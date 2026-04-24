@@ -2,6 +2,8 @@
 
 Open-ended timeline — quality over speed. Milestones are ordered by dependency, not calendar. Each milestone has a concrete exit criterion you can point at.
 
+> **2026-04-24 pivot.** v1 is now *self-dogfooding only* — the coral-benchmarks canary is deferred to v1.1+. Milestone exit criteria below still describe "extract from coral" — that's because coral is the source-of-truth for the prompts we're adapting, not because coral is the validation target. Validation runs against the squirtlesquad Linear workspace using squirtle-squad's own `.agent_squad/config.toml`. See [vision.md](./vision.md) for rationale.
+
 ## M0 — Research & decisions (no code)
 
 Answer the three blocking questions from `open-questions.md`:
