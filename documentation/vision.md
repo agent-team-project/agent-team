@@ -24,10 +24,13 @@ Think of it as: *Claude Code's general-purpose coding agent, but wrapped in a wo
 
 ## What success looks like (v1)
 
-Two milestones, both required:
+**One primary milestone: self-dogfooding.**
 
-1. **Coral canary.** coral-benchmarks installs squirtle-squad, deletes its own `.claude/agents/` and `.claude/skills/`, and the existing ticket-manager / worker workflow behaves identically against the BENCH Linear team. Hard cutover.
-2. **Self-dogfooding.** The squirtle-squad repo uses the plugin's own agents to work tickets on the squirtlesquad Linear project — close at least one ticket via a worker-opened PR against this repo.
+squirtle-squad uses its own installed plugin to work tickets on the squirtlesquad Linear project — close at least one ticket end-to-end via a worker-opened PR against this repo.
+
+**Deferred to v1.1+: Coral canary.** Originally v1 required installing the plugin in coral-benchmarks as a second canary. That's been deferred (2026-04-24 pivot). The Q2 config pattern was proven end-to-end via self-dogfooding against the squirtlesquad Linear workspace; what's left for coral is distribution (the plugin is currently private to `jamesaud`) and the repo-specific touchpoints in coral's worker / ticket-manager routing — separate concerns from "does the pattern work." Revisit once the distribution story is settled.
+
+Keeping v1 scoped to self-dogfooding lets us ship the template with one real consumer validated end-to-end, rather than stalling on cross-repo coordination.
 
 ## Customization as a principle
 
