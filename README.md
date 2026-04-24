@@ -41,7 +41,7 @@ documentation/                           # strategy, architecture, notes
 
 ## What's here today
 
-This is the v1 scaffold. No real agents or skills yet — just a `placeholder` agent and `placeholder` skill for smoke-testing the plugin system. Real content (ticket-manager, worker, linear skill, pull-request skill, assign-worker skill) is extracted from coral-benchmarks in upcoming milestones — see [`documentation/roadmap.md`](./documentation/roadmap.md).
+The v1 plugin ships a `ticket-manager` agent, a `worker` agent, and three skills — `linear`, `pull-request`, and `assign-worker`. V1's remaining work is self-dogfooding: closing a real SQU ticket via a worker-opened PR against this repo. See [`documentation/roadmap.md`](./documentation/roadmap.md) for milestone status.
 
 ## Docs
 
