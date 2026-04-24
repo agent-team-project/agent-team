@@ -6,19 +6,23 @@ Research tasks and decisions not yet committed. Each has an owner, a blocker rel
 
 ## Q1 — Plugin manifest & marketplace schema
 
-**Status**: unverified against current Claude Code docs.
-**Blocks**: M1 (skeleton).
+**Status**: RESOLVED 2026-04-24 via [SQU-5](https://linear.app/squirtlesquad/issue/SQU-5). Full schema reference with worked examples: [`notes/plugin-schema.md`](notes/plugin-schema.md).
 
-Training data may be stale on Claude Code plugin schemas. Need concrete answers to:
+**Summary of answers:**
 
-- Required and optional fields in `.claude-plugin/plugin.json`.
-- How agents and skills are registered inside a plugin (is it convention-based `agents/` + `skills/` directories, or explicit manifest entries?).
-- `.claude-plugin/marketplace.json` format for a self-hosted marketplace.
-- How `/plugin marketplace add <github-slug>` resolves a repo URL — does it read `marketplace.json` at the root, in `.claude-plugin/`, or somewhere else?
-- Whether hooks (e.g. SessionStart) can ship inside a plugin or must live in consumer `.claude/settings.json`.
-- Plugin versioning — git tags, SHAs, semver? How do consumers pin?
+1. **`plugin.json` required fields**: `name`, `description`. Optional: `version`, `author {name, email}`, `homepage`, `repository`, `license`. Location: `.claude-plugin/plugin.json`.
+2. **`marketplace.json` format**: Location `.claude-plugin/marketplace.json`. Required: `name`, `description`, `plugins[]`. Each plugin entry: `name`, `description`, `source {source, url, path, ref?}`, optional `version` and `author`.
+3. **URL resolution**: `/plugin marketplace add <owner>/<repo>` fetches `.claude-plugin/marketplace.json` from the default branch. Supports `#ref` suffix for pinning (`<owner>/<repo>#v1.0.0` or `#branch`). Also accepts full Git URLs and local paths.
+4. **Agent + skill discovery**: Convention-based. Claude Code auto-discovers `agents/*.md` and `skills/<name>/SKILL.md`. No `plugin.json` entries per agent/skill.
+5. **Hooks in plugins**: Supported via `hooks/hooks.json` at plugin root. SessionStart hooks supported as `type: "command"`; can write files and set env vars via `$CLAUDE_ENV_FILE`.
+6. **Versioning**: `version` field in `plugin.json` is optional; without it, version is the commit SHA. Consumers pin via `#ref` on `marketplace add`. `/plugin update` refreshes marketplaces and updates installed plugins. Marketplace-level version-range constraints are not documented — for v1 we pin by ref or SHA.
 
-**Next action**: fetch current plugin docs from Anthropic's Claude Code reference. Likely candidate: the claude-code-guide agent plus web search against docs.claude.com / anthropic.com/engineering.
+**Remaining gaps to validate in M1:**
+
+- **Timing of plugin-shipped SessionStart hooks relative to agent-prompt loading.** Not explicitly documented. Verify at M1 smoke test ([SQU-9](https://linear.app/squirtlesquad/issue/SQU-9)) — this is the single most important open input for Q2 option (a).
+- **Install command shape when marketplace and plugin share a name** (`/plugin install squirtle-squad` vs. `/plugin install squirtle-squad@squirtle-squad`). Verify at M1 smoke test.
+
+**Next action**: Q1 done. Unblocks [SQU-6](https://linear.app/squirtlesquad/issue/SQU-6) (Q2 spike), [SQU-7](https://linear.app/squirtlesquad/issue/SQU-7) (Q3 dev install), [SQU-8](https://linear.app/squirtlesquad/issue/SQU-8) (M1 scaffold).
 
 ---
 
