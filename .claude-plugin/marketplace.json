@@ -1,5 +1,9 @@
 {
   "name": "agent-squad-dev",
+  "owner": {
+    "name": "James Audretsch",
+    "email": "james.audretsch@phoebe.ai"
+  },
   "metadata": {
     "description": "Self-dogfood marketplace for agent-squad. Points at cli/src/agent_squad/template/ so edits to the canonical source are immediately live in this repo on /reload-plugins. Consumer repos generate a different marketplace.json via `agent-squad init` that points at .agent_squad/.",
     "version": "0.1.0"
