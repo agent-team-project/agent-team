@@ -1,68 +1,106 @@
-# agent-squad
+# agent-team
 
-A CLI that vendors a reusable software-engineering agent squad — a `ticket-manager`, persistent feature/domain `manager`s, ephemeral `worker`s, and supporting skills — into any repo. Drop it into your project, edit one config file, and you have a Claude Code-driven team that can triage Linear tickets and ship PRs.
+A CLI for declaring and launching a custom set of Claude Code subagents and skills. Each **agent** is a directory under `.agent_team/agents/`. Run `agent-team run` and the CLI launches Claude Code with your team registered for that session.
 
-**Status**: pre-v1. Under active development. See [`documentation/`](./documentation) for the product strategy, architecture, roadmap, and open questions.
+A starter "software engineering team" template (a `ticket-manager`, a `manager`, ephemeral `worker`s, plus Linear / PR / assign-worker skills) is bundled as one example. Use it as-is, edit it, or throw it away and write your own.
 
-## Install + use
+**Status**: pre-v1. Public API is unstable.
 
-Vendor the squad into a repo:
+## Vocabulary
+
+- **agent** — a definition. A directory at `.agent_team/agents/<name>/` containing `agent.md` (frontmatter + prompt) and `config.toml` (skill assignment). Authored, static, reusable.
+- **instance** — a named runtime spawn of an agent. Identified by the `name=` parameter at spawn time. One agent can have many instances; each instance has its own state.
+- **workspace** — the working directory an instance operates in. For code-writing agents (the bundled `worker`): a fresh git worktree per spawn. For others: the repo root.
+- **state** — persistent per-instance files (journal, goals, progress) at `.agent_team/state/<instance-name>/`. Survives across sessions for long-lived instances; ephemeral instances (workers) keep their state inside their worktree.
+
+## Install
 
 ```sh
-uvx --from git+https://github.com/jamesaud/agent-squad agent-squad init
+uvx --from "git+https://github.com/jamesaud/agent-team#subdirectory=cli" agent-team init
 ```
 
-This creates `.agent_squad/` in the current directory with the squad's agents, skills, and a starter `config.toml`, plus a Claude Code plugin shim at `.claude-plugin/marketplace.json`.
-
-Edit `.agent_squad/config.toml` to match your Linear team. Then, in Claude Code:
+`init` writes a starter `.agent_team/` into the current repo:
 
 ```
-/plugin marketplace add .
-/plugin install agent-squad
+.agent_team/
+├── config.toml                              # consumer-specific runtime values (team IDs, etc.)
+├── agents/
+│   ├── <name>/
+│   │   ├── agent.md                         # frontmatter + prompt body
+│   │   ├── config.toml                      # [skills].extra: which skills this agent uses
+│   │   └── skills/                          # optional agent-private skills
+│   └── ...
+├── skills/
+│   ├── <name>/SKILL.md                      # shared skills (referenced by any agent)
+│   └── ...
+└── state/                                   # per-instance state, written at runtime
+    └── <instance-name>/                     # journal.md, goals.md, etc. (created on first spawn)
 ```
 
-The vendored agents register as `agent-squad:ticket-manager`, `agent-squad:manager`, `agent-squad:worker`, and the skills as `agent-squad:linear`, `agent-squad:pull-request`, `agent-squad:assign-worker`. Edits to anything under `.agent_squad/` are picked up by `/reload-plugins`.
+Edit anything you like, then:
 
-## CLI commands
+```sh
+agent-team run
+```
+
+…and you're in a Claude Code session with your agents and skills loaded.
+
+## Commands
 
 | Command | Purpose |
 |---|---|
-| `agent-squad init` | Vendor the bundled template into the current repo. |
-| `agent-squad add manager <slug>` | Scaffold a new persistent manager scope at `.agent_squad/managers/<slug>/`. |
-| `agent-squad doctor` | Sanity-check the vendored squad. |
-| `agent-squad sync` | (v0.2) Refresh vendored content from a newer CLI version. v0.1 stub points at `init --force`. |
+| `agent-team init [--template default\|empty]` | Vendor a starter `.agent_team/` into the current repo. |
+| `agent-team add agent <name>` | Scaffold a new agent definition. |
+| `agent-team add skill <name> [--agent <a>]` | Scaffold a new skill (shared by default; `--agent` scopes it under one agent). |
+| `agent-team run [-- claude-args…]` | Launch a Claude Code session with all agents registered as subagents. You operate as the orchestrator. |
+| `agent-team spawn <agent> [--name <instance>] [-p "<kickoff>"]` | Launch a Claude Code session that *is* one named agent. Creates `.agent_team/state/<instance>/` if missing, prepends a kickoff naming the instance and its state dir. All other agents are still registered as subagents (so a spawned `manager` can dispatch a `worker`). |
+| `agent-team doctor` | Sanity-check the team layout and config. |
 
-## What's in the squad
+## How it works
 
-- **`ticket-manager`** — manages Linear tickets: search, create, route, comment, transition states.
-- **`manager`** — persistent agent scoped to a domain (a feature, an initiative, an ongoing responsibility). Holds working memory across sessions, dispatches workers within scope.
-- **`worker`** — ephemeral agent that takes one ticket end-to-end: plan → implement in a worktree → open PR.
-- **Skills**: `linear` (GraphQL wrapper), `pull-request` (gh CLI wrapper), `assign-worker` (worker-spawn mechanics).
+`agent-team run` reads each `.agent_team/agents/<name>/agent.md`, parses the YAML frontmatter (`description`) and body (the prompt), resolves each agent's skill set from `agents/<name>/skills/` plus `[skills].extra` in `agents/<name>/config.toml`, builds a tmpdir of symlinks satisfying Claude Code's `--add-dir` skill discovery, and exec's:
 
-## Local development of agent-squad itself
+```sh
+claude --agents '<json>' --add-dir <tmpdir> <forwarded-args>
+```
 
-This repo dogfoods itself. Claude Code running here reads the squad directly from `cli/src/agent_squad/template/` via the marketplace shim at `.claude-plugin/marketplace.json`.
+The launcher exports `AGENT_TEAM_ROOT=<absolute path to .agent_team/>` so skills can locate their bundled assets regardless of the current working directory.
 
-CLI development:
+Subagents are session-scoped — they exist only for the duration of the spawned `claude` process. Nothing is written into `.claude/agents/`. No plugin install, no marketplace, no global state.
+
+## The bundled starter
+
+`agent-team init` (default template) drops in a software-engineering team:
+
+- **`ticket-manager`** — searches, creates, routes, and transitions Linear tickets.
+- **`manager`** — persistent agent. Tracks goals and dispatches workers. State lives at `.agent_team/state/<instance-name>/`. Multiple instances of the manager agent can run side-by-side (e.g. `name=manager-billing`, `name=manager-release`), each with their own state directory.
+- **`worker`** — ephemeral. One instance per ticket, each in a fresh git worktree, each delivers a PR. No persistent state — the worktree is the workspace.
+- **Skills**: `linear` (GraphQL wrapper), `pull-request` (gh CLI wrapper), `assign-worker` (worker-spawn mechanics, agent-private to the manager).
+
+`agent-team init --template empty` skips the bundled content and gives you just the directory scaffold + a stub `config.toml`.
+
+## Working on agent-team itself
+
+This repo dogfoods itself — its own `.agent_team/agents` and `.agent_team/skills` are symlinks into the bundled template at `cli/src/agent_team/template/`, so edits to template content are immediately live for the next `agent-team run`.
+
+CLI dev loop:
 
 ```sh
 cd cli
-uv run --with-editable . agent-squad --help
+uv run --with-editable . agent-team --help
 ```
 
-After editing any template file under `cli/src/agent_squad/template/`:
+Or install editably:
 
+```sh
+cd cli && uv pip install -e .
+agent-team --help
 ```
-/reload-plugins
+
+Smoke-test against a tmp dir:
+
+```sh
+agent-team init --target /tmp/team-smoke
 ```
 
-Full contributor orientation: [`CLAUDE.md`](./CLAUDE.md). Strategy, architecture, roadmap: [`documentation/`](./documentation/).
-
-## Docs
-
-- [`CLAUDE.md`](./CLAUDE.md) — contributor-facing orientation (repo layout, dev loop, config conventions).
-- [`documentation/vision.md`](./documentation/vision.md) — what this is, who it's for, principles.
-- [`documentation/architecture.md`](./documentation/architecture.md) — CLI shape, layers, plugin shim, runner direction.
-- [`documentation/roadmap.md`](./documentation/roadmap.md) — milestones C1 → C5 + parking lot.
-- [`documentation/open-questions.md`](./documentation/open-questions.md) — open research items.
-- [`documentation/notes/archive/`](./documentation/notes/archive/) — historical notes from the plugin-era design (pre-2026-04-27 pivot).
+Contributor orientation: [`CLAUDE.md`](./CLAUDE.md).

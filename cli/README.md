@@ -1,6 +1,6 @@
-# agent-squad CLI
+# agent-team CLI
 
-The `agent-squad` Python package — distributes the squad as a CLI.
+The `agent-team` Python package — distributes the team as a CLI.
 
 This directory is package internals. User-facing docs live in the [repo root README](../README.md) and [`documentation/`](../documentation/).
 
@@ -9,10 +9,10 @@ This directory is package internals. User-facing docs live in the [repo root REA
 ```
 cli/
 ├── pyproject.toml
-└── src/agent_squad/
-    ├── cli.py                 # argparse entrypoint (`agent-squad`)
+└── src/agent_team/
+    ├── cli.py                 # argparse entrypoint (`agent-team`)
     ├── commands/              # init, sync, add, doctor
-    └── template/              # bundled — copied into <consumer>/.agent_squad/ on init
+    └── template/              # bundled — copied into <consumer>/.agent_team/ on init
         ├── agents/            # ticket-manager.md, worker.md, manager.md
         ├── skills/            # linear, pull-request, assign-worker
         ├── scripts/           # linear-graphql.sh
@@ -25,12 +25,12 @@ cli/
 From this directory:
 
 ```sh
-uv run --with-editable . agent-squad --help
+uv run --with-editable . agent-team --help
 ```
 
 Or install editably and run:
 
 ```sh
 uv pip install -e .
-agent-squad --help
+agent-team --help
 ```

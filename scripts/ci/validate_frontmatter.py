@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Validate YAML frontmatter on every agent and skill definition.
+"""Validate YAML frontmatter on every bundled agent and skill.
 
-Each `cli/src/agent_squad/template/agents/*.md` and
-`cli/src/agent_squad/template/skills/*/SKILL.md` must:
+Walks the bundled template and checks:
+  - Each `cli/src/agent_team/template/agents/<name>/agent.md`
+  - Each `cli/src/agent_team/template/skills/<name>/SKILL.md` (shared)
+  - Each `cli/src/agent_team/template/agents/<name>/skills/<name>/SKILL.md` (agent-private)
+
+Each file must:
   1. Start with a YAML frontmatter block delimited by `---`.
   2. Parse as a mapping.
-  3. Contain non-empty `name` and `description` string fields.
+  3. Contain a non-empty `description` string.
 """
 
 from __future__ import annotations
@@ -16,11 +20,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_ROOT = REPO_ROOT / "cli" / "src" / "agent_squad" / "template"
-AGENTS_DIR = TEMPLATE_ROOT / "agents"
-SKILLS_DIR = TEMPLATE_ROOT / "skills"
-
-REQUIRED_FIELDS = ("name", "description")
+TEMPLATE_ROOT = REPO_ROOT / "cli" / "src" / "agent_team" / "template"
 
 
 def extract_frontmatter(path: Path) -> tuple[dict | None, str | None]:
@@ -48,21 +48,19 @@ def validate(path: Path) -> list[str]:
     if err is not None:
         return [f"{rel}: {err}"]
     errors = []
-    for field in REQUIRED_FIELDS:
-        value = data.get(field)
-        if value is None:
-            errors.append(f"{rel}: missing required field `{field}`")
-        elif not isinstance(value, str) or not value.strip():
-            errors.append(f"{rel}: field `{field}` must be a non-empty string")
+    desc = data.get("description")
+    if desc is None:
+        errors.append(f"{rel}: missing required field `description`")
+    elif not isinstance(desc, str) or not desc.strip():
+        errors.append(f"{rel}: field `description` must be a non-empty string")
     return errors
 
 
 def main() -> int:
     targets: list[Path] = []
-    if AGENTS_DIR.is_dir():
-        targets.extend(sorted(AGENTS_DIR.glob("*.md")))
-    if SKILLS_DIR.is_dir():
-        targets.extend(sorted(SKILLS_DIR.glob("*/SKILL.md")))
+    targets.extend(sorted(TEMPLATE_ROOT.glob("agents/*/agent.md")))
+    targets.extend(sorted(TEMPLATE_ROOT.glob("skills/*/SKILL.md")))
+    targets.extend(sorted(TEMPLATE_ROOT.glob("agents/*/skills/*/SKILL.md")))
 
     if not targets:
         print("No agent/skill files found — nothing to validate.", file=sys.stderr)

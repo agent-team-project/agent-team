@@ -1,99 +1,104 @@
 #!/usr/bin/env python3
-"""End-to-end smoke test: `agent-squad init` against a temp dir.
+"""End-to-end smoke test for the installed agent-team CLI.
 
-Exercises the CLI's primary path — vendor template, generate plugin manifests,
-write a starter config.toml — and asserts the resulting tree is valid.
+Assumes `agent-team` is on PATH (CI step `pip install ./cli` runs first).
+Exercises:
+  - `init` against a tmp dir → expected per-agent dirs and shared skills exist
+  - `add agent <name>` → scaffolds new agent dir
+  - `add skill <name>` → scaffolds shared skill
+  - `add skill <name> --agent <agent>` → scaffolds agent-private skill
+  - `doctor` fails when Linear keys empty, passes once filled in
 """
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 import tempfile
 import tomllib
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CLI_SRC = REPO_ROOT / "cli" / "src"
+EXPECTED_AFTER_INIT = [
+    ".agent_team/config.toml",
+    ".agent_team/config.toml.example",
+    ".agent_team/agents/ticket-manager/agent.md",
+    ".agent_team/agents/ticket-manager/config.toml",
+    ".agent_team/agents/manager/agent.md",
+    ".agent_team/agents/manager/config.toml",
+    ".agent_team/agents/manager/skills/assign-worker/SKILL.md",
+    ".agent_team/agents/worker/agent.md",
+    ".agent_team/agents/worker/config.toml",
+    ".agent_team/skills/linear/SKILL.md",
+    ".agent_team/skills/linear/scripts/linear-graphql.sh",
+    ".agent_team/skills/pull-request/SKILL.md",
+]
 
 
 def main() -> int:
+    problems: list[str] = []
     with tempfile.TemporaryDirectory() as tmp:
         target = Path(tmp)
-        result = subprocess.run(
-            [sys.executable, "-m", "agent_squad", "init", "--target", str(target)],
-            env={"PYTHONPATH": str(CLI_SRC), "PATH": _path()},
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            print("init failed:", file=sys.stderr)
-            print(result.stdout, file=sys.stderr)
-            print(result.stderr, file=sys.stderr)
-            return 1
 
-        problems: list[str] = []
-
-        for rel in [
-            ".agent_squad/config.toml",
-            ".agent_squad/config.toml.example",
-            ".agent_squad/agents/ticket-manager.md",
-            ".agent_squad/agents/manager.md",
-            ".agent_squad/agents/worker.md",
-            ".agent_squad/skills/linear/SKILL.md",
-            ".agent_squad/skills/pull-request/SKILL.md",
-            ".agent_squad/skills/assign-worker/SKILL.md",
-            ".agent_squad/scripts/linear-graphql.sh",
-            ".agent_squad/.claude-plugin/plugin.json",
-            ".claude-plugin/marketplace.json",
-        ]:
-            p = target / rel
-            if not p.exists():
+        run(["agent-team", "init", "--target", str(target)])
+        for rel in EXPECTED_AFTER_INIT:
+            if not (target / rel).exists():
                 problems.append(f"missing after init: {rel}")
 
         try:
-            tomllib.loads((target / ".agent_squad" / "config.toml").read_text())
+            tomllib.loads((target / ".agent_team" / "config.toml").read_text())
         except Exception as e:  # noqa: BLE001
             problems.append(f"config.toml not valid TOML: {e}")
 
-        for rel in [
-            ".agent_squad/.claude-plugin/plugin.json",
-            ".claude-plugin/marketplace.json",
-        ]:
-            try:
-                json.loads((target / rel).read_text())
-            except Exception as e:  # noqa: BLE001
-                problems.append(f"{rel} not valid JSON: {e}")
+        run(["agent-team", "add", "agent", "smoke-agent", "--target", str(target)])
+        if not (target / ".agent_team/agents/smoke-agent/agent.md").exists():
+            problems.append("add agent didn't scaffold agent.md")
+        if not (target / ".agent_team/agents/smoke-agent/config.toml").exists():
+            problems.append("add agent didn't scaffold config.toml")
 
-        # `add manager <slug>` should scaffold a CLAUDE.md.
-        result = subprocess.run(
-            [sys.executable, "-m", "agent_squad", "add", "manager", "smoke-test", "--target", str(target)],
-            env={"PYTHONPATH": str(CLI_SRC), "PATH": _path()},
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            problems.append(f"add manager failed: {result.stderr}")
-        elif not (target / ".agent_squad" / "managers" / "smoke-test" / "CLAUDE.md").exists():
-            problems.append("add manager did not create the expected CLAUDE.md")
+        run(["agent-team", "add", "skill", "smoke-skill", "--target", str(target)])
+        if not (target / ".agent_team/skills/smoke-skill/SKILL.md").exists():
+            problems.append("add skill didn't scaffold SKILL.md")
 
-        if problems:
-            print("smoke_init failed:", file=sys.stderr)
-            for p in problems:
-                print(f"  - {p}", file=sys.stderr)
-            return 1
+        run(["agent-team", "add", "skill", "private-skill",
+             "--agent", "smoke-agent", "--target", str(target)])
+        if not (target / ".agent_team/agents/smoke-agent/skills/private-skill/SKILL.md").exists():
+            problems.append("add skill --agent didn't scaffold SKILL.md")
 
-        print("OK  agent-squad init + add manager")
-        return 0
+        rc = subprocess.run(
+            ["agent-team", "doctor", "--target", str(target)],
+            capture_output=True, text=True,
+        ).returncode
+        if rc == 0:
+            problems.append("doctor passed with empty Linear keys (should have failed)")
+
+        cfg_path = target / ".agent_team" / "config.toml"
+        cfg = cfg_path.read_text()
+        cfg = cfg.replace('team_id       = ""', 'team_id       = "smoke-team"')
+        cfg = cfg.replace('ticket_prefix = ""', 'ticket_prefix = "SMK"')
+        cfg_path.write_text(cfg)
+        rc = subprocess.run(
+            ["agent-team", "doctor", "--target", str(target)],
+            capture_output=True, text=True,
+        ).returncode
+        if rc != 0:
+            problems.append("doctor failed with valid Linear keys")
+
+    if problems:
+        print("smoke_init failed:", file=sys.stderr)
+        for p in problems:
+            print(f"  - {p}", file=sys.stderr)
+        return 1
+    print("OK  agent-team init + add + doctor")
+    return 0
 
 
-def _path() -> str:
-    import os
-
-    return os.environ.get("PATH", "")
+def run(cmd: list[str]) -> None:
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"command failed: {' '.join(cmd)}", file=sys.stderr)
+        print(r.stdout, file=sys.stderr)
+        print(r.stderr, file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

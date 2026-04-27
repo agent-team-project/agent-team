@@ -8,7 +8,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -16,23 +16,23 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Python deps
+      - name: Install dev deps (pyyaml for frontmatter validator)
         run: pip install --no-cache-dir pyyaml==6.0.2
 
-      - name: Validate JSON manifests
-        run: python3 scripts/ci/validate_json.py
-
-      - name: Validate TOML config
+      - name: Validate TOML files
         run: python3 scripts/ci/validate_toml.py
 
       - name: Validate agent & skill frontmatter
         run: python3 scripts/ci/validate_frontmatter.py
 
-      - name: CLI smoke test (init + add manager)
+      - name: Install agent-team CLI
+        run: pip install --quiet ./cli
+
+      - name: CLI smoke test (init + add + doctor)
         run: python3 scripts/ci/smoke_init.py
 
       - name: Shellcheck template scripts
         uses: ludeeus/action-shellcheck@2.0.0
         with:
-          scandir: cli/src/agent_squad/template/scripts
+          scandir: cli/src/agent_team/template/skills/linear/scripts
           severity: warning

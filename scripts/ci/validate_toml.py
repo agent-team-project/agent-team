@@ -8,17 +8,22 @@ import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+TEMPLATE_ROOT = REPO_ROOT / "cli" / "src" / "agent_team" / "template"
 
-TOML_FILES = [
-    REPO_ROOT / ".agent_squad" / "config.toml",
-    REPO_ROOT / "cli" / "pyproject.toml",
-    REPO_ROOT / "cli" / "src" / "agent_squad" / "template" / "config.toml.example",
-]
+
+def collect() -> list[Path]:
+    paths: list[Path] = [
+        REPO_ROOT / ".agent_team" / "config.toml",
+        REPO_ROOT / "cli" / "pyproject.toml",
+        TEMPLATE_ROOT / "config.toml.example",
+    ]
+    paths.extend(sorted(TEMPLATE_ROOT.glob("agents/*/config.toml")))
+    return paths
 
 
 def main() -> int:
     failures: list[str] = []
-    for path in TOML_FILES:
+    for path in collect():
         rel = path.relative_to(REPO_ROOT)
         if not path.exists():
             failures.append(f"{rel}: file not found")

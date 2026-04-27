@@ -1,27 +1,32 @@
 # CLAUDE.md
 
-Contributor-facing orientation for `agent-squad`. `README.md` is user-facing; this file is for anyone — human or agent — working *on* the CLI.
+Contributor orientation for `agent-team`. `README.md` is user-facing; this file is for anyone working *on* the CLI.
 
-This is a pointer doc. Authoritative content lives in [`documentation/`](./documentation); follow the links rather than expecting this file to restate them.
+## What it is
 
-## What agent-squad is
+A Python CLI that:
 
-A Python CLI that vendors a reusable software-engineering agent squad — `ticket-manager`, persistent `manager`s, ephemeral `worker`s, and supporting skills (`linear`, `pull-request`, `assign-worker`) — into any repo.
+1. Vendors a starter set of agent definitions and skills into a consumer's repo at `.agent_team/`.
+2. Launches Claude Code with those agents and skills registered for the session, via Claude Code's `--agents` and `--add-dir` flags.
 
-V1 audience is Phoebe teammates. The primary v1 milestone is self-dogfooding: agent-squad uses its own CLI to vendor itself into this repo and close `SQU-*` tickets via worker-opened PRs. Full framing, principles, and non-goals: [`documentation/vision.md`](./documentation/vision.md).
+Everything is per-repo and file-based. There is no plugin install, no marketplace, no global state. The bundled starter (a software-engineering team — `ticket-manager`, `manager`, `worker`, plus `linear` / `pull-request` / `assign-worker` skills) is one template among many possible. Users are expected to edit, replace, or wholly rewrite it.
 
-> **2026-04-27 pivot.** v1 dropped the Claude Code marketplace-plugin distribution and pivoted to a CLI that vendors the squad into the consumer's repo. Plugin-era docs are preserved at [`documentation/notes/archive/`](./documentation/notes/archive/) for context. New milestone numbering starts at C1.
+## Vocabulary
+
+- **agent** — a definition at `.agent_team/agents/<name>/`. Authored, static.
+- **instance** — a named runtime spawn of an agent (`name=` at spawn time). Has its own state at `.agent_team/state/<instance-name>/`. One agent can have many instances.
+- **workspace** — an instance's working directory. For ephemeral code-writing agents: a fresh worktree per spawn (Claude Code's `Agent` tool with `isolation: "worktree"`). For others: the repo root.
 
 ## Repo layout
 
-See [`documentation/architecture.md`](./documentation/architecture.md) for the authoritative tree. In short:
-
-- `cli/` — the Python package. `cli/src/agent_squad/cli.py` is the entrypoint; `cli/src/agent_squad/template/` is the canonical squad content (bundled with the wheel).
-- `documentation/` — strategy, architecture, roadmap, open questions. Not bundled with the CLI.
-- `.agent_squad/config.toml` — this repo's own consumer config (we self-dogfood).
-- `.claude-plugin/marketplace.json` — points at `cli/src/agent_squad/template/` so the canonical squad content is live in this repo's Claude Code session without a vendor copy.
-
-The bundled template at `cli/src/agent_squad/template/` follows Claude Code's plugin layout: `agents/*.md` and `skills/<name>/SKILL.md` auto-discover. `.claude-plugin/plugin.json` lives inside the template directory.
+- `cli/` — the Python package.
+  - `cli/src/agent_team/cli.py` — entrypoint (Typer).
+  - `cli/src/agent_team/commands/` — one module per subcommand (`init`, `add`, `run`, `spawn`, `doctor`).
+  - `cli/src/agent_team/template/` — bundled starter content, copied into consumer repos by `init`.
+- `cli/pyproject.toml` — Python ≥3.11. One runtime dep (`typer`); resist further deps. The future runner is a separate program (likely Go).
+- `.agent_team/` (this repo) — our own team, since we self-dogfood. `agents/` and `skills/` are symlinks into the bundled template.
+- `scripts/ci/` — CI validators and smoke tests.
+- `.github/workflows/ci.yml` — runs the validators on push and PR.
 
 ## CLI dev loop
 
@@ -29,71 +34,86 @@ From repo root:
 
 ```sh
 cd cli
-uv run --with-editable . agent-squad --help
+uv run --with-editable . agent-team --help
 ```
 
-Or install editably and run:
+Or install editably:
 
 ```sh
 cd cli && uv pip install -e .
-agent-squad --help
+agent-team --help
 ```
 
-Smoke-test `init` against a tmp dir:
+Smoke-test against a tmp dir:
 
 ```sh
-mkdir /tmp/squad-smoke && agent-squad init --target /tmp/squad-smoke
+agent-team init --target /tmp/team-smoke
 ```
 
-After editing any template file under `cli/src/agent_squad/template/`, run `/reload-plugins` in your Claude Code session — the marketplace shim points at the template path, so edits are immediately live.
+## How `agent-team run` and `spawn` work
 
-## `.agent_squad/config.toml` conventions
+`run` registers every agent as a subagent for orchestrator-style work. `spawn <agent>` does the same, plus:
+1. Writes the agent's own prompt + a kickoff preamble (instance name + state dir) to a temp file.
+2. Passes `--append-system-prompt-file <that-file>` to claude.
+3. Creates `.agent_team/state/<instance>/` if missing.
+4. Exports `AGENT_TEAM_INSTANCE` and `AGENT_TEAM_STATE_DIR` into claude's env.
 
-The CLI ships zero IDs in the template. Every consumer-specific value lives in `.agent_squad/config.toml`. Keys expected today:
+Net effect: the launched session *is* the named agent and can also dispatch other agents as subagents.
 
-- `[squad]` — `pm_tool`, `local_dir`.
-- `[linear]` — `team_id`, `ticket_prefix`, optional `initiative_id` and `labels`.
-- `[linear.projects]` — map of project-name → Linear project UUID, consumed by `ticket-manager` routing.
-- `[worktree]` — `path`, `branch_prefix`.
+### `agent-team run`
 
-Schema details and the rationale for runtime TOML reads (vs prompt-template substitution): [`documentation/architecture.md`](./documentation/architecture.md) § "Configuration surface" and § "How TOML values reach the logic." The canonical pattern uses `python3 -c 'import tomllib; ...'` inside skill bash.
+For each `.agent_team/agents/<name>/agent.md`:
+1. Split YAML frontmatter from the body. The launcher uses a stdlib-only mini-parser that handles scalar and block-scalar values (no PyYAML at runtime).
+2. `description` from frontmatter becomes the agent's description; body becomes the agent's prompt.
+3. Directory name becomes the agent's name (e.g. `agents/worker/` → subagent `worker`).
+4. Skills are resolved: every `<agent>/skills/<name>/SKILL.md` is auto-included; `[skills].extra = ["..."]` in `<agent>/config.toml` pulls in shared skills (looked up under `.agent_team/skills/<name>/`) or arbitrary paths.
 
-If you find yourself about to hardcode a UUID, label, or path in a template file, stop — the value belongs in TOML. If TOML doesn't currently expose that key, extend the schema and update the relevant skill, rather than embedding the value.
+The CLI assembles `{name: {description, prompt}, …}` as JSON, builds a tmpdir with `.claude/skills/<name>` symlinks for the union of all referenced skills, and exec's:
+
+```sh
+claude --agents '<json>' --add-dir <tmpdir> <forwarded-args>
+```
+
+`AGENT_TEAM_ROOT=<absolute path to .agent_team>` is exported into claude's environment so skills can locate their bundled assets.
+
+Skills are picked up by Claude Code's `--add-dir` discovery — see [Skills docs](https://code.claude.com/docs/en/skills) for the directory shape `--add-dir` expects.
+
+`.agent_team/config.toml` is read by skill bash via `python3 -c 'import tomllib; …'`. The CLI does not substitute prompt templates — values flow through the filesystem at runtime.
+
+## Self-dogfooding
+
+This repo's `.agent_team/agents` and `.agent_team/skills` are symlinks into `cli/src/agent_team/template/`, so edits to template content are immediately live for the next `agent-team run`. If you've broken the wiring, recreate the symlinks by hand or wipe `.agent_team/{agents,skills}` and re-link.
 
 ## Contribution rules
 
-### Branches and worktrees
+### Branches
 
-Workers spawned via `agent-squad:assign-worker` create their own worktree under `.claude/worktrees/<name>/` on a fresh branch. When working by hand, follow the same convention: one branch per ticket, prefixed meaningfully (e.g. `squ-17-claude-md`).
+One branch per ticket, prefixed meaningfully (e.g. `squ-17-claude-md`). When the bundled `worker` agent runs in a worktree, it follows the same convention.
 
-### Ticket prefix and routing
+### Tickets
 
-All tickets for this repo use the `SQU` prefix. Routing (which Linear project a ticket lands in) is handled by `ticket-manager` reading `[linear.projects]` from `.agent_squad/config.toml`. Projects sit under the "Version 1.0" initiative on the squirtlesquad Linear workspace — see [`documentation/roadmap.md`](./documentation/roadmap.md) for milestone structure.
+Tickets for this repo use the `SQU` prefix and live in the `squirtlesquad` Linear workspace. Routing is handled by `ticket-manager` reading `.agent_team/config.toml`.
 
-### Commit style
+### Commits
 
-Match the existing history (`git log --oneline` to see it). Conventions:
+Match the existing history (`git log --oneline`). Conventions:
 
-- Prefix with a milestone or category tag: `C1: …`, `docs: …`, `fix(linear skill): …`, `chore: …`.
-- Include the ticket identifier when the commit closes or substantially advances one: `C2: scaffold manager dogfood scope (SQU-21)`.
-- Trailer line: `Co-authored-by: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` on any commit an agent helped author.
+- Tag with a category or milestone: `docs: …`, `fix(cli): …`, `chore: …`, or a milestone tag if one applies.
+- Include the ticket identifier when the commit closes or substantially advances one.
+- Trailer: `Co-authored-by: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` on any commit an agent helped author.
 
 ### PR body
 
-Use the `agent-squad:pull-request` skill to open PRs — it handles the gh CLI invocation, footer, and Linear-ticket linking. PR bodies should:
-
-- Lead with a short summary of what changed and why.
-- Link the ticket via `Closes https://linear.app/squirtlesquad/issue/SQU-<n>/<slug>` so Linear auto-moves it to Done on merge.
-- End with the standard Claude Code footer.
+Lead with a short summary of what changed and why. Link the ticket via `Closes https://linear.app/squirtlesquad/issue/SQU-<n>/<slug>`. End with the standard Claude Code footer.
 
 ### Quality bar
 
-The principles in [`documentation/vision.md`](./documentation/vision.md) § "Quality & architecture principles" are the bar — minimal surface area, one responsibility per component, strong layer boundaries (CLI ↔ template ↔ vendored copy ↔ consumer extensions), explicit over clever, no half-finished state. If a PR doesn't meet it, it doesn't land.
+- Minimal surface area. One responsibility per component.
+- No half-finished code paths. No dead code, no commented-out blocks.
+- Strong layer boundaries: CLI ↔ template ↔ vendored copy ↔ consumer extensions.
+- If a value would be hardcoded in a template file (UUID, label, path, ticket prefix), it goes in `.agent_team/config.toml` instead. Extend the schema rather than embedding.
+- Runtime CLI deps stay minimal — currently `typer` only.
 
-## When in doubt
+If a PR doesn't meet this bar, it doesn't land.
 
-- Open questions and unresolved research items: [`documentation/open-questions.md`](./documentation/open-questions.md).
-- Roadmap and milestone exit criteria: [`documentation/roadmap.md`](./documentation/roadmap.md).
-- Plugin-era history: [`documentation/notes/archive/`](./documentation/notes/archive/).
-
-Keep this file short. When it grows past ~150 lines or starts duplicating what's in `documentation/`, prune or split.
+Keep this file short. When it grows past ~150 lines, prune.
