@@ -57,7 +57,7 @@ def run(args: argparse.Namespace) -> int:
     print("Done. Next steps:")
     print(f"  1. Edit {squad_dir / 'config.toml'} (team_id, ticket_prefix, projects).")
     print("  2. In Claude Code, run:")
-    print("       /plugin marketplace add .")
+    print(f"       /plugin marketplace add {target}")
     print("       /plugin install agent-squad")
     print("     (one-time per repo; the vendored agents register as `agent-squad:*`).")
     print("  3. Commit .agent_squad/ and .claude-plugin/ so teammates and remote runners share the squad.")
