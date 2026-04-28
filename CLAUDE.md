@@ -25,6 +25,7 @@ Two design sketches capture where the project is going. Read the relevant one if
 
 - [`documentation/templates.md`](./documentation/templates.md) — full templates-as-images model: parameter declarations, layered config resolution, `upgrade` semantics, worked example. The `template` resource verb (SQU-22), the `init <ref>` flow, and the bundled starter's role as the "default template" all live here. Read before touching `init`, the `template` verb, the loader, or `config.toml` shape.
 - [`documentation/orchestrator.md`](./documentation/orchestrator.md) — v1.1+ Go daemon (`agent-teamd`) that owns instance lifecycle, replaces Claude Code's in-session dispatch primitives with an orchestrator-mediated model, and unblocks runtime-agnostic execution. Read before touching the dispatch path or thinking about persistent / restartable instances.
+- [`documentation/topology.md`](./documentation/topology.md) — v1.2+ declarative topology (`instances.toml`): which named instances exist, how each is configured, what events trigger each. Compose-style; depends on the daemon for trigger resolution. Read before touching `instance` resource verbs, dispatch logic, or anything event-driven.
 
 ## Repo layout
 
