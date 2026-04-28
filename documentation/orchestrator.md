@@ -188,11 +188,16 @@ Decide at implementation time; either keeps the public surface identical.
 - Skills stay portable — they're just bash + markdown, runtime-agnostic.
 - The `.agent_team/` layout (agents, skills, state) is unchanged. Only adds `.agent_team/daemon/` for gitignored runtime metadata.
 
-## Relationship to templates
+## Relationship to templates and topology
 
-[`templates.md`](./templates.md) covers the orthogonal concern of how `.agent_team/` gets *populated* — via parameterized templates instantiated into the repo at `init` time. The orchestrator covers what happens at *runtime* once the repo is set up. They compose:
+Three forward-looking docs partition the design space:
 
-- A daemon-managed instance still reads its config from the resolved chain described in `templates.md` (template defaults → repo `config.toml` → per-instance overrides → CLI flags).
-- The `--set` flag at `agent-team run` time flows through both: the launcher merges the config layers, and the daemon (when present) writes the merged copy to the instance's state dir before spawning the claude subprocess.
+- **This doc (`orchestrator.md`)** — runtime: process lifecycle, message routing, daemon API, instance state. Read before touching `run` / `ps` / `logs` / dispatch.
+- [`templates.md`](./templates.md) — authoring/distribution: how `.agent_team/` gets populated via parameterized templates. Read before touching `init` / `loader` / `template` verb / `config.toml` schema.
+- [`topology.md`](./topology.md) — declaration: which named instances exist (`instances.toml`), how each is configured, what events trigger each. The trigger-resolution code lives in the daemon (this doc); the schema and consumer authoring live in topology.
 
-If you're touching `init`, `loader`, the bundled-starter shape, or `config.toml` schema, read `templates.md` first. If you're touching `run`, `ps`, `logs`, message routing, or instance lifecycle, this doc is the reference.
+How they compose at runtime:
+
+- A daemon-managed instance reads its config from the resolved chain in `templates.md` extended by topology's per-instance declared overrides — so the full chain is: CLI flags → per-instance state file → declared overrides (`instances.toml`) → repo `config.toml` → template defaults.
+- The `--set` flag at `agent-team run` flows through this chain; the launcher merges layers and writes the resolved copy to the instance's state dir before spawning the claude subprocess.
+- Event triggers (declared in topology, defined here as `POST /event`) become the public dispatch entry. Existing `/dispatch` and `/message` endpoints become the daemon's internal primitives the trigger handler calls.

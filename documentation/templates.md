@@ -483,6 +483,14 @@ User edits to authored files are preserved when the upstream didn't touch the sa
 
 The template is a parameterized image hosted somewhere (git URL today). `template pull` fetches it to a local cache. `init <ref>` resolves required parameters (interactive prompt or `--set` flags), writes the resolved `config.toml` plus rendered `.tmpl` files into the consumer's `.agent_team/`, and pins the version in `.template.lock`. `run` reads `config.toml`, optionally layers a per-instance config and `--set` flags, and exposes the resolved tree to the spawned agent at `$AGENT_TEAM_STATE_DIR/config.toml`. `upgrade` re-resolves against a newer template version with a three-way merge.
 
+## Relationship to orchestrator and topology
+
+Three forward-looking docs partition the design space:
+
+- **This doc (`templates.md`)** — authoring/distribution: parameterized templates with manifest, substitution, refs, four-layer resolution chain.
+- [`orchestrator.md`](./orchestrator.md) — runtime: daemon-managed lifecycle, message routing, instance state.
+- [`topology.md`](./topology.md) — declaration: `instances.toml` (which named instances exist, configured how, triggered by what events). Topology adds a fifth resolution layer (per-instance declared overrides) between repo `config.toml` and per-instance state files. Consumers who don't need topology see today's UX — declaring instances is opt-in.
+
 ## What this doesn't change
 
 - Agent definitions stay file-based and human-authored. Templates are just a packaging layer.
