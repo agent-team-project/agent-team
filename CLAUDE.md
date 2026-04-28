@@ -17,11 +17,19 @@ Everything is per-repo and file-based. There is no plugin install, no marketplac
 - **instance** — a named runtime spawn of an agent (`name=` at spawn time). Has its own state at `.agent_team/state/<instance-name>/`. One agent can have many instances.
 - **workspace** — an instance's working directory. For ephemeral code-writing agents: a fresh worktree per spawn (Claude Code's `Agent` tool with `isolation: "worktree"`). For others: the repo root.
 
+## Forward-looking architecture
+
+Two design sketches capture where the project is going. Read the relevant one if you're touching code in its area.
+
+- [`documentation/orchestrator.md`](./documentation/orchestrator.md) — v1.1+ Go daemon (`agent-teamd`) that owns instance lifecycle, replaces Claude Code's in-session dispatch primitives with an orchestrator-mediated model, and unblocks runtime-agnostic execution. Read before touching the dispatch path or thinking about persistent / restartable instances.
+- [`documentation/templates.md`](./documentation/templates.md) — v1.2+ templates-as-images model with parameter substitution and a layered config resolution chain. The `template` resource verb (SQU-22), the `init <ref>` flow, and the bundled starter's evolution into a parameterized "default template" all live here. Read before touching `init`, the `template` verb, `loader`, or `config.toml` shape.
+
 ## Repo layout
 
 - `cli/` — the Python package.
   - `cli/src/agent_team/cli.py` — entrypoint (Typer).
-  - `cli/src/agent_team/commands/` — one module per subcommand (`init`, `add`, `run`, `spawn`, `doctor`).
+  - `cli/src/agent_team/loader.py` — pure logic: parse frontmatter, load agents, resolve skills.
+  - `cli/src/agent_team/commands/` — one module per top-level command (`init`, `run`, `doctor`) or resource group (`agent`, `skill`, `instance`).
   - `cli/src/agent_team/template/` — bundled starter content, copied into consumer repos by `init`.
 - `cli/pyproject.toml` — Python ≥3.11. One runtime dep (`typer`); resist further deps. The future runner is a separate program (likely Go).
 - `.agent_team/` (this repo) — our own team, since we self-dogfood. `agents/` and `skills/` are symlinks into the bundled template.
@@ -50,17 +58,7 @@ Smoke-test against a tmp dir:
 agent-team init --target /tmp/team-smoke
 ```
 
-## How `agent-team run` and `spawn` work
-
-`run` registers every agent as a subagent for orchestrator-style work. `spawn <agent>` does the same, plus:
-1. Writes the agent's own prompt + a kickoff preamble (instance name + state dir) to a temp file.
-2. Passes `--append-system-prompt-file <that-file>` to claude.
-3. Creates `.agent_team/state/<instance>/` if missing.
-4. Exports `AGENT_TEAM_INSTANCE` and `AGENT_TEAM_STATE_DIR` into claude's env.
-
-Net effect: the launched session *is* the named agent and can also dispatch other agents as subagents.
-
-### `agent-team run`
+## How `agent-team run <agent>` works
 
 For each `.agent_team/agents/<name>/agent.md`:
 1. Split YAML frontmatter from the body. The launcher uses a stdlib-only mini-parser that handles scalar and block-scalar values (no PyYAML at runtime).
@@ -68,13 +66,18 @@ For each `.agent_team/agents/<name>/agent.md`:
 3. Directory name becomes the agent's name (e.g. `agents/worker/` → subagent `worker`).
 4. Skills are resolved: every `<agent>/skills/<name>/SKILL.md` is auto-included; `[skills].extra = ["..."]` in `<agent>/config.toml` pulls in shared skills (looked up under `.agent_team/skills/<name>/`) or arbitrary paths.
 
-The CLI assembles `{name: {description, prompt}, …}` as JSON, builds a tmpdir with `.claude/skills/<name>` symlinks for the union of all referenced skills, and exec's:
+The CLI assembles `{name: {description, prompt}, …}` as JSON, builds a tmpdir with `.claude/skills/<name>` symlinks for the union of all referenced skills, writes the chosen agent's prompt + a kickoff preamble (instance name, state dir) to a temp file, creates `.agent_team/state/<instance>/` if missing, and exec's:
 
 ```sh
-claude --agents '<json>' --add-dir <tmpdir> <forwarded-args>
+claude --agents '<json>' --add-dir <tmpdir> --append-system-prompt-file <kickoff> <forwarded-args>
 ```
 
-`AGENT_TEAM_ROOT=<absolute path to .agent_team>` is exported into claude's environment so skills can locate their bundled assets.
+The launched session IS the named agent (its prompt is the system prompt) AND has every other agent registered as a subagent (so e.g. a spawned `manager` can dispatch a `worker` via the Task tool).
+
+The launcher exports into claude's env:
+- `AGENT_TEAM_ROOT` — absolute path to `.agent_team/`
+- `AGENT_TEAM_INSTANCE` — the instance name
+- `AGENT_TEAM_STATE_DIR` — absolute path to `.agent_team/state/<instance>/`
 
 Skills are picked up by Claude Code's `--add-dir` discovery — see [Skills docs](https://code.claude.com/docs/en/skills) for the directory shape `--add-dir` expects.
 
