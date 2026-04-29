@@ -102,6 +102,21 @@ agent-team run manager     # or any other agent name from .agent_team/agents/
 
 …and you're in a Claude Code session as that agent, with the rest of the team available as subagents it can dispatch.
 
+## One-shot run
+
+For try-out, CI, or a fresh sandbox — anywhere the two-step `init` + `run` is friction — collapse both into a single command:
+
+```sh
+agent-team template run bundled manager \
+    --set linear.team_id=<your-team-uuid> \
+    --set linear.ticket_prefix=APP \
+    -p "kickoff message"
+```
+
+This instantiates the template into a tempdir under `~/.agent-team/runs/<timestamp>-<agent>/` (or `$XDG_CACHE_HOME/agent-team/runs/...`), spawns the agent against it, and removes the tempdir when the agent exits. Pass `--keep` to preserve the tempdir, or `--target <dir>` to use a specific directory (which is always preserved). `--no-input` fails if required parameters are missing — useful in CI.
+
+The daemon is bypassed; claude is exec'd directly. For long-lived setups where you want `instance ps` / `logs --follow` visibility, use `init` + `run` separately.
+
 ## Commands
 
 ```sh
@@ -116,6 +131,8 @@ agent-team template ls                          # list bundled + cached template
 agent-team template show [<ref>]                # print manifest (default: bundled)
 agent-team template pull <path> [--name <n>]    # copy a local template into the cache
 agent-team template rm <ref>                    # remove a cached template
+agent-team template run <ref> <agent> [--target <dir>] [--keep] [--set k=v]... [-p "..."]
+                                                # one-shot: init into a (temp)dir + spawn the agent
 
 agent-team instance ls                          # list instances (.agent_team/state/*)
 agent-team instance show <name>                 # show an instance's state files
