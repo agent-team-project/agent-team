@@ -16,7 +16,7 @@ func TestHTTP_Dispatch_StopList(t *testing.T) {
 	fake := newFakeSpawner(30 * time.Second)
 	m := NewInstanceManager(root, fake.spawn)
 
-	srv := httptest.NewServer(Handler(m, nil))
+	srv := httptest.NewServer(Handler(m, nil, nil, ""))
 	defer srv.Close()
 
 	// POST /v1/dispatch
@@ -65,7 +65,7 @@ func TestHTTP_Dispatch_StopList(t *testing.T) {
 func TestHTTP_DispatchValidation(t *testing.T) {
 	root := t.TempDir()
 	m := NewInstanceManager(root, newFakeSpawner(time.Second).spawn)
-	srv := httptest.NewServer(Handler(m, nil))
+	srv := httptest.NewServer(Handler(m, nil, nil, ""))
 	defer srv.Close()
 
 	cases := []struct {
@@ -92,7 +92,7 @@ func TestHTTP_StartResumesSession(t *testing.T) {
 	root := t.TempDir()
 	fake := newFakeSpawner(30 * time.Second)
 	m := NewInstanceManager(root, fake.spawn)
-	srv := httptest.NewServer(Handler(m, nil))
+	srv := httptest.NewServer(Handler(m, nil, nil, ""))
 	defer srv.Close()
 
 	resp := mustPost(t, srv.URL+"/v1/dispatch",
@@ -132,7 +132,7 @@ func TestHTTP_StartResumesSession(t *testing.T) {
 
 func TestHTTP_MethodGuards(t *testing.T) {
 	m := NewInstanceManager(t.TempDir(), newFakeSpawner(time.Second).spawn)
-	srv := httptest.NewServer(Handler(m, nil))
+	srv := httptest.NewServer(Handler(m, nil, nil, ""))
 	defer srv.Close()
 
 	// GET on a POST endpoint
@@ -149,7 +149,7 @@ func TestHTTP_MethodGuards(t *testing.T) {
 
 func TestHTTP_InstancesEmptyArray(t *testing.T) {
 	m := NewInstanceManager(t.TempDir(), nil)
-	srv := httptest.NewServer(Handler(m, nil))
+	srv := httptest.NewServer(Handler(m, nil, nil, ""))
 	defer srv.Close()
 	resp := mustGet(t, srv.URL+"/v1/instances")
 	body := readBody(t, resp)
@@ -161,7 +161,7 @@ func TestHTTP_InstancesEmptyArray(t *testing.T) {
 func TestHTTP_Message_AppendsToMailbox(t *testing.T) {
 	root := t.TempDir()
 	m := NewInstanceManager(root, nil)
-	srv := httptest.NewServer(Handler(m, nil))
+	srv := httptest.NewServer(Handler(m, nil, nil, ""))
 	defer srv.Close()
 
 	resp := mustPost(t, srv.URL+"/v1/message", `{"to":"worker-1","from":"manager","body":"hello"}`)
@@ -196,7 +196,7 @@ func TestHTTP_Message_AppendsToMailbox(t *testing.T) {
 
 func TestHTTP_Message_Validation(t *testing.T) {
 	m := NewInstanceManager(t.TempDir(), nil)
-	srv := httptest.NewServer(Handler(m, nil))
+	srv := httptest.NewServer(Handler(m, nil, nil, ""))
 	defer srv.Close()
 
 	cases := []struct {
@@ -220,7 +220,7 @@ func TestHTTP_Message_Validation(t *testing.T) {
 
 func TestHTTP_Message_MethodGuard(t *testing.T) {
 	m := NewInstanceManager(t.TempDir(), nil)
-	srv := httptest.NewServer(Handler(m, nil))
+	srv := httptest.NewServer(Handler(m, nil, nil, ""))
 	defer srv.Close()
 	resp := mustGet(t, srv.URL+"/v1/message")
 	if resp.StatusCode != http.StatusMethodNotAllowed {
@@ -232,7 +232,7 @@ func TestHTTP_Channel_PublishSubscribeDrainAck(t *testing.T) {
 	root := t.TempDir()
 	m := NewInstanceManager(root, nil)
 	cs := NewChannelStore(root)
-	srv := httptest.NewServer(Handler(m, cs))
+	srv := httptest.NewServer(Handler(m, cs, nil, ""))
 	defer srv.Close()
 
 	// Publish before any subscriber → message is on disk; subscriber comes
@@ -322,7 +322,7 @@ func TestHTTP_Channel_DrainSinceParam(t *testing.T) {
 	root := t.TempDir()
 	m := NewInstanceManager(root, nil)
 	cs := NewChannelStore(root)
-	srv := httptest.NewServer(Handler(m, cs))
+	srv := httptest.NewServer(Handler(m, cs, nil, ""))
 	defer srv.Close()
 
 	mustPost(t, srv.URL+"/v1/channel/%23x/publish", `{"sender":"s","body":"a"}`)
@@ -352,7 +352,7 @@ func TestHTTP_Channel_LongPollWait(t *testing.T) {
 	root := t.TempDir()
 	m := NewInstanceManager(root, nil)
 	cs := NewChannelStore(root)
-	srv := httptest.NewServer(Handler(m, cs))
+	srv := httptest.NewServer(Handler(m, cs, nil, ""))
 	defer srv.Close()
 
 	mustPost(t, srv.URL+"/v1/channel/%23live/subscribe", `{"instance":"alice"}`)
@@ -393,7 +393,7 @@ func TestHTTP_Channel_List(t *testing.T) {
 	root := t.TempDir()
 	m := NewInstanceManager(root, nil)
 	cs := NewChannelStore(root)
-	srv := httptest.NewServer(Handler(m, cs))
+	srv := httptest.NewServer(Handler(m, cs, nil, ""))
 	defer srv.Close()
 
 	mustPost(t, srv.URL+"/v1/channel/%23a/publish", `{"sender":"s","body":"x"}`)
@@ -414,7 +414,7 @@ func TestHTTP_Channel_Delete(t *testing.T) {
 	root := t.TempDir()
 	m := NewInstanceManager(root, nil)
 	cs := NewChannelStore(root)
-	srv := httptest.NewServer(Handler(m, cs))
+	srv := httptest.NewServer(Handler(m, cs, nil, ""))
 	defer srv.Close()
 
 	mustPost(t, srv.URL+"/v1/channel/%23gone/publish", `{"sender":"s","body":"x"}`)
@@ -440,7 +440,7 @@ func TestHTTP_Channel_Validation(t *testing.T) {
 	root := t.TempDir()
 	m := NewInstanceManager(root, nil)
 	cs := NewChannelStore(root)
-	srv := httptest.NewServer(Handler(m, cs))
+	srv := httptest.NewServer(Handler(m, cs, nil, ""))
 	defer srv.Close()
 
 	// Bad name (uppercase).

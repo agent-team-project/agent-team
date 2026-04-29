@@ -19,6 +19,7 @@ from pathlib import Path
 
 EXPECTED_AFTER_INIT = [
     ".agent_team/config.toml",
+    ".agent_team/instances.toml",
     ".agent_team/agents/ticket-manager/agent.md",
     ".agent_team/agents/ticket-manager/config.toml",
     ".agent_team/agents/manager/agent.md",
