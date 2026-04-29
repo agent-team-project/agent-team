@@ -1,0 +1,70 @@
+package topology
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+)
+
+// LoadFromFile parses a single instances.toml file. Missing file returns
+// (nil, nil) — the caller decides whether absence is an error.
+func LoadFromFile(path string) (*Topology, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	t, err := Parse(body)
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// LoadLayered reads template-shipped defaults (if any) and the consumer's
+// repo-level `instances.toml` (if any), and returns the merged topology.
+// Repo entries override template entries on a whole-instance basis: the
+// consumer wholesale-replaces a declared instance rather than per-field
+// merging — keeps the merge semantics simple and predictable.
+//
+// Either argument may be empty string to skip that layer. If both layers are
+// missing, returns (nil, nil) — callers treat that as "no topology declared".
+func LoadLayered(templatePath, repoPath string) (*Topology, error) {
+	templateLayer, err := LoadFromFile(templatePath)
+	if err != nil {
+		return nil, err
+	}
+	repoLayer, err := LoadFromFile(repoPath)
+	if err != nil {
+		return nil, err
+	}
+	if templateLayer == nil && repoLayer == nil {
+		return nil, nil
+	}
+	merged := &Topology{Instances: map[string]*Instance{}}
+	if templateLayer != nil {
+		for name, inst := range templateLayer.Instances {
+			merged.Instances[name] = inst
+		}
+	}
+	if repoLayer != nil {
+		for name, inst := range repoLayer.Instances {
+			merged.Instances[name] = inst
+		}
+	}
+	return merged, nil
+}
+
+// LoadFromTeamDir is the production entry point: it reads
+// `<teamDir>/instances.toml` only. Template defaults are bundled into the
+// consumer's `.agent_team/` at `init` time, so the consumer-visible file is
+// the single source of truth at runtime. Returns (nil, nil) on absence.
+//
+// (Daemon callers that need the layered template + repo merge during init
+// should call LoadLayered explicitly.)
+func LoadFromTeamDir(teamDir string) (*Topology, error) {
+	return LoadFromFile(filepath.Join(teamDir, FileName))
+}
