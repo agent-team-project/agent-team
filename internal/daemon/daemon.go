@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jamesaud/agent-team/internal/topology"
 )
 
 // Config is the runtime config for one daemon instance.
@@ -62,6 +64,7 @@ type Daemon struct {
 	cfg      Config
 	manager  *InstanceManager
 	channels *ChannelStore
+	events   *EventResolver
 	server   *http.Server
 	listen   net.Listener
 }
@@ -79,7 +82,18 @@ func New(cfg Config) (*Daemon, error) {
 	}
 	mgr := NewInstanceManager(DaemonRoot(cfg.TeamDir), cfg.SpawnerOverride)
 	channels := NewChannelStore(DaemonRoot(cfg.TeamDir))
-	return &Daemon{cfg: cfg, manager: mgr, channels: channels}, nil
+	// Topology is best-effort: missing or malformed `instances.toml` shouldn't
+	// abort daemon boot — the trigger / event paths simply produce empty
+	// match sets until the operator fixes and reloads. Boot-time parse errors
+	// are surfaced to the daemon log.
+	topo, terr := topology.LoadFromTeamDir(cfg.TeamDir)
+	if terr != nil {
+		fmt.Fprintf(cfg.LogOut, "%s topology: load failed: %v\n",
+			time.Now().UTC().Format(time.RFC3339), terr)
+		topo = nil
+	}
+	events := NewEventResolver(mgr, cfg.TeamDir, topo)
+	return &Daemon{cfg: cfg, manager: mgr, channels: channels, events: events}, nil
 }
 
 // Manager returns the underlying InstanceManager. Useful for tests.
@@ -87,6 +101,9 @@ func (d *Daemon) Manager() *InstanceManager { return d.manager }
 
 // Channels returns the ChannelStore. Useful for tests.
 func (d *Daemon) Channels() *ChannelStore { return d.channels }
+
+// Events returns the EventResolver. Useful for tests.
+func (d *Daemon) Events() *EventResolver { return d.events }
 
 // Run starts the listener and blocks until ctx is cancelled or Shutdown is
 // called. It performs orphan reconciliation before accepting connections.
@@ -105,7 +122,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	d.listen = l
 	d.server = &http.Server{
-		Handler:           Handler(d.manager, d.channels),
+		Handler:           Handler(d.manager, d.channels, d.events, d.cfg.TeamDir),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jamesaud/agent-team/internal/topology"
 )
 
 // Handler builds the daemon's http.Handler. Routes are explicit (no library
@@ -17,7 +19,15 @@ import (
 // If channels is nil, a fresh ChannelStore is constructed against the
 // instance manager's daemon root — convenient for tests that don't care about
 // channel state but still hit `/v1/...`.
-func Handler(m *InstanceManager, channels *ChannelStore) http.Handler {
+//
+// If events is nil, the topology endpoints (`/v1/event`, `/v1/topology`,
+// `/v1/topology/reload`) return 503 Service Unavailable. Tests that exercise
+// the legacy endpoints can pass nil; the real daemon constructs an
+// EventResolver up front and always supplies one.
+//
+// teamDir is the consumer's `.agent_team/` path, used by `/v1/topology/reload`
+// to re-read `instances.toml` from disk.
+func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, teamDir string) http.Handler {
 	if channels == nil {
 		channels = NewChannelStore(m.daemonRoot)
 	}
@@ -235,7 +245,155 @@ func Handler(m *InstanceManager, channels *ChannelStore) http.Handler {
 		dispatchChannelRoute(w, r, channels, name, verb)
 	})
 
+	// `POST /v1/event` — public trigger entry point. Resolves the inbound
+	// event against the declared topology and actuates each matched
+	// instance (spawn for ephemeral, mailbox-message for persistent).
+	mux.HandleFunc("/v1/event", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if events == nil {
+			writeError(w, http.StatusServiceUnavailable, "topology not configured")
+			return
+		}
+		var body struct {
+			Type    string         `json:"type"`
+			Payload map[string]any `json:"payload"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if strings.TrimSpace(body.Type) == "" {
+			writeError(w, http.StatusBadRequest, "`type` is required")
+			return
+		}
+		if body.Payload == nil {
+			body.Payload = map[string]any{}
+		}
+		outcomes, err := events.Event(body.Type, body.Payload)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		matched := make([]string, 0, len(outcomes))
+		dispatched := make([]map[string]any, 0)
+		queued := make([]string, 0)
+		messaged := make([]string, 0)
+		rejected := make([]map[string]string, 0)
+		for _, oc := range outcomes {
+			matched = append(matched, oc.Instance)
+			switch oc.Action {
+			case "dispatched":
+				dispatched = append(dispatched, map[string]any{
+					"instance":    oc.Instance,
+					"instance_id": oc.InstanceID,
+				})
+			case "queued":
+				queued = append(queued, oc.Instance)
+			case "messaged":
+				messaged = append(messaged, oc.Instance)
+			case "rejected":
+				rejected = append(rejected, map[string]string{
+					"instance": oc.Instance,
+					"reason":   oc.Reason,
+				})
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"matched":    matched,
+			"dispatched": dispatched,
+			"queued":     queued,
+			"messaged":   messaged,
+			"rejected":   rejected,
+		})
+	})
+
+	// `GET /v1/topology` — declared instances + triggers + per-instance
+	// running/queued counts. Always 200 with `{instances: []}` even when
+	// nothing is declared, so clients can render an empty state.
+	mux.HandleFunc("/v1/topology", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			topo := (*topology.Topology)(nil)
+			if events != nil {
+				topo = events.Topology()
+			}
+			writeJSON(w, http.StatusOK, marshalTopology(topo, events))
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	})
+
+	// `POST /v1/topology/reload` — re-read instances.toml from disk and swap
+	// the live topology pointer. Running instances are not restarted.
+	mux.HandleFunc("/v1/topology/reload", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if events == nil {
+			writeError(w, http.StatusServiceUnavailable, "topology not configured")
+			return
+		}
+		topo, err := topology.LoadFromTeamDir(teamDir)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		events.SetTopology(topo)
+		writeJSON(w, http.StatusOK, marshalTopology(topo, events))
+	})
+
 	return mux
+}
+
+// marshalTopology renders the wire format for `/v1/topology` and the
+// `/v1/topology/reload` response. Pulls running/queued counts from `events`
+// so the client can render Docker-ps-style status without a second call.
+func marshalTopology(topo *topology.Topology, events *EventResolver) map[string]any {
+	if topo == nil {
+		return map[string]any{"instances": []any{}}
+	}
+	out := make([]map[string]any, 0, len(topo.Instances))
+	for _, inst := range topo.SortedInstances() {
+		entry := map[string]any{
+			"name":        inst.Name,
+			"agent":       inst.Agent,
+			"ephemeral":   inst.Ephemeral,
+			"description": inst.Description,
+			"replicas":    inst.Replicas,
+			"config":      map[string]any(inst.Config),
+			"triggers":    marshalTriggers(inst.Triggers),
+		}
+		if events != nil && inst.Ephemeral {
+			running, queued := events.QueueDepth(inst.Name)
+			entry["running"] = running
+			entry["queued"] = queued
+		}
+		out = append(out, entry)
+	}
+	return map[string]any{"instances": out}
+}
+
+func marshalTriggers(triggers []*topology.Trigger) []map[string]any {
+	out := make([]map[string]any, 0, len(triggers))
+	for _, t := range triggers {
+		match := map[string]any{}
+		for k, mv := range t.Match {
+			if mv.Single != "" {
+				match[k] = mv.Single
+			} else if len(mv.List) > 0 {
+				match[k] = mv.List
+			}
+		}
+		out = append(out, map[string]any{
+			"event": t.Event,
+			"match": match,
+		})
+	}
+	return out
 }
 
 // splitChannelPath parses `/v1/channel/{name}[/{verb}]` into its parts.

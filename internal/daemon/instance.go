@@ -88,6 +88,12 @@ type InstanceManager struct {
 
 	mu        sync.Mutex
 	instances map[string]*tracked
+	// reapHook, if set, is invoked after each reaper finalises an instance.
+	// Used by the topology event dispatcher to release replica capacity for
+	// the declared ephemeral instance whose spawn this was. Hook is called
+	// without holding m.mu so the callback may safely call back into the
+	// manager.
+	reapHook func(instance string)
 }
 
 type tracked struct {
@@ -314,9 +320,9 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 	state, err := proc.Wait()
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	t, ok := m.instances[instance]
 	if !ok {
+		m.mu.Unlock()
 		return
 	}
 	now := time.Now().UTC()
@@ -349,6 +355,20 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 		// any drift. Don't block the goroutine.
 		_ = err
 	}
+	hook := m.reapHook
+	m.mu.Unlock()
+	if hook != nil {
+		hook(instance)
+	}
+}
+
+// SetReapHook installs (or replaces) a callback invoked after each reaper
+// finalises an instance. Pass nil to clear. The hook runs outside the
+// manager's lock, so callbacks may safely call into the manager.
+func (m *InstanceManager) SetReapHook(fn func(instance string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reapHook = fn
 }
 
 // reapedChan returns the per-instance reaper-completion channel snapshotted
