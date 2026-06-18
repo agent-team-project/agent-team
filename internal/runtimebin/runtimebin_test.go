@@ -1,6 +1,10 @@
 package runtimebin
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestBinaryDefaultAndEnvOverride(t *testing.T) {
 	t.Setenv(EnvBinary, "")
@@ -31,6 +35,40 @@ func TestCurrentCodexRuntimeDefaultsBinary(t *testing.T) {
 	}
 	if rt.Kind != KindCodex || rt.Binary != "codex" {
 		t.Fatalf("Current() = %+v, want codex runtime and binary", rt)
+	}
+}
+
+func TestCurrentFromConfigUsesRepoRuntime(t *testing.T) {
+	t.Setenv(EnvRuntime, "")
+	t.Setenv(EnvBinary, "")
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[runtime]\nkind = \"codex\"\nbinary = \"codex-wrapper\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt, err := CurrentFromConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.Kind != KindCodex || rt.Binary != "codex-wrapper" {
+		t.Fatalf("CurrentFromConfig() = %+v, want codex/codex-wrapper", rt)
+	}
+}
+
+func TestCurrentFromConfigEnvOverridesRepoRuntime(t *testing.T) {
+	t.Setenv(EnvRuntime, "claude")
+	t.Setenv(EnvBinary, "claude-wrapper")
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[runtime]\nkind = \"codex\"\nbinary = \"codex-wrapper\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt, err := CurrentFromConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.Kind != KindClaude || rt.Binary != "claude-wrapper" {
+		t.Fatalf("CurrentFromConfig() = %+v, want env override claude/claude-wrapper", rt)
 	}
 }
 

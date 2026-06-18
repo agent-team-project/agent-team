@@ -57,20 +57,19 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime bo
 			warnings = append(warnings, daemonHint)
 		}
 	}
-	if info, err := collectRuntimeInfo(); err != nil {
+	if st, err := os.Stat(teamDir); err != nil || !st.IsDir() {
+		problems = append(problems, fmt.Sprintf("%s not found — run `agent-team init` first.", teamDir))
+		return reportDoctor(cmd, problems, warnings)
+	}
+	if info, err := collectRuntimeInfoForTeam(teamDir); err != nil {
 		problems = append(problems, err.Error())
 	} else if !info.Available {
-		runtimeHint := fmt.Sprintf("runtime binary %q for %s not found — set %s or install the selected runtime.", info.Binary, info.Runtime, runtimebin.EnvBinary)
+		runtimeHint := fmt.Sprintf("runtime binary %q for %s not found — set [runtime].binary in config.toml, set %s, or install the selected runtime.", info.Binary, info.Runtime, runtimebin.EnvBinary)
 		if strictRuntime {
 			problems = append(problems, runtimeHint)
 		} else {
 			warnings = append(warnings, runtimeHint)
 		}
-	}
-
-	if st, err := os.Stat(teamDir); err != nil || !st.IsDir() {
-		problems = append(problems, fmt.Sprintf("%s not found — run `agent-team init` first.", teamDir))
-		return reportDoctor(cmd, problems, warnings)
 	}
 
 	cfgPath := filepath.Join(teamDir, "config.toml")

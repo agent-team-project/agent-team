@@ -527,7 +527,7 @@ func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, p
 	body, _ := json.Marshal(map[string]any{"event": eventType, "payload": payload})
 	prompt := fmt.Sprintf("Topology event for declared instance %q (agent=%s):\n%s",
 		inst.Name, inst.Agent, string(body))
-	args, err := r.prepareEphemeralAgentArgs(inst.Agent, name, runtime.stateDir, prompt)
+	args, rt, err := r.prepareEphemeralAgentArgs(inst.Agent, name, runtime.stateDir, prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -545,11 +545,13 @@ func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, p
 	env := append([]string(nil), runtime.env...)
 	env = append(env, dispatchContextEnv(payload, branch, worktreePath)...)
 	meta, err := r.mgr.Dispatch(DispatchInput{
-		Agent:     inst.Agent,
-		Name:      name,
-		Workspace: workspace,
-		Args:      args,
-		Env:       env,
+		Agent:         inst.Agent,
+		Name:          name,
+		Workspace:     workspace,
+		Runtime:       string(rt.Kind),
+		RuntimeBinary: rt.Binary,
+		Args:          args,
+		Env:           env,
 	})
 	if err != nil {
 		cleanupWorkspace()
@@ -809,14 +811,14 @@ func (r *EventResolver) rerenderTmplFiles(stateDir string, resolved teamtemplate
 	return nil
 }
 
-func (r *EventResolver) prepareEphemeralAgentArgs(agentName, instance, stateDir, prompt string) ([]string, error) {
-	rt, err := runtimebin.Current()
+func (r *EventResolver) prepareEphemeralAgentArgs(agentName, instance, stateDir, prompt string) ([]string, runtimebin.Runtime, error) {
+	rt, err := runtimebin.CurrentFromConfig(filepath.Join(r.teamDir, "config.toml"))
 	if err != nil {
-		return nil, fmt.Errorf("event runtime: %w", err)
+		return nil, runtimebin.Runtime{}, fmt.Errorf("event runtime: %w", err)
 	}
 	agents, err := loader.LoadAllAgents(r.teamDir)
 	if err != nil {
-		return nil, fmt.Errorf("event runtime: load agents: %w", err)
+		return nil, runtimebin.Runtime{}, fmt.Errorf("event runtime: load agents: %w", err)
 	}
 	var chosen *loader.Agent
 	for _, agent := range agents {
@@ -826,24 +828,24 @@ func (r *EventResolver) prepareEphemeralAgentArgs(agentName, instance, stateDir,
 		}
 	}
 	if chosen == nil {
-		return nil, fmt.Errorf("event runtime: agent %q not found", agentName)
+		return nil, runtimebin.Runtime{}, fmt.Errorf("event runtime: agent %q not found", agentName)
 	}
 	skillPaths, err := loader.UnionSkills(agents)
 	if err != nil {
-		return nil, fmt.Errorf("event runtime: resolve skills: %w", err)
+		return nil, runtimebin.Runtime{}, fmt.Errorf("event runtime: resolve skills: %w", err)
 	}
 
 	runtimeDir := filepath.Join(stateDir, "runtime")
 	if err := os.RemoveAll(runtimeDir); err != nil {
-		return nil, fmt.Errorf("event runtime: reset runtime dir: %w", err)
+		return nil, runtimebin.Runtime{}, fmt.Errorf("event runtime: reset runtime dir: %w", err)
 	}
 	skillsRoot := filepath.Join(runtimeDir, ".claude", "skills")
 	if err := os.MkdirAll(skillsRoot, 0o755); err != nil {
-		return nil, fmt.Errorf("event runtime: create skills root: %w", err)
+		return nil, runtimebin.Runtime{}, fmt.Errorf("event runtime: create skills root: %w", err)
 	}
 	for name, path := range skillPaths {
 		if err := os.Symlink(path, filepath.Join(skillsRoot, name)); err != nil {
-			return nil, fmt.Errorf("event runtime: symlink skill %s: %w", name, err)
+			return nil, runtimebin.Runtime{}, fmt.Errorf("event runtime: symlink skill %s: %w", name, err)
 		}
 	}
 
@@ -860,11 +862,11 @@ func (r *EventResolver) prepareEphemeralAgentArgs(agentName, instance, stateDir,
 	)
 	promptFile := filepath.Join(runtimeDir, "system_prompt.md")
 	if err := os.WriteFile(promptFile, []byte(kickoff), 0o644); err != nil {
-		return nil, fmt.Errorf("event runtime: write prompt file: %w", err)
+		return nil, runtimebin.Runtime{}, fmt.Errorf("event runtime: write prompt file: %w", err)
 	}
 	agentsJSON, err := buildAgentsJSON(agents)
 	if err != nil {
-		return nil, err
+		return nil, runtimebin.Runtime{}, err
 	}
 	switch rt.Kind {
 	case runtimebin.KindClaude:
@@ -873,16 +875,16 @@ func (r *EventResolver) prepareEphemeralAgentArgs(agentName, instance, stateDir,
 			"--add-dir", runtimeDir,
 			"--append-system-prompt-file", promptFile,
 			"-p", prompt,
-		}, nil
+		}, rt, nil
 	case runtimebin.KindCodex:
 		return []string{
 			"exec",
 			"-C", r.teamDirParent(),
 			"--add-dir", runtimeDir,
 			codexEventPrompt(kickoff, prompt, agents),
-		}, nil
+		}, rt, nil
 	default:
-		return nil, fmt.Errorf("unsupported runtime %q", rt.Kind)
+		return nil, runtimebin.Runtime{}, fmt.Errorf("unsupported runtime %q", rt.Kind)
 	}
 }
 

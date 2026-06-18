@@ -259,6 +259,40 @@ func TestEvent_EphemeralDispatchUsesCodexRuntime(t *testing.T) {
 	_ = m.WaitForReaper("worker-squ-42", 5*time.Second)
 }
 
+func TestEvent_EphemeralDispatchUsesRepoCodexRuntimeConfig(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	if err := os.WriteFile(filepath.Join(teamDir, "config.toml"), []byte("[runtime]\nkind = \"codex\"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
+	srv := httptest.NewServer(Handler(m, nil, resolver, root))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"agent.dispatch","payload":{"target":"worker","name":"worker-squ-43","kickoff":"implement SQU-43"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	call := fake.lastCall()
+	if len(call) < 2 || call[0] != "codex" || call[1] != "exec" {
+		t.Fatalf("spawn call = %#v, want config-backed codex exec", call)
+	}
+	meta, err := ReadMetadata(root, "worker-squ-43")
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	if meta.Runtime != string(runtimebin.KindCodex) || meta.RuntimeBinary != "codex" || meta.SessionID != "" {
+		t.Fatalf("metadata = %+v, want config-backed codex without Claude session", meta)
+	}
+	_, _ = m.Stop("worker-squ-43")
+	_ = m.WaitForReaper("worker-squ-43", 5*time.Second)
+}
+
 func TestEvent_TicketDispatchCreatesJobAndExportsContext(t *testing.T) {
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)

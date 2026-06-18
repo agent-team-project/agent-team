@@ -257,13 +257,21 @@ claude --agents '<json>' --add-dir <tmpdir> --append-system-prompt-file <kickoff
 
 With `--detach`, with `--attach`, or with `--prompt` when the daemon is already running, the CLI sends that same resolved argv/env to `agent-teamd`. `--detach` returns a log-follow hint, while `--attach` follows the daemon-captured log immediately.
 
-Runtime selection is environment-driven:
+Runtime selection is repo-configurable and environment-overridable. Put this in `.agent_team/config.toml` to set a repo default:
+
+```toml
+[runtime]
+kind = "codex"   # or "claude"
+binary = "codex" # optional wrapper/binary override
+```
+
+Environment variables take precedence:
 
 - `AGENT_TEAM_RUNTIME=claude` (default) enables the full daemon, resume, subagent registry, and queue/event dispatch path.
 - `AGENT_TEAM_RUNTIME=codex` launches Codex sessions with `codex` or `codex exec`. The chosen agent prompt and task are passed as the initial Codex prompt, and team agents are listed as coordination context. Direct interactive runs work without the daemon; one-shot runs with `--prompt` can also use `--detach`, `--attach`, `--json`, or `--format` for daemon-managed logs and process metadata. Codex-managed daemon runs do not support `start`/resume or native subagent registration because Codex does not expose the same `--agents` / `--session-id` contract.
 - `AGENT_TEAM_RUNTIME_BIN=/path/to/wrapper` overrides the binary for the selected runtime.
 
-Run `agent-team runtime` to confirm the selected profile, resolved binary path, and supported capabilities.
+Run `agent-team runtime` to confirm the selected profile, resolved binary path, config source, and supported capabilities.
 
 For the Claude-compatible runtime, the named agent's prompt becomes the session's system prompt and all other agents stay registered as subagents so the named agent can dispatch them via the Task tool. The launcher creates `.agent_team/state/<instance>/` (defaults the instance name to the agent name; pass `--name` for a unique identifier) and exports:
 

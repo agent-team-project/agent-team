@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -274,6 +275,31 @@ func TestRun_CodexRuntimeBuildsDirectExecArgs(t *testing.T) {
 	}
 }
 
+func TestRun_CodexRuntimeCanComeFromRepoConfig(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	appendRuntimeConfigForRunTest(t, tmp, "codex", "")
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt", "codex task", "--no-daemon"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(cap.args) == 0 || cap.args[0] != "exec" {
+		t.Fatalf("codex args = %v, want exec subcommand from repo config", cap.args)
+	}
+	if containsString(cap.args, "--agents") || containsString(cap.args, "--append-system-prompt-file") {
+		t.Fatalf("config-backed codex args include Claude flags: %v", cap.args)
+	}
+}
+
 func TestRun_CodexRuntimeRequiresPromptForDaemonDispatch(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindCodex))
 	tmp := t.TempDir()
@@ -292,6 +318,24 @@ func TestRun_CodexRuntimeRequiresPromptForDaemonDispatch(t *testing.T) {
 		cmd.SetArgs(args)
 		if err := cmd.Execute(); err == nil {
 			t.Fatalf("run %v succeeded, want daemon-only flag rejection", args)
+		}
+	}
+}
+
+func appendRuntimeConfigForRunTest(t *testing.T, repo, kind, binary string) {
+	t.Helper()
+	cfg := filepath.Join(repo, ".agent_team", "config.toml")
+	f, err := os.OpenFile(cfg, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open config: %v", err)
+	}
+	defer f.Close()
+	if _, err := fmt.Fprintf(f, "\n[runtime]\nkind = %q\n", kind); err != nil {
+		t.Fatalf("write runtime kind: %v", err)
+	}
+	if binary != "" {
+		if _, err := fmt.Fprintf(f, "binary = %q\n", binary); err != nil {
+			t.Fatalf("write runtime binary: %v", err)
 		}
 	}
 }

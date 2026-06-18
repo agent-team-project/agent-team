@@ -117,7 +117,7 @@ func collectSnapshot(teamDir, repoRoot string, opts snapshotOptions) *snapshotRe
 		TeamDir:    filepath.ToSlash(teamDir),
 	}
 
-	if runtime, err := collectRuntimeInfo(); err != nil {
+	if runtime, err := collectRuntimeInfoForTeam(teamDir); err != nil {
 		out.addError("runtime", err)
 	} else {
 		out.Runtime = &runtime

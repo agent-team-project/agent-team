@@ -74,11 +74,6 @@ func newRunCmd() *cobra.Command {
 }
 
 func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []string) error {
-	rt, err := runtimebin.Current()
-	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
-		return exitErr(2)
-	}
 	if cfg.format != "" && cfg.jsonOut {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --format cannot be combined with --json.")
 		return exitErr(2)
@@ -115,10 +110,6 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: choose one of --detach or --attach.")
 		return exitErr(2)
 	}
-	if rt.Kind == runtimebin.KindCodex && (cfg.detach || cfg.attach) && strings.TrimSpace(cfg.prompt) == "" {
-		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %s=codex daemon dispatch requires --prompt so Codex can run with `codex exec`.\n", runtimebin.EnvRuntime)
-		return exitErr(2)
-	}
 	if cfg.attach && cfg.noDaemon {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --attach cannot be combined with --no-daemon.")
 		return exitErr(2)
@@ -152,6 +143,15 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 	teamDir := filepath.Join(target, loader.TeamDirName)
 	if st, err := os.Stat(teamDir); err != nil || !st.IsDir() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %s not found — run `agent-team init` first.\n", teamDir)
+		return exitErr(2)
+	}
+	rt, err := runtimebin.CurrentFromConfig(filepath.Join(teamDir, "config.toml"))
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
+		return exitErr(2)
+	}
+	if rt.Kind == runtimebin.KindCodex && (cfg.detach || cfg.attach) && strings.TrimSpace(cfg.prompt) == "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: codex daemon dispatch requires --prompt so Codex can run with `codex exec`.\n")
 		return exitErr(2)
 	}
 

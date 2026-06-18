@@ -8,6 +8,12 @@
 pm_tool   = "linear"
 local_dir = ".agent_team"
 
+# Optional: default LLM runtime for this repo. Environment variables still win:
+# AGENT_TEAM_RUNTIME and AGENT_TEAM_RUNTIME_BIN.
+# [runtime]
+# kind = "claude" # or "codex"
+# binary = "claude"
+
 [linear]
 # UUID of the Linear team this repo's tickets belong to. Find it via:
 #   query { teams(first: 50) { nodes { id key name } } }

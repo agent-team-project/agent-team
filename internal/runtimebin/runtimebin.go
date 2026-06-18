@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/BurntSushi/toml"
 )
 
 type Kind string
@@ -23,16 +25,70 @@ type Runtime struct {
 	Binary string
 }
 
+type configFile struct {
+	Runtime runtimeConfig `toml:"runtime"`
+}
+
+type runtimeConfig struct {
+	Kind   string `toml:"kind"`
+	Binary string `toml:"binary"`
+	Bin    string `toml:"bin"`
+}
+
 func Current() (Runtime, error) {
-	kind, err := ParseKind(os.Getenv(EnvRuntime))
+	return currentWithConfig(runtimeConfig{})
+}
+
+// CurrentFromConfig resolves the runtime using environment variables first,
+// then an optional repo config file containing [runtime].kind and
+// [runtime].binary (or [runtime].bin), then built-in defaults.
+func CurrentFromConfig(configPath string) (Runtime, error) {
+	cfg, err := loadRuntimeConfig(configPath)
+	if err != nil {
+		return Runtime{}, err
+	}
+	return currentWithConfig(cfg)
+}
+
+func currentWithConfig(cfg runtimeConfig) (Runtime, error) {
+	envKind := os.Getenv(EnvRuntime)
+	kindRaw := envKind
+	if strings.TrimSpace(kindRaw) == "" {
+		kindRaw = cfg.Kind
+	}
+	kind, err := ParseKind(kindRaw)
 	if err != nil {
 		return Runtime{}, err
 	}
 	bin := strings.TrimSpace(os.Getenv(EnvBinary))
+	if bin == "" && strings.TrimSpace(envKind) == "" {
+		bin = strings.TrimSpace(cfg.Binary)
+		if bin == "" {
+			bin = strings.TrimSpace(cfg.Bin)
+		}
+	}
 	if bin == "" {
 		bin = defaultBinary(kind)
 	}
 	return Runtime{Kind: kind, Binary: bin}, nil
+}
+
+func loadRuntimeConfig(configPath string) (runtimeConfig, error) {
+	configPath = strings.TrimSpace(configPath)
+	if configPath == "" {
+		return runtimeConfig{}, nil
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		if os.IsNotExist(err) {
+			return runtimeConfig{}, nil
+		}
+		return runtimeConfig{}, err
+	}
+	var cfg configFile
+	if _, err := toml.DecodeFile(configPath, &cfg); err != nil {
+		return runtimeConfig{}, fmt.Errorf("%s: %w", configPath, err)
+	}
+	return cfg.Runtime, nil
 }
 
 func ParseKind(value string) (Kind, error) {

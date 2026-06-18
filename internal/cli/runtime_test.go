@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,7 +34,7 @@ func TestRuntimeCommand_DefaultText(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"runtime"})
+	cmd.SetArgs([]string{"runtime", "--target", t.TempDir()})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("runtime failed: %v\nstderr: %s", err, errOut.String())
 	}
@@ -63,7 +65,7 @@ func TestRuntimeCommand_CodexJSON(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"runtime", "--json"})
+	cmd.SetArgs([]string{"runtime", "--target", t.TempDir(), "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("runtime --json failed: %v\nstderr: %s", err, errOut.String())
 	}
@@ -82,6 +84,47 @@ func TestRuntimeCommand_CodexJSON(t *testing.T) {
 	}
 }
 
+func TestRuntimeCommand_RepoConfigCodexJSON(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	cfg := filepath.Join(tmp, ".agent_team", "config.toml")
+	f, err := os.OpenFile(cfg, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open config: %v", err)
+	}
+	if _, err := f.WriteString("\n[runtime]\nkind = \"codex\"\nbinary = \"codex-wrapper\"\n"); err != nil {
+		_ = f.Close()
+		t.Fatalf("write config: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close config: %v", err)
+	}
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "codex-wrapper" {
+			t.Fatalf("look path bin = %q, want codex-wrapper", bin)
+		}
+		return "/usr/local/bin/codex-wrapper", nil
+	})
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "--target", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime --json failed: %v\nstderr: %s", err, errOut.String())
+	}
+	var info runtimeInfo
+	if err := json.Unmarshal(out.Bytes(), &info); err != nil {
+		t.Fatalf("json: %v\n%s", err, out.String())
+	}
+	if info.Runtime != "codex" || info.Binary != "codex-wrapper" || info.ConfigPath == "" {
+		t.Fatalf("info = %+v, want config-backed codex", info)
+	}
+}
+
 func TestRuntimeCommand_MissingBinaryExitsOne(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "")
 	t.Setenv(runtimebin.EnvBinary, "missing-runtime")
@@ -96,7 +139,7 @@ func TestRuntimeCommand_MissingBinaryExitsOne(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"runtime"})
+	cmd.SetArgs([]string{"runtime", "--target", t.TempDir()})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("runtime succeeded with missing binary, want exit 1")
@@ -117,7 +160,7 @@ func TestRuntimeCommand_InvalidRuntimeExitsTwo(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"runtime"})
+	cmd.SetArgs([]string{"runtime", "--target", t.TempDir()})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("runtime succeeded with invalid env, want exit 2")

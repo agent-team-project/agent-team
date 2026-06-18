@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 
+	"github.com/jamesaud/agent-team/internal/loader"
 	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/spf13/cobra"
 )
@@ -14,7 +16,11 @@ import (
 var runtimeLookPath = exec.LookPath
 
 func newRuntimeCmd() *cobra.Command {
-	var jsonOut bool
+	var (
+		target  string
+		jsonOut bool
+	)
+	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "runtime",
 		Short: "Inspect the selected LLM runtime profile.",
@@ -22,7 +28,7 @@ func newRuntimeCmd() *cobra.Command {
 			"the runtime supports direct runs, daemon dispatch, resume, and native subagents.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			info, err := collectRuntimeInfo()
+			info, err := collectRuntimeInfoForTarget(target)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime: %v\n", err)
 				return exitErr(2)
@@ -40,6 +46,7 @@ func newRuntimeCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&target, "target", cwd, "Repo root or any path under a repo.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	return cmd
 }
@@ -55,11 +62,27 @@ type runtimeInfo struct {
 	Subagents      bool     `json:"subagents"`
 	EnvRuntime     string   `json:"env_runtime,omitempty"`
 	EnvBinary      string   `json:"env_binary,omitempty"`
+	ConfigPath     string   `json:"config_path,omitempty"`
 	Notes          []string `json:"notes,omitempty"`
 }
 
 func collectRuntimeInfo() (runtimeInfo, error) {
-	rt, err := runtimebin.Current()
+	return collectRuntimeInfoForConfig("")
+}
+
+func collectRuntimeInfoForTarget(target string) (runtimeInfo, error) {
+	return collectRuntimeInfoForConfig(runtimeConfigPathForTarget(target))
+}
+
+func collectRuntimeInfoForTeam(teamDir string) (runtimeInfo, error) {
+	if teamDir == "" {
+		return collectRuntimeInfo()
+	}
+	return collectRuntimeInfoForConfig(filepath.Join(teamDir, "config.toml"))
+}
+
+func collectRuntimeInfoForConfig(configPath string) (runtimeInfo, error) {
+	rt, err := runtimebin.CurrentFromConfig(configPath)
 	if err != nil {
 		return runtimeInfo{}, err
 	}
@@ -68,6 +91,7 @@ func collectRuntimeInfo() (runtimeInfo, error) {
 		Binary:     rt.Binary,
 		EnvRuntime: os.Getenv(runtimebin.EnvRuntime),
 		EnvBinary:  os.Getenv(runtimebin.EnvBinary),
+		ConfigPath: filepath.ToSlash(configPath),
 		DirectRun:  true,
 	}
 	if path, err := runtimeLookPath(rt.Binary); err == nil {
@@ -95,6 +119,27 @@ func collectRuntimeInfo() (runtimeInfo, error) {
 	return info, nil
 }
 
+func runtimeConfigPathForTarget(target string) string {
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		return ""
+	}
+	if eval, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = eval
+	}
+	for {
+		candidate := filepath.Join(abs, loader.TeamDirName, "config.toml")
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return ""
+		}
+		abs = parent
+	}
+}
+
 func renderRuntimeInfo(w fmtWriter, info runtimeInfo) {
 	fmt.Fprintf(w, "runtime:          %s\n", info.Runtime)
 	fmt.Fprintf(w, "binary:           %s\n", info.Binary)
@@ -113,6 +158,9 @@ func renderRuntimeInfo(w fmtWriter, info runtimeInfo) {
 	}
 	if info.EnvBinary != "" {
 		fmt.Fprintf(w, "%s: %s\n", runtimebin.EnvBinary, info.EnvBinary)
+	}
+	if info.ConfigPath != "" {
+		fmt.Fprintf(w, "config:           %s\n", info.ConfigPath)
 	}
 	for _, note := range info.Notes {
 		fmt.Fprintf(w, "note:             %s\n", note)
