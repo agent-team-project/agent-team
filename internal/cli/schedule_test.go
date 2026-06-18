@@ -114,6 +114,48 @@ func TestScheduleListShowAndDryRun(t *testing.T) {
 	}
 }
 
+func TestScheduleDueListsRunOnStartAndInterval(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeScheduleTopology(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	old := time.Now().UTC().Add(-2 * time.Hour)
+	if err := daemon.WriteScheduleState(daemon.DaemonRoot(teamDir), &daemon.ScheduleState{
+		Name:       "hourly",
+		LastSeenAt: old,
+	}); err != nil {
+		t.Fatalf("WriteScheduleState hourly: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"schedule", "due", "--repo", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("schedule due json: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []scheduleInfo
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode schedule due json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 2 || rows[0].Name != "hourly" || rows[0].DueReason != "interval" || rows[1].Name != "nightly" || rows[1].DueReason != "run_on_start" {
+		t.Fatalf("due rows = %+v", rows)
+	}
+
+	format := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	format.SetOut(formatOut)
+	format.SetErr(formatErr)
+	format.SetArgs([]string{"schedule", "due", "--repo", tmp, "--format", "{{.Name}} {{.DueReason}}"})
+	if err := format.Execute(); err != nil {
+		t.Fatalf("schedule due format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if got := strings.Split(strings.TrimSpace(formatOut.String()), "\n"); strings.Join(got, ",") != "hourly interval,nightly run_on_start" {
+		t.Fatalf("formatted due rows = %q", formatOut.String())
+	}
+}
+
 func TestScheduleShowMissing(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

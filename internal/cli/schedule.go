@@ -25,6 +25,7 @@ func newScheduleCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newScheduleLsCmd())
 	cmd.AddCommand(newScheduleShowCmd())
+	cmd.AddCommand(newScheduleDueCmd())
 	cmd.AddCommand(newScheduleRunCmd())
 	return cmd
 }
@@ -82,6 +83,46 @@ func newScheduleShowCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the schedule as JSON.")
+	return cmd
+}
+
+func newScheduleDueCmd() *cobra.Command {
+	var (
+		repo    string
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "due",
+		Short: "List schedules due now.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team schedule due: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseScheduleDueFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team schedule due: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			schedules, err := loadScheduleInfos(teamDir)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team schedule due: %v\n", err)
+				return exitErr(1)
+			}
+			rows := dueScheduleRows(schedules, time.Now().UTC())
+			return renderScheduleDueRows(cmd.OutOrStdout(), rows, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit due schedules as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each due schedule with a Go template, e.g. '{{.Name}} {{.DueReason}}'.")
 	return cmd
 }
 
@@ -163,6 +204,8 @@ type scheduleInfo struct {
 	LastSeenAt  *time.Time     `json:"last_seen_at,omitempty"`
 	LastFiredAt *time.Time     `json:"last_fired_at,omitempty"`
 	NextRun     *time.Time     `json:"next_run_at,omitempty"`
+	Due         bool           `json:"due,omitempty"`
+	DueReason   string         `json:"due_reason,omitempty"`
 }
 
 func loadScheduleInfos(teamDir string) ([]scheduleInfo, error) {
@@ -272,6 +315,76 @@ func renderScheduleDetail(w io.Writer, info scheduleInfo, jsonOut bool) error {
 		fmt.Fprintf(w, "Next Run:     %s\n", scheduleTime(info.NextRun))
 	}
 	fmt.Fprintf(w, "Payload:      %s\n", summariseSchedulePayload(info.Payload))
+	return nil
+}
+
+func dueScheduleRows(schedules []scheduleInfo, now time.Time) []scheduleInfo {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	rows := make([]scheduleInfo, 0, len(schedules))
+	for _, info := range schedules {
+		due, reason := scheduleDueState(info, now)
+		if !due {
+			continue
+		}
+		info.Due = true
+		info.DueReason = reason
+		rows = append(rows, info)
+	}
+	return rows
+}
+
+func scheduleDueState(info scheduleInfo, now time.Time) (bool, string) {
+	if info.LastSeenAt == nil {
+		if info.RunOnStart {
+			return true, "run_on_start"
+		}
+		return false, ""
+	}
+	if info.NextRun != nil && !info.NextRun.After(now) {
+		return true, "interval"
+	}
+	return false, ""
+}
+
+func parseScheduleDueFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("schedule-due-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderScheduleDueRows(w io.Writer, rows []scheduleInfo, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(rows)
+	}
+	if tmpl != nil {
+		for _, row := range rows {
+			if err := tmpl.Execute(w, row); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if len(rows) == 0 {
+		fmt.Fprintln(w, "(no schedules due)")
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "SCHEDULE\tEVERY\tREASON\tLAST_FIRED\tNEXT_RUN\tPAYLOAD")
+	for _, row := range rows {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.Name, row.Every, row.DueReason, scheduleTime(row.LastFiredAt), scheduleTime(row.NextRun), summariseSchedulePayload(row.Payload))
+	}
+	_ = tw.Flush()
 	return nil
 }
 
