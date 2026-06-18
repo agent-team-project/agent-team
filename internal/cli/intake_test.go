@@ -250,6 +250,45 @@ func TestIntakeGitHubDryRunReconcileJobDoesNotMutate(t *testing.T) {
 	}
 }
 
+func TestIntakeGitHubReconcileDoesNotMutateWhenDaemonDown(t *testing.T) {
+	target := t.TempDir()
+	initInto(t, target)
+	teamDir := filepath.Join(target, ".agent_team")
+	j := mustNewJob(t, "SQU-108", "worker")
+	j.Status = job.StatusRunning
+	j.PR = "https://github.com/acme/repo/pull/108"
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	payload := `{"action":"closed","repository":{"full_name":"acme/repo"},"pull_request":{"number":108,"merged":true,"html_url":"https://github.com/acme/repo/pull/108","head":{"ref":"worker-squ-108"}}}`
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "github", "--payload", payload, "--target", target, "--reconcile-job", "--json"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("intake github reconcile daemon-down succeeded unexpectedly: stdout=%s", out.String())
+	}
+	if !strings.Contains(stderr.String(), "daemon is not running") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	unchanged, err := job.Read(teamDir, "squ-108")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if unchanged.Status != job.StatusRunning || unchanged.LastEvent != "" || unchanged.Branch != "" {
+		t.Fatalf("daemon-down reconcile mutated job = %+v", unchanged)
+	}
+	events, err := job.ListEvents(teamDir, "squ-108")
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("daemon-down reconcile wrote events = %+v", events)
+	}
+}
+
 func TestIntakeGitHubCleanupMergedRequiresReconcileJob(t *testing.T) {
 	payload := `{"action":"closed","pull_request":{"number":1,"merged":true}}`
 	cmd := NewRootCmd()

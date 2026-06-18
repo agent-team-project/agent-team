@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -97,6 +98,10 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 					if dryRun {
 						reconcile, cleanupPreview, err = previewGitHubIntakeJob(teamDir, ev, cleanupMerged)
 					} else {
+						if err := preflightIntakeDaemon(teamDir); err != nil {
+							fmt.Fprintln(cmd.ErrOrStderr(), err)
+							return exitErr(2)
+						}
 						reconcile, cleanup, err = reconcileGitHubIntakeJob(teamDir, ev, cleanupMerged)
 					}
 					if err != nil {
@@ -267,6 +272,16 @@ func renderIntakeDryRun(w io.Writer, ev *intake.Event, jsonOut bool, tmpl *templ
 				fmt.Fprintf(w, "Pipelines: %s\n", strings.Join(triggerPreview.Pipelines, ", "))
 			}
 		}
+	}
+	return nil
+}
+
+func preflightIntakeDaemon(teamDir string) error {
+	if _, err := newDaemonClient(teamDir); err != nil {
+		if errors.Is(err, errDaemonNotRunning) {
+			return errors.New("agent-team intake: daemon is not running — start it first with `agent-team daemon start`.")
+		}
+		return err
 	}
 	return nil
 }
