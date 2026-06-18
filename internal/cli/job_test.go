@@ -181,6 +181,58 @@ func TestJobCreateFromPipeline(t *testing.T) {
 	}
 }
 
+func TestJobCreateDispatchesImmediately(t *testing.T) {
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-job-create-dispatch-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	mgr := daemon.NewInstanceManager(root, fakeSpawnerForTest(t, 2*time.Second))
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{"job", "create", "SQU-216", "--repo", tmp, "--dispatch", "--workspace", "repo", "--json"})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("job create --dispatch: %v\nstderr=%s", err, createErr.String())
+	}
+	var dispatched jobDispatchResult
+	if err := json.Unmarshal(createOut.Bytes(), &dispatched); err != nil {
+		t.Fatalf("decode dispatched json: %v\nbody=%s", err, createOut.String())
+	}
+	if dispatched.Job == nil || dispatched.Job.Status != job.StatusRunning || dispatched.Job.Instance != "worker-squ-216" || dispatched.Job.LastEvent != "dispatched" {
+		t.Fatalf("dispatched result = %+v", dispatched)
+	}
+
+	pipeline := NewRootCmd()
+	pipelineOut, pipelineErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipeline.SetOut(pipelineOut)
+	pipeline.SetErr(pipelineErr)
+	pipeline.SetArgs([]string{"job", "create", "SQU-217", "--repo", tmp, "--pipeline", "ticket_to_pr", "--dispatch", "--workspace", "repo", "--json"})
+	if err := pipeline.Execute(); err != nil {
+		t.Fatalf("job create pipeline --dispatch: %v\nstderr=%s", err, pipelineErr.String())
+	}
+	var advanced jobAdvanceResult
+	if err := json.Unmarshal(pipelineOut.Bytes(), &advanced); err != nil {
+		t.Fatalf("decode pipeline dispatch json: %v\nbody=%s", err, pipelineOut.String())
+	}
+	if advanced.Job == nil || advanced.Step == nil {
+		t.Fatalf("advanced result missing job/step = %+v", advanced)
+	}
+	if advanced.Job.Status != job.StatusRunning || advanced.Job.Pipeline != "ticket_to_pr" {
+		t.Fatalf("advanced job = %+v", advanced.Job)
+	}
+	if advanced.Step.ID != "implement" || advanced.Step.Status != job.StatusRunning || advanced.Step.Instance != "worker-squ-217-implement" {
+		t.Fatalf("advanced step = %+v", advanced.Step)
+	}
+}
+
 func TestJobEventsFilters(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

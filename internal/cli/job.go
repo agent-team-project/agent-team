@@ -128,6 +128,8 @@ func newJobCreateCmd() *cobra.Command {
 		kickoff     string
 		kickoffFile string
 		instance    string
+		dispatchNow bool
+		workspace   string
 		jsonOut     bool
 		format      string
 	)
@@ -207,6 +209,34 @@ func newJobCreateCmd() *cobra.Command {
 			if err := writeJobWithAudit(teamDir, j, "created", "cli", "created "+j.Ticket, data); err != nil {
 				return err
 			}
+			if dispatchNow {
+				if len(j.Steps) > 0 {
+					res, err := advanceJob(cmd, teamDir, j, workspace)
+					if err != nil {
+						return err
+					}
+					if jsonOut {
+						return json.NewEncoder(cmd.OutOrStdout()).Encode(res)
+					}
+					if tmpl != nil {
+						return renderJobTemplate(cmd.OutOrStdout(), res.Job, tmpl)
+					}
+					return renderJobAdvanceResult(cmd.OutOrStdout(), res)
+				}
+				res, requestedName, err := dispatchJobWithPrefix(cmd, teamDir, j, "", workspace, "agent-team job create")
+				if err != nil {
+					return err
+				}
+				if jsonOut {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(res)
+				}
+				if tmpl != nil {
+					return renderJobTemplate(cmd.OutOrStdout(), res.Job, tmpl)
+				}
+				renderDispatchOutcome(cmd.OutOrStdout(), res.Job.Target, requestedName, res.Event)
+				fmt.Fprintf(cmd.OutOrStdout(), "Job: %s status=%s instance=%s\n", res.Job.ID, res.Job.Status, res.Job.Instance)
+				return nil
+			}
 			return renderJobResult(cmd.OutOrStdout(), j, jsonOut, tmpl)
 		},
 	}
@@ -217,6 +247,8 @@ func newJobCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&kickoff, "kickoff", "", "Kickoff text for the target agent.")
 	cmd.Flags().StringVar(&kickoffFile, "kickoff-file", "", "Read kickoff text from a file.")
 	cmd.Flags().StringVar(&instance, "instance", "", "Instance name that owns the job (default set during dispatch).")
+	cmd.Flags().BoolVar(&dispatchNow, "dispatch", false, "Dispatch the created job immediately using the running daemon.")
+	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for --dispatch: auto, worktree, or repo.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
@@ -555,45 +587,19 @@ func newJobDispatchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			payload, requestedName, err := buildDispatchEventPayload(j.Target, j.Ticket, j.Kickoff, j.Instance, source, workspace)
+			res, requestedName, err := dispatchJobWithPrefix(cmd, teamDir, j, source, workspace, "agent-team job dispatch")
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job dispatch: %v\n", err)
-				return exitErr(2)
-			}
-			payload["job_id"] = j.ID
-			payload["job"] = j.ID
-			dc, err := newDaemonClient(teamDir)
-			if err != nil {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job dispatch: daemon is not running — start it with `agent-team start`.")
-				return exitErr(2)
-			}
-			res, err := dc.PublishEvent("agent.dispatch", payload)
-			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job dispatch: %v\n", err)
-				return exitErr(1)
-			}
-			if latest, err := job.Read(teamDir, j.ID); err == nil {
-				j = latest
-			}
-			applyDispatchResponseToJob(j, requestedName, res)
-			if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{
-				"target":             j.Target,
-				"requested_instance": requestedName,
-			}); err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return json.NewEncoder(out).Encode(struct {
-					Job   *job.Job       `json:"job"`
-					Event *eventResponse `json:"event"`
-				}{Job: j, Event: res})
+				return json.NewEncoder(out).Encode(res)
 			}
 			if tmpl != nil {
-				return renderJobTemplate(out, j, tmpl)
+				return renderJobTemplate(out, res.Job, tmpl)
 			}
-			renderDispatchOutcome(out, j.Target, requestedName, res)
-			fmt.Fprintf(out, "Job: %s status=%s instance=%s\n", j.ID, j.Status, j.Instance)
+			renderDispatchOutcome(out, res.Job.Target, requestedName, res.Event)
+			fmt.Fprintf(out, "Job: %s status=%s instance=%s\n", res.Job.ID, res.Job.Status, res.Job.Instance)
 			return nil
 		},
 	}
@@ -2535,6 +2541,37 @@ func jobMatchesFilters(j *job.Job, filters jobListFilters) bool {
 	return true
 }
 
+func dispatchJobWithPrefix(cmd *cobra.Command, teamDir string, j *job.Job, source, workspace, prefix string) (*jobDispatchResult, string, error) {
+	payload, requestedName, err := buildDispatchEventPayload(j.Target, j.Ticket, j.Kickoff, j.Instance, source, workspace)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", prefix, err)
+		return nil, "", exitErr(2)
+	}
+	payload["job_id"] = j.ID
+	payload["job"] = j.ID
+	dc, err := newDaemonClient(teamDir)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: daemon is not running — start it with `agent-team start`.\n", prefix)
+		return nil, "", exitErr(2)
+	}
+	res, err := dc.PublishEvent("agent.dispatch", payload)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", prefix, err)
+		return nil, "", exitErr(1)
+	}
+	if latest, err := job.Read(teamDir, j.ID); err == nil {
+		j = latest
+	}
+	applyDispatchResponseToJob(j, requestedName, res)
+	if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{
+		"target":             j.Target,
+		"requested_instance": requestedName,
+	}); err != nil {
+		return nil, "", err
+	}
+	return &jobDispatchResult{Job: j, Event: res}, requestedName, nil
+}
+
 func containsFold(value, substr string) bool {
 	return strings.Contains(strings.ToLower(value), strings.ToLower(substr))
 }
@@ -2605,6 +2642,11 @@ type jobAdvanceResult struct {
 	Step    *job.Step      `json:"step,omitempty"`
 	Event   *eventResponse `json:"event,omitempty"`
 	Message string         `json:"message,omitempty"`
+}
+
+type jobDispatchResult struct {
+	Job   *job.Job       `json:"job"`
+	Event *eventResponse `json:"event"`
 }
 
 type jobNextResult struct {
