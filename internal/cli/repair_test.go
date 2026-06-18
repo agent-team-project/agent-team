@@ -50,6 +50,20 @@ func TestRepairDryRunPreviewsDeadQueueWithoutDaemon(t *testing.T) {
 	if item.State != daemon.QueueStateDead || item.LastError == "" {
 		t.Fatalf("dry-run mutated queue item = %+v", item)
 	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--skip-daemon", "--skip-tick"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("repair text dry-run: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"ISSUE", "queue_dead_letter", "agent-team queue retry --all; agent-team repair --skip-tick"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("repair text missing %q:\n%s", want, textOut.String())
+		}
+	}
 }
 
 func TestRepairJobsIncludesStatusPreview(t *testing.T) {
@@ -122,7 +136,7 @@ branch = "worker-squ-121"
 	if err := text.Execute(); err != nil {
 		t.Fatalf("repair --jobs text dry-run: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"job_attention=1", "job_status_changes=1", "job_status_blocked=1"} {
+	for _, want := range []string{"job_attention=1", "job_status_changes=1", "job_status_blocked=1", "job_status_blocked", "agent-team job unblock squ-121 <answer...>"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("repair text missing %q:\n%s", want, textOut.String())
 		}

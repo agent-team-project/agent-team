@@ -303,6 +303,7 @@ func renderRepairResult(w io.Writer, result *repairResult, jsonOut bool) error {
 	}
 	if result.HealthBefore != nil {
 		fmt.Fprintf(w, "Health before: %s\n", repairHealthState(result.HealthBefore))
+		renderRepairHealthActions(w, result.HealthBefore)
 	}
 	renderRepairDaemonStep(w, result.Daemon)
 	fmt.Fprintln(w)
@@ -316,6 +317,28 @@ func renderRepairResult(w io.Writer, result *repairResult, jsonOut bool) error {
 		fmt.Fprintf(w, "Health after: %s\n", repairHealthState(result.HealthAfter))
 	}
 	return nil
+}
+
+func renderRepairHealthActions(w io.Writer, health *healthResult) {
+	if health == nil {
+		return
+	}
+	rows := make([]healthIssue, 0, len(health.Issues))
+	for _, issue := range health.Issues {
+		if len(issue.Actions) > 0 {
+			rows = append(rows, issue)
+		}
+	}
+	if len(rows) == 0 {
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ISSUE\tJOB\tINSTANCE\tACTION")
+	for _, issue := range rows {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
+			issue.Code, emptyDash(issue.Job), emptyDash(issue.Instance), strings.Join(issue.Actions, "; "))
+	}
+	_ = tw.Flush()
 }
 
 func repairHealthState(h *healthResult) string {
