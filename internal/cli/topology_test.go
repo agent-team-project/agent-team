@@ -160,6 +160,35 @@ target = "worker"
 	}
 }
 
+func TestTopologyShowIncludesSchedules(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := topoFixture + `
+[schedules.nightly]
+every = "1h"
+payload.workspace = "repo"
+`
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"topology", "show", "--target", root})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("topology show: %v\nstderr=%s", err, stderr.String())
+	}
+	for _, want := range []string{"SCHEDULE", "nightly", "1h0m0s", "workspace"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("topology output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
 func TestEventPublishJSON(t *testing.T) {
 	target, err := os.MkdirTemp("/tmp", "agent-team-event-json-")
 	if err != nil {

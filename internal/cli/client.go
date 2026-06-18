@@ -524,6 +524,7 @@ func (c *daemonClient) QueueRetry(id string) (*daemon.EventOutcome, error) {
 type topologyResponse struct {
 	Instances []topologyInstance `json:"instances"`
 	Pipelines []topologyPipeline `json:"pipelines"`
+	Schedules []topologySchedule `json:"schedules"`
 }
 
 type topologyInstance struct {
@@ -542,6 +543,13 @@ type topologyPipeline struct {
 	Name    string                   `json:"name"`
 	Trigger map[string]interface{}   `json:"trigger"`
 	Steps   []map[string]interface{} `json:"steps"`
+}
+
+type topologySchedule struct {
+	Name       string                 `json:"name"`
+	Every      string                 `json:"every"`
+	RunOnStart bool                   `json:"run_on_start"`
+	Payload    map[string]interface{} `json:"payload"`
 }
 
 func (c *daemonClient) Topology() (*topologyResponse, error) {

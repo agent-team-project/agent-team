@@ -44,13 +44,16 @@ func LoadLayered(templatePath, repoPath string) (*Topology, error) {
 	if templateLayer == nil && repoLayer == nil {
 		return nil, nil
 	}
-	merged := &Topology{Instances: map[string]*Instance{}, Pipelines: map[string]*Pipeline{}}
+	merged := &Topology{Instances: map[string]*Instance{}, Pipelines: map[string]*Pipeline{}, Schedules: map[string]*Schedule{}}
 	if templateLayer != nil {
 		for name, inst := range templateLayer.Instances {
 			merged.Instances[name] = inst
 		}
 		for name, pipeline := range templateLayer.Pipelines {
 			merged.Pipelines[name] = pipeline
+		}
+		for name, schedule := range templateLayer.Schedules {
+			merged.Schedules[name] = schedule
 		}
 	}
 	if repoLayer != nil {
@@ -59,6 +62,9 @@ func LoadLayered(templatePath, repoPath string) (*Topology, error) {
 		}
 		for name, pipeline := range repoLayer.Pipelines {
 			merged.Pipelines[name] = pipeline
+		}
+		for name, schedule := range repoLayer.Schedules {
+			merged.Schedules[name] = schedule
 		}
 	}
 	return merged, nil

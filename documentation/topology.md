@@ -46,7 +46,7 @@ Event types in v1.2:
 | `agent.dispatch` | One instance dispatching another (e.g. manager → worker) via the orchestrator API | source instance, target name, kickoff |
 | `ticket_webhook` | Linear webhook | event type (created/updated/commented), ticket fields (project, label, state, assignee) |
 | `pr_webhook` | GitHub webhook | event type (opened/review-requested/review-submitted/check-failed), PR metadata |
-| `schedule` | Cron-like timer in the daemon | cron expression, optional jitter |
+| `schedule` | Fixed-interval timer in the daemon | schedule name plus optional payload |
 | `channel.message` | Subscribed channel receives a publish (see future channels work) | channel name, message body |
 
 Each event source is its own ticket; v1.2 launch likely starts with `user_invocation` + `agent.dispatch` + `schedule` (the simplest three). Webhook sources require an HTTP listener and authn, which can come in v1.3.
@@ -97,6 +97,10 @@ replicas  = 3            # max 3 concurrent
 [[instances.worker.triggers]]
 event  = "agent.dispatch"
 match.target = "worker"
+
+[schedules.nightly]
+every = "24h"
+payload.workspace = "repo"
 ```
 
 ### Field reference
@@ -109,6 +113,16 @@ match.target = "worker"
 | `config.<dotted.key>` | no | — | Override values for the resolved per-instance config (layers between repo and CLI flags). Same dotted-key syntax as parameter declarations in `template.toml`. |
 | `replicas` | no | `1` | Max concurrent runs. Ephemeral only — for persistent, this is implicitly 1. |
 | `triggers` | no | empty | List of trigger blocks. Empty triggers list → instance only invokable by explicit `agent-team run <name>`. |
+
+### Schedule field reference
+
+Schedules live under `[schedules.<name>]`. They publish a `schedule` event with payload `source = "schedule"` and `name = "<name>"`; keys under `[schedules.<name>.payload]` are merged into that payload.
+
+| Field | Required | Default | Meaning |
+|---|---|---|---|
+| `every` | yes | — | Go duration string such as `15m`, `1h`, or `24h`. |
+| `run_on_start` | no | `false` | If true, publish once when the daemon scheduler starts, then follow `every`. |
+| `payload.<key>` | no | — | Extra payload keys used by trigger matches or downstream agents. |
 
 ### Trigger field reference
 

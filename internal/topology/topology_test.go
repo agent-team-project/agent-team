@@ -150,6 +150,32 @@ after = ["implement"]
 	}
 }
 
+func TestParse_Schedules(t *testing.T) {
+	top, err := Parse([]byte(`
+[instances.manager]
+agent = "manager"
+
+[schedules.nightly]
+every = "1h"
+run_on_start = true
+payload.workspace = "repo"
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	s := top.Schedules["nightly"]
+	if s == nil {
+		t.Fatal("schedule missing")
+	}
+	if s.Every.String() != "1h0m0s" || !s.RunOnStart || s.Payload["workspace"] != "repo" {
+		t.Fatalf("schedule = %+v", s)
+	}
+	payload := s.EventPayload()
+	if payload["source"] != "schedule" || payload["name"] != "nightly" || payload["workspace"] != "repo" {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
 func TestParse_RejectsMissingAgent(t *testing.T) {
 	_, err := Parse([]byte(`
 [instances.broken]

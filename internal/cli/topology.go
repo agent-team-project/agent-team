@@ -137,7 +137,16 @@ func toResponseLike(top *topology.Topology) map[string]any {
 			"steps":   pipelineStepsAsMaps(pipeline.Steps),
 		})
 	}
-	return map[string]any{"instances": out, "pipelines": pipelines}
+	schedules := make([]map[string]any, 0, len(top.Schedules))
+	for _, schedule := range top.SortedSchedules() {
+		schedules = append(schedules, map[string]any{
+			"name":         schedule.Name,
+			"every":        schedule.Every.String(),
+			"run_on_start": schedule.RunOnStart,
+			"payload":      schedule.Payload,
+		})
+	}
+	return map[string]any{"instances": out, "pipelines": pipelines, "schedules": schedules}
 }
 
 func triggersAsMaps(triggers []*topology.Trigger) []map[string]any {
@@ -180,7 +189,7 @@ func pipelineStepsAsMaps(steps []*topology.PipelineStep) []map[string]any {
 }
 
 func printDaemonTopology(w io.Writer, res *topologyResponse) {
-	if len(res.Instances) == 0 && len(res.Pipelines) == 0 {
+	if len(res.Instances) == 0 && len(res.Pipelines) == 0 && len(res.Schedules) == 0 {
 		fmt.Fprintln(w, "(no topology declared)")
 		return
 	}
@@ -204,6 +213,12 @@ func printDaemonTopology(w io.Writer, res *topologyResponse) {
 		}
 		printDaemonPipelines(w, res.Pipelines)
 	}
+	if len(res.Schedules) > 0 {
+		if len(res.Instances) > 0 || len(res.Pipelines) > 0 {
+			fmt.Fprintln(w)
+		}
+		printDaemonSchedules(w, res.Schedules)
+	}
 }
 
 func printLocalTopology(w io.Writer, top *topology.Topology) {
@@ -226,6 +241,12 @@ func printLocalTopology(w io.Writer, top *topology.Topology) {
 		}
 		printLocalPipelines(w, top.SortedPipelines())
 	}
+	if len(top.Schedules) > 0 {
+		if len(top.Instances) > 0 || len(top.Pipelines) > 0 {
+			fmt.Fprintln(w)
+		}
+		printLocalSchedules(w, top.SortedSchedules())
+	}
 }
 
 func printDaemonPipelines(w io.Writer, pipelines []topologyPipeline) {
@@ -242,6 +263,24 @@ func printLocalPipelines(w io.Writer, pipelines []*topology.Pipeline) {
 	fmt.Fprintln(tw, "PIPELINE\tTRIGGER\tSTEPS")
 	for _, pipeline := range pipelines {
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", pipeline.Name, summariseLocalTrigger(pipeline.Trigger), summariseLocalPipelineSteps(pipeline.Steps))
+	}
+	_ = tw.Flush()
+}
+
+func printDaemonSchedules(w io.Writer, schedules []topologySchedule) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "SCHEDULE\tEVERY\tRUN_ON_START\tPAYLOAD")
+	for _, schedule := range schedules {
+		fmt.Fprintf(tw, "%s\t%s\t%t\t%s\n", schedule.Name, schedule.Every, schedule.RunOnStart, summarisePayloadMap(schedule.Payload))
+	}
+	_ = tw.Flush()
+}
+
+func printLocalSchedules(w io.Writer, schedules []*topology.Schedule) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "SCHEDULE\tEVERY\tRUN_ON_START\tPAYLOAD")
+	for _, schedule := range schedules {
+		fmt.Fprintf(tw, "%s\t%s\t%t\t%s\n", schedule.Name, schedule.Every, schedule.RunOnStart, summariseAnyPayloadMap(schedule.Payload))
 	}
 	_ = tw.Flush()
 }
@@ -266,6 +305,30 @@ func summariseTriggers(triggers []map[string]interface{}) string {
 		}
 	}
 	return strings.Join(parts, ", ")
+}
+
+func summarisePayloadMap(payload map[string]interface{}) string {
+	if len(payload) == 0 {
+		return "—"
+	}
+	keys := make([]string, 0, len(payload))
+	for key := range payload {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
+}
+
+func summariseAnyPayloadMap(payload map[string]any) string {
+	if len(payload) == 0 {
+		return "—"
+	}
+	keys := make([]string, 0, len(payload))
+	for key := range payload {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
 }
 
 func summariseLocalTriggers(triggers []*topology.Trigger) string {

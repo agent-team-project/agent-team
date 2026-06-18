@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/jamesaud/agent-team/internal/template"
@@ -43,6 +44,8 @@ type Topology struct {
 	Instances map[string]*Instance
 	// Pipelines is keyed by the declared pipeline name (`[pipelines.<n>]`).
 	Pipelines map[string]*Pipeline
+	// Schedules is keyed by the declared schedule name (`[schedules.<n>]`).
+	Schedules map[string]*Schedule
 }
 
 // Instance is one declared instance.
@@ -92,6 +95,25 @@ type PipelineStep struct {
 	ID     string
 	Target string
 	After  []string
+}
+
+// Schedule is a periodic source of `schedule` events.
+type Schedule struct {
+	Name       string
+	Every      time.Duration
+	RunOnStart bool
+	Payload    map[string]any
+}
+
+// EventPayload returns the payload published for this schedule tick.
+func (s *Schedule) EventPayload() map[string]any {
+	payload := make(map[string]any, len(s.Payload)+2)
+	for k, v := range s.Payload {
+		payload[k] = v
+	}
+	payload["source"] = "schedule"
+	payload["name"] = s.Name
+	return payload
 }
 
 // Eval returns true iff `payload[key]` matches this expression. The payload
@@ -211,6 +233,19 @@ func (t *Topology) SortedPipelines() []*Pipeline {
 	return out
 }
 
+// SortedSchedules returns schedules ordered by name for deterministic execution.
+func (t *Topology) SortedSchedules() []*Schedule {
+	if t == nil {
+		return nil
+	}
+	out := make([]*Schedule, 0, len(t.Schedules))
+	for _, s := range t.Schedules {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 // PersistentNames returns the names of declared non-ephemeral instances, in
 // sorted order. `instance up` brings these up by default.
 func (t *Topology) PersistentNames() []string {
@@ -240,6 +275,7 @@ func (t *Topology) Find(name string) *Instance {
 type rawTopology struct {
 	Instances map[string]*rawInstance `toml:"instances"`
 	Pipelines map[string]*rawPipeline `toml:"pipelines"`
+	Schedules map[string]*rawSchedule `toml:"schedules"`
 }
 
 type rawInstance struct {
@@ -256,6 +292,13 @@ type rawPipeline struct {
 	Steps   []map[string]any `toml:"steps"`
 }
 
+type rawSchedule struct {
+	Every      string         `toml:"every"`
+	Interval   string         `toml:"interval"`
+	RunOnStart bool           `toml:"run_on_start"`
+	Payload    map[string]any `toml:"payload"`
+}
+
 // Parse decodes a single `instances.toml` body. Used by Load and tests.
 func Parse(body []byte) (*Topology, error) {
 	var raw rawTopology
@@ -269,6 +312,7 @@ func finalise(raw *rawTopology) (*Topology, error) {
 	t := &Topology{
 		Instances: make(map[string]*Instance, len(raw.Instances)),
 		Pipelines: make(map[string]*Pipeline, len(raw.Pipelines)),
+		Schedules: make(map[string]*Schedule, len(raw.Schedules)),
 	}
 	for name, ri := range raw.Instances {
 		if ri == nil {
@@ -289,6 +333,16 @@ func finalise(raw *rawTopology) (*Topology, error) {
 			return nil, err
 		}
 		t.Pipelines[name] = p
+	}
+	for name, rs := range raw.Schedules {
+		if rs == nil {
+			continue
+		}
+		s, err := finaliseSchedule(name, rs)
+		if err != nil {
+			return nil, err
+		}
+		t.Schedules[name] = s
 	}
 	return t, nil
 }
@@ -341,6 +395,28 @@ func finalisePipeline(name string, rp *rawPipeline) (*Pipeline, error) {
 		return nil, err
 	}
 	return &Pipeline{Name: name, Trigger: trigger, Steps: steps}, nil
+}
+
+func finaliseSchedule(name string, rs *rawSchedule) (*Schedule, error) {
+	everyRaw := strings.TrimSpace(rs.Every)
+	if everyRaw == "" {
+		everyRaw = strings.TrimSpace(rs.Interval)
+	}
+	if everyRaw == "" {
+		return nil, fmt.Errorf("schedule %q: every is required", name)
+	}
+	every, err := time.ParseDuration(everyRaw)
+	if err != nil {
+		return nil, fmt.Errorf("schedule %q: every: %w", name, err)
+	}
+	if every <= 0 {
+		return nil, fmt.Errorf("schedule %q: every must be > 0", name)
+	}
+	payload := map[string]any{}
+	for k, v := range rs.Payload {
+		payload[k] = v
+	}
+	return &Schedule{Name: name, Every: every, RunOnStart: rs.RunOnStart, Payload: payload}, nil
 }
 
 // flatten copies src into dst, preserving the dotted-key shape that

@@ -108,6 +108,8 @@ func (d *Daemon) Events() *EventResolver { return d.events }
 // Run starts the listener and blocks until ctx is cancelled or Shutdown is
 // called. It performs orphan reconciliation before accepting connections.
 func (d *Daemon) Run(ctx context.Context) error {
+	runCtx, cancelSchedules := context.WithCancel(ctx)
+	defer cancelSchedules()
 	if err := Reconcile(DaemonRoot(d.cfg.TeamDir), d.manager); err != nil {
 		return fmt.Errorf("daemon: reconcile: %w", err)
 	}
@@ -150,6 +152,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		errCh <- nil
 	}()
+	if d.events != nil {
+		go d.events.RunSchedules(runCtx)
+	}
 
 	select {
 	case <-ctx.Done():

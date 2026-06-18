@@ -703,7 +703,16 @@ func marshalTopology(topo *topology.Topology, events *EventResolver) map[string]
 			"steps":   marshalPipelineSteps(pipeline.Steps),
 		})
 	}
-	return map[string]any{"instances": out, "pipelines": pipelines}
+	schedules := make([]map[string]any, 0, len(topo.Schedules))
+	for _, schedule := range topo.SortedSchedules() {
+		schedules = append(schedules, map[string]any{
+			"name":         schedule.Name,
+			"every":        schedule.Every.String(),
+			"run_on_start": schedule.RunOnStart,
+			"payload":      schedule.Payload,
+		})
+	}
+	return map[string]any{"instances": out, "pipelines": pipelines, "schedules": schedules}
 }
 
 func marshalTriggers(triggers []*topology.Trigger) []map[string]any {

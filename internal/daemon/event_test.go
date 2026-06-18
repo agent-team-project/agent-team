@@ -617,6 +617,46 @@ after = ["implement"]
 	}
 }
 
+func TestEvent_SchedulePublishesDueEvent(t *testing.T) {
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	top, err := topology.Parse([]byte(`
+[instances.manager]
+agent = "manager"
+
+[[instances.manager.triggers]]
+event = "schedule"
+match.name = "nightly"
+
+[schedules.nightly]
+every = "1s"
+payload.workspace = "repo"
+`))
+	if err != nil {
+		t.Fatalf("parse topology: %v", err)
+	}
+	m := NewInstanceManager(root, nil)
+	resolver := NewEventResolver(m, teamDir, top)
+	state := map[string]time.Time{}
+	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	if fired := resolver.fireDueSchedules(now, state); len(fired) != 0 {
+		t.Fatalf("first tick fired = %v, want none without run_on_start", fired)
+	}
+	if fired := resolver.fireDueSchedules(now.Add(500*time.Millisecond), state); len(fired) != 0 {
+		t.Fatalf("early tick fired = %v, want none", fired)
+	}
+	if fired := resolver.fireDueSchedules(now.Add(time.Second), state); len(fired) != 1 || fired[0] != "nightly" {
+		t.Fatalf("due tick fired = %v, want nightly", fired)
+	}
+	messages, err := ReadMessages(root, "manager")
+	if err != nil {
+		t.Fatalf("read messages: %v", err)
+	}
+	if len(messages) != 1 || !strings.Contains(messages[0].Body, `"event":"schedule"`) || !strings.Contains(messages[0].Body, `"name":"nightly"`) {
+		t.Fatalf("messages = %+v", messages)
+	}
+}
+
 func TestIntakeLinearRouteNormalizesAndDispatches(t *testing.T) {
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)

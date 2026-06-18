@@ -46,3 +46,10 @@ target = "worker"
 id     = "review"
 target = "manager"
 after  = ["implement"]
+
+# Optional fixed-interval schedule. Uncomment and adapt to publish a `schedule`
+# event with name = "nightly" every 24 hours.
+#
+# [schedules.nightly]
+# every = "24h"
+# payload.workspace = "repo"
