@@ -1396,7 +1396,7 @@ func newJobTriageCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
-	cmd.Flags().DurationVar(&staleAfter, "stale-after", 24*time.Hour, "Flag queued or running jobs with no update after this duration (0 disables stale checks).")
+	cmd.Flags().DurationVar(&staleAfter, "stale-after", defaultJobTriageStaleAfter, "Flag queued or running jobs with no update after this duration (0 disables stale checks).")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit triage snapshot as JSON.")
 	return cmd
 }
@@ -1932,6 +1932,8 @@ type jobTriageQueueStats struct {
 	Delayed int
 	IDs     []string
 }
+
+const defaultJobTriageStaleAfter = 24 * time.Hour
 
 func newJobListFilters(status, target, instance, pipeline, ticket, branch, pr string) (jobListFilters, error) {
 	f := jobListFilters{

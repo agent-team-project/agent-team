@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/job"
 )
 
 func TestMonitorCommandJSONDoesNotExitUnhealthy(t *testing.T) {
@@ -216,6 +217,50 @@ description = "complete"
 	}
 	if body.Plan != nil || body.Events != nil {
 		t.Fatalf("plan/events should be omitted unless requested: plan=%+v events=%+v", body.Plan, body.Events)
+	}
+}
+
+func TestMonitorJobsJSONIncludesJobTriage(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	j := mustNewJob(t, "SQU-701", "worker")
+	j.Status = job.StatusFailed
+	j.LastStatus = "needs review"
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"monitor", "--summary", "--jobs", "--json", "--target", tmp})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("monitor --summary --jobs --json: %v\nstdout=%s\nstderr=%s", err, summaryOut.String(), summaryErr.String())
+	}
+	var summaryBody monitorSummarySnapshot
+	if err := json.Unmarshal(summaryOut.Bytes(), &summaryBody); err != nil {
+		t.Fatalf("decode monitor summary jobs json: %v\nbody=%s", err, summaryOut.String())
+	}
+	if summaryBody.Jobs == nil || summaryBody.Jobs.Summary.Failed != 1 || len(summaryBody.Jobs.Attention) != 1 {
+		t.Fatalf("summary jobs = %+v", summaryBody.Jobs)
+	}
+
+	full := NewRootCmd()
+	fullOut, fullErr := &bytes.Buffer{}, &bytes.Buffer{}
+	full.SetOut(fullOut)
+	full.SetErr(fullErr)
+	full.SetArgs([]string{"monitor", "--jobs", "--json", "--target", tmp})
+	if err := full.Execute(); err != nil {
+		t.Fatalf("monitor --jobs --json: %v\nstdout=%s\nstderr=%s", err, fullOut.String(), fullErr.String())
+	}
+	var fullBody monitorSnapshot
+	if err := json.Unmarshal(fullOut.Bytes(), &fullBody); err != nil {
+		t.Fatalf("decode monitor jobs json: %v\nbody=%s", err, fullOut.String())
+	}
+	if fullBody.Jobs == nil || len(fullBody.Jobs.Attention) != 1 || fullBody.Jobs.Attention[0].JobID != "squ-701" {
+		t.Fatalf("full jobs = %+v", fullBody.Jobs)
 	}
 }
 
