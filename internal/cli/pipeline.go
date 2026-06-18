@@ -20,6 +20,7 @@ func newPipelineCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newPipelineLsCmd())
 	cmd.AddCommand(newPipelineShowCmd())
+	cmd.AddCommand(newPipelineJobsCmd())
 	return cmd
 }
 
@@ -76,6 +77,47 @@ func newPipelineShowCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the pipeline as JSON.")
+	return cmd
+}
+
+func newPipelineJobsCmd() *cobra.Command {
+	var (
+		repo    string
+		status  string
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "jobs <pipeline>",
+		Short: "List jobs for one pipeline.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline jobs: %v\n", err)
+				return exitErr(2)
+			}
+			filters, err := newJobListFilters(status, "", "", args[0], "", "", "")
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline jobs: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			return runJobList(cmd.OutOrStdout(), teamDir, filters, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&status, "status", "", "Filter by job status: queued, running, blocked, done, or failed.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit jobs as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
 }
 

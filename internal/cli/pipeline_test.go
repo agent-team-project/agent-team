@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jamesaud/agent-team/internal/job"
 )
 
 func TestPipelineListAndShow(t *testing.T) {
@@ -96,5 +99,63 @@ func TestPipelineShowMissing(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `pipeline "missing" not found`) {
 		t.Fatalf("missing stderr = %q", stderr.String())
+	}
+}
+
+func TestPipelineJobsListsMatchingJobs(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{ID: "squ-301", Ticket: "SQU-301", Target: "worker", Pipeline: "ticket_to_pr", Status: job.StatusRunning, CreatedAt: now, UpdatedAt: now},
+		{ID: "squ-302", Ticket: "SQU-302", Target: "manager", Pipeline: "nightly", Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now},
+		{ID: "squ-303", Ticket: "SQU-303", Target: "manager", Pipeline: "ticket_to_pr", Status: job.StatusDone, CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	jsonCmd := NewRootCmd()
+	jsonOut, jsonErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jsonCmd.SetOut(jsonOut)
+	jsonCmd.SetErr(jsonErr)
+	jsonCmd.SetArgs([]string{"pipeline", "jobs", "ticket_to_pr", "--repo", root, "--status", "running", "--json"})
+	if err := jsonCmd.Execute(); err != nil {
+		t.Fatalf("pipeline jobs json: %v\nstderr=%s", err, jsonErr.String())
+	}
+	var rows []job.Job
+	if err := json.Unmarshal(jsonOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline jobs json: %v\nbody=%s", err, jsonOut.String())
+	}
+	if len(rows) != 1 || rows[0].ID != "squ-301" {
+		t.Fatalf("pipeline job rows = %+v", rows)
+	}
+
+	formatCmd := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatCmd.SetOut(formatOut)
+	formatCmd.SetErr(formatErr)
+	formatCmd.SetArgs([]string{"pipeline", "jobs", "ticket_to_pr", "--repo", root, "--format", "{{.ID}} {{.Status}}"})
+	if err := formatCmd.Execute(); err != nil {
+		t.Fatalf("pipeline jobs format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if got := strings.Split(strings.TrimSpace(formatOut.String()), "\n"); strings.Join(got, ",") != "squ-301 running,squ-303 done" {
+		t.Fatalf("pipeline jobs format output = %q", formatOut.String())
+	}
+
+	invalid := NewRootCmd()
+	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalid.SetOut(invalidOut)
+	invalid.SetErr(invalidErr)
+	invalid.SetArgs([]string{"pipeline", "jobs", "ticket_to_pr", "--repo", root, "--status", "waiting"})
+	if err := invalid.Execute(); err == nil {
+		t.Fatalf("pipeline jobs invalid status succeeded")
+	}
+	if !strings.Contains(invalidErr.String(), "unknown job status") {
+		t.Fatalf("invalid status stderr = %q", invalidErr.String())
 	}
 }
