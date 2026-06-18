@@ -188,7 +188,7 @@ agent-team job ls [-w] [--summary] [--sort id|status|target|updated|created] [--
 agent-team job show <job-id> | triage [-w] [--no-clear] [--json] | next <job-id> [--json] | ready [--state ready|queued|all] [--json] | events <job-id> [-f] [--tail N|all] [--type closed] [--actor cli] [--since 24h] [--json]
 agent-team job retry <job-id> [--dispatch] [--workspace auto|worktree|repo] [--json]
                                                 # reopen a failed/closed job and optionally dispatch another attempt immediately
-agent-team job dispatch|start|stop|kill|wait|logs|attach|send|update|close|reopen|cleanup|rm|prune|step|advance|reconcile ...
+agent-team job dispatch|start|stop|kill|wait|logs|attach|send|unblock|update|close|reopen|cleanup|rm|prune|step|advance|reconcile ...
                                                 # create, monitor, dispatch, control, and clean up durable work units
 agent-team pipeline ls [--json] | show <pipeline> [--json] | jobs <pipeline> [--status running] [--json] | ready <pipeline>|--all [--state ready|all] [--json] | advance <pipeline>|--all [--limit N] [--dry-run] [--json] | run <pipeline> <ticket> [--ticket-url <url>] [--dispatch] [--json]
                                                 # inspect declared pipeline workflows from instances.toml
@@ -236,7 +236,7 @@ Use `monitor --jobs --schedules` or `job triage` plus `schedule next` to inspect
 
 Use `repair --dry-run` when `health` reports dead-letter queue items or stale daemon state. Add `--jobs` to include durable job triage and status-file update previews in the before/after health snapshots. `repair` starts and reconciles the daemon, retries dead-letter queue entries, then runs a maintenance tick; add `--skip-daemon`, `--skip-queue`, or `--skip-tick` to narrow the recovery action.
 
-Use `job retry <job-id> --dispatch` for the common failed-job recovery path: it records a reopen event, then immediately sends the job back through daemon dispatch. For pipeline jobs, it resets the first failed step whose dependencies are satisfied, then advances the next ready step.
+Use `job unblock <job-id> <answer...>` when a blocked worker needs operator input: it sends the answer to the owning instance, marks the durable job running, and records an audit event. Use `job retry <job-id> --dispatch` for the common failed-job recovery path: it records a reopen event, then immediately sends the job back through daemon dispatch. For pipeline jobs, it resets the first failed step whose dependencies are satisfied, then advances the next ready step.
 
 Use `snapshot --output diagnostics.json` when you need one read-only artifact for debugging or handoff. It captures health, desired-state plan, instance rows, jobs, job triage, status-derived job update previews, queue items, schedules, runtime profile, and recent lifecycle events; sensitive payload keys are redacted by default, and section-level failures are recorded in the JSON instead of aborting the whole report. Use `--no-redact` only for local debugging when raw payload values are required.
 

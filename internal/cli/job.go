@@ -37,6 +37,7 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobStartCmd())
 	cmd.AddCommand(newJobDispatchCmd())
 	cmd.AddCommand(newJobSendCmd())
+	cmd.AddCommand(newJobUnblockCmd())
 	cmd.AddCommand(newJobLogsCmd())
 	cmd.AddCommand(newJobAttachCmd())
 	cmd.AddCommand(newJobStopCmd())
@@ -685,6 +686,119 @@ func newJobSendCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.LastEvent}}'.")
 	return cmd
+}
+
+func newJobUnblockCmd() *cobra.Command {
+	var (
+		repo         string
+		from         string
+		status       string
+		force        bool
+		allowMissing bool
+		jsonOut      bool
+		format       string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "unblock <job-id> <message...>",
+		Short: "Answer a blocked job and mark it ready to continue.",
+		Long: "Send an answer to a blocked job's owning instance, then mark the durable job running or queued. " +
+			"Use this when a worker reported blocked and the operator has supplied the missing input.",
+		Args: cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job unblock: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			next, err := parseJobUnblockStatus(status)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job unblock: %v\n", err)
+				return exitErr(2)
+			}
+			tmpl, err := parseJobFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job unblock: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
+			if err != nil {
+				return err
+			}
+			if j.Status != job.StatusBlocked && !force {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job unblock: job %q is %s; pass --force to unblock anyway.\n", j.ID, j.Status)
+				return exitErr(2)
+			}
+			if strings.TrimSpace(j.Instance) == "" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job unblock: job %q has no owning instance; use `agent-team job retry %s --dispatch` to start a new attempt.\n", j.ID, j.ID)
+				return exitErr(2)
+			}
+			body := strings.TrimSpace(strings.Join(args[1:], " "))
+			if body == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job unblock: message body is required.")
+				return exitErr(2)
+			}
+			client, err := sendClientForTeamDir(teamDir)
+			if err != nil {
+				return err
+			}
+			fromLabel := normalizedJobUnblockSender(from)
+			if err := runSendWithClient(io.Discard, cmd.ErrOrStderr(), client, j.Instance, body, sendOptions{
+				From:         fromLabel,
+				AllowMissing: allowMissing,
+			}); err != nil {
+				return err
+			}
+			j.Status = next
+			j.LastEvent = "unblocked"
+			j.LastStatus = body
+			j.UpdatedAt = time.Now().UTC()
+			data := map[string]string{
+				"from":     fromLabel,
+				"instance": j.Instance,
+				"status":   string(next),
+			}
+			if err := writeJobWithAudit(teamDir, j, "", "cli", "", data); err != nil {
+				return err
+			}
+			if jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(j)
+			}
+			if tmpl != nil {
+				return renderJobTemplate(cmd.OutOrStdout(), j, tmpl)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "  unblocked   %-20s job=%s status=%s\n", j.Instance, j.ID, j.Status)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&from, "from", "(cli)", "Sender label recorded with the unblock message.")
+	cmd.Flags().StringVar(&status, "status", string(job.StatusRunning), "Status after unblocking: running or queued.")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Allow unblocking a job not currently marked blocked.")
+	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing a message for an owning instance the daemon does not know yet.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
+	return cmd
+}
+
+func parseJobUnblockStatus(raw string) (job.Status, error) {
+	status, err := job.ParseStatus(raw)
+	if err != nil {
+		return "", err
+	}
+	switch status {
+	case job.StatusRunning, job.StatusQueued:
+		return status, nil
+	default:
+		return "", fmt.Errorf("--status must be running or queued")
+	}
+}
+
+func normalizedJobUnblockSender(from string) string {
+	from = strings.TrimSpace(from)
+	if from == "" {
+		return "(cli)"
+	}
+	return from
 }
 
 func newJobLogsCmd() *cobra.Command {

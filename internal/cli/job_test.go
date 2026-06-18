@@ -1994,6 +1994,100 @@ func TestJobDispatchAndSend(t *testing.T) {
 	stopAndWaitForTest(t, mgr, "worker-squ-43")
 }
 
+func TestJobUnblockSendsMessageAndMarksRunning(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now().UTC()
+	blocked := &job.Job{
+		ID:         "squ-82",
+		Ticket:     "SQU-82",
+		Target:     "worker",
+		Instance:   "worker-squ-82",
+		Status:     job.StatusBlocked,
+		LastEvent:  "status_blocked",
+		LastStatus: "needs credentials",
+		CreatedAt:  now.Add(-time.Hour),
+		UpdatedAt:  now.Add(-30 * time.Minute),
+	}
+	if err := job.Write(teamDir, blocked); err != nil {
+		t.Fatalf("write blocked job: %v", err)
+	}
+	if err := daemon.WriteMetadata(root, &daemon.Metadata{
+		Instance:  "worker-squ-82",
+		Agent:     "worker",
+		Status:    daemon.StatusRunning,
+		StartedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "unblock", "SQU-82", "credentials are now configured", "--repo", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job unblock: %v\nstderr=%s", err, stderr.String())
+	}
+	var updated job.Job
+	if err := json.Unmarshal(out.Bytes(), &updated); err != nil {
+		t.Fatalf("decode unblock json: %v\nbody=%s", err, out.String())
+	}
+	if updated.Status != job.StatusRunning || updated.LastEvent != "unblocked" || updated.LastStatus != "credentials are now configured" {
+		t.Fatalf("updated = %+v", updated)
+	}
+	messages, err := daemon.ReadMessages(root, "worker-squ-82")
+	if err != nil {
+		t.Fatalf("read messages: %v", err)
+	}
+	if len(messages) != 1 || messages[0].From != "(cli)" || messages[0].Body != "credentials are now configured" {
+		t.Fatalf("messages = %+v", messages)
+	}
+	events, err := job.ListEvents(teamDir, "squ-82")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "unblocked" || events[0].Status != job.StatusRunning || events[0].Data["instance"] != "worker-squ-82" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestJobUnblockRefusesNonBlockedWithoutForce(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	running := &job.Job{
+		ID:        "squ-83",
+		Ticket:    "SQU-83",
+		Target:    "worker",
+		Instance:  "worker-squ-83",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, running); err != nil {
+		t.Fatalf("write running job: %v", err)
+	}
+
+	refused := NewRootCmd()
+	refusedOut, refusedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	refused.SetOut(refusedOut)
+	refused.SetErr(refusedErr)
+	refused.SetArgs([]string{"job", "unblock", "squ-83", "continue", "--repo", tmp})
+	if err := refused.Execute(); err == nil {
+		t.Fatalf("job unblock running succeeded unexpectedly: stdout=%s", refusedOut.String())
+	}
+	if !strings.Contains(refusedErr.String(), "pass --force to unblock anyway") {
+		t.Fatalf("stderr = %q", refusedErr.String())
+	}
+	if messages, err := daemon.ReadMessages(daemon.DaemonRoot(teamDir), "worker-squ-83"); err == nil && len(messages) != 0 {
+		t.Fatalf("messages should not be sent: %+v", messages)
+	}
+}
+
 func TestJobDispatchRecordsWorktreeAndCleanup(t *testing.T) {
 	target, mgr, cleanup := setupDispatchCommandRepo(t)
 	defer cleanup()
