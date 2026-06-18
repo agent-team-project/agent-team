@@ -40,6 +40,8 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobKillCmd())
 	cmd.AddCommand(newJobCloseCmd())
 	cmd.AddCommand(newJobCleanupCmd())
+	cmd.AddCommand(newJobRmCmd())
+	cmd.AddCommand(newJobPruneCmd())
 	cmd.AddCommand(newJobStepCmd())
 	cmd.AddCommand(newJobAdvanceCmd())
 	cmd.AddCommand(newJobReconcileCmd())
@@ -886,6 +888,123 @@ func newJobCleanupCmd() *cobra.Command {
 	return cmd
 }
 
+func newJobRmCmd() *cobra.Command {
+	var (
+		repo    string
+		force   bool
+		dryRun  bool
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:     "rm <job-id> [<job-id>...]",
+		Aliases: []string{"remove"},
+		Short:   "Remove job files and their event logs.",
+		Long: "Remove durable job TOML files and their sibling event logs. " +
+			"Queued, running, and blocked jobs are refused unless --force is set.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job rm: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobRemoveFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job rm: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			results := make([]jobRemoveResult, 0, len(args))
+			for _, id := range args {
+				j, err := job.Read(teamDir, id)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job rm: %v\n", err)
+					return exitErr(1)
+				}
+				if !force && !jobStatusTerminal(j.Status) {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job rm: refusing to remove active job %q with status %s; pass --force to remove it.\n", j.ID, j.Status)
+					return exitErr(2)
+				}
+				result, err := removeJobFiles(teamDir, j, jobRemoveOptions{DryRun: dryRun, Force: force})
+				if err != nil {
+					return err
+				}
+				results = append(results, result)
+			}
+			return renderJobRemoveResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Allow removing queued, running, or blocked jobs.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview removals without deleting files.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit removal results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
+	return cmd
+}
+
+func newJobPruneCmd() *cobra.Command {
+	var (
+		repo     string
+		statuses []string
+		dryRun   bool
+		jsonOut  bool
+		format   string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Remove terminal job files and their event logs.",
+		Long:  "Remove jobs in terminal statuses. By default, this removes done and failed jobs.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job prune: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobRemoveFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job prune: %v\n", err)
+				return exitErr(2)
+			}
+			statusSet, err := parseJobPruneStatuses(statuses, !cmd.Flags().Changed("status"))
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job prune: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			jobs, err := job.List(teamDir)
+			if err != nil {
+				return err
+			}
+			results := make([]jobRemoveResult, 0, len(jobs))
+			for _, j := range jobs {
+				if !statusSet[j.Status] {
+					continue
+				}
+				result, err := removeJobFiles(teamDir, j, jobRemoveOptions{DryRun: dryRun})
+				if err != nil {
+					return err
+				}
+				results = append(results, result)
+			}
+			return renderJobRemoveResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringSliceVar(&statuses, "status", nil, "Terminal status to prune: done, failed, or terminal. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview removals without deleting files.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit removal results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
+	return cmd
+}
+
 func newJobStepCmd() *cobra.Command {
 	var (
 		repo      string
@@ -1238,6 +1357,26 @@ type jobListFilters struct {
 	PR       string
 }
 
+type jobRemoveOptions struct {
+	DryRun bool
+	Force  bool
+}
+
+type jobRemoveResult struct {
+	ID            string     `json:"id"`
+	Ticket        string     `json:"ticket"`
+	Status        job.Status `json:"status"`
+	Action        string     `json:"action"`
+	DryRun        bool       `json:"dry_run,omitempty"`
+	Forced        bool       `json:"forced,omitempty"`
+	Removed       bool       `json:"removed"`
+	JobFile       bool       `json:"job_file"`
+	EventLog      bool       `json:"event_log"`
+	JobPath       string     `json:"job_path"`
+	EventPath     string     `json:"event_path"`
+	EventsRemoved bool       `json:"events_removed"`
+}
+
 func newJobListFilters(status, target, instance, pipeline, ticket, branch, pr string) (jobListFilters, error) {
 	f := jobListFilters{
 		Target:   strings.TrimSpace(target),
@@ -1255,6 +1394,125 @@ func newJobListFilters(status, target, instance, pipeline, ticket, branch, pr st
 		f.Status = parsed
 	}
 	return f, nil
+}
+
+func parseJobPruneStatuses(raw []string, useDefault bool) (map[job.Status]bool, error) {
+	if useDefault {
+		return map[job.Status]bool{job.StatusDone: true, job.StatusFailed: true}, nil
+	}
+	statuses := map[job.Status]bool{}
+	for _, value := range splitFilterValues(raw) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		switch value {
+		case "terminal", "finished":
+			statuses[job.StatusDone] = true
+			statuses[job.StatusFailed] = true
+		case string(job.StatusDone), string(job.StatusFailed):
+			parsed, _ := job.ParseStatus(value)
+			statuses[parsed] = true
+		default:
+			return nil, fmt.Errorf("--status must be done, failed, or terminal")
+		}
+	}
+	if len(statuses) == 0 {
+		return nil, fmt.Errorf("--status requires at least one non-empty status")
+	}
+	return statuses, nil
+}
+
+func jobStatusTerminal(status job.Status) bool {
+	return status == job.StatusDone || status == job.StatusFailed
+}
+
+func removeJobFiles(teamDir string, j *job.Job, opts jobRemoveOptions) (jobRemoveResult, error) {
+	result := jobRemoveResult{
+		ID:        j.ID,
+		Ticket:    j.Ticket,
+		Status:    j.Status,
+		Action:    "removed",
+		DryRun:    opts.DryRun,
+		Forced:    opts.Force,
+		JobPath:   job.Path(teamDir, j.ID),
+		EventPath: job.EventPath(teamDir, j.ID),
+	}
+	if opts.DryRun {
+		result.Action = "would_remove"
+	}
+	jobExists, err := pathExists(result.JobPath)
+	if err != nil {
+		return result, err
+	}
+	eventExists, err := pathExists(result.EventPath)
+	if err != nil {
+		return result, err
+	}
+	result.JobFile = jobExists
+	result.EventLog = eventExists
+	if opts.DryRun {
+		return result, nil
+	}
+	if jobExists {
+		if err := os.Remove(result.JobPath); err != nil {
+			return result, err
+		}
+		result.Removed = true
+	}
+	if eventExists {
+		if err := os.Remove(result.EventPath); err != nil {
+			return result, err
+		}
+		result.EventsRemoved = true
+	}
+	if result.Removed || result.EventsRemoved {
+		result.Removed = true
+	}
+	return result, nil
+}
+
+func pathExists(path string) (bool, error) {
+	if _, err := os.Stat(path); err == nil {
+		return true, nil
+	} else if os.IsNotExist(err) {
+		return false, nil
+	} else {
+		return false, err
+	}
+}
+
+func renderJobRemoveResults(w io.Writer, results []jobRemoveResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := tmpl.Execute(w, result); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	renderJobRemoveTable(w, results)
+	return nil
+}
+
+func renderJobRemoveTable(w io.Writer, results []jobRemoveResult) {
+	if len(results) == 0 {
+		fmt.Fprintln(w, "(no jobs removed)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tSTATUS\tACTION\tJOB\tEVENTS")
+	for _, result := range results {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			result.ID, result.Status, result.Action, yesNo(result.JobFile), yesNo(result.EventLog))
+	}
+	_ = tw.Flush()
 }
 
 func runJobList(w io.Writer, teamDir string, filters jobListFilters, jsonOut bool, tmpl *template.Template) error {
@@ -1917,6 +2175,17 @@ func parseJobEventFormat(format string) (*template.Template, error) {
 		return nil, nil
 	}
 	tmpl, err := template.New("job-event-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func parseJobRemoveFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("job-remove-format").Parse(format)
 	if err != nil {
 		return nil, fmt.Errorf("invalid --format template: %w", err)
 	}

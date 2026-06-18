@@ -175,6 +175,125 @@ func TestJobListFilters(t *testing.T) {
 	}
 }
 
+func TestJobRmRequiresForceForActiveAndRemovesEvents(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{"job", "create", "SQU-61", "--repo", tmp, "--kickoff", "remove smoke"})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("job create: %v\nstderr=%s", err, createErr.String())
+	}
+
+	rmActive := NewRootCmd()
+	rmActiveOut, rmActiveErr := &bytes.Buffer{}, &bytes.Buffer{}
+	rmActive.SetOut(rmActiveOut)
+	rmActive.SetErr(rmActiveErr)
+	rmActive.SetArgs([]string{"job", "rm", "squ-61", "--repo", tmp})
+	if err := rmActive.Execute(); err == nil {
+		t.Fatalf("job rm active succeeded unexpectedly")
+	}
+	if !strings.Contains(rmActiveErr.String(), "refusing to remove active job") {
+		t.Fatalf("rm active stderr = %q", rmActiveErr.String())
+	}
+
+	closeCmd := NewRootCmd()
+	closeOut, closeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	closeCmd.SetOut(closeOut)
+	closeCmd.SetErr(closeErr)
+	closeCmd.SetArgs([]string{"job", "close", "squ-61", "--repo", tmp, "--status", "done"})
+	if err := closeCmd.Execute(); err != nil {
+		t.Fatalf("job close: %v\nstderr=%s", err, closeErr.String())
+	}
+
+	rm := NewRootCmd()
+	rmOut, rmErr := &bytes.Buffer{}, &bytes.Buffer{}
+	rm.SetOut(rmOut)
+	rm.SetErr(rmErr)
+	rm.SetArgs([]string{"job", "rm", "SQU-61", "--repo", tmp, "--json"})
+	if err := rm.Execute(); err != nil {
+		t.Fatalf("job rm: %v\nstderr=%s", err, rmErr.String())
+	}
+	var removed []jobRemoveResult
+	if err := json.Unmarshal(rmOut.Bytes(), &removed); err != nil {
+		t.Fatalf("decode rm json: %v\nbody=%s", err, rmOut.String())
+	}
+	if len(removed) != 1 || !removed[0].Removed || !removed[0].JobFile || !removed[0].EventLog || !removed[0].EventsRemoved {
+		t.Fatalf("removed = %+v", removed)
+	}
+	if _, err := os.Stat(job.Path(filepath.Join(tmp, ".agent_team"), "squ-61")); !os.IsNotExist(err) {
+		t.Fatalf("job file err=%v, want not exist", err)
+	}
+	if _, err := os.Stat(job.EventPath(filepath.Join(tmp, ".agent_team"), "squ-61")); !os.IsNotExist(err) {
+		t.Fatalf("event file err=%v, want not exist", err)
+	}
+}
+
+func TestJobPruneRemovesOnlySelectedTerminalJobs(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{ID: "squ-62", Ticket: "SQU-62", Target: "worker", Status: job.StatusDone, CreatedAt: now, UpdatedAt: now},
+		{ID: "squ-63", Ticket: "SQU-63", Target: "worker", Status: job.StatusFailed, CreatedAt: now, UpdatedAt: now},
+		{ID: "squ-64", Ticket: "SQU-64", Target: "worker", Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+		if err := job.AppendSnapshotEvent(teamDir, j, "seeded", "test", "", nil); err != nil {
+			t.Fatalf("append event %s: %v", j.ID, err)
+		}
+	}
+
+	dryRun := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryRun.SetOut(dryOut)
+	dryRun.SetErr(dryErr)
+	dryRun.SetArgs([]string{"job", "prune", "--repo", tmp, "--dry-run", "--json"})
+	if err := dryRun.Execute(); err != nil {
+		t.Fatalf("job prune dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dry []jobRemoveResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dry); err != nil {
+		t.Fatalf("decode dry-run json: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(dry) != 2 || !dry[0].DryRun || dry[0].Removed {
+		t.Fatalf("dry-run results = %+v", dry)
+	}
+	if _, err := os.Stat(job.Path(teamDir, "squ-62")); err != nil {
+		t.Fatalf("dry-run removed job unexpectedly: %v", err)
+	}
+
+	pruneDone := NewRootCmd()
+	pruneDoneOut, pruneDoneErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pruneDone.SetOut(pruneDoneOut)
+	pruneDone.SetErr(pruneDoneErr)
+	pruneDone.SetArgs([]string{"job", "prune", "--repo", tmp, "--status", "done", "--format", "{{.ID}} {{.Action}} {{.Status}}"})
+	if err := pruneDone.Execute(); err != nil {
+		t.Fatalf("job prune done: %v\nstderr=%s", err, pruneDoneErr.String())
+	}
+	if got := strings.TrimSpace(pruneDoneOut.String()); got != "squ-62 removed done" {
+		t.Fatalf("prune done output = %q", got)
+	}
+	if _, err := os.Stat(job.Path(teamDir, "squ-62")); !os.IsNotExist(err) {
+		t.Fatalf("done job file err=%v, want not exist", err)
+	}
+	if _, err := os.Stat(job.EventPath(teamDir, "squ-62")); !os.IsNotExist(err) {
+		t.Fatalf("done event file err=%v, want not exist", err)
+	}
+	if _, err := os.Stat(job.Path(teamDir, "squ-63")); err != nil {
+		t.Fatalf("failed job removed unexpectedly: %v", err)
+	}
+	if _, err := os.Stat(job.Path(teamDir, "squ-64")); err != nil {
+		t.Fatalf("queued job removed unexpectedly: %v", err)
+	}
+}
+
 func TestJobListWatchRendersSnapshot(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
