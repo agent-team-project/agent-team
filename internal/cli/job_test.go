@@ -1566,6 +1566,106 @@ func TestJobNextReportsPipelineState(t *testing.T) {
 	}
 }
 
+func TestJobReadyListsAdvanceablePipelineJobs(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	jobs := []*job.Job{
+		{
+			ID:        "squ-210",
+			Ticket:    "SQU-210",
+			Target:    "manager",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusDone, StartedAt: now, FinishedAt: now},
+				{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"implement"}},
+			},
+		},
+		{
+			ID:        "squ-211",
+			Ticket:    "SQU-211",
+			Target:    "manager",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now.Add(time.Minute),
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-211"},
+				{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"implement"}},
+			},
+		},
+		{
+			ID:        "squ-212",
+			Ticket:    "SQU-212",
+			Target:    "manager",
+			Pipeline:  "nightly",
+			Status:    job.StatusDone,
+			CreatedAt: now,
+			UpdatedAt: now.Add(2 * time.Minute),
+			Steps: []job.Step{
+				{ID: "triage", Target: "manager", Status: job.StatusDone, StartedAt: now, FinishedAt: now},
+			},
+		},
+		{
+			ID:        "squ-213",
+			Ticket:    "SQU-213",
+			Target:    "worker",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	}
+	for _, j := range jobs {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job ready json: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []jobReadyRow
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode ready rows: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].JobID != "squ-210" || rows[0].State != "ready" || rows[0].StepID != "review" {
+		t.Fatalf("default ready rows = %+v", rows)
+	}
+
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--pipeline", "ticket_to_pr", "--state", "all", "--format", "{{.JobID}} {{.State}} {{.StepID}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job ready all format: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := strings.Split(strings.TrimSpace(out.String()), "\n"); strings.Join(got, ",") != "squ-210 ready review,squ-211 running implement" {
+		t.Fatalf("formatted ready rows = %q", out.String())
+	}
+
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--state", ","})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("job ready empty state succeeded")
+	}
+	if !strings.Contains(stderr.String(), "--state requires at least one non-empty state") {
+		t.Fatalf("missing state error:\n%s", stderr.String())
+	}
+}
+
 func TestJobAdvanceDispatchesNextReadyStep(t *testing.T) {
 	target, _, cleanup := setupIntakePipelineRepo(t)
 	defer cleanup()

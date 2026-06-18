@@ -46,6 +46,7 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobRmCmd())
 	cmd.AddCommand(newJobPruneCmd())
 	cmd.AddCommand(newJobNextCmd())
+	cmd.AddCommand(newJobReadyCmd())
 	cmd.AddCommand(newJobStepCmd())
 	cmd.AddCommand(newJobAdvanceCmd())
 	cmd.AddCommand(newJobReconcileCmd())
@@ -1248,6 +1249,49 @@ func newJobNextCmd() *cobra.Command {
 	return cmd
 }
 
+func newJobReadyCmd() *cobra.Command {
+	var (
+		repo     string
+		pipeline string
+		states   []string
+		jsonOut  bool
+		format   string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "ready",
+		Short: "List pipeline jobs with ready or selected next-step states.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ready: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			stateFilter, err := parseJobNextStateFilter(states, !cmd.Flags().Changed("state"))
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job ready: %v\n", err)
+				return exitErr(2)
+			}
+			tmpl, err := parseJobReadyFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job ready: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			return runJobReady(cmd.OutOrStdout(), teamDir, strings.TrimSpace(pipeline), stateFilter, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&pipeline, "pipeline", "", "Filter by pipeline name.")
+	cmd.Flags().StringSliceVar(&states, "state", nil, "Next-step state to include: ready, queued, running, blocked, failed, done, none, or all. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit ready rows as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.")
+	return cmd
+}
+
 func newJobStepCmd() *cobra.Command {
 	var (
 		repo      string
@@ -1918,6 +1962,31 @@ func parseJobPruneStatuses(raw []string, useDefault bool) (map[job.Status]bool, 
 	return statuses, nil
 }
 
+func parseJobNextStateFilter(raw []string, useDefault bool) (map[string]bool, error) {
+	if useDefault {
+		return map[string]bool{"ready": true, "queued": true}, nil
+	}
+	states := map[string]bool{}
+	for _, value := range splitFilterValues(raw) {
+		state := strings.ToLower(strings.TrimSpace(value))
+		if state == "" {
+			continue
+		}
+		switch state {
+		case "all":
+			return nil, nil
+		case "ready", "queued", "running", "blocked", "failed", "done", "none":
+			states[state] = true
+		default:
+			return nil, fmt.Errorf("--state must be ready, queued, running, blocked, failed, done, none, or all")
+		}
+	}
+	if len(states) == 0 {
+		return nil, fmt.Errorf("--state requires at least one non-empty state")
+	}
+	return states, nil
+}
+
 func jobStatusTerminal(status job.Status) bool {
 	return status == job.StatusDone || status == job.StatusFailed
 }
@@ -2053,6 +2122,89 @@ func renderJobRemoveTable(w io.Writer, results []jobRemoveResult) {
 	for _, result := range results {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			result.ID, result.Status, result.Action, yesNo(result.JobFile), yesNo(result.EventLog))
+	}
+	_ = tw.Flush()
+}
+
+func runJobReady(w io.Writer, teamDir, pipeline string, states map[string]bool, jsonOut bool, tmpl *template.Template) error {
+	rows, err := collectJobReadyRows(teamDir, pipeline, states)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(rows)
+	}
+	if tmpl != nil {
+		for _, row := range rows {
+			if err := tmpl.Execute(w, row); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	renderJobReadyTable(w, rows)
+	return nil
+}
+
+func collectJobReadyRows(teamDir, pipeline string, states map[string]bool) ([]jobReadyRow, error) {
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]jobReadyRow, 0, len(jobs))
+	for _, j := range jobs {
+		if len(j.Steps) == 0 {
+			continue
+		}
+		if pipeline != "" && j.Pipeline != pipeline {
+			continue
+		}
+		next := inspectNextJobStep(j)
+		if len(states) > 0 && !states[next.State] {
+			continue
+		}
+		rows = append(rows, jobReadyRowFromJob(j, next))
+	}
+	return rows, nil
+}
+
+func jobReadyRowFromJob(j *job.Job, next jobNextResult) jobReadyRow {
+	row := jobReadyRow{
+		JobID:      j.ID,
+		Ticket:     j.Ticket,
+		Pipeline:   j.Pipeline,
+		JobStatus:  j.Status,
+		State:      next.State,
+		WaitingFor: next.WaitingFor,
+		UpdatedAt:  j.UpdatedAt,
+		Message:    next.Message,
+	}
+	if next.Step != nil {
+		row.StepID = next.Step.ID
+		row.Target = next.Step.Target
+		row.StepStatus = next.Step.Status
+		row.Instance = next.Step.Instance
+	}
+	return row
+}
+
+func renderJobReadyTable(w io.Writer, rows []jobReadyRow) {
+	if len(rows) == 0 {
+		fmt.Fprintln(w, "(no ready pipeline jobs)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "JOB\tSTATE\tSTEP\tTARGET\tPIPELINE\tWAITING_FOR\tUPDATED")
+	for _, row := range rows {
+		waiting := "-"
+		if len(row.WaitingFor) > 0 {
+			waiting = strings.Join(row.WaitingFor, ",")
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.JobID, row.State, emptyDash(row.StepID), emptyDash(row.Target), emptyDash(row.Pipeline), waiting, row.UpdatedAt.Format(time.RFC3339))
 	}
 	_ = tw.Flush()
 }
@@ -2398,6 +2550,21 @@ type jobNextResult struct {
 	State      string     `json:"state"`
 	Step       *job.Step  `json:"step,omitempty"`
 	WaitingFor []string   `json:"waiting_for,omitempty"`
+	Message    string     `json:"message"`
+}
+
+type jobReadyRow struct {
+	JobID      string     `json:"job_id"`
+	Ticket     string     `json:"ticket"`
+	Pipeline   string     `json:"pipeline,omitempty"`
+	JobStatus  job.Status `json:"job_status"`
+	State      string     `json:"state"`
+	StepID     string     `json:"step_id,omitempty"`
+	Target     string     `json:"target,omitempty"`
+	StepStatus job.Status `json:"step_status,omitempty"`
+	Instance   string     `json:"instance,omitempty"`
+	WaitingFor []string   `json:"waiting_for,omitempty"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 	Message    string     `json:"message"`
 }
 
@@ -2880,6 +3047,17 @@ func parseJobNextFormat(format string) (*template.Template, error) {
 		return nil, nil
 	}
 	tmpl, err := template.New("job-next-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func parseJobReadyFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("job-ready-format").Parse(format)
 	if err != nil {
 		return nil, fmt.Errorf("invalid --format template: %w", err)
 	}
