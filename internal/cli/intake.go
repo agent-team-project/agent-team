@@ -77,21 +77,26 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake %s: %v\n", provider, err)
 				return exitErr(2)
 			}
-			if dryRun {
-				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl)
-			}
 			var reconcile *job.ReconcileResult
+			var cleanupPreview *jobCleanupPreview
 			cleanup := ""
 			if provider == "github" && reconcileJob {
 				teamDir, err := resolveTeamDir(cmd, target)
 				if err != nil {
 					return err
 				}
-				reconcile, cleanup, err = reconcileGitHubIntakeJob(teamDir, ev, cleanupMerged)
+				if dryRun {
+					reconcile, cleanupPreview, err = previewGitHubIntakeJob(teamDir, ev, cleanupMerged)
+				} else {
+					reconcile, cleanup, err = reconcileGitHubIntakeJob(teamDir, ev, cleanupMerged)
+				}
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake github: %v\n", err)
 					return exitErr(1)
 				}
+			}
+			if dryRun {
+				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, reconcile, cleanupPreview)
 			}
 			return publishIntakeEventWithJob(cmd, target, ev, jsonOut, tmpl, reconcile, cleanup)
 		},
@@ -143,7 +148,7 @@ func newIntakeScheduleCmd() *cobra.Command {
 			}
 			ev := &intake.Event{Type: "schedule", Payload: body}
 			if dryRun {
-				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl)
+				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, nil, nil)
 			}
 			return publishIntakeEvent(cmd, target, ev, jsonOut, tmpl)
 		},
@@ -173,11 +178,12 @@ func intakePayload(payload, payloadFile string) ([]byte, error) {
 }
 
 type intakePublishResult struct {
-	Event     *intake.Event        `json:"event"`
-	Outcome   *eventResponse       `json:"outcome"`
-	Reconcile *job.ReconcileResult `json:"reconcile,omitempty"`
-	Cleanup   string               `json:"cleanup,omitempty"`
-	DryRun    bool                 `json:"dry_run,omitempty"`
+	Event          *intake.Event        `json:"event"`
+	Outcome        *eventResponse       `json:"outcome"`
+	Reconcile      *job.ReconcileResult `json:"reconcile,omitempty"`
+	Cleanup        string               `json:"cleanup,omitempty"`
+	CleanupPreview *jobCleanupPreview   `json:"cleanup_preview,omitempty"`
+	DryRun         bool                 `json:"dry_run,omitempty"`
 }
 
 func parseIntakeFormat(format string) (*template.Template, error) {
@@ -191,8 +197,8 @@ func parseIntakeFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
-func renderIntakeDryRun(w io.Writer, ev *intake.Event, jsonOut bool, tmpl *template.Template) error {
-	result := intakePublishResult{Event: ev, DryRun: true}
+func renderIntakeDryRun(w io.Writer, ev *intake.Event, jsonOut bool, tmpl *template.Template, reconcile *job.ReconcileResult, cleanupPreview *jobCleanupPreview) error {
+	result := intakePublishResult{Event: ev, Reconcile: reconcile, CleanupPreview: cleanupPreview, DryRun: true}
 	if jsonOut {
 		return json.NewEncoder(w).Encode(result)
 	}
@@ -214,6 +220,12 @@ func renderIntakeDryRun(w io.Writer, ev *intake.Event, jsonOut bool, tmpl *templ
 		fmt.Fprintf(tw, "%s\t%v\n", key, ev.Payload[key])
 	}
 	_ = tw.Flush()
+	if reconcile != nil && reconcile.Job != nil {
+		fmt.Fprintf(w, "Job: %s would reconcile by %s status=%s\n", reconcile.Job.ID, reconcile.MatchedBy, reconcile.Job.Status)
+	}
+	if cleanupPreview != nil {
+		fmt.Fprintf(w, "Cleanup: %s\n", cleanupPreview.Summary)
+	}
 	return nil
 }
 
@@ -278,6 +290,22 @@ func reconcileGitHubIntakeJob(teamDir string, ev *intake.Event, cleanupMerged bo
 		}
 	}
 	return result, cleanup, nil
+}
+
+func previewGitHubIntakeJob(teamDir string, ev *intake.Event, cleanupMerged bool) (*job.ReconcileResult, *jobCleanupPreview, error) {
+	result, err := job.PreviewReconcilePR(teamDir, job.ReconcileInputFromPayload(ev.Type, ev.Payload), time.Now().UTC())
+	if err != nil {
+		return nil, nil, err
+	}
+	var cleanupPreview *jobCleanupPreview
+	if cleanupMerged && result.Job.Status == job.StatusDone {
+		preview, err := previewJobCleanup(filepath.Dir(teamDir), result.Job)
+		if err != nil {
+			return nil, nil, err
+		}
+		cleanupPreview = &preview
+	}
+	return result, cleanupPreview, nil
 }
 
 func renderIntakeTemplate(w io.Writer, result intakePublishResult, tmpl *template.Template) error {

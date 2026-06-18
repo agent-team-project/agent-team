@@ -1931,6 +1931,51 @@ func TestJobReconcileGitHubMergedCleansOwnedWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	preview := NewRootCmd()
+	previewOut, previewErr := &bytes.Buffer{}, &bytes.Buffer{}
+	preview.SetOut(previewOut)
+	preview.SetErr(previewErr)
+	preview.SetArgs([]string{
+		"job", "reconcile", "github",
+		"--payload", string(payload),
+		"--cleanup-merged",
+		"--dry-run",
+		"--repo", target,
+		"--json",
+	})
+	if err := preview.Execute(); err != nil {
+		t.Fatalf("job reconcile github dry-run: %v\nstderr=%s", err, previewErr.String())
+	}
+	var previewResult struct {
+		Result struct {
+			Job job.Job `json:"job"`
+		} `json:"result"`
+		CleanupPreview *jobCleanupPreview `json:"cleanup_preview"`
+		DryRun         bool               `json:"dry_run"`
+	}
+	if err := json.Unmarshal(previewOut.Bytes(), &previewResult); err != nil {
+		t.Fatalf("decode reconcile dry-run json: %v\nbody=%s", err, previewOut.String())
+	}
+	if !previewResult.DryRun || previewResult.Result.Job.Status != job.StatusDone {
+		t.Fatalf("dry-run reconcile = %+v", previewResult)
+	}
+	if previewResult.CleanupPreview == nil || !previewResult.CleanupPreview.WouldRemoveWorktree || !previewResult.CleanupPreview.WouldRemoveBranch {
+		t.Fatalf("dry-run cleanup preview = %+v", previewResult.CleanupPreview)
+	}
+	afterPreview, err := job.Read(filepath.Join(target, ".agent_team"), "squ-45")
+	if err != nil {
+		t.Fatalf("read job after dry-run: %v", err)
+	}
+	if afterPreview.Status != job.StatusRunning || afterPreview.Worktree != dispatched.Worktree || afterPreview.Branch != dispatched.Branch {
+		t.Fatalf("dry-run mutated job = %+v", afterPreview)
+	}
+	if _, err := os.Stat(dispatched.Worktree); err != nil {
+		t.Fatalf("dry-run removed worktree or stat failed: %v", err)
+	}
+	if !branchExists(t, target, dispatched.Branch) {
+		t.Fatalf("dry-run removed branch %s", dispatched.Branch)
+	}
+
 	reconcile := NewRootCmd()
 	reconcileOut, reconcileErr := &bytes.Buffer{}, &bytes.Buffer{}
 	reconcile.SetOut(reconcileOut)

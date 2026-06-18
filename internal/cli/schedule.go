@@ -124,7 +124,7 @@ func newScheduleRunCmd() *cobra.Command {
 			}
 			ev := &intake.Event{Type: topology.EventSchedule, Payload: eventPayload}
 			if dryRun {
-				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl)
+				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, nil, nil)
 			}
 			return publishScheduleEvent(cmd, repo, ev, jsonOut, tmpl)
 		},

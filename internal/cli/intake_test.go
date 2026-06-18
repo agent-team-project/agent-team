@@ -117,6 +117,52 @@ func TestIntakeGitHubReconcilesOwningJob(t *testing.T) {
 	}
 }
 
+func TestIntakeGitHubDryRunReconcileJobDoesNotMutate(t *testing.T) {
+	target := t.TempDir()
+	initInto(t, target)
+	teamDir := filepath.Join(target, ".agent_team")
+	j := mustNewJob(t, "SQU-107", "worker")
+	j.Status = job.StatusRunning
+	j.PR = "https://github.com/acme/repo/pull/107"
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	payload := `{"action":"closed","repository":{"full_name":"acme/repo"},"pull_request":{"number":107,"merged":true,"html_url":"https://github.com/acme/repo/pull/107","head":{"ref":"worker-squ-107"}}}`
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "github", "--payload", payload, "--target", target, "--dry-run", "--reconcile-job", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake github dry-run reconcile: %v\nstderr=%s", err, stderr.String())
+	}
+	var result intakePublishResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode intake github dry-run json: %v\nbody=%s", err, out.String())
+	}
+	if !result.DryRun || result.Outcome != nil {
+		t.Fatalf("dry-run result = %+v", result)
+	}
+	if result.Reconcile == nil || result.Reconcile.Job == nil || result.Reconcile.Job.Status != job.StatusDone {
+		t.Fatalf("preview reconcile = %+v", result.Reconcile)
+	}
+	unchanged, err := job.Read(teamDir, "squ-107")
+	if err != nil {
+		t.Fatalf("read dry-run job: %v", err)
+	}
+	if unchanged.Status != job.StatusRunning || unchanged.LastEvent != "" || unchanged.Branch != "" {
+		t.Fatalf("dry-run mutated job = %+v", unchanged)
+	}
+	events, err := job.ListEvents(teamDir, "squ-107")
+	if err != nil {
+		t.Fatalf("list dry-run events: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("dry-run wrote events = %+v", events)
+	}
+}
+
 func TestIntakeGitHubCleanupMergedRequiresReconcileJob(t *testing.T) {
 	payload := `{"action":"closed","pull_request":{"number":1,"merged":true}}`
 	cmd := NewRootCmd()

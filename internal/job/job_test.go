@@ -199,3 +199,46 @@ func TestReconcilePRMarksMergedJobDone(t *testing.T) {
 		t.Fatalf("events = %+v", events)
 	}
 }
+
+func TestPreviewReconcilePRDoesNotWrite(t *testing.T) {
+	teamDir := filepath.Join(t.TempDir(), ".agent_team")
+	now := time.Date(2026, 6, 18, 13, 0, 0, 0, time.UTC)
+	j, err := New("SQU-78", "worker", "preview the change", now)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	j.Status = StatusRunning
+	j.PR = "https://github.com/acme/repo/pull/78"
+	j.Branch = "worktree-worker-squ-78"
+	if err := Write(teamDir, j); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	merged := true
+	result, err := PreviewReconcilePR(teamDir, ReconcileInput{
+		EventType: "pr.merged",
+		Action:    "closed",
+		PRURL:     "https://github.com/acme/repo/pull/78",
+		Branch:    "worker-squ-78",
+		Merged:    &merged,
+	}, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("PreviewReconcilePR: %v", err)
+	}
+	if result.MatchedBy != "pr_url" || result.Job.Status != StatusDone || result.Job.Branch != "worker-squ-78" {
+		t.Fatalf("preview result = %+v", result)
+	}
+	unchanged, err := Read(teamDir, "squ-78")
+	if err != nil {
+		t.Fatalf("Read unchanged: %v", err)
+	}
+	if unchanged.Status != StatusRunning || unchanged.LastEvent != "" || unchanged.Branch != "worktree-worker-squ-78" {
+		t.Fatalf("preview mutated persisted job = %+v", unchanged)
+	}
+	events, err := ListEvents(teamDir, "squ-78")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("preview wrote events = %+v", events)
+	}
+}

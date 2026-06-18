@@ -51,13 +51,48 @@ func ReconcileInputFromPayload(eventType string, payload map[string]any) Reconci
 	return input
 }
 
-// ReconcilePR finds the job that owns a PR/branch and updates its lifecycle.
-func ReconcilePR(teamDir string, input ReconcileInput, now time.Time) (*ReconcileResult, error) {
+// PreviewReconcilePR finds the job that owns a PR/branch and returns the job
+// state that would be written by ReconcilePR without mutating durable state.
+func PreviewReconcilePR(teamDir string, input ReconcileInput, now time.Time) (*ReconcileResult, error) {
 	match, err := MatchPRJob(teamDir, input)
 	if err != nil {
 		return nil, err
 	}
-	j := match.Job
+	j := cloneJob(match.Job)
+	message := applyPRReconcile(j, input, now)
+	return &ReconcileResult{Job: j, MatchedBy: match.MatchedBy, Message: message}, nil
+}
+
+// ReconcilePR finds the job that owns a PR/branch and updates its lifecycle.
+func ReconcilePR(teamDir string, input ReconcileInput, now time.Time) (*ReconcileResult, error) {
+	result, err := PreviewReconcilePR(teamDir, input, now)
+	if err != nil {
+		return nil, err
+	}
+	j := result.Job
+	if err := Write(teamDir, j); err != nil {
+		return nil, err
+	}
+	data := map[string]string{"matched_by": result.MatchedBy}
+	if input.PR != "" {
+		data["pr"] = input.PR
+	}
+	if input.PRURL != "" {
+		data["pr_url"] = input.PRURL
+	}
+	if input.Branch != "" {
+		data["branch"] = input.Branch
+	}
+	if input.Source != "" {
+		data["source"] = input.Source
+	}
+	if err := AppendSnapshotEvent(teamDir, j, "", "reconcile", "", data); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func applyPRReconcile(j *Job, input ReconcileInput, now time.Time) string {
 	if strings.TrimSpace(input.PRURL) != "" {
 		j.PR = strings.TrimSpace(input.PRURL)
 	} else if strings.TrimSpace(j.PR) == "" && strings.TrimSpace(input.PR) != "" {
@@ -82,26 +117,24 @@ func ReconcilePR(teamDir string, input ReconcileInput, now time.Time) (*Reconcil
 	case strings.HasPrefix(eventType, "pr.") && j.Status == StatusQueued:
 		j.Status = StatusRunning
 	}
-	if err := Write(teamDir, j); err != nil {
-		return nil, err
+	return j.LastStatus
+}
+
+func cloneJob(j *Job) *Job {
+	if j == nil {
+		return nil
 	}
-	data := map[string]string{"matched_by": match.MatchedBy}
-	if input.PR != "" {
-		data["pr"] = input.PR
+	cp := *j
+	if len(j.Steps) > 0 {
+		cp.Steps = make([]Step, len(j.Steps))
+		for i, step := range j.Steps {
+			cp.Steps[i] = step
+			if len(step.After) > 0 {
+				cp.Steps[i].After = append([]string(nil), step.After...)
+			}
+		}
 	}
-	if input.PRURL != "" {
-		data["pr_url"] = input.PRURL
-	}
-	if input.Branch != "" {
-		data["branch"] = input.Branch
-	}
-	if input.Source != "" {
-		data["source"] = input.Source
-	}
-	if err := AppendSnapshotEvent(teamDir, j, "", "reconcile", "", data); err != nil {
-		return nil, err
-	}
-	return &ReconcileResult{Job: j, MatchedBy: match.MatchedBy, Message: j.LastStatus}, nil
+	return &cp
 }
 
 // IsMerged reports whether the input explicitly represents a merged PR.
