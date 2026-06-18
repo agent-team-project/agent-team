@@ -35,6 +35,7 @@ func newHealthCmd() *cobra.Command {
 		staleOnly       bool
 		unhealthyOnly   bool
 		strictTopology  bool
+		includeJobs     bool
 		interval        time.Duration
 		timeout         time.Duration
 	)
@@ -92,6 +93,7 @@ func newHealthCmd() *cobra.Command {
 				opts.filters.Limit = 1
 			}
 			opts.strictTopology = strictTopology
+			opts.includeJobs = includeJobs
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -160,6 +162,7 @@ func newHealthCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only check instances whose status.toml is stale.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only check crashed or stale instances. Daemon health remains global.")
 	cmd.Flags().BoolVar(&strictTopology, "strict-topology", false, "Treat running daemon-known instances not declared in instances.toml as unhealthy.")
+	cmd.Flags().BoolVar(&includeJobs, "jobs", false, "Include durable job triage and treat jobs needing attention as unhealthy.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch or --wait.")
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
 	return cmd
@@ -168,6 +171,7 @@ func newHealthCmd() *cobra.Command {
 type healthOptions struct {
 	filters        psOptions
 	strictTopology bool
+	includeJobs    bool
 }
 
 func newHealthOptions(statusFilters, agentFilters, phaseFilters []string, staleOnly bool) (healthOptions, error) {
@@ -187,14 +191,15 @@ func newHealthOptionsWithInstancesAndUnhealthy(statusFilters, agentFilters, phas
 }
 
 type healthResult struct {
-	Healthy   bool             `json:"healthy"`
-	Daemon    healthDaemon     `json:"daemon"`
-	Summary   psSummaryJSON    `json:"summary"`
-	Queue     queueSummary     `json:"queue"`
-	Declared  healthDeclared   `json:"declared"`
-	Issues    []healthIssue    `json:"issues"`
-	CheckedAt string           `json:"checked_at"`
-	Instances []healthInstance `json:"instances,omitempty"`
+	Healthy   bool               `json:"healthy"`
+	Daemon    healthDaemon       `json:"daemon"`
+	Summary   psSummaryJSON      `json:"summary"`
+	Queue     queueSummary       `json:"queue"`
+	Jobs      *jobTriageSnapshot `json:"jobs,omitempty"`
+	Declared  healthDeclared     `json:"declared"`
+	Issues    []healthIssue      `json:"issues"`
+	CheckedAt string             `json:"checked_at"`
+	Instances []healthInstance   `json:"instances,omitempty"`
 }
 
 type healthDaemon struct {
@@ -214,6 +219,7 @@ type healthIssue struct {
 	Code     string `json:"code"`
 	Severity string `json:"severity"`
 	Instance string `json:"instance,omitempty"`
+	Job      string `json:"job,omitempty"`
 	Message  string `json:"message"`
 	Status   string `json:"status,omitempty"`
 	Phase    string `json:"phase,omitempty"`
@@ -371,6 +377,11 @@ func collectHealthWithOptions(teamDir string, now time.Time, opts healthOptions)
 	if err := addQueueHealth(result, teamDir, now); err != nil {
 		return nil, err
 	}
+	if opts.includeJobs {
+		if err := addJobHealth(result, teamDir, now); err != nil {
+			return nil, err
+		}
+	}
 	return result, nil
 }
 
@@ -499,6 +510,21 @@ func addQueueHealth(result *healthResult, teamDir string, now time.Time) error {
 	return nil
 }
 
+func addJobHealth(result *healthResult, teamDir string, now time.Time) error {
+	if result == nil {
+		return nil
+	}
+	snapshot, err := collectJobTriage(teamDir, now.UTC(), defaultJobTriageStaleAfter)
+	if err != nil {
+		return err
+	}
+	result.Jobs = &snapshot
+	for _, item := range snapshot.Attention {
+		result.addJobIssue(item)
+	}
+	return nil
+}
+
 func filterHealthRows(rows []instanceRow, opts healthOptions) []instanceRow {
 	return filterLimitSortPsRows(rows, opts.filters)
 }
@@ -562,11 +588,36 @@ func healthRowMatchesFilters(row instanceRow, opts healthOptions) bool {
 }
 
 func (r *healthResult) addIssue(code, instance, status, phase, message string) {
+	r.addIssueWithSeverity(code, "error", instance, "", status, phase, message)
+}
+
+func (r *healthResult) addJobIssue(item jobTriageItem) {
+	severity := item.Severity
+	switch severity {
+	case "critical":
+		severity = "error"
+	case "warning", "info":
+	default:
+		severity = "error"
+	}
+	reasons := strings.Join(item.Reasons, ",")
+	if reasons == "" {
+		reasons = "attention"
+	}
+	message := fmt.Sprintf("job %q needs attention: %s", item.JobID, reasons)
+	if strings.TrimSpace(item.Message) != "" {
+		message += ": " + strings.TrimSpace(item.Message)
+	}
+	r.addIssueWithSeverity("job_attention", severity, item.Instance, item.JobID, string(item.Status), "", message)
+}
+
+func (r *healthResult) addIssueWithSeverity(code, severity, instance, jobID, status, phase, message string) {
 	r.Healthy = false
 	r.Issues = append(r.Issues, healthIssue{
 		Code:     code,
-		Severity: "error",
+		Severity: severity,
 		Instance: instance,
+		Job:      jobID,
 		Status:   status,
 		Phase:    phase,
 		Message:  message,
@@ -609,6 +660,18 @@ func renderHealth(w io.Writer, result *healthResult) {
 			result.Queue.Attempts,
 		)
 	}
+	if result.Jobs != nil {
+		fmt.Fprintf(w, "jobs: total=%d queued=%d running=%d blocked=%d done=%d failed=%d attention=%d ready_steps=%d\n",
+			result.Jobs.Summary.Total,
+			result.Jobs.Summary.Queued,
+			result.Jobs.Summary.Running,
+			result.Jobs.Summary.Blocked,
+			result.Jobs.Summary.Done,
+			result.Jobs.Summary.Failed,
+			len(result.Jobs.Attention),
+			len(result.Jobs.ReadySteps),
+		)
+	}
 	fmt.Fprint(w, "phases:")
 	for _, phase := range lifecyclePhaseSummaryOrder() {
 		fmt.Fprintf(w, " %s=%d", phase, result.Summary.Phases[phase])
@@ -627,6 +690,9 @@ func renderHealth(w io.Writer, result *healthResult) {
 		}
 		detail := issue.Message
 		parts := []string{}
+		if issue.Job != "" {
+			parts = append(parts, "job="+issue.Job)
+		}
 		if issue.Status != "" {
 			parts = append(parts, "status="+issue.Status)
 		}

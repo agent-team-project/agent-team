@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/jamesaud/agent-team/internal/topology"
 )
 
@@ -525,6 +526,69 @@ func TestHealthCommandReportsDeadQueueItems(t *testing.T) {
 	}
 	if !sawQueueIssue {
 		t.Fatalf("issues = %+v, missing queue_dead_letter", body.Issues)
+	}
+}
+
+func TestHealthCommandJobsReportsJobAttention(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC().Add(-48 * time.Hour)
+	failed := &job.Job{
+		ID:         "squ-91",
+		Ticket:     "SQU-91",
+		Target:     "worker",
+		Status:     job.StatusFailed,
+		LastStatus: "tests failed",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if err := job.Write(teamDir, failed); err != nil {
+		t.Fatalf("write failed job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"health", "--jobs", "--json", "--target", tmp})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("health --jobs succeeded unexpectedly")
+	}
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 1 {
+		t.Fatalf("expected exit 1, got %v", err)
+	}
+	var body healthResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode health jobs json: %v\nbody=%s stderr=%s", err, out.String(), stderr.String())
+	}
+	if body.Jobs == nil || body.Jobs.Summary.Total != 1 || len(body.Jobs.Attention) != 1 {
+		t.Fatalf("jobs = %+v", body.Jobs)
+	}
+	var sawJobIssue bool
+	for _, issue := range body.Issues {
+		if issue.Code == "job_attention" && issue.Job == "squ-91" && issue.Status == string(job.StatusFailed) {
+			sawJobIssue = true
+		}
+	}
+	if !sawJobIssue {
+		t.Fatalf("issues = %+v, missing job_attention", body.Issues)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"health", "--jobs", "--target", tmp})
+	if err := text.Execute(); err == nil {
+		t.Fatal("health --jobs text succeeded unexpectedly")
+	}
+	for _, want := range []string{"jobs: total=1", "attention=1", "job_attention", "job=squ-91"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("health text missing %q:\n%s", want, textOut.String())
+		}
 	}
 }
 
