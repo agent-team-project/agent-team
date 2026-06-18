@@ -1771,6 +1771,7 @@ func newJobStepCmd() *cobra.Command {
 		worktree  string
 		advance   bool
 		workspace string
+		dryRun    bool
 		jsonOut   bool
 	)
 	cwd, _ := os.Getwd()
@@ -1797,6 +1798,17 @@ func newJobStepCmd() *cobra.Command {
 			}); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job step: %v\n", err)
 				return exitErr(2)
+			}
+			if dryRun {
+				if advance && stepStatus == job.StatusDone {
+					preview, err := previewJobAdvanceDispatch(teamDir, j, workspace)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job step: %v\n", err)
+						return exitErr(1)
+					}
+					return renderJobAdvancePreview(cmd.OutOrStdout(), preview, jsonOut, nil)
+				}
+				return renderJobStepPreview(cmd.OutOrStdout(), j, jsonOut)
 			}
 			if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"step": args[1]}); err != nil {
 				return err
@@ -1827,6 +1839,7 @@ func newJobStepCmd() *cobra.Command {
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Worktree path to record on the job.")
 	cmd.Flags().BoolVar(&advance, "advance", false, "After marking the step done, dispatch the next ready step.")
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for an advanced step: auto, worktree, or repo.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the step update and optional advance dispatch without writing job or daemon state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job or advance result as JSON.")
 	return cmd
 }
@@ -4822,6 +4835,20 @@ func renderJobReopenPreview(w io.Writer, j *job.Job, jsonOut bool, tmpl *templat
 	}
 	if tmpl != nil {
 		return renderJobTemplate(w, j, tmpl)
+	}
+	fmt.Fprintln(w, "Dry run: true")
+	renderJobDetail(w, j)
+	return nil
+}
+
+type jobStepPreview struct {
+	Job    *job.Job `json:"job"`
+	DryRun bool     `json:"dry_run"`
+}
+
+func renderJobStepPreview(w io.Writer, j *job.Job, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(jobStepPreview{Job: j, DryRun: true})
 	}
 	fmt.Fprintln(w, "Dry run: true")
 	renderJobDetail(w, j)

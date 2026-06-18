@@ -3310,6 +3310,66 @@ func TestJobStepDoneAdvanceDispatchesNextStep(t *testing.T) {
 		t.Fatalf("write job: %v", err)
 	}
 
+	stepDry := NewRootCmd()
+	stepDryOut, stepDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	stepDry.SetOut(stepDryOut)
+	stepDry.SetErr(stepDryErr)
+	stepDry.SetArgs([]string{"job", "step", "squ-202", "triage", "--status", "blocked", "--message", "needs review notes", "--repo", target, "--dry-run", "--json"})
+	if err := stepDry.Execute(); err != nil {
+		t.Fatalf("job step dry-run: %v\nstderr=%s", err, stepDryErr.String())
+	}
+	var stepPreview jobStepPreview
+	if err := json.Unmarshal(stepDryOut.Bytes(), &stepPreview); err != nil {
+		t.Fatalf("decode step dry-run json: %v\nbody=%s", err, stepDryOut.String())
+	}
+	if !stepPreview.DryRun || stepPreview.Job == nil || stepPreview.Job.Steps[0].Status != job.StatusBlocked || stepPreview.Job.LastStatus != "needs review notes" {
+		t.Fatalf("step preview = %+v", stepPreview)
+	}
+	unchanged, err := job.Read(teamDir, "squ-202")
+	if err != nil {
+		t.Fatalf("read dry-run job: %v", err)
+	}
+	if unchanged.Steps[0].Status != job.StatusRunning || unchanged.LastStatus != "" {
+		t.Fatalf("step dry-run mutated job = %+v", unchanged)
+	}
+
+	advanceDry := NewRootCmd()
+	advanceDryOut, advanceDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	advanceDry.SetOut(advanceDryOut)
+	advanceDry.SetErr(advanceDryErr)
+	advanceDry.SetArgs([]string{"job", "step", "squ-202", "triage", "--status", "done", "--advance", "--repo", target, "--dry-run", "--json"})
+	if err := advanceDry.Execute(); err != nil {
+		t.Fatalf("job step --advance dry-run: %v\nstderr=%s", err, advanceDryErr.String())
+	}
+	var advancePreview jobAdvancePreview
+	if err := json.Unmarshal(advanceDryOut.Bytes(), &advancePreview); err != nil {
+		t.Fatalf("decode step advance dry-run json: %v\nbody=%s", err, advanceDryOut.String())
+	}
+	if !advancePreview.DryRun || advancePreview.Job == nil || advancePreview.Job.Steps[0].Status != job.StatusDone || advancePreview.Step == nil || advancePreview.Step.ID != "review" {
+		t.Fatalf("advance preview = %+v", advancePreview)
+	}
+	if advancePreview.Dispatch == nil || advancePreview.Dispatch.RequestedName != "manager-squ-202-review" {
+		t.Fatalf("dispatch preview = %+v", advancePreview.Dispatch)
+	}
+	payload := advancePreview.Dispatch.Preview.Payload
+	if payload["pipeline"] != "ticket_triage" || payload["pipeline_step"] != "review" || payload["job_id"] != "squ-202" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	unchanged, err = job.Read(teamDir, "squ-202")
+	if err != nil {
+		t.Fatalf("read advance dry-run job: %v", err)
+	}
+	if unchanged.Steps[0].Status != job.StatusRunning || unchanged.Steps[1].Status != job.StatusBlocked {
+		t.Fatalf("advance dry-run mutated job = %+v", unchanged)
+	}
+	dryMessages, err := daemon.ReadMessages(daemon.DaemonRoot(teamDir), "manager")
+	if err != nil {
+		t.Fatalf("read dry-run messages: %v", err)
+	}
+	if len(dryMessages) != 0 {
+		t.Fatalf("dry-run sent messages = %+v", dryMessages)
+	}
+
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
