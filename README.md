@@ -178,7 +178,7 @@ agent-team dispatch <target> <ticket> [kickoff...] [--name <instance>] [--source
 agent-team job create <ticket> [kickoff...] [--target worker] [--pipeline ticket_to_pr] [--dispatch] [--workspace auto|worktree|repo] [--instance <name>] [--json]
 agent-team job ls [-w] [--summary] [--sort id|status|target|updated|created] [--status queued|running|blocked|done|failed] [--target-agent worker] [--pipeline name] [--instance name] [--json]
 agent-team job show <job-id> | next <job-id> [--json] | ready [--state ready|queued|all] [--json] | events <job-id> [-f] [--tail N|all] [--type closed] [--actor cli] [--since 24h] [--json]
-agent-team job dispatch|start|stop|kill|wait|logs|attach|send|update|close|reopen|cleanup|rm|prune|step|advance ...
+agent-team job dispatch|start|stop|kill|wait|logs|attach|send|update|close|reopen|cleanup|rm|prune|step|advance|reconcile ...
                                                 # create, monitor, dispatch, control, and clean up durable work units
 agent-team pipeline ls [--json] | show <pipeline> [--json] | jobs <pipeline> [--status running] [--json] | ready <pipeline> [--state ready|all] [--json] | run <pipeline> <ticket> [--dispatch] [--json]
                                                 # inspect declared pipeline workflows from instances.toml

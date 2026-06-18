@@ -183,6 +183,94 @@ func TestJobShowIncludesQueueItems(t *testing.T) {
 	}
 }
 
+func TestJobReconcileQueueUpdatesDeadJob(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	j, err := job.New("SQU-110", "worker", "reconcile queue state", time.Now())
+	if err != nil {
+		t.Fatalf("job.New: %v", err)
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("job.Write: %v", err)
+	}
+	now := time.Now().UTC()
+	item := &daemon.QueueItem{
+		ID:         "q-job-reconcile",
+		State:      daemon.QueueStateDead,
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-110",
+		Payload: map[string]any{
+			"job_id": "squ-110",
+			"ticket": "SQU-110",
+			"target": "worker",
+		},
+		Attempts:       daemon.MaxQueueAttempts,
+		LastError:      "spawn failed",
+		QueuedAt:       now.Add(-time.Hour),
+		UpdatedAt:      now,
+		DeadLetteredAt: now,
+	}
+	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+		t.Fatalf("WriteQueueItem: %v", err)
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"job", "reconcile", "queue", "--repo", tmp, "--state", "dead", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("job reconcile queue dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryResults []jobQueueReconcileResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryResults); err != nil {
+		t.Fatalf("decode dry reconcile json: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(dryResults) != 1 || dryResults[0].JobID != "squ-110" || dryResults[0].After != job.StatusFailed || !dryResults[0].Changed || !dryResults[0].DryRun {
+		t.Fatalf("dry results = %+v", dryResults)
+	}
+	unchanged, err := job.Read(teamDir, "squ-110")
+	if err != nil {
+		t.Fatalf("read dry-run job: %v", err)
+	}
+	if unchanged.Status != job.StatusQueued {
+		t.Fatalf("dry-run changed job = %+v", unchanged)
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"job", "reconcile", "queue", "--repo", tmp, "--state", "dead", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("job reconcile queue apply: %v\nstderr=%s", err, applyErr.String())
+	}
+	var applied []jobQueueReconcileResult
+	if err := json.Unmarshal(applyOut.Bytes(), &applied); err != nil {
+		t.Fatalf("decode applied reconcile json: %v\nbody=%s", err, applyOut.String())
+	}
+	if len(applied) != 1 || applied[0].JobID != "squ-110" || applied[0].After != job.StatusFailed || !applied[0].Changed || applied[0].DryRun {
+		t.Fatalf("applied = %+v", applied)
+	}
+	updated, err := job.Read(teamDir, "squ-110")
+	if err != nil {
+		t.Fatalf("read updated job: %v", err)
+	}
+	if updated.Status != job.StatusFailed || updated.LastEvent != "queue_dead" || updated.LastStatus != "spawn failed" || updated.Instance != "worker-squ-110" {
+		t.Fatalf("updated job = %+v", updated)
+	}
+	events, err := job.ListEvents(teamDir, "squ-110")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "queue_reconcile" || events[0].Data["queue_id"] != "q-job-reconcile" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
 func TestJobCreateFromPipeline(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

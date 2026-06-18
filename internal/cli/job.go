@@ -1470,9 +1470,57 @@ func newJobAdvanceCmd() *cobra.Command {
 func newJobReconcileCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reconcile",
-		Short: "Reconcile external PR state back into jobs.",
+		Short: "Reconcile external runtime state back into jobs.",
 	}
 	cmd.AddCommand(newJobReconcileGitHubCmd())
+	cmd.AddCommand(newJobReconcileQueueCmd())
+	return cmd
+}
+
+func newJobReconcileQueueCmd() *cobra.Command {
+	var (
+		repo    string
+		state   string
+		dryRun  bool
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "queue",
+		Short: "Reconcile persisted queue state back into owning jobs.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile queue: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobQueueReconcileFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reconcile queue: %v\n", err)
+				return exitErr(2)
+			}
+			stateFilter, err := parseJobQueueReconcileState(state)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reconcile queue: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			results, err := reconcileJobsFromQueue(teamDir, stateFilter, dryRun, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			return renderJobQueueReconcileResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&state, "state", queuePruneStateAll, "Queue state to reconcile: pending, dead, or all.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview job updates without writing them.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.After}}'.")
 	return cmd
 }
 
@@ -2629,6 +2677,122 @@ func queuePayloadString(payload map[string]any, key string) string {
 	}
 }
 
+func parseJobQueueReconcileState(raw string) (string, error) {
+	state := strings.ToLower(strings.TrimSpace(raw))
+	switch state {
+	case "", queuePruneStateAll:
+		return queuePruneStateAll, nil
+	case daemon.QueueStatePending, daemon.QueueStateDead:
+		return state, nil
+	default:
+		return "", fmt.Errorf("--state must be pending, dead, or all")
+	}
+}
+
+func reconcileJobsFromQueue(teamDir, state string, dryRun bool, now time.Time) ([]jobQueueReconcileResult, error) {
+	items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]jobQueueReconcileResult, 0)
+	for _, item := range items {
+		if state != queuePruneStateAll && item.State != state {
+			continue
+		}
+		j := jobForQueueItem(jobs, item)
+		if j == nil {
+			continue
+		}
+		result := reconcileJobFromQueueItem(j, item, dryRun, now)
+		if result.Changed && !dryRun {
+			if err := writeJobWithAudit(teamDir, j, "queue_reconcile", "cli", result.Message, map[string]string{
+				"queue_id":    item.ID,
+				"queue_state": item.State,
+				"instance":    item.Instance,
+				"instance_id": item.InstanceID,
+			}); err != nil {
+				return nil, err
+			}
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func jobForQueueItem(jobs []*job.Job, item *daemon.QueueItem) *job.Job {
+	for _, j := range jobs {
+		if queueItemMatchesJob(item, j) {
+			return j
+		}
+	}
+	return nil
+}
+
+func reconcileJobFromQueueItem(j *job.Job, item *daemon.QueueItem, dryRun bool, now time.Time) jobQueueReconcileResult {
+	before := j.Status
+	after, event, status := queueReconciledJobState(j, item, now)
+	result := jobQueueReconcileResult{
+		JobID:      j.ID,
+		QueueID:    item.ID,
+		QueueState: item.State,
+		Before:     before,
+		After:      after,
+		Instance:   item.InstanceID,
+		Message:    status,
+		DryRun:     dryRun,
+	}
+	if j.Status == job.StatusDone {
+		return result
+	}
+	if j.Status != after || j.LastEvent != event || j.LastStatus != status || (item.InstanceID != "" && j.Instance != item.InstanceID) {
+		result.Changed = true
+	}
+	if dryRun || !result.Changed {
+		return result
+	}
+	j.Status = after
+	j.LastEvent = event
+	j.LastStatus = status
+	if item.InstanceID != "" {
+		j.Instance = item.InstanceID
+	}
+	if item.Instance != "" {
+		j.Target = item.Instance
+	}
+	j.UpdatedAt = now.UTC()
+	return result
+}
+
+func queueReconciledJobState(j *job.Job, item *daemon.QueueItem, now time.Time) (job.Status, string, string) {
+	if j.Status == job.StatusDone {
+		return j.Status, j.LastEvent, j.LastStatus
+	}
+	switch item.State {
+	case daemon.QueueStateDead:
+		status := strings.TrimSpace(item.LastError)
+		if status == "" {
+			status = "dead-lettered queue item " + item.ID
+		}
+		return job.StatusFailed, "queue_dead", status
+	case daemon.QueueStatePending:
+		status := "queued"
+		if !item.NextRetry.IsZero() {
+			if item.NextRetry.After(now.UTC()) {
+				status = "retry at " + item.NextRetry.Format(time.RFC3339)
+			} else {
+				status = "ready to retry"
+			}
+		}
+		return job.StatusQueued, "queue_pending", status
+	default:
+		return j.Status, j.LastEvent, j.LastStatus
+	}
+}
+
 func applyDispatchResponseToJob(j *job.Job, requestedName string, res *eventResponse) {
 	now := time.Now().UTC()
 	j.UpdatedAt = now
@@ -2707,6 +2871,18 @@ type jobAdvanceResult struct {
 type jobDispatchResult struct {
 	Job   *job.Job       `json:"job"`
 	Event *eventResponse `json:"event"`
+}
+
+type jobQueueReconcileResult struct {
+	JobID      string     `json:"job_id"`
+	QueueID    string     `json:"queue_id"`
+	QueueState string     `json:"queue_state"`
+	Before     job.Status `json:"before"`
+	After      job.Status `json:"after"`
+	Instance   string     `json:"instance,omitempty"`
+	Message    string     `json:"message,omitempty"`
+	Changed    bool       `json:"changed"`
+	DryRun     bool       `json:"dry_run,omitempty"`
 }
 
 type jobNextResult struct {
@@ -3242,6 +3418,17 @@ func parseJobRemoveFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
+func parseJobQueueReconcileFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("job-queue-reconcile-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
 func renderJobResult(w io.Writer, j *job.Job, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(j)
@@ -3285,6 +3472,41 @@ func renderJobTable(w io.Writer, jobs []*job.Job) {
 			j.ID, j.Status, j.Target, emptyDash(j.Instance), emptyDash(j.Pipeline), j.Ticket, j.UpdatedAt.Format(time.RFC3339))
 	}
 	_ = tw.Flush()
+}
+
+func renderJobQueueReconcileResults(w io.Writer, results []jobQueueReconcileResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := tmpl.Execute(w, result); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if len(results) == 0 {
+		fmt.Fprintln(w, "(no queue-backed jobs reconciled)")
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "JOB\tQUEUE\tSTATE\tBEFORE\tAFTER\tINSTANCE\tACTION\tMESSAGE")
+	for _, result := range results {
+		action := "unchanged"
+		if result.Changed {
+			action = "updated"
+			if result.DryRun {
+				action = "would_update"
+			}
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			result.JobID, result.QueueID, result.QueueState, result.Before, result.After, emptyDash(result.Instance), action, emptyDash(result.Message))
+	}
+	return tw.Flush()
 }
 
 func renderJobDetail(w io.Writer, j *job.Job) {
