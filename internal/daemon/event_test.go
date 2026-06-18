@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,6 +43,34 @@ func mustParseTopo(t *testing.T) *topology.Topology {
 	return top
 }
 
+func fixtureTeamDir(t *testing.T) string {
+	t.Helper()
+	repoRoot := t.TempDir()
+	teamDir := filepath.Join(repoRoot, ".agent_team")
+	writeFixtureAgent(t, teamDir, "worker")
+	return teamDir
+}
+
+func writeFixtureAgent(t *testing.T, teamDir, name string) {
+	t.Helper()
+	agentDir := filepath.Join(teamDir, "agents", name)
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\ndescription: fixture " + name + "\n---\n\nYou are fixture " + name + ".\n"
+	if err := os.WriteFile(filepath.Join(agentDir, "agent.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, string(out))
+	}
+}
+
 func (f *fakeSpawner) lastEnv() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -49,6 +78,12 @@ func (f *fakeSpawner) lastEnv() []string {
 		return nil
 	}
 	return append([]string(nil), f.envs[len(f.envs)-1]...)
+}
+
+func (f *fakeSpawner) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
 }
 
 func containsString(items []string, want string) bool {
@@ -103,7 +138,7 @@ func TestEvent_EphemeralDispatchUnderCapacity(t *testing.T) {
 	root := t.TempDir()
 	fake := newFakeSpawner(30 * time.Second)
 	m := NewInstanceManager(root, fake.spawn)
-	resolver := NewEventResolver(m, filepath.Join(t.TempDir(), ".agent_team"), mustParseTopo(t))
+	resolver := NewEventResolver(m, fixtureTeamDir(t), mustParseTopo(t))
 	srv := httptest.NewServer(Handler(m, nil, resolver, root))
 	defer srv.Close()
 
@@ -130,6 +165,180 @@ func TestEvent_EphemeralDispatchUnderCapacity(t *testing.T) {
 	}
 }
 
+func TestEvent_EphemeralDispatchUsesRequestedChildName(t *testing.T) {
+	root := t.TempDir()
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, fixtureTeamDir(t), mustParseTopo(t))
+	srv := httptest.NewServer(Handler(m, nil, resolver, root))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"agent.dispatch","payload":{"target":"worker","name":"worker-squ-42","kickoff":"implement SQU-42"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var got struct {
+		Dispatched []map[string]any `json:"dispatched"`
+		Rejected   []map[string]any `json:"rejected"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Rejected) != 0 {
+		t.Fatalf("unexpected rejection: %+v", got.Rejected)
+	}
+	if len(got.Dispatched) != 1 {
+		t.Fatalf("expected 1 dispatched, got %+v", got)
+	}
+	if id, _ := got.Dispatched[0]["instance_id"].(string); id != "worker-squ-42" {
+		t.Fatalf("instance_id = %q, want worker-squ-42", id)
+	}
+	call := fake.lastCall()
+	if len(call) < 11 || call[0] != "claude" || call[1] != "--session-id" || call[2] == "" {
+		t.Fatalf("spawn call = %#v, want claude --session-id <id> with agent runtime args", call)
+	}
+	for _, want := range []string{"--agents", "--add-dir", "--append-system-prompt-file", "-p"} {
+		if !containsString(call, want) {
+			t.Fatalf("spawn call missing %q: %#v", want, call)
+		}
+	}
+	var prompt string
+	for i := 0; i < len(call)-1; i++ {
+		if call[i] == "-p" {
+			prompt = call[i+1]
+			break
+		}
+	}
+	if !strings.Contains(prompt, `"name":"worker-squ-42"`) {
+		t.Fatalf("prompt missing requested child name: %s", prompt)
+	}
+}
+
+func TestEvent_EphemeralDispatchRejectsDuplicateRequestedChildName(t *testing.T) {
+	root := t.TempDir()
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, fixtureTeamDir(t), mustParseTopo(t))
+	srv := httptest.NewServer(Handler(m, nil, resolver, root))
+	defer srv.Close()
+
+	body := `{"type":"agent.dispatch","payload":{"target":"worker","name":"worker-squ-42","kickoff":"implement SQU-42"}}`
+	resp := mustPost(t, srv.URL+"/v1/event", body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("first event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	resp = mustPost(t, srv.URL+"/v1/event", body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("second event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var got struct {
+		Dispatched []map[string]any `json:"dispatched"`
+		Rejected   []map[string]any `json:"rejected"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Dispatched) != 0 {
+		t.Fatalf("second dispatch should not spawn, got %+v", got.Dispatched)
+	}
+	if len(got.Rejected) != 1 {
+		t.Fatalf("expected duplicate rejection, got %+v", got)
+	}
+	reason, _ := got.Rejected[0]["reason"].(string)
+	if !strings.Contains(reason, `instance "worker-squ-42" already running`) {
+		t.Fatalf("rejection reason = %q", reason)
+	}
+	if calls := fake.callCount(); calls != 1 {
+		t.Fatalf("spawner calls = %d, want 1", calls)
+	}
+}
+
+func TestEvent_EphemeralDispatchCanCreateWorktreeWorkspace(t *testing.T) {
+	root := t.TempDir()
+	repoRoot := t.TempDir()
+	runGit(t, repoRoot, "init")
+	runGit(t, repoRoot, "config", "user.email", "test@example.com")
+	runGit(t, repoRoot, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoRoot, "add", "README.md")
+	runGit(t, repoRoot, "commit", "-m", "init")
+	teamDir := filepath.Join(repoRoot, ".agent_team")
+	writeFixtureAgent(t, teamDir, "worker")
+
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
+	srv := httptest.NewServer(Handler(m, nil, resolver, root))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"agent.dispatch","payload":{"target":"worker","name":"worker-squ-42","workspace":"worktree","kickoff":"implement SQU-42"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var got struct {
+		Dispatched []map[string]any `json:"dispatched"`
+		Rejected   []map[string]any `json:"rejected"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Rejected) != 0 || len(got.Dispatched) != 1 {
+		t.Fatalf("dispatch response = %+v", got)
+	}
+	meta, err := ReadMetadata(root, "worker-squ-42")
+	if err != nil {
+		t.Fatalf("metadata: %v", err)
+	}
+	wantPrefix := filepath.Join(repoRoot, ".claude", "worktrees", "worker-squ-42-")
+	if !strings.HasPrefix(meta.Workspace, wantPrefix) {
+		t.Fatalf("workspace = %q, want prefix %q", meta.Workspace, wantPrefix)
+	}
+	if _, err := os.Stat(filepath.Join(meta.Workspace, "README.md")); err != nil {
+		t.Fatalf("worktree missing README: %v", err)
+	}
+	_, _ = m.Stop("worker-squ-42")
+	_ = m.WaitForReaper("worker-squ-42", 5*time.Second)
+}
+
+func TestEvent_EphemeralDispatchRejectsUnsafeRequestedChildName(t *testing.T) {
+	root := t.TempDir()
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, fixtureTeamDir(t), mustParseTopo(t))
+	srv := httptest.NewServer(Handler(m, nil, resolver, root))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"agent.dispatch","payload":{"target":"worker","name":"../worker-squ-42"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var got struct {
+		Dispatched []map[string]any `json:"dispatched"`
+		Rejected   []map[string]any `json:"rejected"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Dispatched) != 0 {
+		t.Fatalf("dispatched should be empty, got %+v", got.Dispatched)
+	}
+	if len(got.Rejected) != 1 {
+		t.Fatalf("expected rejection, got %+v", got)
+	}
+	reason, _ := got.Rejected[0]["reason"].(string)
+	if !strings.Contains(reason, "path segments are not allowed") {
+		t.Fatalf("rejection reason = %q", reason)
+	}
+	if call := fake.lastCall(); call != nil {
+		t.Fatalf("spawner should not be called, got %#v", call)
+	}
+}
+
 func TestEvent_EphemeralDispatchPreparesRuntimeState(t *testing.T) {
 	root := t.TempDir()
 	repoRoot := t.TempDir()
@@ -137,6 +346,7 @@ func TestEvent_EphemeralDispatchPreparesRuntimeState(t *testing.T) {
 	if err := os.MkdirAll(teamDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	writeFixtureAgent(t, teamDir, "worker")
 	if err := os.WriteFile(filepath.Join(teamDir, "config.toml"), []byte(`
 [linear]
 team_id = "repo-team"
@@ -211,10 +421,7 @@ match.target = "worker"
 
 func TestEvent_EphemeralReapCleansMetadataAndState(t *testing.T) {
 	root := t.TempDir()
-	teamDir := filepath.Join(t.TempDir(), ".agent_team")
-	if err := os.MkdirAll(teamDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	teamDir := fixtureTeamDir(t)
 	fake := newFakeSpawner(time.Second)
 	m := NewInstanceManager(root, fake.spawn)
 	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
@@ -269,7 +476,7 @@ func TestEvent_EphemeralReplicasQueueing(t *testing.T) {
 	root := t.TempDir()
 	fake := newFakeSpawner(30 * time.Second)
 	m := NewInstanceManager(root, fake.spawn)
-	resolver := NewEventResolver(m, filepath.Join(t.TempDir(), ".agent_team"), mustParseTopo(t))
+	resolver := NewEventResolver(m, fixtureTeamDir(t), mustParseTopo(t))
 	resolver.SetQueueCap(2) // small cap so we can hit it deterministically.
 	srv := httptest.NewServer(Handler(m, nil, resolver, root))
 	defer srv.Close()

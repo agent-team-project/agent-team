@@ -384,13 +384,20 @@ If the manager later dispatches a worker via `assign-worker`:
 ```
 POST /event
     { "type": "agent.dispatch",
-      "payload": { "source": "manager", "target": "worker", "kickoff": "implement SQU-42" } }
+      "payload": {
+        "source": "manager",
+        "target": "worker",
+        "name": "worker-squ-42",
+        "ticket": "SQU-42",
+        "kickoff": "implement SQU-42",
+        "workspace": "worktree"
+      } }
 
 → { "matched": ["worker"],
     "dispatched": [{ "instance_id": "worker-squ-42", "started_at": "..." }] }
 ```
 
-A fresh worker spawns (ephemeral, generated name from the kickoff). The daemon creates `.agent_team/state/<generated-worker>/`, writes the resolved config from repo + declared instance overrides, and exports the same `AGENT_TEAM_ROOT`, `AGENT_TEAM_INSTANCE`, and `AGENT_TEAM_STATE_DIR` variables that `agent-team run` provides. When the worker opens its PR and exits, the slot frees up — capped at the declared `replicas = 3`.
+A fresh worker spawns under the requested safe child name. If no `payload.name` is supplied, the daemon falls back to `worker-<short-hex>`. The daemon creates `.agent_team/state/<worker-name>/`, writes the resolved config from repo + declared instance overrides, stages the same `--agents` / skill runtime that `agent-team run` uses, exports `AGENT_TEAM_ROOT`, `AGENT_TEAM_INSTANCE`, and `AGENT_TEAM_STATE_DIR`, and, because `workspace = "worktree"` was requested, launches the child in `.claude/worktrees/<worker-name>-<id>/`. When the worker exits, the replica slot frees up — capped at the declared `replicas = 3`.
 
 ### Inspecting and stopping
 
@@ -410,10 +417,7 @@ Stopping tm-mobile ... ✓ (state preserved at .agent_team/state/tm-mobile/)
 
 1. **Match-expression DSL scope.** v1.2 starts with the small TOML-key DSL (single value / list / multiple AND-keys). Users may eventually want regex (`match.title ~ "^\\[urgent\\]"`) or simple boolean ops. Defer to v1.3 once we see what real workloads look like.
 
-2. **Inter-agent dispatch migration.** Today, `manager` dispatches `worker` via the `assign-worker` skill (which uses Claude Code's `Agent` tool with `team_name`). With topology, dispatch becomes `POST /event {type: "agent.dispatch", target: "worker"}`. Two paths:
-   - **Compat shim**: keep `assign-worker` as the user-facing skill, rewrite its implementation to POST to the daemon. Skill API unchanged.
-   - **Direct migration**: agents call the daemon API directly via a new `dispatch` skill; deprecate `assign-worker`.
-   First is more incremental and probably right for v1.2.
+2. **Inter-agent dispatch migration.** Resolved for the bundled team as a compat shim: `assign-worker` remains the user-facing manager skill, but first posts `agent.dispatch` to the daemon. If the daemon is not running or cannot route the event, the skill falls back to Claude Code's legacy `TeamCreate` / `Agent` path.
 
 3. **Replicas semantics.** For ephemeral instances with `replicas = N`: do we queue events that arrive while at capacity, or reject them? Probably queue with a configurable cap; rejection is bad UX for the dispatcher (manager would have to retry).
 

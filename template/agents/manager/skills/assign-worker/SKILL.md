@@ -6,58 +6,93 @@ user_invocable: true
 
 # Assign a Worker Agent
 
-The worker itself is fully specified in the `worker` agent — don't re-explain its job here. This skill only covers the **launch mechanics** the team-lead is responsible for.
+The worker itself is fully specified in the `worker` agent. This skill only covers the **launch / forwarding mechanics** the manager is responsible for.
 
-**Reuse is the default, spawn is the fallback.** A running worker has in-memory reasoning about the ticket and an open branch/PR. Re-spawning gets you a fresh worktree (Claude Code's `isolation: "worktree"` always creates new) and forces re-onboarding — so always look for an existing worker before spawning a new one.
+Use the daemon topology path when `agent-teamd` is running. Fall back to Claude's in-session `TeamCreate` / `Agent` tools only when the daemon socket is unavailable or topology cannot route the event.
 
 ## Preflight
 
 1. **Ticket identifier present?** You need `<PREFIX>-<n>` (the consumer's prefix from `.agent_team/config.toml` under `linear.ticket_prefix`) or a Linear URL. If you can't infer it, ask.
-2. **Is this follow-up on an open PR?** Review-bot comments, rebase requests, post-merge fixups, and "address that feedback" asks all point at an existing PR. Treat these as reuse cases by default — go to **Reuse an existing worker** below.
-3. **Existing worker in this session's team?** Before spawning, look for a teammate whose name matches the ticket or who already opened the target PR. See **Reuse an existing worker**.
+2. **Worker name.** Normalize the ticket to lowercase and use `worker-<ticket-lowercase>` (for example `worker-squ-14`). This stable name lets daemon dispatch reject duplicates and lets you forward follow-up messages to the existing worker.
+3. **Kickoff text.** Pass only the ticket identifier and user-supplied direction. Do not restate the worker's operating procedure; its agent prompt handles planning, implementation, validation, and PR creation.
 
-## Reuse an existing worker
+## Daemon Dispatch (Preferred)
 
-Do this **before** calling `Agent` / `TeamCreate`. If any of these match, send a message to the existing worker instead of spawning a new one.
+If `$AGENT_TEAM_ROOT/daemon.sock` exists, dispatch through topology:
 
-- **Discover by name.** `cat ~/.claude/teams/<team>/config.json` and look for a teammate whose name matches the ticket (e.g. `worker-squ-14` for `SQU-14`). The naming convention from **Spawn** below guarantees one name per ticket, so a match is conclusive.
-- **Discover by PR.** If the user pointed at a PR instead of a ticket, scan the most recent PR URL each teammate has mentioned (the last `gh pr ...` message in their transcript is enough). A worker that opened the target PR owns follow-up on it.
-- **Forward with `SendMessage`.** Send the new instructions to the matched worker: `SendMessage({to: "worker-<ticket>", message: "<the user's follow-up ask>", summary: "..."})`. The idle worker wakes up on receipt and picks up where it left off — its in-memory state is what carries the continuity, not any on-disk worktree (worktrees don't persist across spawns).
+```sh
+"$AGENT_TEAM_ROOT"/agents/manager/skills/assign-worker/scripts/assign_worker.sh dispatch \
+  --ticket SQU-14 \
+  --kickoff "SQU-14: <user's instructions>"
+```
 
-Only fall through to **Spawn** when there is no matching worker — i.e. a genuinely new ticket, or the prior worker was explicitly shut down.
+For long kickoff text, write it to a temp file and use `--kickoff-file <path>`.
 
-## Team setup (one-time per session)
+The helper posts:
 
-Exactly one team per session — this is a hard constraint.
+```json
+{"type":"agent.dispatch","payload":{"source":"<manager>","target":"worker","name":"worker-squ-14","ticket":"SQU-14","kickoff":"...","workspace":"worktree"}}
+```
 
-- Check `ls ~/.claude/teams/` for a team whose `config.json` has `leadSessionId` matching this session. If none, call `TeamCreate` with a **generic, project-level name** (typically the repo name, e.g. `agent-team`, `my-project`) — never per-ticket, because one team has to hold workers for multiple tickets over the session's lifetime.
-- If a team from another session already occupies the obvious name, pick a suffix (`agent-team-2`). Orphaned teams from prior sessions are fine to leave alone.
+Interpret the JSON response:
 
-## Spawn (fallback: only when no existing worker matches)
+- `dispatched` has an entry: a worker started. Report the `instance_id` and continue.
+- `queued` is non-empty: the worker event was accepted but replica capacity is full. Tell the user it is queued.
+- `rejected` says the requested instance is already running or queued: reuse the existing worker by sending the follow-up to `worker-<ticket-lowercase>`:
+  ```sh
+  "$AGENT_TEAM_ROOT"/skills/inbox/scripts/inbox.sh send worker-squ-14 "<the user's follow-up ask>"
+  ```
+- `matched` is empty or `rejected` has another reason: run `agent-team topology show` / `agent-team daemon status` if available, then use the legacy fallback below if the daemon cannot route `agent.dispatch` to `worker`.
 
-Use the `Agent` tool (not `TeamCreate` alone — that only makes the container). Required parameters:
+Do not call `Agent` after a successful daemon dispatch or queue response.
+
+## Legacy Fallback (No Daemon)
+
+Use this only when the daemon socket is missing or daemon topology routing failed.
+
+### Reuse First
+
+Before spawning, check the current Claude team:
+
+- **Discover by name.** `cat ~/.claude/teams/<team>/config.json` and look for a teammate whose name matches the ticket, e.g. `worker-squ-14`.
+- **Discover by PR.** If the user pointed at a PR instead of a ticket, scan recent worker messages for the PR URL. A worker that opened the target PR owns follow-up on it.
+- **Forward with `SendMessage`.** Send the new instructions to the matched worker:
+  `SendMessage({to: "worker-squ-14", message: "<the user's follow-up ask>", summary: "..."})`.
+
+Only spawn when no matching worker exists.
+
+### Team Setup
+
+Exactly one team per session.
+
+- Check `ls ~/.claude/teams/` for a team whose `config.json` has `leadSessionId` matching this session.
+- If none exists, call `TeamCreate` with a generic project-level name, usually the repo name. Never create a per-ticket team.
+- If another session already owns the obvious name, add a suffix such as `agent-team-2`.
+
+### Spawn
+
+Use the `Agent` tool with:
 
 | Param | Value |
 |-------|-------|
 | `subagent_type` | `"worker"` |
-
 | `team_name` | same name used in `TeamCreate` |
-| `name` | `"worker-<ticket-lowercase>"` e.g. `worker-squ-14` — this is how you and the worker address each other via `SendMessage`, and how future reuse-checks find it |
+| `name` | `"worker-<ticket-lowercase>"` |
 | `description` | short, e.g. `"SQU-14 worker extraction"` |
-| `isolation` | `"worktree"` — Claude Code creates a fresh git worktree + branch for the worker before it starts, and auto-cleans if no changes happen. The worker's prompt is written to expect this. |
-| `prompt` | **the ticket identifier and any user-supplied direction** — the worker's own startup sequence handles the rest (plan, implement, PR). Don't re-specify those steps. |
+| `isolation` | `"worktree"` |
+| `prompt` | ticket identifier and user-supplied direction |
 
-Do **not** pass `run_in_background: true` — that forces background mode and breaks tmux visibility + team messaging. Only use it if the user explicitly says "run in background".
+Do **not** pass `run_in_background: true` unless the user explicitly asks for background mode.
 
-## After spawning (or forwarding)
+## After Spawning or Forwarding
 
-- Messages from the worker arrive automatically as new turns. Do not poll, do not sleep.
-- If the worker asks a question (via `SendMessage` or a `blockers.md` entry surfaced in a message), relay it to the user verbatim — don't answer on the user's behalf unless the answer is mechanical (file paths, existing conventions).
-- When the user answers, forward via `SendMessage({to: "worker-<ticket>", ...})` — the idle worker wakes up on receipt.
+- Messages from a legacy worker arrive as new turns through `SendMessage`.
+- Daemon workers receive direct follow-ups through the inbox skill; they may reply through inbox or status files.
+- If a worker asks a question, relay it to the user verbatim unless the answer is mechanical and already present in the repo.
 
-## Common failure modes
+## Common Failure Modes
 
-- **Spawned fresh when a worker already existed.** You skipped the reuse check. The new worker re-asks blockers the user already answered, or starts a parallel branch that conflicts with the first worker's PR. Always check `~/.claude/teams/<team>/config.json` first.
-- **"Team not found" on spawn.** You skipped `TeamCreate`, or you used a different `team_name` than the one you created. Pass the exact name from the `TeamCreate` result.
-- **Worker runs in main repo, not worktree.** The worker's own startup sequence `cd`s into the worktree — but only if the prompt contains the ticket identifier. If you spawned with a vague prompt, it may skip that step. Always include `<PREFIX>-<n>` in the prompt.
-- **Two workers, one team, one ticket.** Only possible if you spawned with two different `name` values for the same ticket. Shut one down via `SendMessage({type: "shutdown_request"})`.
+- **Spawned fresh when a worker already existed.** In daemon mode, repeated dispatch to the same worker name should produce an already-running/queued rejection; forward via inbox. In legacy mode, check the Claude team before spawning.
+- **Daemon dispatch returns no matches.** `instances.toml` is missing the `worker` trigger for `agent.dispatch` or the daemon needs `agent-team topology reload`.
+- **"Team not found" in legacy spawn.** You skipped `TeamCreate` or used a different `team_name`.
+- **Worker runs in the main repo.** Daemon dispatch should include `workspace:"worktree"`; legacy spawn should include `isolation:"worktree"`.

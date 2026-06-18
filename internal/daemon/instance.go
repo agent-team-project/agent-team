@@ -582,6 +582,13 @@ func (m *InstanceManager) List() []*Metadata {
 	return out
 }
 
+func (m *InstanceManager) isRunning(instance string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.instances[instance]
+	return ok && t.meta.Status == StatusRunning
+}
+
 // reap waits for the child to exit and finalises its metadata. Non-zero exit
 // or signal-based exit becomes status=crashed; clean exit becomes
 // status=exited UNLESS the prior status was StatusStopped (a stop we issued),

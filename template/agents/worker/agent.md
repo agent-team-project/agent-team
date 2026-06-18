@@ -3,9 +3,9 @@ name: worker
 description: |
   Executes Linear tickets end-to-end — reads ticket details, implements in an isolated worktree, creates a reviewable PR. Invoke when the user assigns a Linear ticket for autonomous execution.
 
-  **Spawn recipe (default — teammate mode):**
-  1. If no agent team exists this session, first call TeamCreate with team_name set to a generic session-level name (typically the repo name, e.g. "agent-team").
-  2. Spawn via Agent with: subagent_type="worker", team_name=<same>, name="worker-<ticket-lowercase>" (e.g. "worker-squ-14"), and DO NOT pass run_in_background.
+  **Spawn recipe:**
+  - Daemon mode: the manager's `assign-worker` skill posts an `agent.dispatch` event with target `worker`, a stable name like `worker-squ-14`, and `workspace = "worktree"`.
+  - Legacy teammate mode: if no agent team exists this session, first call TeamCreate with team_name set to a generic session-level name (typically the repo name, e.g. "agent-team"), then spawn via Agent with subagent_type="worker", team_name=<same>, name="worker-<ticket-lowercase>", isolation="worktree", and DO NOT pass run_in_background.
 
   This makes the worker visible in a tmux pane and addressable via SendMessage. Setting team_name alone without TeamCreate will fail; passing run_in_background=true forces background mode and breaks tmux visibility.
 
@@ -51,11 +51,11 @@ Invoke the **`linear`** skill (via the `Skill` tool) to load Linear GraphQL acce
 
 ### 2. Initialize
 
-You're already inside a fresh git worktree — Claude Code's `Agent` tool used its built-in `isolation: "worktree"` to set one up for you before you started. You don't need to run a setup script or `git worktree add`.
+You're normally already inside a fresh git worktree. In daemon mode, `agent-teamd` created `.claude/worktrees/<instance>-<id>/` before launching you. In legacy teammate mode, Claude Code's `Agent` tool used `isolation: "worktree"`. You don't need to run a setup script or `git worktree add`. If `pwd` shows you are still in the main repo, stop and report a launcher error rather than editing `main`.
 
 What to do:
 
-1. Confirm cwd and branch — run `pwd` and `git branch --show-current`. Your worktree path looks like `<repo-root>/.claude/worktrees/<auto-name>/` and your branch like `worktree-<slug>`. Both are fine; just note them for your final report.
+1. Confirm cwd and branch — run `pwd` and `git branch --show-current`. Your worktree path should look like `<repo-root>/.claude/worktrees/<auto-name>/` and your branch like `worktree-<slug>`. Both daemon-created and Agent-created variants are fine; just note them for your final report.
 2. `mkdir -p .worker_agent` to set up the state dir you'll write plan/progress/journal into.
 3. Check if a PR already exists for this ticket (in case an earlier spawn on a different branch got partway there): `gh pr list --search "SQU-<n> in:title" --state all --json number,url,state,headRefName`. If one exists, read its body and comments — you may be addressing review feedback, not starting fresh.
 4. Check if the Linear ticket is already in a terminal state (Done/Cancelled). If so, the ticket is resolved — report back to the team lead and stop rather than duplicating work.

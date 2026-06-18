@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/loader"
 	teamtemplate "github.com/jamesaud/agent-team/internal/template"
 	"github.com/jamesaud/agent-team/internal/topology"
 )
@@ -137,11 +140,33 @@ func (r *EventResolver) actuatePersistent(inst *topology.Instance, eventType str
 }
 
 func (r *EventResolver) actuateEphemeral(inst *topology.Instance, eventType string, payload map[string]any) EventOutcome {
+	childName, requested, err := childNameForEvent(inst.Name, payload)
+	if err != nil {
+		return EventOutcome{Instance: inst.Name, Action: "rejected", Reason: err.Error()}
+	}
+	if requested && r.mgr.isRunning(childName) {
+		return EventOutcome{
+			Instance:   inst.Name,
+			Action:     "rejected",
+			InstanceID: childName,
+			Reason:     fmt.Sprintf("instance %q already running", childName),
+		}
+	}
+
 	r.mu.Lock()
 	tr, ok := r.tracking[inst.Name]
 	if !ok {
 		tr = &ephTracker{}
 		r.tracking[inst.Name] = tr
+	}
+	if requested && queuedChildName(tr.queue, childName) {
+		r.mu.Unlock()
+		return EventOutcome{
+			Instance:   inst.Name,
+			Action:     "rejected",
+			InstanceID: childName,
+			Reason:     fmt.Sprintf("instance %q already queued", childName),
+		}
 	}
 	if tr.running >= inst.Replicas {
 		if len(tr.queue) >= r.queueCap {
@@ -152,21 +177,19 @@ func (r *EventResolver) actuateEphemeral(inst *topology.Instance, eventType stri
 				Reason:   fmt.Sprintf("at replica capacity (%d) and queue is full (%d)", inst.Replicas, r.queueCap),
 			}
 		}
-		uniq := uniqueChildName(inst.Name)
 		tr.queue = append(tr.queue, &queuedEvent{
 			eventType:  eventType,
 			payload:    payload,
 			queuedAt:   time.Now().UTC(),
-			uniqueName: uniq,
+			uniqueName: childName,
 		})
 		r.mu.Unlock()
-		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: uniq}
+		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: childName}
 	}
 	tr.running++
-	uniq := uniqueChildName(inst.Name)
 	r.mu.Unlock()
 
-	meta, err := r.spawn(inst, uniq, eventType, payload)
+	meta, err := r.spawn(inst, childName, eventType, payload)
 	if err != nil {
 		// Spawn failed; release capacity and don't drain queue (no work freed).
 		r.mu.Lock()
@@ -177,32 +200,109 @@ func (r *EventResolver) actuateEphemeral(inst *topology.Instance, eventType stri
 	return EventOutcome{Instance: inst.Name, Action: "dispatched", InstanceID: meta.Instance}
 }
 
+func childNameForEvent(declared string, payload map[string]any) (string, bool, error) {
+	requested := payloadString(payload, "name")
+	if requested == "" {
+		requested = payloadString(payload, "instance")
+	}
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return uniqueChildName(declared), false, nil
+	}
+	if err := validateRequestedChildName(declared, requested); err != nil {
+		return "", false, err
+	}
+	return requested, true, nil
+}
+
+func queuedChildName(queue []*queuedEvent, name string) bool {
+	for _, ev := range queue {
+		if ev != nil && ev.uniqueName == name {
+			return true
+		}
+	}
+	return false
+}
+
+func payloadString(payload map[string]any, key string) string {
+	if payload == nil {
+		return ""
+	}
+	v, ok := payload[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
+}
+
+func validateRequestedChildName(declared, name string) error {
+	if len(name) > 128 {
+		return fmt.Errorf("requested instance name %q invalid: max length is 128", name)
+	}
+	if name == "." || name == ".." || strings.Contains(name, "..") || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("requested instance name %q invalid: path segments are not allowed", name)
+	}
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return fmt.Errorf("requested instance name %q invalid: only ASCII letters, digits, '.', '_' and '-' are allowed", name)
+	}
+	prefix := declared + "-"
+	if !strings.HasPrefix(name, prefix) {
+		return fmt.Errorf("requested instance name %q invalid: must start with %q", name, prefix)
+	}
+	return nil
+}
+
 // spawn issues a Dispatch for an ephemeral declared instance. The daemon still
-// uses the minimal `claude -p <prompt>` argv shape rather than the CLI's full
-// `--agents` / `--add-dir` launcher, but it mirrors the run path's per-instance
-// runtime contract: state dir, resolved config, and AGENT_TEAM_* env vars.
+// mirrors the CLI's full `--agents` / `--add-dir` launcher, plus the run path's
+// per-instance runtime contract: state dir, resolved config, and AGENT_TEAM_* env vars.
 // The caller's payload is JSON-encoded into the prompt so the spawned child has
 // full event context to work from.
 func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, payload map[string]any) (*Metadata, error) {
-	env, err := r.prepareEphemeralRuntime(inst, name)
+	runtime, err := r.prepareEphemeralRuntime(inst, name)
 	if err != nil {
 		return nil, err
 	}
 	body, _ := json.Marshal(map[string]any{"event": eventType, "payload": payload})
 	prompt := fmt.Sprintf("Topology event for declared instance %q (agent=%s):\n%s",
 		inst.Name, inst.Agent, string(body))
-	return r.mgr.Dispatch(DispatchInput{
+	args, err := r.prepareEphemeralAgentArgs(inst.Agent, name, runtime.stateDir, prompt)
+	if err != nil {
+		return nil, err
+	}
+	workspace := r.teamDirParent()
+	cleanupWorkspace := func() {}
+	if payloadString(payload, "workspace") == "worktree" || payloadString(payload, "isolation") == "worktree" {
+		workspace, cleanupWorkspace, err = r.prepareEphemeralWorktree(name)
+		if err != nil {
+			return nil, err
+		}
+	}
+	meta, err := r.mgr.Dispatch(DispatchInput{
 		Agent:     inst.Agent,
 		Name:      name,
-		Prompt:    prompt,
-		Workspace: r.teamDirParent(),
-		Env:       env,
+		Workspace: workspace,
+		Args:      args,
+		Env:       runtime.env,
 	})
+	if err != nil {
+		cleanupWorkspace()
+		return nil, err
+	}
+	return meta, nil
 }
 
-func (r *EventResolver) prepareEphemeralRuntime(inst *topology.Instance, name string) ([]string, error) {
+type ephemeralRuntime struct {
+	stateDir string
+	env      []string
+}
+
+func (r *EventResolver) prepareEphemeralRuntime(inst *topology.Instance, name string) (*ephemeralRuntime, error) {
 	if strings.TrimSpace(r.teamDir) == "" {
-		return nil, nil
+		return nil, errors.New("event runtime: team dir is required")
 	}
 	stateDir := filepath.Join(r.teamDir, "state", name)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -224,11 +324,168 @@ func (r *EventResolver) prepareEphemeralRuntime(inst *topology.Instance, name st
 	if err := os.WriteFile(filepath.Join(stateDir, "config.toml"), body, 0o644); err != nil {
 		return nil, fmt.Errorf("event runtime: write config: %w", err)
 	}
-	return []string{
-		"AGENT_TEAM_ROOT=" + r.teamDir,
-		"AGENT_TEAM_INSTANCE=" + name,
-		"AGENT_TEAM_STATE_DIR=" + stateDir,
+	if err := r.rerenderTmplFiles(stateDir, resolved); err != nil {
+		return nil, fmt.Errorf("event runtime: re-render .tmpl files: %w", err)
+	}
+	return &ephemeralRuntime{
+		stateDir: stateDir,
+		env: []string{
+			"AGENT_TEAM_ROOT=" + r.teamDir,
+			"AGENT_TEAM_INSTANCE=" + name,
+			"AGENT_TEAM_STATE_DIR=" + stateDir,
+		},
 	}, nil
+}
+
+func (r *EventResolver) rerenderTmplFiles(stateDir string, resolved teamtemplate.Tree) error {
+	renderRoot := filepath.Join(stateDir, "rendered")
+	if err := os.RemoveAll(renderRoot); err != nil {
+		return err
+	}
+	hasTmpl := false
+	err := filepath.WalkDir(r.teamDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path == filepath.Join(r.teamDir, "state") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, teamtemplate.TmplSuffix) {
+			return nil
+		}
+		hasTmpl = true
+		rel, err := filepath.Rel(r.teamDir, path)
+		if err != nil {
+			return err
+		}
+		dstRel := strings.TrimSuffix(rel, teamtemplate.TmplSuffix)
+		dst := filepath.Join(renderRoot, dstRel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		out, err := teamtemplate.RenderBytes(rel, body, resolved)
+		if err != nil {
+			return err
+		}
+		mode := os.FileMode(0o644)
+		if strings.HasSuffix(rel, ".sh"+teamtemplate.TmplSuffix) {
+			mode = 0o755
+		}
+		return os.WriteFile(dst, out, mode)
+	})
+	if err != nil {
+		return err
+	}
+	if !hasTmpl {
+		_ = os.RemoveAll(renderRoot)
+	}
+	return nil
+}
+
+func (r *EventResolver) prepareEphemeralAgentArgs(agentName, instance, stateDir, prompt string) ([]string, error) {
+	agents, err := loader.LoadAllAgents(r.teamDir)
+	if err != nil {
+		return nil, fmt.Errorf("event runtime: load agents: %w", err)
+	}
+	var chosen *loader.Agent
+	for _, agent := range agents {
+		if agent.Name == agentName {
+			chosen = agent
+			break
+		}
+	}
+	if chosen == nil {
+		return nil, fmt.Errorf("event runtime: agent %q not found", agentName)
+	}
+	skillPaths, err := loader.UnionSkills(agents)
+	if err != nil {
+		return nil, fmt.Errorf("event runtime: resolve skills: %w", err)
+	}
+
+	runtimeDir := filepath.Join(stateDir, "runtime")
+	if err := os.RemoveAll(runtimeDir); err != nil {
+		return nil, fmt.Errorf("event runtime: reset runtime dir: %w", err)
+	}
+	skillsRoot := filepath.Join(runtimeDir, ".claude", "skills")
+	if err := os.MkdirAll(skillsRoot, 0o755); err != nil {
+		return nil, fmt.Errorf("event runtime: create skills root: %w", err)
+	}
+	for name, path := range skillPaths {
+		if err := os.Symlink(path, filepath.Join(skillsRoot, name)); err != nil {
+			return nil, fmt.Errorf("event runtime: symlink skill %s: %w", name, err)
+		}
+	}
+
+	workspace := r.teamDirParent()
+	stateRel, err := filepath.Rel(workspace, stateDir)
+	if err != nil {
+		stateRel = stateDir
+	}
+	kickoff := fmt.Sprintf(
+		"You are the `%s` instance of the `%s` agent.\n"+
+			"Your state dir is `%s` (absolute: `%s`).\n\n"+
+			"--- agent prompt ---\n\n%s",
+		instance, agentName, filepath.ToSlash(stateRel), stateDir, chosen.Prompt,
+	)
+	promptFile := filepath.Join(runtimeDir, "system_prompt.md")
+	if err := os.WriteFile(promptFile, []byte(kickoff), 0o644); err != nil {
+		return nil, fmt.Errorf("event runtime: write prompt file: %w", err)
+	}
+	agentsJSON, err := buildAgentsJSON(agents)
+	if err != nil {
+		return nil, err
+	}
+	return []string{
+		"--agents", agentsJSON,
+		"--add-dir", runtimeDir,
+		"--append-system-prompt-file", promptFile,
+		"-p", prompt,
+	}, nil
+}
+
+func (r *EventResolver) prepareEphemeralWorktree(instance string) (string, func(), error) {
+	repoRoot := r.teamDirParent()
+	if repoRoot == "" {
+		return "", nil, errors.New("event worktree: repo root is required")
+	}
+	tag := newSessionID()[0:8]
+	branch := "worktree-" + instance + "-" + tag
+	worktreePath := filepath.Join(repoRoot, ".claude", "worktrees", instance+"-"+tag)
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		return "", nil, fmt.Errorf("event worktree: create parent: %w", err)
+	}
+	cmd := exec.Command("git", "-C", repoRoot, "worktree", "add", "-b", branch, worktreePath, "HEAD")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", nil, fmt.Errorf("event worktree: git worktree add: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	cleanup := func() {
+		_ = exec.Command("git", "-C", repoRoot, "worktree", "remove", "--force", worktreePath).Run()
+		_ = exec.Command("git", "-C", repoRoot, "branch", "-D", branch).Run()
+	}
+	return worktreePath, cleanup, nil
+}
+
+func buildAgentsJSON(agents []*loader.Agent) (string, error) {
+	type agentEntry struct {
+		Description string `json:"description"`
+		Prompt      string `json:"prompt"`
+	}
+	m := make(map[string]agentEntry, len(agents))
+	for _, agent := range agents {
+		m[agent.Name] = agentEntry{Description: agent.Description, Prompt: agent.Prompt}
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "", fmt.Errorf("event runtime: encode agents JSON: %w", err)
+	}
+	return string(b), nil
 }
 
 func (r *EventResolver) teamDirParent() string {
