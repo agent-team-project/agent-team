@@ -36,6 +36,9 @@ func newQueueLsCmd() *cobra.Command {
 	var (
 		target      string
 		stateFilter string
+		instances   []string
+		eventTypes  []string
+		readyOnly   bool
 		watch       bool
 		noClear     bool
 		summary     bool
@@ -66,7 +69,7 @@ func newQueueLsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue ls: %v\n", err)
 				return exitErr(2)
 			}
-			state, err := parseQueueStateFilter(stateFilter)
+			filters, err := parseQueueListFilters(stateFilter, instances, eventTypes, readyOnly, time.Now().UTC())
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue ls: %v\n", err)
 				return exitErr(2)
@@ -79,18 +82,21 @@ func newQueueLsCmd() *cobra.Command {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
 				if summary {
-					return runQueueSummaryWatch(ctx, cmd.OutOrStdout(), teamDir, state, jsonOut, interval, !noClear && !jsonOut)
+					return runQueueSummaryWatch(ctx, cmd.OutOrStdout(), teamDir, filters, jsonOut, interval, !noClear && !jsonOut)
 				}
-				return runQueueListWatch(ctx, cmd.OutOrStdout(), teamDir, state, jsonOut, tmpl, interval, !noClear && !jsonOut)
+				return runQueueListWatch(ctx, cmd.OutOrStdout(), teamDir, filters, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
 			if summary {
-				return runQueueSummary(cmd.OutOrStdout(), teamDir, state, jsonOut)
+				return runQueueSummary(cmd.OutOrStdout(), teamDir, filters, jsonOut)
 			}
-			return runQueueList(cmd.OutOrStdout(), teamDir, state, jsonOut, tmpl)
+			return runQueueList(cmd.OutOrStdout(), teamDir, filters, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVar(&stateFilter, "state", "", "Filter by queue state: pending or dead.")
+	cmd.Flags().StringSliceVar(&instances, "instance", nil, "Filter by target instance name; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "Filter by event type; repeat or comma-separate values.")
+	cmd.Flags().BoolVar(&readyOnly, "ready", false, "Only show pending queue items whose next retry is due now.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the queue table until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate queue counts instead of queue rows.")
@@ -311,13 +317,83 @@ func parseQueueStateFilter(raw string) (string, error) {
 	}
 }
 
-func filterQueueItems(items []*daemon.QueueItem, state string) []*daemon.QueueItem {
-	if state == "" {
+type queueListFilters struct {
+	state      string
+	instances  map[string]bool
+	eventTypes map[string]bool
+	readyOnly  bool
+	now        time.Time
+}
+
+func parseQueueListFilters(stateRaw string, instancesRaw, eventTypesRaw []string, readyOnly bool, now time.Time) (queueListFilters, error) {
+	state, err := parseQueueStateFilter(stateRaw)
+	if err != nil {
+		return queueListFilters{}, err
+	}
+	instances, err := stringSetFilter(instancesRaw, "--instance", "instance")
+	if err != nil {
+		return queueListFilters{}, err
+	}
+	eventTypes, err := stringSetFilter(eventTypesRaw, "--event-type", "event type")
+	if err != nil {
+		return queueListFilters{}, err
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return queueListFilters{
+		state:      state,
+		instances:  instances,
+		eventTypes: eventTypes,
+		readyOnly:  readyOnly,
+		now:        now,
+	}, nil
+}
+
+func (f queueListFilters) withNow(now time.Time) queueListFilters {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	f.now = now
+	return f
+}
+
+func (f queueListFilters) empty() bool {
+	return f.state == "" && len(f.instances) == 0 && len(f.eventTypes) == 0 && !f.readyOnly
+}
+
+func (f queueListFilters) match(item *daemon.QueueItem) bool {
+	if f.state != "" && item.State != f.state {
+		return false
+	}
+	if len(f.instances) > 0 && !f.instances[item.Instance] {
+		return false
+	}
+	if len(f.eventTypes) > 0 && !f.eventTypes[item.EventType] {
+		return false
+	}
+	if f.readyOnly {
+		if item.State != daemon.QueueStatePending {
+			return false
+		}
+		now := f.now
+		if now.IsZero() {
+			now = time.Now().UTC()
+		}
+		if !item.NextRetry.IsZero() && item.NextRetry.After(now) {
+			return false
+		}
+	}
+	return true
+}
+
+func filterQueueItems(items []*daemon.QueueItem, filters queueListFilters) []*daemon.QueueItem {
+	if filters.empty() {
 		return items
 	}
 	out := make([]*daemon.QueueItem, 0, len(items))
 	for _, item := range items {
-		if item.State == state {
+		if filters.match(item) {
 			out = append(out, item)
 		}
 	}
@@ -406,12 +482,13 @@ func pruneQueueItems(teamDir, state string, olderThan time.Duration, now time.Ti
 	return results, nil
 }
 
-func runQueueSummary(w io.Writer, teamDir, state string, jsonOut bool) error {
+func runQueueSummary(w io.Writer, teamDir string, filters queueListFilters, jsonOut bool) error {
 	items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
 	if err != nil {
 		return err
 	}
-	summary := summarizeQueueItems(filterQueueItems(items, state), time.Now().UTC())
+	now := time.Now().UTC()
+	summary := summarizeQueueItems(filterQueueItems(items, filters.withNow(now)), now)
 	if jsonOut {
 		return json.NewEncoder(w).Encode(summary)
 	}
@@ -419,7 +496,7 @@ func runQueueSummary(w io.Writer, teamDir, state string, jsonOut bool) error {
 	return nil
 }
 
-func runQueueSummaryWatch(ctx context.Context, w io.Writer, teamDir, state string, jsonOut bool, interval time.Duration, clear bool) error {
+func runQueueSummaryWatch(ctx context.Context, w io.Writer, teamDir string, filters queueListFilters, jsonOut bool, interval time.Duration, clear bool) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
@@ -431,7 +508,7 @@ func runQueueSummaryWatch(ctx context.Context, w io.Writer, teamDir, state strin
 				return err
 			}
 		}
-		if err := runQueueSummary(w, teamDir, state, jsonOut); err != nil {
+		if err := runQueueSummary(w, teamDir, filters, jsonOut); err != nil {
 			return err
 		}
 		select {
@@ -555,12 +632,12 @@ func renderQueuePruneTable(w io.Writer, results []queuePruneResult) {
 	_ = tw.Flush()
 }
 
-func runQueueList(w io.Writer, teamDir, state string, jsonOut bool, tmpl *template.Template) error {
+func runQueueList(w io.Writer, teamDir string, filters queueListFilters, jsonOut bool, tmpl *template.Template) error {
 	items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
 	if err != nil {
 		return err
 	}
-	filtered := filterQueueItems(items, state)
+	filtered := filterQueueItems(items, filters.withNow(time.Now().UTC()))
 	if jsonOut {
 		return json.NewEncoder(w).Encode(filtered)
 	}
@@ -571,7 +648,7 @@ func runQueueList(w io.Writer, teamDir, state string, jsonOut bool, tmpl *templa
 	return nil
 }
 
-func runQueueListWatch(ctx context.Context, w io.Writer, teamDir, state string, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+func runQueueListWatch(ctx context.Context, w io.Writer, teamDir string, filters queueListFilters, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
@@ -583,7 +660,7 @@ func runQueueListWatch(ctx context.Context, w io.Writer, teamDir, state string, 
 				return err
 			}
 		}
-		if err := runQueueList(w, teamDir, state, jsonOut, tmpl); err != nil {
+		if err := runQueueList(w, teamDir, filters, jsonOut, tmpl); err != nil {
 			return err
 		}
 		select {

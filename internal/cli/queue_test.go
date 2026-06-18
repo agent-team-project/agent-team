@@ -96,7 +96,7 @@ func TestQueueListWatchRendersSnapshot(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var out bytes.Buffer
-	if err := runQueueListWatch(ctx, &out, teamDir, daemon.QueueStatePending, false, nil, time.Millisecond, false); err != nil {
+	if err := runQueueListWatch(ctx, &out, teamDir, queueListFilters{state: daemon.QueueStatePending}, false, nil, time.Millisecond, false); err != nil {
 		t.Fatalf("runQueueListWatch: %v", err)
 	}
 	if !strings.Contains(out.String(), "q-watch") || strings.Contains(out.String(), watchClearSequence) {
@@ -106,11 +106,133 @@ func TestQueueListWatchRendersSnapshot(t *testing.T) {
 	ctx, cancel = context.WithCancel(context.Background())
 	cancel()
 	out.Reset()
-	if err := runQueueSummaryWatch(ctx, &out, teamDir, "", false, time.Millisecond, false); err != nil {
+	if err := runQueueSummaryWatch(ctx, &out, teamDir, queueListFilters{}, false, time.Millisecond, false); err != nil {
 		t.Fatalf("runQueueSummaryWatch: %v", err)
 	}
 	if !strings.Contains(out.String(), "queue: total=1 pending=1 dead=0") || strings.Contains(out.String(), watchClearSequence) {
 		t.Fatalf("summary watch output = %q", out.String())
+	}
+}
+
+func TestQueueListFilters(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	items := []*daemon.QueueItem{
+		{
+			ID:         "q-ready",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-96",
+			Payload:    map[string]any{"target": "worker", "ticket": "SQU-96"},
+			Attempts:   1,
+			NextRetry:  now.Add(-time.Minute),
+			QueuedAt:   now.Add(-2 * time.Hour),
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+		{
+			ID:         "q-delayed",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-97",
+			Payload:    map[string]any{"target": "worker", "ticket": "SQU-97"},
+			Attempts:   2,
+			NextRetry:  now.Add(time.Hour),
+			QueuedAt:   now.Add(-time.Hour),
+			UpdatedAt:  now,
+		},
+		{
+			ID:         "q-manager",
+			State:      daemon.QueueStatePending,
+			EventType:  "ticket.created",
+			Instance:   "manager",
+			InstanceID: "manager-squ-98",
+			Payload:    map[string]any{"target": "manager", "ticket": "SQU-98"},
+			QueuedAt:   now.Add(-30 * time.Minute),
+			UpdatedAt:  now,
+		},
+		{
+			ID:             "q-dead-worker",
+			State:          daemon.QueueStateDead,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     "worker-squ-99",
+			Payload:        map[string]any{"target": "worker", "ticket": "SQU-99"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-3 * time.Hour),
+			UpdatedAt:      now.Add(-2 * time.Hour),
+			DeadLetteredAt: now.Add(-2 * time.Hour),
+		},
+	}
+	for _, item := range items {
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+			t.Fatalf("WriteQueueItem %s: %v", item.ID, err)
+		}
+	}
+
+	list := NewRootCmd()
+	listOut, listErr := &bytes.Buffer{}, &bytes.Buffer{}
+	list.SetOut(listOut)
+	list.SetErr(listErr)
+	list.SetArgs([]string{
+		"queue", "ls",
+		"--target", tmp,
+		"--instance", "worker,manager",
+		"--event-type", "agent.dispatch",
+		"--ready",
+		"--json",
+	})
+	if err := list.Execute(); err != nil {
+		t.Fatalf("queue ls filters: %v\nstderr=%s", err, listErr.String())
+	}
+	var listed []daemon.QueueItem
+	if err := json.Unmarshal(listOut.Bytes(), &listed); err != nil {
+		t.Fatalf("decode list json: %v\nbody=%s", err, listOut.String())
+	}
+	if len(listed) != 1 || listed[0].ID != "q-ready" {
+		t.Fatalf("listed = %+v", listed)
+	}
+
+	summaryCmd := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryCmd.SetOut(summaryOut)
+	summaryCmd.SetErr(summaryErr)
+	summaryCmd.SetArgs([]string{
+		"queue", "ls",
+		"--target", tmp,
+		"--summary",
+		"--instance", "worker",
+		"--event-type", "agent.dispatch",
+		"--json",
+	})
+	if err := summaryCmd.Execute(); err != nil {
+		t.Fatalf("queue ls filtered summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var summary queueSummary
+	if err := json.Unmarshal(summaryOut.Bytes(), &summary); err != nil {
+		t.Fatalf("decode summary json: %v\nbody=%s", err, summaryOut.String())
+	}
+	if summary.Total != 3 || summary.Pending != 2 || summary.Dead != 1 || summary.Delayed != 1 || summary.Attempts != daemon.MaxQueueAttempts+3 {
+		t.Fatalf("summary = %+v", summary)
+	}
+	if summary.Instances["worker"] != 3 || summary.Events["agent.dispatch"] != 3 {
+		t.Fatalf("summary maps = %+v", summary)
+	}
+
+	bad := NewRootCmd()
+	badOut, badErr := &bytes.Buffer{}, &bytes.Buffer{}
+	bad.SetOut(badOut)
+	bad.SetErr(badErr)
+	bad.SetArgs([]string{"queue", "ls", "--target", tmp, "--instance", ","})
+	if err := bad.Execute(); err == nil {
+		t.Fatalf("queue ls empty instance succeeded; stdout=%s", badOut.String())
+	}
+	if !strings.Contains(badErr.String(), "--instance requires at least one non-empty instance") {
+		t.Fatalf("bad stderr = %q", badErr.String())
 	}
 }
 
