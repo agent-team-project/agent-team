@@ -495,6 +495,91 @@ func TestJobReconcileQueueUpdatesDeadJob(t *testing.T) {
 	}
 }
 
+func TestJobReconcileStatusUpdatesOwningJob(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-120",
+		Ticket:    "SQU-120",
+		Target:    "worker",
+		Status:    job.StatusQueued,
+		CreatedAt: now.Add(-time.Hour),
+		UpdatedAt: now.Add(-time.Hour),
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "worker-squ-120"), `[status]
+phase = "implementing"
+description = "writing status reconcile"
+since = "2026-06-18T12:00:00Z"
+
+[work]
+job = "squ-120"
+ticket = "SQU-120"
+pr = "https://github.com/acme/repo/pull/120"
+branch = "worker-squ-120"
+`, now)
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"job", "reconcile", "status", "--repo", tmp, "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("job reconcile status dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview []jobStatusReconcileResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode dry status reconcile json: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(preview) != 1 || preview[0].JobID != "squ-120" || preview[0].After != job.StatusRunning || !preview[0].Changed || !preview[0].DryRun {
+		t.Fatalf("preview = %+v", preview)
+	}
+	unchanged, err := job.Read(teamDir, "squ-120")
+	if err != nil {
+		t.Fatalf("read dry-run job: %v", err)
+	}
+	if unchanged.Status != job.StatusQueued || unchanged.Instance != "" {
+		t.Fatalf("dry-run changed job = %+v", unchanged)
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"job", "reconcile", "status", "--repo", tmp, "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("job reconcile status: %v\nstderr=%s", err, applyErr.String())
+	}
+	var applied []jobStatusReconcileResult
+	if err := json.Unmarshal(applyOut.Bytes(), &applied); err != nil {
+		t.Fatalf("decode status reconcile json: %v\nbody=%s", err, applyOut.String())
+	}
+	if len(applied) != 1 || applied[0].JobID != "squ-120" || applied[0].After != job.StatusRunning || !applied[0].Changed || applied[0].DryRun {
+		t.Fatalf("applied = %+v", applied)
+	}
+	updated, err := job.Read(teamDir, "squ-120")
+	if err != nil {
+		t.Fatalf("read updated job: %v", err)
+	}
+	if updated.Status != job.StatusRunning || updated.Instance != "worker-squ-120" || updated.Branch != "worker-squ-120" || updated.PR == "" {
+		t.Fatalf("updated job = %+v", updated)
+	}
+	if updated.LastEvent != "status_reconcile" || updated.LastStatus != "writing status reconcile" {
+		t.Fatalf("updated status fields = %+v", updated)
+	}
+	events, err := job.ListEvents(teamDir, "squ-120")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "status_reconcile" || events[0].Data["phase"] != "implementing" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
 func TestJobCreateFromPipeline(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

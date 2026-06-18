@@ -49,6 +49,27 @@ func TestTickRunsMaintenanceCycle(t *testing.T) {
 	if err := job.Write(teamDir, j); err != nil {
 		t.Fatalf("write ready job: %v", err)
 	}
+	statusJob := &job.Job{
+		ID:        "squ-94",
+		Ticket:    "SQU-94",
+		Target:    "worker",
+		Status:    job.StatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, statusJob); err != nil {
+		t.Fatalf("write status job: %v", err)
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "worker-squ-94"), `[status]
+phase = "blocked"
+description = "waiting on failing test details"
+since = "2026-06-18T12:00:00Z"
+
+[work]
+job = "squ-94"
+ticket = "SQU-94"
+branch = "worker-squ-94"
+`, now)
 
 	dry := NewRootCmd()
 	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -65,6 +86,9 @@ func TestTickRunsMaintenanceCycle(t *testing.T) {
 	if !preview.DryRun || preview.Reconcile != nil || preview.Queue == nil || !preview.Queue.DryRun || preview.Queue.WouldDispatch != 1 {
 		t.Fatalf("tick preview = %+v", preview)
 	}
+	if len(preview.JobStatus) != 1 || preview.JobStatus[0].JobID != "squ-94" || preview.JobStatus[0].After != job.StatusBlocked || !preview.JobStatus[0].Changed || !preview.JobStatus[0].DryRun {
+		t.Fatalf("tick preview job status = %+v", preview.JobStatus)
+	}
 	if len(preview.Advance) != 1 || preview.Advance[0].Action != "would_advance" || !preview.Advance[0].DryRun {
 		t.Fatalf("tick preview advance = %+v", preview.Advance)
 	}
@@ -77,6 +101,13 @@ func TestTickRunsMaintenanceCycle(t *testing.T) {
 	}
 	if unchanged.Steps[1].Status != job.StatusBlocked {
 		t.Fatalf("tick dry-run mutated job = %+v", unchanged)
+	}
+	statusUnchanged, err := job.Read(teamDir, "squ-94")
+	if err != nil {
+		t.Fatalf("read dry-run status job: %v", err)
+	}
+	if statusUnchanged.Status != job.StatusQueued {
+		t.Fatalf("tick dry-run mutated status job = %+v", statusUnchanged)
 	}
 
 	cmd := NewRootCmd()
@@ -94,6 +125,9 @@ func TestTickRunsMaintenanceCycle(t *testing.T) {
 	if result.Reconcile == nil || result.Queue == nil {
 		t.Fatalf("tick missing daemon results = %+v", result)
 	}
+	if len(result.JobStatus) != 1 || result.JobStatus[0].JobID != "squ-94" || result.JobStatus[0].After != job.StatusBlocked || !result.JobStatus[0].Changed {
+		t.Fatalf("tick job status result = %+v", result.JobStatus)
+	}
 	if result.Queue.Attempted != 1 || result.Queue.Dispatched != 1 || result.Queue.Pending != 0 {
 		t.Fatalf("queue result = %+v", result.Queue)
 	}
@@ -109,6 +143,13 @@ func TestTickRunsMaintenanceCycle(t *testing.T) {
 	}
 	if updated.Steps[1].Status != job.StatusRunning || updated.Steps[1].Instance == "" {
 		t.Fatalf("advanced job = %+v", updated)
+	}
+	statusUpdated, err := job.Read(teamDir, "squ-94")
+	if err != nil {
+		t.Fatalf("read updated status job: %v", err)
+	}
+	if statusUpdated.Status != job.StatusBlocked || statusUpdated.Instance != "worker-squ-94" || statusUpdated.LastEvent != "status_reconcile" {
+		t.Fatalf("status reconciled job = %+v", statusUpdated)
 	}
 	stopAndWaitForTest(t, mgr, "worker-squ-91")
 	stopAndWaitForTest(t, mgr, updated.Steps[1].Instance)

@@ -36,7 +36,7 @@ func newTickCmd() *cobra.Command {
 		Use:   "tick",
 		Short: "Run one orchestration maintenance cycle.",
 		Long: "Run one orchestration maintenance cycle against the running daemon: " +
-			"reconcile process metadata, fire due schedules, drain ready queue items, then advance ready pipeline jobs.",
+			"reconcile process metadata and job status files, fire due schedules, drain ready queue items, then advance ready pipeline jobs.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
@@ -122,11 +122,11 @@ func newTickCmd() *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for advanced pipeline steps: auto, worktree, or repo.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Advance at most this many ready pipeline jobs; 0 means no limit.")
-	cmd.Flags().BoolVar(&skipReconcile, "skip-reconcile", false, "Skip daemon metadata reconciliation.")
+	cmd.Flags().BoolVar(&skipReconcile, "skip-reconcile", false, "Skip daemon metadata and job status reconciliation.")
 	cmd.Flags().BoolVar(&skipSchedules, "skip-schedules", false, "Skip firing due schedules.")
 	cmd.Flags().BoolVar(&skipDrain, "skip-drain", false, "Skip queue draining.")
 	cmd.Flags().BoolVar(&skipAdvance, "skip-advance", false, "Skip pipeline advancement.")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview schedule firing, queue drain, and pipeline advancement without mutating state.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview job status reconciliation, schedule firing, queue drain, and pipeline advancement without mutating state.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Run tick repeatedly until interrupted.")
 	cmd.Flags().BoolVar(&untilIdle, "until-idle", false, "Run tick cycles until no immediate schedule, queue, or pipeline work remains.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
@@ -146,6 +146,7 @@ type tickOptions struct {
 
 type tickResult struct {
 	Reconcile *daemonReconcileResponse   `json:"reconcile,omitempty"`
+	JobStatus []jobStatusReconcileResult `json:"job_status,omitempty"`
 	Schedule  *daemon.ScheduleFireResult `json:"schedule,omitempty"`
 	Queue     *daemon.QueueDrainResult   `json:"queue,omitempty"`
 	Advance   []pipelineAdvanceResult    `json:"advance,omitempty"`
@@ -171,6 +172,13 @@ func runTick(cmd *cobra.Command, teamDir, workspace string, limit int, opts tick
 			return nil, err
 		}
 		result.Reconcile = rec
+	}
+	if !opts.SkipReconcile {
+		status, err := reconcileJobsFromStatus(teamDir, opts.DryRun, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		result.JobStatus = status
 	}
 	if !opts.SkipSchedules {
 		schedule, err := dc.ScheduleFire(opts.DryRun)
@@ -262,6 +270,11 @@ func tickResultIsIdle(result *tickResult) bool {
 	if result.Schedule != nil && (result.Schedule.Fired > 0 || result.Schedule.WouldFire > 0) {
 		return false
 	}
+	for _, status := range result.JobStatus {
+		if status.Changed {
+			return false
+		}
+	}
 	if result.Queue != nil && (result.Queue.Attempted > 0 || result.Queue.WouldDispatch > 0 || result.Queue.Dispatched > 0 || result.Queue.Rejected > 0) {
 		return false
 	}
@@ -345,6 +358,15 @@ func renderTickResult(w fmtWriter, result *tickResult, jsonOut bool, tmpl *templ
 		}
 	} else {
 		fmt.Fprintln(w, "Reconcile: skipped")
+	}
+	fmt.Fprintln(w)
+	if result.JobStatus != nil {
+		fmt.Fprintln(w, "Job status:")
+		if err := renderJobStatusReconcileResults(w, result.JobStatus, false, nil); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintln(w, "Job status: skipped")
 	}
 	fmt.Fprintln(w)
 	if result.Schedule != nil {

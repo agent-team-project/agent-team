@@ -1595,6 +1595,47 @@ func newJobReconcileCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newJobReconcileGitHubCmd())
 	cmd.AddCommand(newJobReconcileQueueCmd())
+	cmd.AddCommand(newJobReconcileStatusCmd())
+	return cmd
+}
+
+func newJobReconcileStatusCmd() *cobra.Command {
+	var (
+		repo    string
+		dryRun  bool
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Reconcile instance status.toml files back into owning jobs.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile status: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobStatusReconcileFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reconcile status: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			results, err := reconcileJobsFromStatus(teamDir, dryRun, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			return renderJobStatusReconcileResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview job updates without writing them.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.After}}'.")
 	return cmd
 }
 
@@ -3172,6 +3213,144 @@ func reconcileJobsFromQueue(teamDir, state string, dryRun bool, now time.Time) (
 	return results, nil
 }
 
+func reconcileJobsFromStatus(teamDir string, dryRun bool, now time.Time) ([]jobStatusReconcileResult, error) {
+	rows := loadInstanceRows(teamDir, loadAgentNames(teamDir), now)
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]jobStatusReconcileResult, 0)
+	for _, row := range rows {
+		if !row.HasFile || strings.TrimSpace(row.Phase) == "" || row.Phase == "—" || row.Phase == "?" {
+			continue
+		}
+		j, matchedBy := jobForStatusRow(jobs, row)
+		if j == nil {
+			continue
+		}
+		result := reconcileJobFromStatusRow(j, row, matchedBy, dryRun, now)
+		if result.Changed && !dryRun {
+			data := map[string]string{
+				"instance":   row.Instance,
+				"phase":      row.Phase,
+				"matched_by": matchedBy,
+			}
+			if row.Job != "" {
+				data["status_job"] = row.Job
+			}
+			if row.Ticket != "" {
+				data["ticket"] = row.Ticket
+			}
+			if row.Branch != "" {
+				data["branch"] = row.Branch
+			}
+			if row.PR != "" {
+				data["pr"] = row.PR
+			}
+			if err := writeJobWithAudit(teamDir, j, "status_reconcile", "cli", result.Message, data); err != nil {
+				return nil, err
+			}
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func jobForStatusRow(jobs []*job.Job, row instanceRow) (*job.Job, string) {
+	if id := job.IDFromInput(row.Job); id != "" {
+		for _, j := range jobs {
+			if j.ID == id {
+				return j, "job"
+			}
+		}
+	}
+	if id := job.IDFromInput(row.Ticket); id != "" {
+		for _, j := range jobs {
+			if j.ID == id {
+				return j, "ticket"
+			}
+		}
+	}
+	ticket := strings.TrimSpace(row.Ticket)
+	if ticket == "" {
+		return nil, ""
+	}
+	for _, j := range jobs {
+		if strings.EqualFold(strings.TrimSpace(j.Ticket), ticket) || strings.EqualFold(strings.TrimSpace(j.TicketURL), ticket) {
+			return j, "ticket"
+		}
+	}
+	return nil, ""
+}
+
+func reconcileJobFromStatusRow(j *job.Job, row instanceRow, matchedBy string, dryRun bool, now time.Time) jobStatusReconcileResult {
+	before := j.Status
+	after := statusReconciledJobState(j.Status, row.Phase)
+	message := strings.TrimSpace(row.Summary)
+	if message == "" {
+		message = "status " + strings.TrimSpace(row.Phase)
+	}
+	result := jobStatusReconcileResult{
+		JobID:     j.ID,
+		Instance:  row.Instance,
+		Phase:     row.Phase,
+		MatchedBy: matchedBy,
+		Before:    before,
+		After:     after,
+		Branch:    row.Branch,
+		PR:        row.PR,
+		Message:   message,
+		DryRun:    dryRun,
+	}
+	if j.Status != after ||
+		strings.TrimSpace(j.Instance) != strings.TrimSpace(row.Instance) ||
+		(row.Branch != "" && strings.TrimSpace(j.Branch) != strings.TrimSpace(row.Branch)) ||
+		(row.PR != "" && strings.TrimSpace(j.PR) != strings.TrimSpace(row.PR)) ||
+		strings.TrimSpace(j.LastStatus) != message {
+		result.Changed = true
+	}
+	if dryRun || !result.Changed {
+		return result
+	}
+	j.Status = after
+	if row.Instance != "" {
+		j.Instance = row.Instance
+	}
+	if row.Branch != "" {
+		j.Branch = row.Branch
+	}
+	if row.PR != "" {
+		j.PR = row.PR
+	}
+	if row.Ticket != "" && strings.TrimSpace(j.Ticket) == "" {
+		j.Ticket = row.Ticket
+	}
+	j.LastEvent = "status_reconcile"
+	j.LastStatus = message
+	j.UpdatedAt = now.UTC()
+	return result
+}
+
+func statusReconciledJobState(current job.Status, phase string) job.Status {
+	phase = strings.ToLower(strings.TrimSpace(phase))
+	if current == job.StatusDone {
+		return current
+	}
+	if current == job.StatusFailed && phase != "done" {
+		return current
+	}
+	switch phase {
+	case "planning", "implementing", "awaiting_review":
+		return job.StatusRunning
+	case "blocked":
+		return job.StatusBlocked
+	case "done":
+		return job.StatusDone
+	default:
+		return current
+	}
+}
+
 func jobForQueueItem(jobs []*job.Job, item *daemon.QueueItem) *job.Job {
 	for _, j := range jobs {
 		if queueItemMatchesJob(item, j) {
@@ -3332,6 +3511,20 @@ type jobQueueReconcileResult struct {
 	Message    string     `json:"message,omitempty"`
 	Changed    bool       `json:"changed"`
 	DryRun     bool       `json:"dry_run,omitempty"`
+}
+
+type jobStatusReconcileResult struct {
+	JobID     string     `json:"job_id"`
+	Instance  string     `json:"instance"`
+	Phase     string     `json:"phase"`
+	MatchedBy string     `json:"matched_by"`
+	Before    job.Status `json:"before"`
+	After     job.Status `json:"after"`
+	Branch    string     `json:"branch,omitempty"`
+	PR        string     `json:"pr,omitempty"`
+	Message   string     `json:"message,omitempty"`
+	Changed   bool       `json:"changed"`
+	DryRun    bool       `json:"dry_run,omitempty"`
 }
 
 type jobNextResult struct {
@@ -3950,6 +4143,17 @@ func parseJobQueueReconcileFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
+func parseJobStatusReconcileFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("job-status-reconcile-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
 func renderJobResult(w io.Writer, j *job.Job, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(j)
@@ -4026,6 +4230,41 @@ func renderJobQueueReconcileResults(w io.Writer, results []jobQueueReconcileResu
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			result.JobID, result.QueueID, result.QueueState, result.Before, result.After, emptyDash(result.Instance), action, emptyDash(result.Message))
+	}
+	return tw.Flush()
+}
+
+func renderJobStatusReconcileResults(w io.Writer, results []jobStatusReconcileResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := tmpl.Execute(w, result); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if len(results) == 0 {
+		fmt.Fprintln(w, "(no status-backed jobs reconciled)")
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "JOB\tINSTANCE\tPHASE\tBEFORE\tAFTER\tMATCH\tACTION\tMESSAGE")
+	for _, result := range results {
+		action := "unchanged"
+		if result.Changed {
+			action = "updated"
+			if result.DryRun {
+				action = "would_update"
+			}
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			result.JobID, result.Instance, result.Phase, result.Before, result.After, result.MatchedBy, action, emptyDash(result.Message))
 	}
 	return tw.Flush()
 }
