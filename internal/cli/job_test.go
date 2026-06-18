@@ -122,6 +122,39 @@ func TestJobCreateListShowClose(t *testing.T) {
 		t.Fatalf("created event data = %+v", events[0].Data)
 	}
 
+	showEvents := NewRootCmd()
+	showEventsOut, showEventsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showEvents.SetOut(showEventsOut)
+	showEvents.SetErr(showEventsErr)
+	showEvents.SetArgs([]string{"job", "show", "SQU-42", "--repo", tmp, "--events", "1"})
+	if err := showEvents.Execute(); err != nil {
+		t.Fatalf("job show events: %v\nstderr=%s", err, showEventsErr.String())
+	}
+	for _, want := range []string{"Recent Events:", "TIME", "closed", "done"} {
+		if !strings.Contains(showEventsOut.String(), want) {
+			t.Fatalf("job show events missing %q:\n%s", want, showEventsOut.String())
+		}
+	}
+
+	showEventsJSON := NewRootCmd()
+	showEventsJSONOut, showEventsJSONErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showEventsJSON.SetOut(showEventsJSONOut)
+	showEventsJSON.SetErr(showEventsJSONErr)
+	showEventsJSON.SetArgs([]string{"job", "show", "SQU-42", "--repo", tmp, "--events", "all", "--json"})
+	if err := showEventsJSON.Execute(); err != nil {
+		t.Fatalf("job show events json: %v\nstderr=%s", err, showEventsJSONErr.String())
+	}
+	var showEventsBody struct {
+		Job    job.Job     `json:"job"`
+		Events []job.Event `json:"events"`
+	}
+	if err := json.Unmarshal(showEventsJSONOut.Bytes(), &showEventsBody); err != nil {
+		t.Fatalf("decode show events json: %v\nbody=%s", err, showEventsJSONOut.String())
+	}
+	if showEventsBody.Job.ID != "squ-42" || len(showEventsBody.Events) != 2 {
+		t.Fatalf("show events json = %+v", showEventsBody)
+	}
+
 	tailCmd := NewRootCmd()
 	tailOut, tailErr := &bytes.Buffer{}, &bytes.Buffer{}
 	tailCmd.SetOut(tailOut)

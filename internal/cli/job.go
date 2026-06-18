@@ -394,9 +394,10 @@ func newJobLsCmd() *cobra.Command {
 
 func newJobShowCmd() *cobra.Command {
 	var (
-		repo    string
-		jsonOut bool
-		format  string
+		repo       string
+		eventsTail string
+		jsonOut    bool
+		format     string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -404,8 +405,13 @@ func newJobShowCmd() *cobra.Command {
 		Short: "Show one durable job.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			includeEvents := cmd.Flags().Changed("events")
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job show: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if includeEvents && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job show: --events cannot be combined with --format.")
 				return exitErr(2)
 			}
 			tmpl, err := parseJobFormat(format)
@@ -413,14 +419,23 @@ func newJobShowCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job show: %v\n", err)
 				return exitErr(2)
 			}
+			eventTail := 0
+			if includeEvents {
+				eventTail, err = parseJobShowEventsTail(eventsTail)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job show: %v\n", err)
+					return exitErr(2)
+				}
+			}
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
 			if err != nil {
 				return err
 			}
-			return renderJobShowResult(cmd.OutOrStdout(), teamDir, j, jsonOut, tmpl)
+			return renderJobShowResult(cmd.OutOrStdout(), teamDir, j, jsonOut, tmpl, includeEvents, eventTail)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&eventsTail, "events", "5", "Include the last N job events in the detail output, or all.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
@@ -4444,8 +4459,31 @@ func renderJobResult(w io.Writer, j *job.Job, jsonOut bool, tmpl *template.Templ
 	return nil
 }
 
-func renderJobShowResult(w io.Writer, teamDir string, j *job.Job, jsonOut bool, tmpl *template.Template) error {
+func parseJobShowEventsTail(raw string) (int, error) {
+	tail, err := parseLogTail(raw)
+	if err != nil {
+		return 0, fmt.Errorf("--events must be >= 0 or \"all\"")
+	}
+	return tail, nil
+}
+
+type jobShowResult struct {
+	Job    *job.Job    `json:"job"`
+	Events []job.Event `json:"events"`
+}
+
+func renderJobShowResult(w io.Writer, teamDir string, j *job.Job, jsonOut bool, tmpl *template.Template, includeEvents bool, eventTail int) error {
 	if jsonOut || tmpl != nil {
+		if jsonOut && includeEvents {
+			events, err := job.ListEvents(teamDir, j.ID)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(w).Encode(jobShowResult{
+				Job:    j,
+				Events: job.TailEvents(events, eventTail),
+			})
+		}
 		return renderJobResult(w, j, jsonOut, tmpl)
 	}
 	queueItems, err := queueItemsForJob(teamDir, j)
@@ -4457,6 +4495,13 @@ func renderJobShowResult(w io.Writer, teamDir string, j *job.Job, jsonOut bool, 
 		return err
 	}
 	renderJobDetailWithRuntime(w, j, queueItems, statusPreviews)
+	if includeEvents {
+		events, err := job.ListEvents(teamDir, j.ID)
+		if err != nil {
+			return err
+		}
+		renderJobRecentEvents(w, job.TailEvents(events, eventTail))
+	}
 	return nil
 }
 
@@ -4558,6 +4603,11 @@ func renderJobDetail(w io.Writer, j *job.Job) {
 
 func renderJobDetailWithQueue(w io.Writer, j *job.Job, queueItems []*daemon.QueueItem) {
 	renderJobDetailWithRuntime(w, j, queueItems, nil)
+}
+
+func renderJobRecentEvents(w io.Writer, events []job.Event) {
+	fmt.Fprintln(w, "Recent Events:")
+	renderJobEventTable(w, events, true)
 }
 
 func renderJobDetailWithRuntime(w io.Writer, j *job.Job, queueItems []*daemon.QueueItem, statusPreviews []jobStatusReconcileResult) {
