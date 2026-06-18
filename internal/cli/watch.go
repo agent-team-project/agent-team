@@ -15,6 +15,8 @@ func newWatchCmd() *cobra.Command {
 		target          string
 		all             bool
 		plan            bool
+		jobs            bool
+		schedules       bool
 		stopExtras      bool
 		summary         bool
 		resources       bool
@@ -126,6 +128,8 @@ func newWatchCmd() *cobra.Command {
 				opts.Stats.Limit = 1
 			}
 			opts.IncludePlan = plan
+			opts.IncludeJobs = jobs
+			opts.IncludeSchedules = schedules
 			opts.IncludeResources = resources
 			opts.StopExtras = stopExtras
 			opts.PlanActions = planActions
@@ -151,6 +155,8 @@ func newWatchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "Include stopped, exited, and crashed daemon-managed instances in the stats section.")
 	cmd.Flags().BoolVar(&plan, "plan", false, "Include desired-state actions from instances.toml and daemon metadata.")
+	cmd.Flags().BoolVar(&jobs, "jobs", false, "Include durable job summary, attention, and ready-step state.")
+	cmd.Flags().BoolVar(&schedules, "schedules", false, "Include due and upcoming declared schedule state.")
 	cmd.Flags().BoolVar(&stopExtras, "stop-extras", false, "With --plan, preview running topology extras as stop actions.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Watch compact non-failing fleet health and optional plan summaries instead of the full monitor.")
 	cmd.Flags().BoolVar(&resources, "resources", false, "With --summary, include aggregate CPU, memory, and RSS totals.")

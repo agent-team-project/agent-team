@@ -264,6 +264,55 @@ func TestMonitorJobsJSONIncludesJobTriage(t *testing.T) {
 	}
 }
 
+func TestMonitorSchedulesJSONIncludesForecast(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeScheduleTopology(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := daemon.WriteScheduleState(daemon.DaemonRoot(teamDir), &daemon.ScheduleState{
+		Name:       "hourly",
+		LastSeenAt: now.Add(-30 * time.Minute),
+	}); err != nil {
+		t.Fatalf("WriteScheduleState hourly: %v", err)
+	}
+
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"monitor", "--summary", "--schedules", "--json", "--target", tmp})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("monitor --summary --schedules --json: %v\nstdout=%s\nstderr=%s", err, summaryOut.String(), summaryErr.String())
+	}
+	var summaryBody monitorSummarySnapshot
+	if err := json.Unmarshal(summaryOut.Bytes(), &summaryBody); err != nil {
+		t.Fatalf("decode monitor summary schedules json: %v\nbody=%s", err, summaryOut.String())
+	}
+	if summaryBody.Schedules == nil || summaryBody.Schedules.Total != 2 || summaryBody.Schedules.Due != 1 || summaryBody.Schedules.Upcoming != 1 {
+		t.Fatalf("summary schedules = %+v", summaryBody.Schedules)
+	}
+	if summaryBody.Schedules.Rows[0].Name != "nightly" || summaryBody.Schedules.Rows[0].DueReason != "run_on_start" {
+		t.Fatalf("summary schedule rows = %+v", summaryBody.Schedules.Rows)
+	}
+
+	full := NewRootCmd()
+	fullOut, fullErr := &bytes.Buffer{}, &bytes.Buffer{}
+	full.SetOut(fullOut)
+	full.SetErr(fullErr)
+	full.SetArgs([]string{"monitor", "--schedules", "--json", "--target", tmp})
+	if err := full.Execute(); err != nil {
+		t.Fatalf("monitor --schedules --json: %v\nstdout=%s\nstderr=%s", err, fullOut.String(), fullErr.String())
+	}
+	var fullBody monitorSnapshot
+	if err := json.Unmarshal(fullOut.Bytes(), &fullBody); err != nil {
+		t.Fatalf("decode monitor schedules json: %v\nbody=%s", err, fullOut.String())
+	}
+	if fullBody.Schedules == nil || fullBody.Schedules.Due != 1 || len(fullBody.Schedules.Rows) != 2 {
+		t.Fatalf("full schedules = %+v", fullBody.Schedules)
+	}
+}
+
 func TestMonitorSummaryResourcesHonorsStaleFilter(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
