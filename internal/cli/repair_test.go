@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/job"
 )
 
 func TestRepairDryRunPreviewsDeadQueueWithoutDaemon(t *testing.T) {
@@ -48,6 +49,83 @@ func TestRepairDryRunPreviewsDeadQueueWithoutDaemon(t *testing.T) {
 	}
 	if item.State != daemon.QueueStateDead || item.LastError == "" {
 		t.Fatalf("dry-run mutated queue item = %+v", item)
+	}
+}
+
+func TestRepairJobsIncludesStatusPreview(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-121",
+		Ticket:    "SQU-121",
+		Target:    "worker",
+		Status:    job.StatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "worker-squ-121"), `[status]
+phase = "blocked"
+description = "needs credentials"
+since = "2026-06-18T12:00:00Z"
+
+[work]
+job = "squ-121"
+ticket = "SQU-121"
+branch = "worker-squ-121"
+`, now)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--skip-daemon", "--skip-queue", "--skip-tick", "--jobs", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("repair --jobs dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var result repairResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode repair json: %v\nbody=%s", err, out.String())
+	}
+	if result.HealthBefore == nil {
+		t.Fatal("missing health_before")
+	}
+	if result.HealthBefore.Jobs == nil || result.HealthBefore.Jobs.Summary.Total != 1 {
+		t.Fatalf("jobs snapshot = %+v", result.HealthBefore.Jobs)
+	}
+	if len(result.HealthBefore.JobStatus) != 1 ||
+		result.HealthBefore.JobStatus[0].JobID != "squ-121" ||
+		result.HealthBefore.JobStatus[0].After != job.StatusBlocked ||
+		!result.HealthBefore.JobStatus[0].Changed {
+		t.Fatalf("job status preview = %+v", result.HealthBefore.JobStatus)
+	}
+	var sawBlocked bool
+	for _, issue := range result.HealthBefore.Issues {
+		if issue.Code == "job_status_blocked" && issue.Job == "squ-121" && issue.Phase == "blocked" {
+			sawBlocked = true
+			break
+		}
+	}
+	if !sawBlocked {
+		t.Fatalf("issues = %+v, missing job_status_blocked", result.HealthBefore.Issues)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--skip-daemon", "--skip-queue", "--skip-tick", "--jobs"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("repair --jobs text dry-run: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"job_attention=0", "job_status_changes=1", "job_status_blocked=1"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("repair text missing %q:\n%s", want, textOut.String())
+		}
 	}
 }
 

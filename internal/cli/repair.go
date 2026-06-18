@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -23,6 +24,7 @@ func newRepairCmd() *cobra.Command {
 		skipDaemon   bool
 		skipQueue    bool
 		skipTick     bool
+		includeJobs  bool
 		untilIdle    bool
 		readyTimeout time.Duration
 		interval     time.Duration
@@ -75,6 +77,7 @@ func newRepairCmd() *cobra.Command {
 				SkipDaemon:    skipDaemon,
 				SkipQueue:     skipQueue,
 				SkipTick:      skipTick,
+				IncludeJobs:   includeJobs,
 				UntilIdle:     untilIdle,
 				ReadyTimeout:  readyTimeout,
 				Interval:      interval,
@@ -96,6 +99,7 @@ func newRepairCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipDaemon, "skip-daemon", false, "Do not start or reconcile the daemon.")
 	cmd.Flags().BoolVar(&skipQueue, "skip-queue", false, "Do not retry dead-letter queue items.")
 	cmd.Flags().BoolVar(&skipTick, "skip-tick", false, "Do not run a maintenance tick after queue retry.")
+	cmd.Flags().BoolVar(&includeJobs, "jobs", false, "Include durable job triage and status-file previews in health snapshots.")
 	cmd.Flags().BoolVar(&untilIdle, "until-idle", false, "Run maintenance ticks until no immediate queue, schedule, or pipeline work remains.")
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for implicit daemon readiness (0 = no timeout).")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Delay between --until-idle maintenance cycles.")
@@ -110,6 +114,7 @@ type repairOptions struct {
 	SkipDaemon    bool
 	SkipQueue     bool
 	SkipTick      bool
+	IncludeJobs   bool
 	UntilIdle     bool
 	ReadyTimeout  time.Duration
 	Interval      time.Duration
@@ -154,7 +159,7 @@ func runRepair(cmd *cobra.Command, target, teamDir string, opts repairOptions) (
 		opts.MaxCycles = 1
 	}
 	if opts.CollectHealth {
-		health, err := collectHealth(teamDir, time.Now())
+		health, err := collectRepairHealth(teamDir, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -215,13 +220,17 @@ func runRepair(cmd *cobra.Command, target, teamDir string, opts repairOptions) (
 	}
 
 	if opts.CollectHealth && !opts.DryRun {
-		health, err := collectHealth(teamDir, time.Now())
+		health, err := collectRepairHealth(teamDir, opts)
 		if err != nil {
 			return nil, err
 		}
 		result.HealthAfter = health
 	}
 	return result, nil
+}
+
+func collectRepairHealth(teamDir string, opts repairOptions) (*healthResult, error) {
+	return collectHealthWithOptions(teamDir, time.Now(), healthOptions{includeJobs: opts.IncludeJobs})
 }
 
 func repairDaemonStepResult(status daemonStatusJSON, opts repairOptions) repairStepResult {
@@ -317,7 +326,21 @@ func repairHealthState(h *healthResult) string {
 	if !h.Healthy {
 		state = "unhealthy"
 	}
-	return fmt.Sprintf("%s (issues=%d, queue_dead=%d, queue_pending=%d)", state, len(h.Issues), h.Queue.Dead, h.Queue.Pending)
+	parts := []string{
+		fmt.Sprintf("issues=%d", len(h.Issues)),
+		fmt.Sprintf("queue_dead=%d", h.Queue.Dead),
+		fmt.Sprintf("queue_pending=%d", h.Queue.Pending),
+	}
+	if h.Jobs != nil {
+		parts = append(parts, fmt.Sprintf("job_attention=%d", len(h.Jobs.Attention)))
+	}
+	if h.JobStatus != nil {
+		parts = append(parts,
+			fmt.Sprintf("job_status_changes=%d", countChangedJobStatusPreviews(h.JobStatus)),
+			fmt.Sprintf("job_status_blocked=%d", countJobStatusPreviewsByAfter(h.JobStatus, "blocked")),
+		)
+	}
+	return fmt.Sprintf("%s (%s)", state, strings.Join(parts, ", "))
 }
 
 func renderRepairDaemonStep(w io.Writer, step repairStepResult) {
