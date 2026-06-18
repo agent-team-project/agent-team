@@ -1387,6 +1387,9 @@ func newJobTriageCmd() *cobra.Command {
 	var (
 		repo       string
 		staleAfter time.Duration
+		watch      bool
+		noClear    bool
+		interval   time.Duration
 		jsonOut    bool
 	)
 	cwd, _ := os.Getwd()
@@ -1401,9 +1404,18 @@ func newJobTriageCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job triage: --stale-after must be >= 0.")
 				return exitErr(2)
 			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job triage: --interval must be >= 0.")
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
+			}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				return runJobTriageWatch(ctx, cmd.OutOrStdout(), teamDir, staleAfter, jsonOut, interval, !noClear)
 			}
 			snapshot, err := collectJobTriage(teamDir, time.Now().UTC(), staleAfter)
 			if err != nil {
@@ -1415,6 +1427,9 @@ func newJobTriageCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().DurationVar(&staleAfter, "stale-after", defaultJobTriageStaleAfter, "Flag queued or running jobs with no update after this duration (0 disables stale checks).")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the triage view until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit triage snapshot as JSON.")
 	return cmd
 }
@@ -2170,6 +2185,38 @@ func collectJobTriage(teamDir string, now time.Time, staleAfter time.Duration) (
 		Attention:  attention,
 		ReadySteps: readySteps,
 	}, nil
+}
+
+func runJobTriageWatch(ctx context.Context, w io.Writer, teamDir string, staleAfter time.Duration, jsonOut bool, interval time.Duration, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		snapshot, err := collectJobTriage(teamDir, time.Now().UTC(), staleAfter)
+		if err != nil {
+			return err
+		}
+		if jsonOut {
+			if err := json.NewEncoder(w).Encode(snapshot); err != nil {
+				return err
+			}
+		} else {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+			renderJobTriage(w, snapshot, false)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
 }
 
 func queueStatsByJob(jobs []*job.Job, items []*daemon.QueueItem, now time.Time) map[string]jobTriageQueueStats {

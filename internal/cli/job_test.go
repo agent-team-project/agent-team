@@ -313,6 +313,50 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	}
 }
 
+func TestJobTriageWatchRendersOnceWhenContextCancelled(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	j := mustNewJob(t, "SQU-206", "worker")
+	j.Status = job.StatusFailed
+	j.LastStatus = "needs attention"
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out bytes.Buffer
+	if err := runJobTriageWatch(ctx, &out, teamDir, 24*time.Hour, false, time.Millisecond, false); err != nil {
+		t.Fatalf("triage watch: %v", err)
+	}
+	if strings.Contains(out.String(), watchClearSequence) {
+		t.Fatalf("watch with clear=false wrote clear sequence: %q", out.String())
+	}
+	for _, want := range []string{"jobs: total=1", "Attention:", "squ-206", "failed"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("triage watch missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestJobTriageRejectsNegativeInterval(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "triage", "--repo", tmp, "--watch", "--interval", "-1s"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("job triage negative interval succeeded")
+	}
+	if !strings.Contains(stderr.String(), "--interval must be >= 0") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestJobReconcileQueueUpdatesDeadJob(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
