@@ -30,6 +30,7 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobLsCmd())
 	cmd.AddCommand(newJobShowCmd())
 	cmd.AddCommand(newJobWaitCmd())
+	cmd.AddCommand(newJobStartCmd())
 	cmd.AddCommand(newJobDispatchCmd())
 	cmd.AddCommand(newJobSendCmd())
 	cmd.AddCommand(newJobLogsCmd())
@@ -318,6 +319,49 @@ func newJobWaitCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the final job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the final job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
+	return cmd
+}
+
+func newJobStartCmd() *cobra.Command {
+	var (
+		repo         string
+		wait         bool
+		timeout      time.Duration
+		readyTimeout time.Duration
+		dryRun       bool
+		quiet        bool
+		jsonOut      bool
+		format       string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "start <job-id>",
+		Short: "Start or resume a job's owning instance.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			formatTemplate, err := parseLifecycleActionFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job start: %v\n", err)
+				return exitErr(2)
+			}
+			return runJobInstanceUp(cmd, repo, args[0], instanceUpOptions{
+				Wait:    wait,
+				Timeout: timeout,
+				DryRun:  dryRun,
+				Quiet:   quiet,
+				JSON:    jsonOut,
+				Format:  formatTemplate,
+			}, readyTimeout)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the owning instance to become healthy after starting or resuming.")
+	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
+	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for implicit daemon readiness (0 = no timeout).")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the start/resume action without changing daemon or job state.")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output and use only the exit code.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable lifecycle action JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the lifecycle action with a Go template, e.g. '{{.Instance}} {{.Action}}'.")
 	return cmd
 }
 
@@ -1144,6 +1188,50 @@ func jobWaitStatusList(statuses map[job.Status]bool) string {
 		}
 	}
 	return strings.Join(out, "|")
+}
+
+func runJobInstanceUp(cmd *cobra.Command, repo, id string, opts instanceUpOptions, readyTimeout time.Duration) error {
+	if readyTimeout < 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job start: --ready-timeout must be >= 0.")
+		return exitErr(2)
+	}
+	teamDir, j, err := readJobAndTeamDir(cmd, repo, id)
+	if err != nil {
+		return err
+	}
+	instance := strings.TrimSpace(j.Instance)
+	if instance == "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job start: job %q has no owning instance; dispatch it first.\n", j.ID)
+		return exitErr(2)
+	}
+	repoRoot := filepath.Dir(teamDir)
+	if !opts.DryRun {
+		if err := ensureDaemonReadyWithTimeout(cmd, repoRoot, opts.JSON || opts.Quiet, readyTimeout); err != nil {
+			return err
+		}
+	}
+	if err := runInstanceUpWithOptions(cmd, repoRoot, "", []string{instance}, opts); err != nil {
+		return err
+	}
+	if opts.DryRun {
+		return nil
+	}
+	applyJobInstanceUpUpdate(j)
+	return job.Write(teamDir, j)
+}
+
+func applyJobInstanceUpUpdate(j *job.Job) {
+	now := time.Now().UTC()
+	if j.Status != job.StatusDone {
+		j.Status = job.StatusRunning
+	}
+	j.LastEvent = "instance_start"
+	if strings.TrimSpace(j.Instance) != "" {
+		j.LastStatus = "start " + j.Instance
+	} else {
+		j.LastStatus = "start"
+	}
+	j.UpdatedAt = now
 }
 
 func runJobInstanceDown(cmd *cobra.Command, repo, id string, opts instanceDownOptions, nextStatus job.Status) error {

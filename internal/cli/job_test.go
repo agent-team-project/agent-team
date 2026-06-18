@@ -471,6 +471,65 @@ func TestJobAttachRequiresOwningInstance(t *testing.T) {
 	}
 }
 
+func TestJobStartResumesOwningInstanceAndMarksJobRunning(t *testing.T) {
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-job-start-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	mgr := daemon.NewInstanceManager(root, fakeSpawnerForTest(t, 2*time.Second))
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	if _, err := mgr.Dispatch(daemon.DispatchInput{Agent: "worker", Name: "worker-squ-63", Workspace: tmp}); err != nil {
+		t.Fatalf("dispatch worker: %v", err)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-63")
+	t.Cleanup(func() {
+		meta, err := daemon.ReadMetadata(root, "worker-squ-63")
+		if err == nil && meta.Status == daemon.StatusRunning {
+			stopAndWaitForTest(t, mgr, "worker-squ-63")
+		}
+	})
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-63",
+		Ticket:    "SQU-63",
+		Target:    "worker",
+		Instance:  "worker-squ-63",
+		Status:    job.StatusBlocked,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "start", "squ-63", "--repo", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job start: %v\nstdout=%s\nstderr=%s", err, out.String(), stderr.String())
+	}
+	var rows []lifecycleActionResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode start json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Action != "resume" || rows[0].Instance != "worker-squ-63" || rows[0].Status != string(daemon.StatusRunning) {
+		t.Fatalf("rows = %+v", rows)
+	}
+	updated, err := job.Read(teamDir, "squ-63")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if updated.Status != job.StatusRunning || updated.LastEvent != "instance_start" || updated.LastStatus != "start worker-squ-63" {
+		t.Fatalf("updated job = %+v", updated)
+	}
+}
+
 func TestJobStopStopsOwningInstanceAndBlocksJob(t *testing.T) {
 	tmp, err := os.MkdirTemp("/tmp", "agent-team-job-stop-")
 	if err != nil {
