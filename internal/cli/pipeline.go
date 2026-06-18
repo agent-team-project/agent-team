@@ -173,19 +173,28 @@ func newPipelineAdvanceCmd() *cobra.Command {
 		repo      string
 		workspace string
 		limit     int
+		all       bool
 		dryRun    bool
 		jsonOut   bool
 		format    string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "advance <pipeline>",
-		Short: "Dispatch ready steps for one pipeline.",
-		Long:  "Dispatch ready next steps for jobs in one pipeline using the same path as `agent-team job advance`.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "advance <pipeline>|--all",
+		Short: "Dispatch ready pipeline steps.",
+		Long:  "Dispatch ready next steps for jobs in one pipeline, or across all pipelines with --all, using the same path as `agent-team job advance`.",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if !all && len(args) != 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: pass a pipeline name or --all.")
 				return exitErr(2)
 			}
 			if limit < 0 {
@@ -201,8 +210,11 @@ func newPipelineAdvanceCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			pipelineName := strings.TrimSpace(args[0])
-			if pipelineName == "" {
+			pipelineName := ""
+			if !all {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if !all && pipelineName == "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: pipeline name is required.")
 				return exitErr(2)
 			}
@@ -216,6 +228,7 @@ func newPipelineAdvanceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for advanced steps: auto, worktree, or repo.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Advance at most this many ready jobs; 0 means no limit.")
+	cmd.Flags().BoolVar(&all, "all", false, "Advance ready steps across all pipelines.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview ready steps without dispatching them.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit advance results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
@@ -546,10 +559,11 @@ func renderPipelineAdvanceTable(w io.Writer, results []pipelineAdvanceResult) {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "JOB\tSTEP\tTARGET\tACTION\tSTATUS\tINSTANCE\tMESSAGE")
+	fmt.Fprintln(tw, "JOB\tPIPELINE\tSTEP\tTARGET\tACTION\tSTATUS\tINSTANCE\tMESSAGE")
 	for _, result := range results {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			result.JobID,
+			emptyDash(result.Pipeline),
 			emptyDash(result.StepID),
 			emptyDash(result.Target),
 			result.Action,

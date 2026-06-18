@@ -426,3 +426,76 @@ func TestPipelineAdvanceDryRunAndDispatch(t *testing.T) {
 		t.Fatalf("jobs after advance first=%+v second=%+v", first, second)
 	}
 }
+
+func TestPipelineAdvanceAllDryRun(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-501",
+			Ticket:    "SQU-501",
+			Target:    "worker",
+			Kickoff:   "SQU-501: implement",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusBlocked},
+			},
+		},
+		{
+			ID:        "squ-502",
+			Ticket:    "SQU-502",
+			Target:    "manager",
+			Kickoff:   "SQU-502: triage",
+			Pipeline:  "nightly",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "triage", Target: "manager", Status: job.StatusBlocked},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"pipeline", "advance", "--all", "--repo", root, "--dry-run", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline advance --all dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var preview []pipelineAdvanceResult
+	if err := json.Unmarshal(out.Bytes(), &preview); err != nil {
+		t.Fatalf("decode advance all dry-run: %v\nbody=%s", err, out.String())
+	}
+	if len(preview) != 2 {
+		t.Fatalf("preview len = %d, want 2: %+v", len(preview), preview)
+	}
+	got := preview[0].JobID + ":" + preview[0].Pipeline + "," + preview[1].JobID + ":" + preview[1].Pipeline
+	if got != "squ-501:ticket_to_pr,squ-502:nightly" {
+		t.Fatalf("preview order = %s, rows=%+v", got, preview)
+	}
+
+	invalid := NewRootCmd()
+	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalid.SetOut(invalidOut)
+	invalid.SetErr(invalidErr)
+	invalid.SetArgs([]string{"pipeline", "advance", "ticket_to_pr", "--all", "--repo", root})
+	if err := invalid.Execute(); err == nil {
+		t.Fatal("pipeline advance <pipeline> --all succeeded")
+	}
+	if !strings.Contains(invalidErr.String(), "--all cannot be combined") {
+		t.Fatalf("invalid stderr = %q", invalidErr.String())
+	}
+}
