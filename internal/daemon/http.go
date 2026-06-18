@@ -466,7 +466,15 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 			writeError(w, http.StatusServiceUnavailable, "topology not configured")
 			return
 		}
-		result, err := events.DrainQueuesWithResult()
+		var (
+			result *QueueDrainResult
+			err    error
+		)
+		if r.URL.Query().Get("dry_run") == "true" {
+			result, err = events.PreviewDrainQueuesWithResult()
+		} else {
+			result, err = events.DrainQueuesWithResult()
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return

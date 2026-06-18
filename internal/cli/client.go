@@ -520,8 +520,12 @@ func (c *daemonClient) QueueRetry(id string) (*daemon.EventOutcome, error) {
 	return &out, nil
 }
 
-func (c *daemonClient) QueueDrain() (*daemon.QueueDrainResult, error) {
-	resp, err := c.hc.Post(c.baseURL+"/v1/queue/drain", "application/json", bytes.NewReader([]byte("{}")))
+func (c *daemonClient) QueueDrain(dryRun bool) (*daemon.QueueDrainResult, error) {
+	u := c.baseURL + "/v1/queue/drain"
+	if dryRun {
+		u += "?dry_run=true"
+	}
+	resp, err := c.hc.Post(u, "application/json", bytes.NewReader([]byte("{}")))
 	if err != nil {
 		return nil, fmt.Errorf("daemon: queue drain: %w", err)
 	}

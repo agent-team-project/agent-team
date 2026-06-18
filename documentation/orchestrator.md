@@ -132,9 +132,10 @@ POST /v1/reconcile
 GET /v1/queue
   → [{ "id": "...", "state": "pending|dead", "event_type": "...", ... }]
 
-POST /v1/queue/drain
+POST /v1/queue/drain[?dry_run=true]
   → { "attempted": <int>, "dispatched": <int>, "rejected": <int>,
-       "pending": <int>, "dead": <int>, "outcomes": [...] }
+       "would_dispatch": <int>, "pending": <int>, "dead": <int>,
+       "dry_run": <bool>, "outcomes": [...] }
 
 POST /v1/queue/{id}/retry
   → { "instance": "...", "action": "dispatched|queued|rejected", ... }
@@ -217,7 +218,7 @@ agent-team plan [--json] [--summary] [--stop-extras] [--format '{{.Instance}} {{
                                   # read-only desired-state preview from instances.toml + daemon metadata
 agent-team sync [-q] [--dry-run] [--stop-extras] [--agent manager] [--instance manager] [--status unknown] [--phase idle] [--action start] [--summary] [--format '{{.Instance}} {{.Action}}'] [--ready-timeout 3s] [--wait --timeout 30s] [--json]
                                   # reload topology, reconcile metadata, start/resume persistent instances, and optionally stop running extras
-agent-team tick [-w] [--interval 2s] [--skip-reconcile] [--skip-drain] [--skip-advance] [--limit N] [--workspace auto|worktree|repo] [--format '{{.Queue.Dispatched}} {{len .Advance}}'] [--json]
+agent-team tick [-w] [--interval 2s] [--dry-run] [--skip-reconcile] [--skip-drain] [--skip-advance] [--limit N] [--workspace auto|worktree|repo] [--format '{{.Queue.Dispatched}} {{len .Advance}}'] [--json]
                                   # operator maintenance cycle: reconcile metadata, drain ready queue items, advance ready pipeline jobs
 agent-team inspect [<instance>...] [--all] [--latest | --last N] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--format '{{.Instance}} {{if .Runtime}}{{.Runtime.Lifecycle}}{{end}}'] [--json]
                                   # runtime metadata + state/status/topology detail; reads persisted runtime metadata if the daemon is down

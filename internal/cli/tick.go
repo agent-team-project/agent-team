@@ -22,6 +22,7 @@ func newTickCmd() *cobra.Command {
 		skipReconcile bool
 		skipDrain     bool
 		skipAdvance   bool
+		dryRun        bool
 		watch         bool
 		jsonOut       bool
 		format        string
@@ -60,6 +61,7 @@ func newTickCmd() *cobra.Command {
 				SkipReconcile: skipReconcile,
 				SkipDrain:     skipDrain,
 				SkipAdvance:   skipAdvance,
+				DryRun:        dryRun,
 			}
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -73,11 +75,7 @@ func newTickCmd() *cobra.Command {
 				}
 				return nil
 			}
-			result, err := runTick(cmd, teamDir, workspace, limit, tickOptions{
-				SkipReconcile: skipReconcile,
-				SkipDrain:     skipDrain,
-				SkipAdvance:   skipAdvance,
-			})
+			result, err := runTick(cmd, teamDir, workspace, limit, opts)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team tick: %v\n", err)
 				if errors.Is(err, errDaemonNotRunning) {
@@ -94,6 +92,7 @@ func newTickCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipReconcile, "skip-reconcile", false, "Skip daemon metadata reconciliation.")
 	cmd.Flags().BoolVar(&skipDrain, "skip-drain", false, "Skip queue draining.")
 	cmd.Flags().BoolVar(&skipAdvance, "skip-advance", false, "Skip pipeline advancement.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview queue drain and pipeline advancement without mutating state.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Run tick repeatedly until interrupted.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the tick result with a Go template, e.g. '{{.Queue.Dispatched}} {{len .Advance}}'.")
@@ -105,12 +104,14 @@ type tickOptions struct {
 	SkipReconcile bool
 	SkipDrain     bool
 	SkipAdvance   bool
+	DryRun        bool
 }
 
 type tickResult struct {
 	Reconcile *daemonReconcileResponse `json:"reconcile,omitempty"`
 	Queue     *daemon.QueueDrainResult `json:"queue,omitempty"`
 	Advance   []pipelineAdvanceResult  `json:"advance,omitempty"`
+	DryRun    bool                     `json:"dry_run,omitempty"`
 }
 
 func runTick(cmd *cobra.Command, teamDir, workspace string, limit int, opts tickOptions) (*tickResult, error) {
@@ -118,8 +119,8 @@ func runTick(cmd *cobra.Command, teamDir, workspace string, limit int, opts tick
 	if err != nil {
 		return nil, err
 	}
-	result := &tickResult{}
-	if !opts.SkipReconcile {
+	result := &tickResult{DryRun: opts.DryRun}
+	if !opts.SkipReconcile && !opts.DryRun {
 		rec, err := dc.Reconcile()
 		if err != nil {
 			return nil, err
@@ -127,14 +128,14 @@ func runTick(cmd *cobra.Command, teamDir, workspace string, limit int, opts tick
 		result.Reconcile = rec
 	}
 	if !opts.SkipDrain {
-		drain, err := dc.QueueDrain()
+		drain, err := dc.QueueDrain(opts.DryRun)
 		if err != nil {
 			return nil, err
 		}
 		result.Queue = drain
 	}
 	if !opts.SkipAdvance {
-		advanced, err := advanceReadyPipelineJobs(cmd, teamDir, "", workspace, limit, false)
+		advanced, err := advanceReadyPipelineJobs(cmd, teamDir, "", workspace, limit, opts.DryRun)
 		if err != nil {
 			return nil, err
 		}
@@ -194,6 +195,10 @@ func renderTickResult(w fmtWriter, result *tickResult, jsonOut bool, tmpl *templ
 		}
 		_, err := fmt.Fprintln(w)
 		return err
+	}
+	if result.DryRun {
+		fmt.Fprintln(w, "Dry run: true")
+		fmt.Fprintln(w)
 	}
 	if result.Reconcile != nil {
 		fmt.Fprintln(w, "Reconcile:")

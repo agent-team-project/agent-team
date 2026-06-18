@@ -1084,6 +1084,62 @@ func (r *EventResolver) DrainQueuesWithResult() (*QueueDrainResult, error) {
 	if err != nil {
 		return result, err
 	}
+	applyQueueDrainCounts(result, items)
+	return result, nil
+}
+
+// PreviewDrainQueuesWithResult reports which ready queue items would be
+// dispatched by DrainQueuesWithResult without spawning processes or removing
+// queue files.
+func (r *EventResolver) PreviewDrainQueuesWithResult() (*QueueDrainResult, error) {
+	if err := r.loadPersistedQueue(); err != nil {
+		return nil, err
+	}
+	result := &QueueDrainResult{DryRun: true, Outcomes: []EventOutcome{}}
+	r.mu.Lock()
+	if r.topo != nil {
+		now := time.Now().UTC()
+		for _, inst := range r.topo.SortedInstances() {
+			if !inst.Ephemeral {
+				continue
+			}
+			tr := r.tracking[inst.Name]
+			running := 0
+			var queue []*queuedEvent
+			if tr != nil {
+				running = tr.running
+				queue = tr.queue
+			}
+			capacity := inst.Replicas - running
+			for _, ev := range queue {
+				if capacity <= 0 {
+					break
+				}
+				if ev == nil {
+					continue
+				}
+				if !ev.nextRetry.IsZero() && ev.nextRetry.After(now) {
+					continue
+				}
+				result.WouldDispatch++
+				result.Outcomes = append(result.Outcomes, EventOutcome{Instance: inst.Name, Action: "would_dispatch", InstanceID: ev.uniqueName})
+				capacity--
+			}
+		}
+	}
+	r.mu.Unlock()
+	items, err := ListQueueItems(r.mgr.daemonRoot)
+	if err != nil {
+		return result, err
+	}
+	applyQueueDrainCounts(result, items)
+	return result, nil
+}
+
+func applyQueueDrainCounts(result *QueueDrainResult, items []*QueueItem) {
+	if result == nil {
+		return
+	}
 	for _, item := range items {
 		switch item.State {
 		case QueueStatePending:
@@ -1092,7 +1148,6 @@ func (r *EventResolver) DrainQueuesWithResult() (*QueueDrainResult, error) {
 			result.Dead++
 		}
 	}
-	return result, nil
 }
 
 func (r *EventResolver) nextDrainableQueuedEvent() (*topology.Instance, *queuedEvent) {

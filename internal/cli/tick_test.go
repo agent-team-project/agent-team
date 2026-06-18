@@ -49,6 +49,35 @@ func TestTickRunsMaintenanceCycle(t *testing.T) {
 		t.Fatalf("write ready job: %v", err)
 	}
 
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"tick", "--target", target, "--workspace", "repo", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("tick dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview tickResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode tick dry-run json: %v\nbody=%s", err, dryOut.String())
+	}
+	if !preview.DryRun || preview.Reconcile != nil || preview.Queue == nil || !preview.Queue.DryRun || preview.Queue.WouldDispatch != 1 {
+		t.Fatalf("tick preview = %+v", preview)
+	}
+	if len(preview.Advance) != 1 || preview.Advance[0].Action != "would_advance" || !preview.Advance[0].DryRun {
+		t.Fatalf("tick preview advance = %+v", preview.Advance)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-tick"); err != nil {
+		t.Fatalf("tick dry-run removed queue item: %v", err)
+	}
+	unchanged, err := job.Read(teamDir, "squ-93")
+	if err != nil {
+		t.Fatalf("read dry-run job: %v", err)
+	}
+	if unchanged.Steps[1].Status != job.StatusBlocked {
+		t.Fatalf("tick dry-run mutated job = %+v", unchanged)
+	}
+
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)

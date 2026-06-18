@@ -695,6 +695,25 @@ func TestQueueDrainThroughDaemon(t *testing.T) {
 		t.Fatalf("WriteQueueItem: %v", err)
 	}
 
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"queue", "drain", "--target", target, "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("queue drain dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview daemon.QueueDrainResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode drain dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if !preview.DryRun || preview.WouldDispatch != 1 || preview.Dispatched != 0 || preview.Pending != 1 {
+		t.Fatalf("drain preview = %+v", preview)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-drain"); err != nil {
+		t.Fatalf("dry-run removed queue item: %v", err)
+	}
+
 	drain := NewRootCmd()
 	drainOut, drainErr := &bytes.Buffer{}, &bytes.Buffer{}
 	drain.SetOut(drainOut)

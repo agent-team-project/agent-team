@@ -340,6 +340,7 @@ func newQueueRetryCmd() *cobra.Command {
 func newQueueDrainCmd() *cobra.Command {
 	var (
 		target  string
+		dryRun  bool
 		jsonOut bool
 		format  string
 	)
@@ -370,7 +371,7 @@ func newQueueDrainCmd() *cobra.Command {
 				}
 				return err
 			}
-			result, err := dc.QueueDrain()
+			result, err := dc.QueueDrain(dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue drain: %v\n", err)
 				return exitErr(1)
@@ -379,6 +380,7 @@ func newQueueDrainCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview ready queue items without dispatching them.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the drain result with a Go template, e.g. '{{.Dispatched}} {{.Pending}}'.")
 	return cmd
@@ -962,8 +964,13 @@ func renderQueueDrainResult(w io.Writer, result *daemon.QueueDrainResult, jsonOu
 		_, err := fmt.Fprintln(w)
 		return err
 	}
-	fmt.Fprintf(w, "queue drain: attempted=%d dispatched=%d rejected=%d pending=%d dead=%d\n",
-		result.Attempted, result.Dispatched, result.Rejected, result.Pending, result.Dead)
+	if result.DryRun {
+		fmt.Fprintf(w, "queue drain dry-run: would_dispatch=%d pending=%d dead=%d\n",
+			result.WouldDispatch, result.Pending, result.Dead)
+	} else {
+		fmt.Fprintf(w, "queue drain: attempted=%d dispatched=%d rejected=%d pending=%d dead=%d\n",
+			result.Attempted, result.Dispatched, result.Rejected, result.Pending, result.Dead)
+	}
 	if len(result.Outcomes) == 0 {
 		return nil
 	}

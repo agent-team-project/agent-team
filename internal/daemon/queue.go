@@ -35,12 +35,14 @@ type QueueItem struct {
 
 // QueueDrainResult describes one explicit queue drain pass.
 type QueueDrainResult struct {
-	Attempted  int            `json:"attempted"`
-	Dispatched int            `json:"dispatched"`
-	Rejected   int            `json:"rejected"`
-	Pending    int            `json:"pending"`
-	Dead       int            `json:"dead"`
-	Outcomes   []EventOutcome `json:"outcomes"`
+	Attempted     int            `json:"attempted"`
+	Dispatched    int            `json:"dispatched"`
+	WouldDispatch int            `json:"would_dispatch,omitempty"`
+	Rejected      int            `json:"rejected"`
+	Pending       int            `json:"pending"`
+	Dead          int            `json:"dead"`
+	DryRun        bool           `json:"dry_run,omitempty"`
+	Outcomes      []EventOutcome `json:"outcomes"`
 }
 
 func QueueRoot(daemonRoot string) string {

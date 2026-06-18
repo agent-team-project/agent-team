@@ -633,6 +633,44 @@ func TestEvent_DrainQueuesWithResultReportsOutcomes(t *testing.T) {
 	}
 }
 
+func TestEvent_PreviewDrainQueuesDoesNotDispatch(t *testing.T) {
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	now := time.Now().UTC()
+	item := &QueueItem{
+		ID:         "queued-preview",
+		State:      QueueStatePending,
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-79",
+		Payload:    map[string]any{"target": "worker", "name": "worker-squ-79", "ticket": "SQU-79"},
+		QueuedAt:   now,
+		UpdatedAt:  now,
+	}
+	if err := WriteQueueItem(root, item); err != nil {
+		t.Fatalf("WriteQueueItem: %v", err)
+	}
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
+	result, err := resolver.PreviewDrainQueuesWithResult()
+	if err != nil {
+		t.Fatalf("PreviewDrainQueuesWithResult: %v", err)
+	}
+	if !result.DryRun || result.WouldDispatch != 1 || result.Dispatched != 0 || result.Pending != 1 {
+		t.Fatalf("preview result = %+v", result)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Action != "would_dispatch" || result.Outcomes[0].InstanceID != "worker-squ-79" {
+		t.Fatalf("preview outcomes = %+v", result.Outcomes)
+	}
+	if _, err := ReadQueueItem(root, "queued-preview"); err != nil {
+		t.Fatalf("preview removed queue item: %v", err)
+	}
+	if fake.callCount() != 0 {
+		t.Fatalf("spawn calls=%d, want 0", fake.callCount())
+	}
+}
+
 func TestEvent_PipelineCreatesJobAndDispatchesFirstStep(t *testing.T) {
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)
