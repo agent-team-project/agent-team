@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"text/template"
+	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/spf13/cobra"
@@ -19,8 +22,10 @@ func newTickCmd() *cobra.Command {
 		skipReconcile bool
 		skipDrain     bool
 		skipAdvance   bool
+		watch         bool
 		jsonOut       bool
 		format        string
+		interval      time.Duration
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -38,6 +43,10 @@ func newTickCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team tick: --limit must be >= 0.")
 				return exitErr(2)
 			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team tick: --interval must be >= 0.")
+				return exitErr(2)
+			}
 			tmpl, err := parseTickFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team tick: %v\n", err)
@@ -46,6 +55,23 @@ func newTickCmd() *cobra.Command {
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
+			}
+			opts := tickOptions{
+				SkipReconcile: skipReconcile,
+				SkipDrain:     skipDrain,
+				SkipAdvance:   skipAdvance,
+			}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				if err := runTickLoop(ctx, cmd, teamDir, workspace, limit, opts, jsonOut, tmpl, interval); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team tick: %v\n", err)
+					if errors.Is(err, errDaemonNotRunning) {
+						return exitErr(2)
+					}
+					return exitErr(1)
+				}
+				return nil
 			}
 			result, err := runTick(cmd, teamDir, workspace, limit, tickOptions{
 				SkipReconcile: skipReconcile,
@@ -68,8 +94,10 @@ func newTickCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipReconcile, "skip-reconcile", false, "Skip daemon metadata reconciliation.")
 	cmd.Flags().BoolVar(&skipDrain, "skip-drain", false, "Skip queue draining.")
 	cmd.Flags().BoolVar(&skipAdvance, "skip-advance", false, "Skip pipeline advancement.")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Run tick repeatedly until interrupted.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the tick result with a Go template, e.g. '{{.Queue.Dispatched}} {{len .Advance}}'.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	return cmd
 }
 
@@ -113,6 +141,33 @@ func runTick(cmd *cobra.Command, teamDir, workspace string, limit int, opts tick
 		result.Advance = advanced
 	}
 	return result, nil
+}
+
+func runTickLoop(ctx context.Context, cmd *cobra.Command, teamDir, workspace string, limit int, opts tickOptions, jsonOut bool, tmpl *template.Template, interval time.Duration) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	first := true
+	for {
+		result, err := runTick(cmd, teamDir, workspace, limit, opts)
+		if err != nil {
+			return err
+		}
+		if !first && !jsonOut {
+			fmt.Fprintln(cmd.OutOrStdout())
+		}
+		if err := renderTickResult(cmd.OutOrStdout(), result, jsonOut, tmpl); err != nil {
+			return err
+		}
+		first = false
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
 }
 
 func parseTickFormat(format string) (*template.Template, error) {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -81,4 +82,30 @@ func TestTickRunsMaintenanceCycle(t *testing.T) {
 	}
 	stopAndWaitForTest(t, mgr, "worker-squ-91")
 	stopAndWaitForTest(t, mgr, updated.Steps[1].Instance)
+}
+
+func TestTickWatchRendersCanceledSnapshot(t *testing.T) {
+	target, _, cleanup := setupDispatchCommandRepo(t)
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	if err := runTickLoop(ctx, cmd, teamDir, "repo", 0, tickOptions{
+		SkipReconcile: true,
+		SkipDrain:     true,
+		SkipAdvance:   true,
+	}, true, nil, time.Millisecond); err != nil {
+		t.Fatalf("tick watch loop: %v\nstderr=%s", err, stderr.String())
+	}
+	var result tickResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode watch tick json: %v\nbody=%s", err, out.String())
+	}
+	if result.Reconcile != nil || result.Queue != nil || result.Advance != nil {
+		t.Fatalf("watch result = %+v, want skipped sections", result)
+	}
 }
