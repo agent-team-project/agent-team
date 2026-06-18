@@ -29,6 +29,7 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobCreateCmd())
 	cmd.AddCommand(newJobLsCmd())
 	cmd.AddCommand(newJobShowCmd())
+	cmd.AddCommand(newJobWaitCmd())
 	cmd.AddCommand(newJobDispatchCmd())
 	cmd.AddCommand(newJobSendCmd())
 	cmd.AddCommand(newJobLogsCmd())
@@ -213,6 +214,108 @@ func newJobShowCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
+	return cmd
+}
+
+func newJobWaitCmd() *cobra.Command {
+	var (
+		repo         string
+		statuses     []string
+		timeout      time.Duration
+		interval     time.Duration
+		failOnFailed bool
+		quiet        bool
+		jsonOut      bool
+		format       string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "wait <job-id>",
+		Short: "Wait for a job to reach a lifecycle status.",
+		Long: "Wait for a durable job to reach one of the requested lifecycle statuses. " +
+			"By default this waits for a terminal status: done or failed.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job wait: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if timeout < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job wait: --timeout must be >= 0.")
+				return exitErr(2)
+			}
+			if quiet && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job wait: choose one of --quiet or --json.")
+				return exitErr(2)
+			}
+			if format != "" && (quiet || jsonOut) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job wait: --format cannot be combined with --quiet or --json.")
+				return exitErr(2)
+			}
+			waitStatuses, err := parseJobWaitStatuses(statuses, !cmd.Flags().Changed("status"))
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job wait: %v\n", err)
+				return exitErr(2)
+			}
+			tmpl, err := parseJobFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job wait: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			defer stop()
+			cancel := func() {}
+			if timeout > 0 {
+				ctx, cancel = context.WithTimeout(ctx, timeout)
+			}
+			defer cancel()
+			j, err := runJobWait(ctx, teamDir, args[0], waitStatuses, interval)
+			if err != nil {
+				if timeoutErr, ok := err.(*jobWaitTimeoutError); ok {
+					if !quiet {
+						status := "unknown"
+						if timeoutErr.Job != nil {
+							status = string(timeoutErr.Job.Status)
+						}
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job wait: timed out waiting for %s to reach %s (current=%s).\n",
+							job.NormalizeID(args[0]), jobWaitStatusList(waitStatuses), status)
+					}
+					return exitErr(1)
+				}
+				if err == context.Canceled {
+					return nil
+				}
+				return err
+			}
+			if jsonOut {
+				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(j); err != nil {
+					return err
+				}
+			} else if tmpl != nil {
+				if err := renderJobTemplate(cmd.OutOrStdout(), j, tmpl); err != nil {
+					return err
+				}
+			} else if !quiet {
+				fmt.Fprintf(cmd.OutOrStdout(), "  wait   %-20s %s\n", j.ID, j.Status)
+			}
+			if failOnFailed && j.Status == job.StatusFailed {
+				return exitErr(1)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringSliceVar(&statuses, "status", nil, "Status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
+	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait (0 = no timeout).")
+	cmd.Flags().DurationVar(&interval, "interval", 500*time.Millisecond, "Polling interval.")
+	cmd.Flags().BoolVar(&failOnFailed, "fail-on-failed", false, "Exit 1 if the job resolves to failed.")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the final job as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the final job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
 }
 
@@ -861,6 +964,83 @@ func runJobListWatch(ctx context.Context, w io.Writer, teamDir string, filters j
 			}
 		}
 	}
+}
+
+type jobWaitTimeoutError struct {
+	Job *job.Job
+}
+
+func (e *jobWaitTimeoutError) Error() string {
+	return "job wait timed out"
+}
+
+func parseJobWaitStatuses(raw []string, useDefault bool) (map[job.Status]bool, error) {
+	if useDefault {
+		return map[job.Status]bool{
+			job.StatusDone:   true,
+			job.StatusFailed: true,
+		}, nil
+	}
+	statuses := map[job.Status]bool{}
+	for _, value := range splitFilterValues(raw) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		switch value {
+		case "terminal", "finished":
+			statuses[job.StatusDone] = true
+			statuses[job.StatusFailed] = true
+		default:
+			status, err := job.ParseStatus(value)
+			if err != nil {
+				return nil, err
+			}
+			statuses[status] = true
+		}
+	}
+	if len(statuses) == 0 {
+		return nil, fmt.Errorf("--status requires at least one non-empty status")
+	}
+	return statuses, nil
+}
+
+func runJobWait(ctx context.Context, teamDir, id string, statuses map[job.Status]bool, interval time.Duration) (*job.Job, error) {
+	if interval <= 0 {
+		interval = 500 * time.Millisecond
+	}
+	var last *job.Job
+	for {
+		j, err := job.Read(teamDir, id)
+		if err != nil {
+			return nil, err
+		}
+		last = j
+		if statuses[j.Status] {
+			return j, nil
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			if ctx.Err() == context.DeadlineExceeded {
+				return last, &jobWaitTimeoutError{Job: last}
+			}
+			return last, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func jobWaitStatusList(statuses map[job.Status]bool) string {
+	order := []job.Status{job.StatusQueued, job.StatusRunning, job.StatusBlocked, job.StatusDone, job.StatusFailed}
+	out := make([]string, 0, len(statuses))
+	for _, status := range order {
+		if statuses[status] {
+			out = append(out, string(status))
+		}
+	}
+	return strings.Join(out, "|")
 }
 
 func filteredJobs(teamDir string, filters jobListFilters) ([]*job.Job, error) {

@@ -174,6 +174,115 @@ func TestJobListWatchRendersSnapshot(t *testing.T) {
 	}
 }
 
+func TestJobWaitPollsUntilTerminalStatus(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-58",
+		Ticket:    "SQU-58",
+		Target:    "worker",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		time.Sleep(25 * time.Millisecond)
+		updated, err := job.Read(teamDir, "squ-58")
+		if err != nil {
+			t.Errorf("read job in updater: %v", err)
+			return
+		}
+		updated.Status = job.StatusDone
+		updated.LastEvent = "test_done"
+		updated.UpdatedAt = time.Now().UTC()
+		if err := job.Write(teamDir, updated); err != nil {
+			t.Errorf("write done job: %v", err)
+		}
+	}()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "wait", "SQU-58", "--repo", tmp, "--timeout", "2s", "--interval", "10ms", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job wait: %v\nstderr=%s", err, stderr.String())
+	}
+	<-done
+	var got job.Job
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode wait json: %v\nbody=%s", err, out.String())
+	}
+	if got.Status != job.StatusDone || got.LastEvent != "test_done" {
+		t.Fatalf("wait result = %+v", got)
+	}
+}
+
+func TestJobWaitTimesOut(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-59",
+		Ticket:    "SQU-59",
+		Target:    "worker",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "wait", "squ-59", "--repo", tmp, "--timeout", "1ms", "--interval", "10ms"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("job wait succeeded unexpectedly")
+	}
+	if !strings.Contains(stderr.String(), "timed out") || !strings.Contains(stderr.String(), "current=running") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestJobWaitFailOnFailed(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-60",
+		Ticket:    "SQU-60",
+		Target:    "worker",
+		Status:    job.StatusFailed,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "wait", "squ-60", "--repo", tmp, "--quiet", "--fail-on-failed"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("job wait succeeded unexpectedly")
+	}
+	if out.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("quiet wait produced stdout=%q stderr=%q", out.String(), stderr.String())
+	}
+}
+
 func TestJobLogsReadsOwningInstanceLog(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
