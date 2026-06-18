@@ -86,6 +86,7 @@ func newScheduleShowCmd() *cobra.Command {
 func newScheduleRunCmd() *cobra.Command {
 	var (
 		repo    string
+		payload string
 		dryRun  bool
 		jsonOut bool
 		format  string
@@ -114,7 +115,12 @@ func newScheduleRunCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team schedule run: %v\n", err)
 				return exitErr(1)
 			}
-			ev := &intake.Event{Type: topology.EventSchedule, Payload: copyMap(info.Payload)}
+			eventPayload, err := scheduleEventPayload(info, payload)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team schedule run: %v\n", err)
+				return exitErr(2)
+			}
+			ev := &intake.Event{Type: topology.EventSchedule, Payload: eventPayload}
 			if dryRun {
 				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl)
 			}
@@ -122,10 +128,28 @@ func newScheduleRunCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&payload, "payload", "", "Additional JSON object merged into the declared schedule payload.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the schedule event without publishing it.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the event and outcome as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the event result with a Go template, e.g. '{{.Event.Type}} {{.DryRun}}'.")
 	return cmd
+}
+
+func scheduleEventPayload(info scheduleInfo, overrideRaw string) (map[string]any, error) {
+	payload := copyMap(info.Payload)
+	overrideRaw = strings.TrimSpace(overrideRaw)
+	if overrideRaw != "" {
+		var extra map[string]any
+		if err := json.Unmarshal([]byte(overrideRaw), &extra); err != nil {
+			return nil, fmt.Errorf("--payload is not valid JSON: %w", err)
+		}
+		for key, value := range extra {
+			payload[key] = value
+		}
+	}
+	payload["source"] = "schedule"
+	payload["name"] = info.Name
+	return payload, nil
 }
 
 type scheduleInfo struct {

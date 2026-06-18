@@ -65,6 +65,31 @@ func TestScheduleListShowAndDryRun(t *testing.T) {
 	if result.Event.Payload["name"] != "nightly" || result.Event.Payload["source"] != "schedule" || result.Event.Payload["workspace"] != "repo" {
 		t.Fatalf("dry-run payload = %+v", result.Event.Payload)
 	}
+
+	override := NewRootCmd()
+	overrideOut, overrideErr := &bytes.Buffer{}, &bytes.Buffer{}
+	override.SetOut(overrideOut)
+	override.SetErr(overrideErr)
+	override.SetArgs([]string{
+		"schedule", "run", "nightly",
+		"--repo", tmp,
+		"--payload", `{"workspace":"scratch","extra":true,"name":"ignored"}`,
+		"--dry-run",
+		"--json",
+	})
+	if err := override.Execute(); err != nil {
+		t.Fatalf("schedule run override dry-run: %v\nstderr=%s", err, overrideErr.String())
+	}
+	var overridden intakePublishResult
+	if err := json.Unmarshal(overrideOut.Bytes(), &overridden); err != nil {
+		t.Fatalf("decode schedule override json: %v\nbody=%s", err, overrideOut.String())
+	}
+	if overridden.Event.Payload["workspace"] != "scratch" || overridden.Event.Payload["extra"] != true {
+		t.Fatalf("override payload = %+v", overridden.Event.Payload)
+	}
+	if overridden.Event.Payload["name"] != "nightly" || overridden.Event.Payload["source"] != "schedule" {
+		t.Fatalf("identity fields should be preserved: %+v", overridden.Event.Payload)
+	}
 }
 
 func TestScheduleShowMissing(t *testing.T) {
@@ -81,6 +106,24 @@ func TestScheduleShowMissing(t *testing.T) {
 		t.Fatalf("schedule show missing succeeded: stdout=%s", out.String())
 	}
 	if !strings.Contains(stderr.String(), `schedule "missing" not found`) {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestScheduleRunRejectsInvalidPayload(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeScheduleTopology(t, tmp)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"schedule", "run", "nightly", "--repo", tmp, "--payload", "{", "--dry-run"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("schedule run invalid payload succeeded: stdout=%s", out.String())
+	}
+	if !strings.Contains(stderr.String(), "--payload is not valid JSON") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
