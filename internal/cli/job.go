@@ -192,6 +192,7 @@ func newJobLsCmd() *cobra.Command {
 		pr           string
 		watch        bool
 		noClear      bool
+		summary      bool
 		jsonOut      bool
 		format       string
 		interval     time.Duration
@@ -204,6 +205,10 @@ func newJobLsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if format != "" && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --format cannot be combined with --summary.")
 				return exitErr(2)
 			}
 			if interval < 0 {
@@ -227,7 +232,13 @@ func newJobLsCmd() *cobra.Command {
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
+				if summary {
+					return runJobSummaryWatch(ctx, cmd.OutOrStdout(), teamDir, filters, jsonOut, interval, !noClear && !jsonOut)
+				}
 				return runJobListWatch(ctx, cmd.OutOrStdout(), teamDir, filters, jsonOut, tmpl, interval, !noClear && !jsonOut)
+			}
+			if summary {
+				return runJobSummary(cmd.OutOrStdout(), teamDir, filters, jsonOut)
 			}
 			return runJobList(cmd.OutOrStdout(), teamDir, filters, jsonOut, tmpl)
 		},
@@ -242,6 +253,7 @@ func newJobLsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&pr, "pr", "", "Filter by PR URL or number substring.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the job table until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate job counts instead of job rows.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
@@ -1377,6 +1389,21 @@ type jobRemoveResult struct {
 	EventsRemoved bool       `json:"events_removed"`
 }
 
+type jobSummary struct {
+	Total        int            `json:"total"`
+	Queued       int            `json:"queued"`
+	Running      int            `json:"running"`
+	Blocked      int            `json:"blocked"`
+	Done         int            `json:"done"`
+	Failed       int            `json:"failed"`
+	Targets      map[string]int `json:"targets"`
+	Pipelines    map[string]int `json:"pipelines"`
+	WithInstance int            `json:"with_instance"`
+	WithBranch   int            `json:"with_branch"`
+	WithWorktree int            `json:"with_worktree"`
+	WithPR       int            `json:"with_pr"`
+}
+
 func newJobListFilters(status, target, instance, pipeline, ticket, branch, pr string) (jobListFilters, error) {
 	f := jobListFilters{
 		Target:   strings.TrimSpace(target),
@@ -1394,6 +1421,107 @@ func newJobListFilters(status, target, instance, pipeline, ticket, branch, pr st
 		f.Status = parsed
 	}
 	return f, nil
+}
+
+func runJobSummary(w io.Writer, teamDir string, filters jobListFilters, jsonOut bool) error {
+	filtered, err := filteredJobs(teamDir, filters)
+	if err != nil {
+		return err
+	}
+	summary := summarizeJobs(filtered)
+	if jsonOut {
+		return json.NewEncoder(w).Encode(summary)
+	}
+	renderJobSummary(w, summary)
+	return nil
+}
+
+func runJobSummaryWatch(ctx context.Context, w io.Writer, teamDir string, filters jobListFilters, jsonOut bool, interval time.Duration, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if !jsonOut {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+		}
+		if err := runJobSummary(w, teamDir, filters, jsonOut); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
+}
+
+func summarizeJobs(jobs []*job.Job) jobSummary {
+	summary := jobSummary{
+		Targets:   map[string]int{},
+		Pipelines: map[string]int{},
+	}
+	for _, j := range jobs {
+		summary.Total++
+		switch j.Status {
+		case job.StatusQueued:
+			summary.Queued++
+		case job.StatusRunning:
+			summary.Running++
+		case job.StatusBlocked:
+			summary.Blocked++
+		case job.StatusDone:
+			summary.Done++
+		case job.StatusFailed:
+			summary.Failed++
+		}
+		if target := strings.TrimSpace(j.Target); target != "" {
+			summary.Targets[target]++
+		}
+		if pipeline := strings.TrimSpace(j.Pipeline); pipeline != "" {
+			summary.Pipelines[pipeline]++
+		}
+		if strings.TrimSpace(j.Instance) != "" {
+			summary.WithInstance++
+		}
+		if strings.TrimSpace(j.Branch) != "" {
+			summary.WithBranch++
+		}
+		if strings.TrimSpace(j.Worktree) != "" {
+			summary.WithWorktree++
+		}
+		if strings.TrimSpace(j.PR) != "" {
+			summary.WithPR++
+		}
+	}
+	return summary
+}
+
+func renderJobSummary(w io.Writer, summary jobSummary) {
+	fmt.Fprintf(w, "jobs: total=%d queued=%d running=%d blocked=%d done=%d failed=%d\n",
+		summary.Total, summary.Queued, summary.Running, summary.Blocked, summary.Done, summary.Failed)
+	if len(summary.Targets) > 0 {
+		fmt.Fprint(w, "targets:")
+		for _, key := range sortedCountKeys(summary.Targets) {
+			fmt.Fprintf(w, " %s=%d", key, summary.Targets[key])
+		}
+		fmt.Fprintln(w)
+	}
+	if len(summary.Pipelines) > 0 {
+		fmt.Fprint(w, "pipelines:")
+		for _, key := range sortedCountKeys(summary.Pipelines) {
+			fmt.Fprintf(w, " %s=%d", key, summary.Pipelines[key])
+		}
+		fmt.Fprintln(w)
+	}
+	fmt.Fprintf(w, "ownership: instance=%d branch=%d worktree=%d pr=%d\n",
+		summary.WithInstance, summary.WithBranch, summary.WithWorktree, summary.WithPR)
 }
 
 func parseJobPruneStatuses(raw []string, useDefault bool) (map[job.Status]bool, error) {

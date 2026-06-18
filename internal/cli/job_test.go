@@ -175,6 +175,85 @@ func TestJobListFilters(t *testing.T) {
 	}
 }
 
+func TestJobListSummary(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	jobs := []*job.Job{
+		{ID: "squ-65", Ticket: "SQU-65", Target: "worker", Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now},
+		{
+			ID:        "squ-66",
+			Ticket:    "SQU-66",
+			Target:    "worker",
+			Instance:  "worker-squ-66",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			Branch:    "worktree-worker-squ-66",
+			Worktree:  filepath.Join(tmp, ".claude", "worktrees", "worker-squ-66"),
+			PR:        "https://github.com/acme/repo/pull/66",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{ID: "squ-67", Ticket: "SQU-67", Target: "manager", Status: job.StatusDone, CreatedAt: now, UpdatedAt: now},
+	}
+	for _, j := range jobs {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "ls", "--repo", tmp, "--target-agent", "worker", "--summary", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job ls summary json: %v\nstderr=%s", err, stderr.String())
+	}
+	var summary jobSummary
+	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
+		t.Fatalf("decode summary json: %v\nbody=%s", err, out.String())
+	}
+	if summary.Total != 2 || summary.Queued != 1 || summary.Running != 1 || summary.Done != 0 {
+		t.Fatalf("summary = %+v", summary)
+	}
+	if summary.Targets["worker"] != 2 || summary.Pipelines["ticket_to_pr"] != 1 {
+		t.Fatalf("summary maps = %+v", summary)
+	}
+	if summary.WithInstance != 1 || summary.WithBranch != 1 || summary.WithWorktree != 1 || summary.WithPR != 1 {
+		t.Fatalf("summary ownership = %+v", summary)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"job", "ls", "--repo", tmp, "--status", "done", "--summary"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("job ls summary text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{
+		"jobs: total=1 queued=0 running=0 blocked=0 done=1 failed=0",
+		"targets: manager=1",
+		"ownership: instance=0 branch=0 worktree=0 pr=0",
+	} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("summary text missing %q:\n%s", want, textOut.String())
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var watchOut bytes.Buffer
+	if err := runJobSummaryWatch(ctx, &watchOut, teamDir, jobListFilters{}, false, time.Millisecond, false); err != nil {
+		t.Fatalf("runJobSummaryWatch: %v", err)
+	}
+	if !strings.Contains(watchOut.String(), "jobs: total=3") || strings.Contains(watchOut.String(), watchClearSequence) {
+		t.Fatalf("watch summary output = %q", watchOut.String())
+	}
+}
+
 func TestJobRmRequiresForceForActiveAndRemovesEvents(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
