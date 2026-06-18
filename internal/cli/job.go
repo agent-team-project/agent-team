@@ -695,6 +695,7 @@ func newJobUnblockCmd() *cobra.Command {
 		status       string
 		force        bool
 		allowMissing bool
+		dryRun       bool
 		jsonOut      bool
 		format       string
 	)
@@ -753,6 +754,7 @@ func newJobUnblockCmd() *cobra.Command {
 			if err := runSendWithClient(io.Discard, cmd.ErrOrStderr(), client, j.Instance, body, sendOptions{
 				From:         fromLabel,
 				AllowMissing: allowMissing,
+				DryRun:       dryRun,
 			}); err != nil {
 				return err
 			}
@@ -760,6 +762,23 @@ func newJobUnblockCmd() *cobra.Command {
 			j.LastEvent = "unblocked"
 			j.LastStatus = body
 			j.UpdatedAt = time.Now().UTC()
+			if dryRun {
+				if jsonOut {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(jobUnblockPreview{
+						DryRun:        true,
+						Job:           j,
+						Instance:      j.Instance,
+						From:          fromLabel,
+						Message:       body,
+						StatusPreview: hasStatusBlock,
+					})
+				}
+				if tmpl != nil {
+					return renderJobTemplate(cmd.OutOrStdout(), j, tmpl)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "  would-unblock   %-20s job=%s status=%s\n", j.Instance, j.ID, j.Status)
+				return nil
+			}
 			data := map[string]string{
 				"from":     fromLabel,
 				"instance": j.Instance,
@@ -788,9 +807,19 @@ func newJobUnblockCmd() *cobra.Command {
 	cmd.Flags().StringVar(&status, "status", string(job.StatusRunning), "Status after unblocking: running or queued.")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Allow unblocking a job not currently marked blocked.")
 	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing a message for an owning instance the daemon does not know yet.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the unblock without sending a mailbox message or updating the job.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
+}
+
+type jobUnblockPreview struct {
+	DryRun        bool     `json:"dry_run"`
+	Job           *job.Job `json:"job"`
+	Instance      string   `json:"instance"`
+	From          string   `json:"from"`
+	Message       string   `json:"message"`
+	StatusPreview bool     `json:"status_preview,omitempty"`
 }
 
 func parseJobUnblockStatus(raw string) (job.Status, error) {

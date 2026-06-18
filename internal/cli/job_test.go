@@ -2234,6 +2234,72 @@ branch = "worker-squ-84"
 	}
 }
 
+func TestJobUnblockDryRunDoesNotMutateOrSend(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now().UTC().Truncate(time.Second)
+	queued := &job.Job{
+		ID:        "squ-85",
+		Ticket:    "SQU-85",
+		Target:    "worker",
+		Status:    job.StatusQueued,
+		CreatedAt: now.Add(-time.Hour),
+		UpdatedAt: now.Add(-30 * time.Minute),
+	}
+	if err := job.Write(teamDir, queued); err != nil {
+		t.Fatalf("write queued job: %v", err)
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "worker-squ-85"), `[status]
+phase = "blocked"
+description = "needs token"
+since = "2026-06-18T12:00:00Z"
+
+[work]
+job = "squ-85"
+ticket = "SQU-85"
+branch = "worker-squ-85"
+`, now)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "unblock", "SQU-85", "token is configured", "--repo", tmp, "--allow-missing", "--dry-run", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job unblock dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var preview jobUnblockPreview
+	if err := json.Unmarshal(out.Bytes(), &preview); err != nil {
+		t.Fatalf("decode unblock preview json: %v\nbody=%s", err, out.String())
+	}
+	if !preview.DryRun || preview.Job == nil || preview.Job.Status != job.StatusRunning || preview.Job.Instance != "worker-squ-85" || !preview.StatusPreview {
+		t.Fatalf("preview = %+v", preview)
+	}
+	persisted, err := job.Read(teamDir, "squ-85")
+	if err != nil {
+		t.Fatalf("read persisted job: %v", err)
+	}
+	if persisted.Status != job.StatusQueued || persisted.Instance != "" || persisted.LastEvent != "" {
+		t.Fatalf("dry-run mutated job = %+v", persisted)
+	}
+	messages, err := daemon.ReadMessages(root, "worker-squ-85")
+	if err != nil {
+		t.Fatalf("read messages: %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("dry-run sent messages = %+v", messages)
+	}
+	events, err := job.ListEvents(teamDir, "squ-85")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("dry-run wrote events = %+v", events)
+	}
+}
+
 func TestJobUnblockRefusesNonBlockedWithoutForce(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
