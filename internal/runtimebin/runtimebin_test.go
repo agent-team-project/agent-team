@@ -4,11 +4,48 @@ import "testing"
 
 func TestBinaryDefaultAndEnvOverride(t *testing.T) {
 	t.Setenv(EnvBinary, "")
-	if got := Binary(); got != DefaultBinary {
+	got, err := Binary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != DefaultBinary {
 		t.Fatalf("default Binary() = %q, want %q", got, DefaultBinary)
 	}
 	t.Setenv(EnvBinary, "  codex  ")
-	if got := Binary(); got != "codex" {
+	got, err = Binary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "codex" {
 		t.Fatalf("env Binary() = %q, want codex", got)
+	}
+}
+
+func TestCurrentCodexRuntimeDefaultsBinary(t *testing.T) {
+	t.Setenv(EnvRuntime, "codex")
+	t.Setenv(EnvBinary, "")
+
+	rt, err := Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.Kind != KindCodex || rt.Binary != "codex" {
+		t.Fatalf("Current() = %+v, want codex runtime and binary", rt)
+	}
+}
+
+func TestCurrentRejectsUnknownRuntime(t *testing.T) {
+	t.Setenv(EnvRuntime, "llama")
+
+	if _, err := Current(); err == nil {
+		t.Fatal("Current() error = nil, want invalid runtime error")
+	}
+}
+
+func TestClaudeCompatibleBinaryRejectsCodex(t *testing.T) {
+	t.Setenv(EnvRuntime, "codex")
+
+	if _, err := ClaudeCompatibleBinary(); err == nil {
+		t.Fatal("ClaudeCompatibleBinary() error = nil, want unsupported runtime error")
 	}
 }

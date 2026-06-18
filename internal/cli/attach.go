@@ -22,7 +22,7 @@ import (
 //  2. POST /v1/stop {instance} — daemon SIGTERMs the child and (per SQU-28's
 //     reaper-with-channel sync) returns only after metadata is persisted.
 //  3. Read the persisted session_id from /v1/instances.
-//  4. exec `claude --resume <session-id>` directly with stdin/stdout/stderr
+//  4. exec the Claude-compatible resume command directly with stdin/stdout/stderr
 //     wired to the user's terminal — TTY ownership transfers.
 //  5. When the user exits: unless --no-resume is set, POST /v1/start to put
 //     the instance back under daemon supervision.
@@ -49,13 +49,13 @@ func newAttachCmd() *cobra.Command {
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "attach <instance>",
-		Short: "Open an interactive claude session against a daemon-managed persistent instance.",
-		Long: "Stop the daemon-managed claude child for <instance>, then exec " +
-			"`claude --resume <session-id>` in your terminal so the conversation " +
+		Short: "Open an interactive Claude-compatible session against a daemon-managed persistent instance.",
+		Long: "Stop the daemon-managed Claude-compatible child for <instance>, then exec " +
+			"`<runtime> --resume <session-id>` in your terminal so the conversation " +
 			"continues interactively. On exit, the daemon resumes supervision " +
 			"automatically — pass --no-resume to leave the instance stopped.\n\n" +
 			"There is brief downtime during the handoff (Shape A): the daemon " +
-			"child is killed before claude --resume reattaches. Channel cursors " +
+			"child is killed before the runtime resume command reattaches. Channel cursors " +
 			"and mailbox state survive the transfer.\n\n" +
 			"Compatibility: log-oriented invocations such as --no-follow, --tail, " +
 			"--latest, --last, --all, or status/agent/phase filters follow the " +
@@ -93,7 +93,7 @@ func newAttachCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
-	cmd.Flags().BoolVar(&noResume, "no-resume", false, "Leave the instance in stopped state when claude exits (default: re-dispatch via the daemon).")
+	cmd.Flags().BoolVar(&noResume, "no-resume", false, "Leave the instance in stopped state when the runtime exits (default: re-dispatch via the daemon).")
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "Log compatibility mode: attach to every daemon-known instance, prefixed by instance name.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Log compatibility mode: attach to the most recently started instance.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Log compatibility mode: attach to the N most recently started instances (0 = disabled).")
@@ -264,7 +264,7 @@ func runAttach(cmd *cobra.Command, target, instance string, noResume bool) error
 	}
 
 	// Stop the running child (if any). An already-stopped instance is a no-op
-	// on the daemon side — we proceed straight to claude --resume.
+	// on the daemon side — we proceed straight to runtime resume.
 	if meta.Status == daemon.StatusRunning {
 		if err := dc.StopInstance(instance); err != nil {
 			return fmt.Errorf("agent-team: stop %s: %w", instance, err)
@@ -285,7 +285,7 @@ func runAttach(cmd *cobra.Command, target, instance string, noResume bool) error
 
 	if startErr := dc.StartInstance(instance); startErr != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(),
-			"agent-team: claude session ended but daemon `start` failed: %v\n  Run `agent-team start %s` manually.\n",
+			"agent-team: runtime session ended but daemon `start` failed: %v\n  Run `agent-team start %s` manually.\n",
 			startErr, instance)
 		if resumeErr != nil {
 			return resumeErr
@@ -314,10 +314,14 @@ func lookupInstanceMeta(dc *daemonClient, instance string) (*daemon.Metadata, er
 }
 
 // execClaudeAttach is split out so tests can intercept the exec without
-// requiring a real claude binary. The default wires stdin/stdout/stderr to the
-// user's terminal so claude's TUI is fully interactive.
+// requiring a real Claude-compatible binary. The default wires stdin/stdout/stderr
+// to the user's terminal so the runtime TUI is fully interactive.
 var execClaudeAttach = func(cmd *cobra.Command, args []string, cwd string) error {
-	bin := runtimebin.Binary()
+	bin, err := runtimebin.ClaudeCompatibleBinary()
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team attach: %v\n", err)
+		return exitErr(2)
+	}
 	c := exec.Command(bin, args...)
 	c.Dir = cwd
 	c.Stdin = os.Stdin

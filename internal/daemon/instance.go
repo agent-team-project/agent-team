@@ -176,7 +176,11 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 	}
 	logPath := filepath.Join(instanceDir(m.daemonRoot, in.Name), "child.log")
 
-	args := []string{runtimebin.Binary(), "--session-id", sessionID}
+	bin, err := runtimebin.ClaudeCompatibleBinary()
+	if err != nil {
+		return nil, fmt.Errorf("dispatch: %w", err)
+	}
+	args := []string{bin, "--session-id", sessionID}
 	if len(in.Args) > 0 {
 		args = append(args, in.Args...)
 	} else if in.Prompt != "" {
@@ -534,7 +538,11 @@ func (m *InstanceManager) Start(instance string) (*Metadata, error) {
 	if logPath == "" {
 		logPath = filepath.Join(instanceDir(m.daemonRoot, instance), "child.log")
 	}
-	args := []string{runtimebin.Binary(), "--resume", base.SessionID}
+	bin, err := runtimebin.ClaudeCompatibleBinary()
+	if err != nil {
+		return nil, fmt.Errorf("start: %w", err)
+	}
+	args := []string{bin, "--resume", base.SessionID}
 	proc, err := m.spawner(args, os.Environ(), base.Workspace, logPath, logPath)
 	if err != nil {
 		return nil, fmt.Errorf("start: spawn: %w", err)

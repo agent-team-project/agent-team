@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
 )
@@ -217,6 +218,80 @@ func TestRun_ExecsClaudeWithExpectedArgs(t *testing.T) {
 	}
 	if !foundPromptFlag {
 		t.Errorf("-p prompt not forwarded: %v", cap.args)
+	}
+}
+
+func TestRun_CodexRuntimeBuildsDirectExecArgs(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindCodex))
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt", "codex task", "--no-daemon", "--", "--sandbox", "workspace-write"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if len(cap.args) == 0 || cap.args[0] != "exec" {
+		t.Fatalf("codex args = %v, want exec subcommand", cap.args)
+	}
+	for _, forbidden := range []string{"--agents", "--append-system-prompt-file"} {
+		if containsString(cap.args, forbidden) {
+			t.Fatalf("codex args should not include %s: %v", forbidden, cap.args)
+		}
+	}
+	cwdArg := ""
+	for i := 0; i < len(cap.args)-1; i++ {
+		if cap.args[i] == "-C" {
+			cwdArg = cap.args[i+1]
+			break
+		}
+	}
+	if cwdArg == "" || cwdArg != cap.cwd {
+		t.Fatalf("codex args missing -C target: %v", cap.args)
+	}
+	if !containsString(cap.args, "--add-dir") || cap.addDir == "" || !cap.skillsDirOK {
+		t.Fatalf("codex args missing add-dir with skills: args=%v addDir=%q skills=%v", cap.args, cap.addDir, cap.skillsDirOK)
+	}
+	if !containsString(cap.args, "--sandbox") || !containsString(cap.args, "workspace-write") {
+		t.Fatalf("forwarded codex args missing: %v", cap.args)
+	}
+	prompt := cap.args[len(cap.args)-1]
+	for _, want := range []string{
+		"You are the `manager` instance of the `manager` agent.",
+		"This session is running through the Codex adapter.",
+		"Available team agents:",
+		"codex task",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("codex prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestRun_CodexRuntimeRejectsDaemonOnlyFlags(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindCodex))
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cases := [][]string{
+		{"run", "manager", "--target", tmp, "--detach"},
+		{"run", "manager", "--target", tmp, "--prompt", "x", "--json"},
+		{"run", "manager", "--target", tmp, "--prompt", "x", "--format", "{{.Instance}}"},
+	}
+	for _, args := range cases {
+		cmd := NewRootCmd()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("run %v succeeded, want daemon-only flag rejection", args)
+		}
 	}
 }
 

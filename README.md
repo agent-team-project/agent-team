@@ -116,7 +116,7 @@ agent-team template run bundled manager \
 
 This instantiates the template into a tempdir under `~/.agent-team/runs/<timestamp>-<agent>/` (or `$XDG_CACHE_HOME/agent-team/runs/...`), spawns the agent against it, and removes the tempdir when the agent exits. Pass `--keep` to preserve the tempdir, or `--target <dir>` to use a specific directory (which is always preserved). `--no-input` fails if required parameters are missing — useful in CI.
 
-The daemon is bypassed; claude is exec'd directly. For long-lived setups where you want `instance ps` / `logs --follow` visibility, use `init` + `run` separately.
+The daemon is bypassed; the selected runtime is exec'd directly. For long-lived setups where you want `instance ps` / `logs --follow` visibility, use `init` + `run` separately.
 
 ## Commands
 
@@ -166,7 +166,7 @@ agent-team inspect [<instance>...] [--all] [--latest | --last N] [--agent manage
 agent-team logs [<instance> | --latest | --last N] [--all | --agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--no-prefix] [--list [--format '{{.Instance}} {{.LogPath}}'] [--json]] [--daemon] [-f] [--tail N|all] [--since 10m] [--grep 'error|panic']
                                                 # list/show/follow instance or daemon logs; reads daemon-managed logs locally if the daemon is down
 agent-team attach <instance> [--no-resume]
-                                                # interactive claude --resume handoff; daemon resumes supervision afterward
+                                                # interactive Claude-compatible resume handoff; daemon resumes supervision afterward
 agent-team events [-f] [--tail N] [--latest | --last N] [--since 24h] [--summary] [--format '{{.Action}} {{.Instance}}'] [--action dispatch] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--json]
                                                 # show/follow lifecycle events; phase/stale/unhealthy narrow by current status.toml; reads local history if the daemon is down
 agent-team wait [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--until terminal|running|stopped|exited|crashed|removed] [--until-phase done] [--timeout 5m] [--interval 500ms] [--dry-run] [--fail-on-crash] [--summary] [--format '{{.Instance}} {{.Status}} {{.Phase}}'] [--json]
@@ -233,7 +233,9 @@ Git URL refs (`github.com/foo/bar@v0.1.0`) are tracked as a follow-up — see [`
 
 ## How `run` works
 
-`agent-team run <agent>` reads every `.agent_team/agents/<name>/agent.md`, parses the YAML frontmatter (`description`) and body (the prompt), resolves each agent's skill set from `agents/<name>/skills/` plus `[skills].extra` in `agents/<name>/config.toml`, builds a tmpdir of symlinks satisfying Claude Code's `--add-dir` skill discovery, and exec's:
+`agent-team run <agent>` reads every `.agent_team/agents/<name>/agent.md`, parses the YAML frontmatter (`description`) and body (the prompt), resolves each agent's skill set from `agents/<name>/skills/` plus `[skills].extra` in `agents/<name>/config.toml`, builds a tmpdir of symlinks satisfying the runtime's extra-directory discovery, and exec's the selected runtime.
+
+The default runtime is Claude-compatible:
 
 ```sh
 claude --agents '<json>' --add-dir <tmpdir> --append-system-prompt-file <kickoff> <forwarded-args>
@@ -241,9 +243,13 @@ claude --agents '<json>' --add-dir <tmpdir> --append-system-prompt-file <kickoff
 
 With `--detach`, with `--attach`, or with `--prompt` when the daemon is already running, the CLI sends that same resolved argv/env to `agent-teamd`. `--detach` returns a log-follow hint, while `--attach` follows the daemon-captured log immediately.
 
-The executable defaults to `claude`. Set `AGENT_TEAM_RUNTIME_BIN` to point the existing Claude-compatible adapter at another binary or wrapper.
+Runtime selection is environment-driven:
 
-The named agent's prompt becomes the session's system prompt; all other agents stay registered as subagents so the named agent can dispatch them via the Task tool. The launcher creates `.agent_team/state/<instance>/` (defaults the instance name to the agent name; pass `--name` for a unique identifier) and exports:
+- `AGENT_TEAM_RUNTIME=claude` (default) enables the full daemon, resume, subagent registry, and queue/event dispatch path.
+- `AGENT_TEAM_RUNTIME=codex` launches direct Codex sessions with `codex` or `codex exec`. The chosen agent prompt and task are passed as the initial Codex prompt, and team agents are listed as coordination context. This path currently bypasses daemon dispatch/resume because Codex does not expose the same `--agents` / `--session-id` contract.
+- `AGENT_TEAM_RUNTIME_BIN=/path/to/wrapper` overrides the binary for the selected runtime.
+
+For the Claude-compatible runtime, the named agent's prompt becomes the session's system prompt and all other agents stay registered as subagents so the named agent can dispatch them via the Task tool. The launcher creates `.agent_team/state/<instance>/` (defaults the instance name to the agent name; pass `--name` for a unique identifier) and exports:
 
 - `AGENT_TEAM_ROOT` — absolute path to `.agent_team/`
 - `AGENT_TEAM_INSTANCE` — the instance name

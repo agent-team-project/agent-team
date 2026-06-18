@@ -261,6 +261,26 @@ func TestInstance_DispatchUsesRuntimeBinaryEnv(t *testing.T) {
 	waitForStatusNot(t, m, "worker-runtime", StatusRunning)
 }
 
+func TestInstance_DispatchRejectsNonClaudeRuntime(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "codex")
+	root := t.TempDir()
+	fake := newFakeSpawner(2 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+
+	_, err := m.Dispatch(DispatchInput{
+		Agent:     "worker",
+		Name:      "worker-runtime",
+		Prompt:    "hello",
+		Workspace: t.TempDir(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "not Claude-compatible") {
+		t.Fatalf("dispatch error = %v, want Claude-compatible runtime error", err)
+	}
+	if got := fake.callCount(); got != 0 {
+		t.Fatalf("spawn calls = %d, want none", got)
+	}
+}
+
 func TestInstance_DispatchRefusesDuplicateName(t *testing.T) {
 	root := t.TempDir()
 	fake := newFakeSpawner(2 * time.Second)

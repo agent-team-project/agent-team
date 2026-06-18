@@ -43,15 +43,15 @@ func newRunCmd() *cobra.Command {
 	cwd, _ := os.Getwd()
 
 	cmd := &cobra.Command{
-		Use:   "run <agent> [-- <claude-args>...]",
-		Short: "Launch a Claude Code session as the named agent.",
-		Long: "Launch a Claude Code session as the named agent. The agent's prompt becomes " +
-			"the system prompt; all other agents are still registered as subagents so this " +
-			"agent can dispatch them. Pass `--name` to give the instance a unique identifier " +
-			"(state dir: .agent_team/state/<name>/). Forward extra args to claude after `--`.",
+		Use:   "run <agent> [-- <runtime-args>...]",
+		Short: "Launch an LLM runtime session as the named agent.",
+		Long: "Launch an LLM runtime session as the named agent. With the default Claude-compatible " +
+			"runtime, the agent's prompt becomes the system prompt and all other agents are " +
+			"registered as subagents. Pass `--name` to give the instance a unique identifier " +
+			"(state dir: .agent_team/state/<name>/). Forward extra runtime args after `--`.",
 		Args:               cobra.MinimumNArgs(1),
 		DisableFlagParsing: false,
-		// Allow unknown trailing args after the agent name to be forwarded to claude.
+		// Allow unknown trailing args after the agent name to be forwarded to the runtime.
 		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.tailSet = cmd.Flags().Changed("tail")
@@ -60,11 +60,11 @@ func newRunCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&cfg.target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVarP(&cfg.name, "name", "n", "", "Instance name (defaults to the agent name). State dir: .agent_team/state/<name>/.")
-	cmd.Flags().StringVarP(&cfg.prompt, "prompt", "p", "", "Kickoff message. With this, claude runs in one-shot mode; without, interactive.")
+	cmd.Flags().StringVarP(&cfg.prompt, "prompt", "p", "", "Kickoff message. With this, the runtime runs in one-shot mode when supported; without, interactive.")
 	cmd.Flags().StringArrayVar(&cfg.setStrings, "set", nil, "Override a config value for this spawn, e.g. --set linear.team_id=<x>. Repeatable.")
 	cmd.Flags().StringVar(&cfg.instanceConfig, "instance-config", "", "Path to a per-instance TOML config that layers on top of repo config (below --set).")
-	cmd.Flags().BoolVar(&cfg.noDaemon, "no-daemon", false, "Bypass the daemon: exec claude directly even if the daemon is running. Useful for debugging.")
-	cmd.Flags().BoolVarP(&cfg.detach, "detach", "d", false, "Dispatch through agent-teamd and return immediately instead of attaching to claude.")
+	cmd.Flags().BoolVar(&cfg.noDaemon, "no-daemon", false, "Bypass the daemon: exec the runtime directly even if the daemon is running. Useful for debugging.")
+	cmd.Flags().BoolVarP(&cfg.detach, "detach", "d", false, "Dispatch through agent-teamd and return immediately instead of attaching to the runtime.")
 	cmd.Flags().BoolVar(&cfg.attach, "attach", false, "Dispatch through agent-teamd and follow the captured instance log.")
 	cmd.Flags().StringVar(&cfg.tail, "tail", "50", "With --attach, show only the last N lines before following (0 or all = all).")
 	cmd.Flags().DurationVar(&cfg.readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for daemon readiness with --detach or --attach (0 = no timeout).")
@@ -74,6 +74,11 @@ func newRunCmd() *cobra.Command {
 }
 
 func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []string) error {
+	rt, err := runtimebin.Current()
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
+		return exitErr(2)
+	}
 	if cfg.format != "" && cfg.jsonOut {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --format cannot be combined with --json.")
 		return exitErr(2)
@@ -108,6 +113,14 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 	}
 	if cfg.detach && cfg.attach {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: choose one of --detach or --attach.")
+		return exitErr(2)
+	}
+	if rt.Kind == runtimebin.KindCodex && (cfg.detach || cfg.attach) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %s=codex supports direct launches only; omit --detach/--attach.\n", runtimebin.EnvRuntime)
+		return exitErr(2)
+	}
+	if rt.Kind == runtimebin.KindCodex && (cfg.jsonOut || cfg.format != "") {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %s=codex cannot emit daemon dispatch metadata; omit --json/--format.\n", runtimebin.EnvRuntime)
 		return exitErr(2)
 	}
 	if cfg.attach && cfg.noDaemon {
@@ -239,19 +252,15 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		return err
 	}
 
-	claudeArgs := []string{
-		"--agents", agentsJSON,
-		"--add-dir", tmpdir,
-		"--append-system-prompt-file", promptFile,
-	}
-	if cfg.prompt != "" {
-		claudeArgs = append(claudeArgs, "-p", cfg.prompt)
-	}
 	// Forwarded args may begin with `--` (the cobra delimiter); strip it.
 	if len(forwarded) > 0 && forwarded[0] == "--" {
 		forwarded = forwarded[1:]
 	}
-	claudeArgs = append(claudeArgs, forwarded...)
+	runtimeArgs, err := buildRuntimeArgs(rt, target, tmpdir, agentsJSON, promptFile, kickoff, cfg.prompt, forwarded, agents)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
+		return exitErr(2)
+	}
 
 	teamEnv := []string{
 		"AGENT_TEAM_ROOT=" + teamDir,
@@ -267,7 +276,7 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 	//
 	// Channel subscriptions declared in agent frontmatter (`subscribes: ...`)
 	// are POSTed to the daemon before the spawn so an agent has its mailbox
-	// ready when its claude process boots. This applies to both daemon and
+	// ready when its runtime process boots. This applies to both daemon and
 	// no-daemon paths — but no-daemon mode silently skips since channels
 	// only exist with a running daemon.
 	var dispatchClient *daemonClient
@@ -276,7 +285,8 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 			return err
 		}
 	}
-	if !cfg.noDaemon {
+	daemonCapable := rt.Kind == runtimebin.KindClaude
+	if !cfg.noDaemon && daemonCapable {
 		dc, err := newDaemonClient(teamDir)
 		if err == nil {
 			dispatchClient = dc
@@ -289,10 +299,10 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 			return err
 		}
 	}
-	if !cfg.noDaemon && (cfg.prompt != "" || cfg.detach || cfg.attach) {
+	if !cfg.noDaemon && daemonCapable && (cfg.prompt != "" || cfg.detach || cfg.attach) {
 		if dispatchClient != nil {
-			// claudeArgs already starts with --agents/--add-dir/.../-p; the
-			// daemon prepends `claude --session-id <uuid>` so we strip nothing
+			// runtimeArgs already starts with --agents/--add-dir/.../-p; the
+			// daemon prepends the Claude-compatible binary and session id, so we strip nothing
 			// — the daemon's spawn surface accepts arbitrary trailing argv
 			// via DispatchInput.Args.
 			disp, derr := dispatchClient.Dispatch(dispatchPayload{
@@ -300,7 +310,7 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 				Name:      instance,
 				Prompt:    cfg.prompt,
 				Workspace: target,
-				Args:      claudeArgs,
+				Args:      runtimeArgs,
 				Env:       teamEnv,
 			})
 			if derr != nil {
@@ -340,7 +350,57 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		// Daemon not running → fall through to direct exec.
 	}
 
-	return execClaude(cmd, claudeArgs, env, target)
+	return execClaude(cmd, runtimeArgs, env, target)
+}
+
+func buildRuntimeArgs(rt runtimebin.Runtime, target, addDir, agentsJSON, promptFile, kickoff, prompt string, forwarded []string, agents []*loader.Agent) ([]string, error) {
+	switch rt.Kind {
+	case runtimebin.KindClaude:
+		args := []string{
+			"--agents", agentsJSON,
+			"--add-dir", addDir,
+			"--append-system-prompt-file", promptFile,
+		}
+		if prompt != "" {
+			args = append(args, "-p", prompt)
+		}
+		return append(args, forwarded...), nil
+	case runtimebin.KindCodex:
+		args := []string{}
+		if prompt != "" {
+			args = append(args, "exec")
+		}
+		args = append(args, "-C", target, "--add-dir", addDir)
+		args = append(args, forwarded...)
+		args = append(args, codexInitialPrompt(kickoff, prompt, agents))
+		return args, nil
+	default:
+		return nil, fmt.Errorf("unsupported runtime %q", rt.Kind)
+	}
+}
+
+func codexInitialPrompt(kickoff, prompt string, agents []*loader.Agent) string {
+	var b strings.Builder
+	b.WriteString(kickoff)
+	b.WriteString("\n\n--- agent-team runtime ---\n\n")
+	b.WriteString("This session is running through the Codex adapter. The current agent prompt is included above. Other team agents are listed for coordination context, but this adapter does not register them as native subagents.\n")
+	if len(agents) > 0 {
+		b.WriteString("\nAvailable team agents:\n")
+		for _, agent := range agents {
+			b.WriteString("- ")
+			b.WriteString(agent.Name)
+			if agent.Description != "" {
+				b.WriteString(": ")
+				b.WriteString(agent.Description)
+			}
+			b.WriteByte('\n')
+		}
+	}
+	if strings.TrimSpace(prompt) != "" {
+		b.WriteString("\n--- task ---\n\n")
+		b.WriteString(prompt)
+	}
+	return b.String()
 }
 
 func parseRunFormat(format string) (*texttemplate.Template, error) {
@@ -373,11 +433,17 @@ type runDispatchJSON struct {
 
 // execClaude is split out so tests can intercept the exec.
 var execClaude = func(cmd *cobra.Command, args []string, env []string, cwd string) error {
-	bin := runtimebin.Binary()
+	bin, err := runtimebin.Binary()
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
+		return exitErr(2)
+	}
 	c := exec.Command(bin, args...)
 	c.Env = env
 	c.Dir = cwd
-	c.Stdin = os.Stdin
+	if len(args) == 0 || args[0] != "exec" {
+		c.Stdin = os.Stdin
+	}
 	c.Stdout = cmd.OutOrStdout()
 	c.Stderr = cmd.ErrOrStderr()
 	if err := c.Run(); err != nil {
@@ -503,7 +569,7 @@ func writeStateConfig(stateDir string, resolved template.Tree) error {
 }
 
 // subscribeAgentChannels POSTs /v1/channel/<name>/subscribe for each declared
-// channel before the agent's claude process is spawned. Errors are logged to
+// channel before the agent's runtime process is spawned. Errors are logged to
 // stderr and ignored (the agent can re-subscribe at runtime via the channel
 // skill if needed) — a flaky `subscribe` shouldn't gate the dispatch.
 func subscribeAgentChannels(cmd *cobra.Command, dc *daemonClient, instance string, channels []string) {
