@@ -85,6 +85,9 @@ func TestResolver_CacheLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if rt.Ref != "github.com/acme/eng-team@v1.0.0" {
+		t.Errorf("ref = %q", rt.Ref)
+	}
 	if rt.Manifest.Template.Name != "cached" {
 		t.Errorf("manifest = %+v", rt.Manifest)
 	}

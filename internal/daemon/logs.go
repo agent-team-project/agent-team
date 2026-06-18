@@ -17,18 +17,21 @@ var logTailInterval = 200 * time.Millisecond
 
 // StreamLogs writes the contents of an instance's child.log to w. With
 // follow=false, it dumps the file from start to its current end and returns.
-// With follow=true, after the initial dump it polls for newly-appended bytes
-// and writes them until ctx is cancelled or the underlying connection is
-// closed.
+// If tailLines > 0, the initial dump is limited to the last N lines. With
+// follow=true, after the initial dump it polls for newly-appended bytes and
+// writes them until ctx is cancelled or the underlying connection is closed.
 //
 // Encoding contract: chunked Transfer-Encoding text. The handler must already
 // have set the response headers (Content-Type / Transfer-Encoding) before
 // calling. We rely on http.ResponseWriter being a Flusher (httptest, http2,
 // chi all implement it for chunked text); if it's not, we still send the
 // whole thing in one shot — correct, just unbuffered.
-func StreamLogs(ctx context.Context, w io.Writer, daemonRoot, instance string, follow bool) error {
+func StreamLogs(ctx context.Context, w io.Writer, daemonRoot, instance string, follow bool, tailLines int) error {
 	if instance == "" {
 		return errors.New("logs: instance is required")
+	}
+	if tailLines < 0 {
+		return errors.New("logs: tail must be >= 0")
 	}
 	logPath := childLogPath(daemonRoot, instance)
 	f, err := os.Open(logPath)
@@ -40,8 +43,14 @@ func StreamLogs(ctx context.Context, w io.Writer, daemonRoot, instance string, f
 	flusher, _ := w.(http.Flusher)
 
 	// Initial dump up to current EOF.
-	if _, err := io.Copy(w, f); err != nil {
-		return err
+	if tailLines > 0 {
+		if err := copyTailLines(w, f, tailLines); err != nil {
+			return err
+		}
+	} else {
+		if _, err := io.Copy(w, f); err != nil {
+			return err
+		}
 	}
 	if flusher != nil {
 		flusher.Flush()
@@ -79,6 +88,34 @@ func StreamLogs(ctx context.Context, w io.Writer, daemonRoot, instance string, f
 			}
 		}
 	}
+}
+
+func copyTailLines(w io.Writer, f *os.File, lines int) error {
+	body, err := io.ReadAll(f)
+	if err != nil {
+		return err
+	}
+	if lines <= 0 {
+		_, err := w.Write(body)
+		return err
+	}
+	start := 0
+	seen := 0
+	for i := len(body) - 1; i >= 0; i-- {
+		if body[i] != '\n' {
+			continue
+		}
+		if i == len(body)-1 {
+			continue
+		}
+		seen++
+		if seen == lines {
+			start = i + 1
+			break
+		}
+	}
+	_, err = w.Write(body[start:])
+	return err
 }
 
 // childLogPath is the on-disk path for an instance's stdout/stderr log,

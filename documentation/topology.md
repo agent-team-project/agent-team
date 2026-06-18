@@ -8,7 +8,7 @@
 
 | Concern | Today | With topology |
 |---|---|---|
-| **Which instances exist** | Whatever the user has spawned ad-hoc via `agent-team run <agent> --name <name>`. No declarative source of truth. | Declared in `instances.toml`. `agent-team instance up` brings up the declared persistent instances. |
+| **Which instances exist** | Whatever the user has spawned ad-hoc via `agent-team run <agent> --name <name>`. No declarative source of truth. | Declared in `instances.toml`. `agent-team start` brings up the declared persistent instances. |
 | **What each is configured for** | Single repo-wide `config.toml`. All instances of `ticket-manager` share the same Linear project. | Per-instance config overrides in `instances.toml`. Multiple `ticket-manager` instances can target different Linear projects. |
 | **When each gets invoked** | Hand-written. User runs `agent-team run`, or one agent dispatches another via the `assign-worker` skill / Claude Code primitives. | Triggers declared in `instances.toml`. Daemon resolves user invocations, ticket webhooks, PR events, scheduled timers, channel messages, and inter-agent dispatches against the trigger table. |
 
@@ -17,7 +17,7 @@
 Three concrete needs not met by the today-style ad-hoc model:
 
 1. **Multiple instances of the same agent with different settings.** "Two `ticket-manager`s in one repo, one routing to Linear project A, one to project B." The motivating case from the design conversation. Today's repo-global `config.toml` doesn't support per-instance overrides.
-2. **Predictable bring-up.** A new contributor cloning the repo wants `agent-team instance up` to start everything that should be running. Today they'd have to know to spawn each one by hand and remember the right flags.
+2. **Predictable bring-up.** A new contributor cloning the repo wants `agent-team start` to start everything that should be running. Today they'd have to know to spawn each one by hand and remember the right flags.
 3. **Event-driven dispatch.** Ticket webhooks, scheduled timers, PR events, channel publishes — all need to route to the right instance without a human in the loop. Today, dispatch is in-process: a manager spawns a worker via Claude Code's `Agent` tool. With the daemon and topology, dispatch becomes "any source of events → daemon → declared trigger → instance."
 
 None of these are needed for the simplest "run a manager and chat" workflow — that path keeps working. Topology is the layer for users who outgrow ad-hoc spawning.
@@ -30,7 +30,7 @@ A named runtime spawn of an agent, declared with config and triggers. Distinct f
 
 - A canonical name (`manager`, `tm-platform`, `worker`).
 - A reference to the agent template it runs.
-- An `ephemeral` flag (true → spawn-on-demand, exit on completion; false → long-lived, brought up at `instance up`).
+- An `ephemeral` flag (true → spawn-on-demand, exit on completion; false → long-lived, brought up by `agent-team start`).
 - Optional config overrides on top of the repo's `config.toml`.
 - Zero or more triggers — events that should invoke this instance.
 
@@ -104,7 +104,7 @@ match.target = "worker"
 | Field | Required | Default | Meaning |
 |---|---|---|---|
 | `agent` | yes | — | Agent template directory under `.agent_team/agents/`. Must exist after `init`. |
-| `ephemeral` | no | `false` | If `true`, spawn-on-trigger and exit on completion. If `false`, brought up at `instance up`, runs until stopped. |
+| `ephemeral` | no | `false` | If `true`, spawn-on-trigger and exit on completion. If `false`, brought up by `agent-team start`, runs until stopped. |
 | `description` | no | empty | Human-readable. Shown in `instance ps`. |
 | `config.<dotted.key>` | no | — | Override values for the resolved per-instance config (layers between repo and CLI flags). Same dotted-key syntax as parameter declarations in `template.toml`. |
 | `replicas` | no | `1` | Max concurrent runs. Ephemeral only — for persistent, this is implicitly 1. |
@@ -145,12 +145,106 @@ In practice, declared overrides and state files rarely conflict — declared ove
 ## CLI surface additions
 
 ```
-agent-team instance up [<name>...]
-    Bring up declared persistent instances. With no args: all non-ephemeral declared instances.
-    Idempotent — already-running instances are left alone.
+agent-team start [<name>...] [--agent <agent>] [--status <status>] [--phase <phase>] [--stale] [--unhealthy] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--wait --timeout <duration>] [--attach --tail N|all]
+    Start the daemon if needed, then bring up declared persistent instances.
+    With no args: all non-ephemeral declared instances. Idempotent —
+    already-running instances are left alone. With explicit names: resume a
+    daemon-known instance by name, or start a declared persistent instance.
+    With --agent: start/resume declared persistent and daemon-known instances
+    for that agent. With --status: limit set selections to running, stopped,
+    exited, crashed, or unknown lifecycle status. With --phase: limit set
+    selections to planning, implementing, awaiting_review, blocked, idle,
+    done, or unknown work phase. With --stale: target only non-idle work
+    whose status.toml has not been updated past the stale threshold.
+    With --wait on a scoped selection, health waits on the selected instance
+    names while still checking daemon readiness globally.
+    With --summary: render aggregate action/status counts instead of
+    per-instance rows. With --format: render each action result with a Go
+    template. With --attach: follow the selected instance log after
+    start/resume; exactly one selected instance is required.
 
-agent-team instance down [<name>...]
+agent-team instance up [<name>...] [--latest | --last N] [--agent <agent>] [--status <status>] [--phase <phase>] [--stale] [--unhealthy] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--wait --timeout <duration>] [--attach --tail N|all]
+    Lower-level equivalent when the daemon is already running.
+
+agent-team instance down [<name>...] [--latest | --last N] [--agent <agent>] [--status <status>] [--phase <phase>] [--stale] [--unhealthy] [--rm] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--wait --wait-timeout <duration>] [--timeout <duration>] [--json]
     Gracefully stop declared persistent instances. With no args: all running.
+    State is preserved by default; --agent, --status, --phase, --stale,
+    and --unhealthy
+    narrow the selection; --rm explicitly removes selected instance state and
+    daemon metadata after stopping. With --wait, confirm selected
+    instances reach a terminal state; --wait-timeout controls that deadline.
+    If --wait-timeout is omitted, --timeout remains the backward-compatible
+    wait deadline.
+
+agent-team stop [<name>...] [--all] [--agent <agent>] [--status <status>] [--phase <phase>] [--stale] [--unhealthy] [--rm] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--wait --wait-timeout <duration>] [--timeout <duration>]
+    Top-level equivalent. With no args: running declared persistent instances.
+    With --all: every daemon-managed running instance, including ad-hoc and
+    ephemeral work. With --rm: remove selected state and daemon metadata after
+    stopping.
+
+agent-team kill [<name>...] [--all] [--agent <agent>] [--status <status>] [--phase <phase>] [--stale] [--unhealthy] [--rm] [--dry-run] [--summary] [--wait --wait-timeout <duration>] [--timeout <duration>] [--format '{{.Instance}} {{.Action}}']
+    Force-stop equivalent. It follows stop's target selection, but asks the
+    daemon to escalate to SIGKILL after --timeout. With --wait, confirm the
+    selected instances reach a terminal state before returning. If
+    --wait-timeout is omitted, --timeout remains the backward-compatible wait
+    deadline.
+
+agent-team restart [<name>...] [--agent <agent>] [--status <status>] [--phase <phase>] [--stale] [--unhealthy] [-f] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--wait --wait-timeout <duration>] [--attach --tail N|all]
+    Stop then resume declared persistent instances. With no args: all
+    non-ephemeral declared instances. With explicit names: restart a
+    daemon-known instance by name, or start a declared persistent instance if
+    it has no daemon metadata yet. With --agent: restart/resume declared
+    persistent and daemon-known instances for that agent. With --status: limit
+    set selections to running, stopped, exited, crashed, or unknown lifecycle
+    status. With --phase: limit selections by reported work phase. With
+    --stale: limit recovery to stale non-idle work. With --wait on a scoped
+    selection, health waits on the selected instance names while still
+    checking daemon readiness globally. With -f:
+    escalate to SIGKILL if a running instance does not stop within --timeout.
+    With --summary: render aggregate action/status counts instead of
+    per-instance rows. With --format: render each action result with a Go
+    template. With --attach: follow the selected instance log after restart;
+    exactly one selected instance is required.
+
+agent-team reload [--json]
+    Top-level operator command: re-read instances.toml in the running daemon,
+    then reconcile daemon metadata against the live process table. It does not
+    start newly-declared instances or stop undeclared running work.
+
+agent-team plan [--json] [--summary] [--stop-extras] [--agent <agent>] [--instance <name>] [--status <status>] [--phase <phase>] [--action <action>]
+    Read-only desired-state preview. Shows persistent declarations that would
+    start or resume, running instances that would be kept, ephemeral
+    declarations that stay on-demand, and daemon-known extra instances not
+    declared in topology. With --stop-extras, running extra instances are
+    shown as stop actions, matching `agent-team sync --stop-extras`; running
+    children of declared ephemeral instances (for example `worker-<id>`) are
+    shown as kept ephemeral work. Filters narrow the displayed rows by agent,
+    instance, lifecycle status, reported work phase, or planned action.
+    With --summary, plan renders aggregate action/status counts instead of
+    per-instance rows.
+
+agent-team sync [--dry-run] [--stop-extras] [--agent <agent>] [--instance <name>] [--status <status>] [--phase <phase>] [--action <action>] [--summary] [--wait --timeout <duration>] [--json]
+    Apply the safe subset of the plan: reload topology in the daemon,
+    reconcile metadata, then start/resume declared persistent instances.
+    Filters narrow the plan rows sync will converge, so operators can apply
+    desired state to one agent, instance, lifecycle status, work phase, or
+    planned action at a time.
+    With --summary, sync renders aggregate action/status counts instead of
+    per-instance rows; with --dry-run, the counts summarize the filtered plan.
+    With --wait, filtered sync waits on the selected instance names while
+    still checking daemon readiness globally.
+    By default, sync does not stop or remove daemon-known extra instances.
+    With --stop-extras, sync also stops running daemon-known instances not
+    declared in `instances.toml`, while leaving running children of declared
+    ephemeral instances alone; it still does not remove state or metadata. Use
+    `rm` or `prune` explicitly for destructive cleanup.
+
+agent-team health --strict-topology
+    Treat running daemon-known instances that are not declared in
+    `instances.toml` as unhealthy topology drift. Running children of declared
+    ephemeral instances are not drift. This is still read-only; use `plan` to
+    inspect the desired-state delta and `stop`, `rm`, or `prune` for explicit
+    cleanup.
 
 agent-team instance ls
     List declared instances and their state (running / stopped / never-spawned / crashed).
@@ -160,9 +254,26 @@ agent-team instance ps
     Same as `ls` but filtered to currently-running.
 
 agent-team instance show <name>
-    Print the declared instance's resolved config + triggers + current state.
+    Print daemon runtime metadata, the declared instance's config + triggers,
+    and current state.
 
-agent-team event publish <type> [--payload <json>]
+agent-team inspect <name> [--json]
+    Top-level alias for `instance show`.
+
+agent-team rm [<name>...] [--all] [--latest | --last N] [--status <status>] [--phase <phase>] [--stale] [--unhealthy] [--agent <agent>] [--dry-run] [--summary] [-f]
+    Remove instance state and daemon metadata. Refuses running instances
+    unless -f is set. With --all, remove every daemon-known instance,
+    optionally narrowed by --status, --phase, --stale, --unhealthy, or
+    --agent. With --dry-run, preview the same removal set without deleting
+    state or daemon metadata.
+
+agent-team prune [--older-than <duration>] [--agent <agent>] [--status exited|crashed] [--phase <phase>] [--stale] [--unhealthy] [--dry-run] [--summary]
+    Remove finished daemon-known instances and their state without prompting.
+    Running and stopped instances are intentionally left alone. Use --status,
+    --phase, --stale, --unhealthy, --agent, and --older-than to narrow the
+    finished cleanup set; --dry-run previews the same set.
+
+agent-team event publish <type> [--payload <json>] [--format '{{len .Matched}} {{len .Dispatched}}'] [--json]
     Manual event injection — useful for testing trigger matching.
     The daemon resolves the event against declared triggers and dispatches accordingly.
 ```
@@ -236,14 +347,14 @@ match.target = "worker"
 ### Bringing it up
 
 ```sh
-$ agent-team instance up
+$ agent-team start
 Starting manager (manager)         ✓
 Starting tm-platform (ticket-manager) ✓
 Starting tm-mobile (ticket-manager)   ✓
 worker (ephemeral, replicas=3) — spawn-on-trigger, not started
 ```
 
-`agent-team instance ls`:
+`agent-team ps`:
 
 ```
 NAME           AGENT           STATE     EPHEMERAL  TRIGGERS                          PHASE
@@ -284,7 +395,7 @@ A fresh worker spawns (ephemeral, generated name from the kickoff). When it open
 ### Inspecting and stopping
 
 ```sh
-$ agent-team instance ps
+$ agent-team ps
 NAME              AGENT           UPTIME  PHASE              SUMMARY
 manager           manager         3h      idle               waiting on user
 tm-platform       ticket-manager  3h      idle               last triaged PLAT-42 12m ago
@@ -306,7 +417,7 @@ Stopping tm-mobile ... ✓ (state preserved at .agent_team/state/tm-mobile/)
 
 3. **Replicas semantics.** For ephemeral instances with `replicas = N`: do we queue events that arrive while at capacity, or reject them? Probably queue with a configurable cap; rejection is bad UX for the dispatcher (manager would have to retry).
 
-4. **State preservation on `instance down`.** Currently `.agent_team/state/<instance>/` survives stop/start cycles by design. Should `instance down --rm` exist (Docker-style "remove all state")? Probably yes for ephemeral; probably no for persistent (would clobber journal/goals/progress).
+4. **State preservation on `instance down`.** Resolved: `.agent_team/state/<instance>/` survives stop/start cycles by default. `instance down --rm` and top-level `stop --rm` are explicit destructive cleanup paths for selected instances.
 
 5. **Topology hot-reload.** `agent-team instance reload` re-parses `instances.toml` and applies diffs (start newly-declared, stop newly-undeclared, restart changed). Implementation has a tricky case: a running instance whose declared config changed — graceful restart, or wait for current work to drain? Defer the policy to v1.2 PR; default likely "warn, don't auto-restart, require explicit `instance restart <name>`."
 

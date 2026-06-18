@@ -7,8 +7,12 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	texttemplate "text/template"
+	"time"
 
 	"github.com/jamesaud/agent-team/internal/loader"
 	"github.com/jamesaud/agent-team/internal/template"
@@ -24,6 +28,13 @@ type runConfig struct {
 	setStrings     []string
 	instanceConfig string
 	noDaemon       bool
+	detach         bool
+	attach         bool
+	tail           string
+	tailSet        bool
+	readyTimeout   time.Duration
+	jsonOut        bool
+	format         string
 }
 
 func newRunCmd() *cobra.Command {
@@ -42,6 +53,7 @@ func newRunCmd() *cobra.Command {
 		// Allow unknown trailing args after the agent name to be forwarded to claude.
 		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.tailSet = cmd.Flags().Changed("tail")
 			return runAgent(cmd, cfg, args[0], args[1:])
 		},
 	}
@@ -51,10 +63,75 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&cfg.setStrings, "set", nil, "Override a config value for this spawn, e.g. --set linear.team_id=<x>. Repeatable.")
 	cmd.Flags().StringVar(&cfg.instanceConfig, "instance-config", "", "Path to a per-instance TOML config that layers on top of repo config (below --set).")
 	cmd.Flags().BoolVar(&cfg.noDaemon, "no-daemon", false, "Bypass the daemon: exec claude directly even if the daemon is running. Useful for debugging.")
+	cmd.Flags().BoolVarP(&cfg.detach, "detach", "d", false, "Dispatch through agent-teamd and return immediately instead of attaching to claude.")
+	cmd.Flags().BoolVar(&cfg.attach, "attach", false, "Dispatch through agent-teamd and follow the captured instance log.")
+	cmd.Flags().StringVar(&cfg.tail, "tail", "50", "With --attach, show only the last N lines before following (0 or all = all).")
+	cmd.Flags().DurationVar(&cfg.readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for daemon readiness with --detach or --attach (0 = no timeout).")
+	cmd.Flags().BoolVar(&cfg.jsonOut, "json", false, "Emit daemon dispatch metadata as JSON. Requires --prompt or --detach.")
+	cmd.Flags().StringVar(&cfg.format, "format", "", "Render daemon dispatch metadata with a Go template, e.g. '{{.Instance}} {{.PID}}'. Requires --prompt or --detach.")
 	return cmd
 }
 
 func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []string) error {
+	if cfg.format != "" && cfg.jsonOut {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --format cannot be combined with --json.")
+		return exitErr(2)
+	}
+	if cfg.attach && cfg.jsonOut {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --attach cannot be combined with --json.")
+		return exitErr(2)
+	}
+	if cfg.format != "" && cfg.attach {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --format cannot be combined with --attach.")
+		return exitErr(2)
+	}
+	if cfg.jsonOut && cfg.prompt == "" && !cfg.detach {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --json requires --prompt or --detach so the daemon can dispatch the session.")
+		return exitErr(2)
+	}
+	if cfg.format != "" && cfg.prompt == "" && !cfg.detach {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --format requires --prompt or --detach so the daemon can dispatch the session.")
+		return exitErr(2)
+	}
+	if cfg.jsonOut && cfg.noDaemon {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --json cannot be combined with --no-daemon.")
+		return exitErr(2)
+	}
+	if cfg.format != "" && cfg.noDaemon {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --format cannot be combined with --no-daemon.")
+		return exitErr(2)
+	}
+	if cfg.detach && cfg.noDaemon {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --detach cannot be combined with --no-daemon.")
+		return exitErr(2)
+	}
+	if cfg.detach && cfg.attach {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: choose one of --detach or --attach.")
+		return exitErr(2)
+	}
+	if cfg.attach && cfg.noDaemon {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --attach cannot be combined with --no-daemon.")
+		return exitErr(2)
+	}
+	if !cfg.attach && cfg.tailSet {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --tail requires --attach.")
+		return exitErr(2)
+	}
+	if cfg.readyTimeout < 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: --ready-timeout must be >= 0.")
+		return exitErr(2)
+	}
+	tailLines, err := parseLogTail(cfg.tail)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
+		return exitErr(2)
+	}
+	formatTemplate, err := parseRunFormat(cfg.format)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
+		return exitErr(2)
+	}
+
 	target, err := filepath.Abs(cfg.target)
 	if err != nil {
 		return exitErr(2)
@@ -182,28 +259,42 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 	}
 	env := append(os.Environ(), teamEnv...)
 
-	// Daemon-aware routing: for one-shot dispatches (--prompt given), route
-	// through the daemon when one is running. Interactive sessions stay
-	// direct — the daemon spawns claude headless against a log file, which
-	// is incompatible with an attached terminal.
+	// Daemon-aware routing: one-shot dispatches (--prompt given) route
+	// through the daemon when one is running, and --detach opts into daemon
+	// routing explicitly. Plain interactive sessions stay direct because
+	// users expect an attached terminal.
 	//
 	// Channel subscriptions declared in agent frontmatter (`subscribes: ...`)
 	// are POSTed to the daemon before the spawn so an agent has its mailbox
 	// ready when its claude process boots. This applies to both daemon and
 	// no-daemon paths — but no-daemon mode silently skips since channels
 	// only exist with a running daemon.
-	if !cfg.noDaemon {
-		if dc, err := newDaemonClient(teamDir); err == nil {
-			subscribeAgentChannels(cmd, dc, instance, chosen.Subscribes)
+	var dispatchClient *daemonClient
+	if cfg.detach || cfg.attach {
+		if err := ensureDaemonReadyWithTimeout(cmd, target, cfg.jsonOut, cfg.readyTimeout); err != nil {
+			return err
 		}
 	}
-	if !cfg.noDaemon && cfg.prompt != "" {
-		if dc, err := newDaemonClient(teamDir); err == nil {
+	if !cfg.noDaemon {
+		dc, err := newDaemonClient(teamDir)
+		if err == nil {
+			dispatchClient = dc
+			subscribeAgentChannels(cmd, dc, instance, chosen.Subscribes)
+		} else if cfg.jsonOut || formatTemplate != nil {
+			if errors.Is(err, errDaemonNotRunning) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team run: daemon is not running — start it with `agent-team start`.")
+				return exitErr(2)
+			}
+			return err
+		}
+	}
+	if !cfg.noDaemon && (cfg.prompt != "" || cfg.detach || cfg.attach) {
+		if dispatchClient != nil {
 			// claudeArgs already starts with --agents/--add-dir/.../-p; the
 			// daemon prepends `claude --session-id <uuid>` so we strip nothing
 			// — the daemon's spawn surface accepts arbitrary trailing argv
 			// via DispatchInput.Args.
-			disp, derr := dc.Dispatch(dispatchPayload{
+			disp, derr := dispatchClient.Dispatch(dispatchPayload{
 				Agent:     agentName,
 				Name:      instance,
 				Prompt:    cfg.prompt,
@@ -213,6 +304,30 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 			})
 			if derr != nil {
 				return fmt.Errorf("daemon dispatch: %w", derr)
+			}
+			row := runDispatchJSON{
+				Instance:  disp.InstanceID,
+				Agent:     agentName,
+				PID:       disp.PID,
+				SessionID: disp.SessionID,
+				StartedAt: disp.StartedAt.Format(time.RFC3339),
+				Follow:    fmt.Sprintf("agent-team logs %s --follow", disp.InstanceID),
+			}
+			if cfg.jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(row)
+			}
+			if formatTemplate != nil {
+				return renderRunFormat(cmd.OutOrStdout(), row, formatTemplate)
+			}
+			if cfg.attach {
+				out := cmd.OutOrStdout()
+				fmt.Fprintf(out,
+					"agent-team: dispatched %s via daemon (pid=%d, session=%s)\n",
+					disp.InstanceID, disp.PID, disp.SessionID)
+				fmt.Fprintf(out, "\nattaching to %s (Ctrl-C to detach)\n", disp.InstanceID)
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+				defer stop()
+				return followLifecycleLog(ctx, out, dispatchClient, disp.InstanceID, tailLines)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"agent-team: dispatched %s via daemon (pid=%d, session=%s)\n",
@@ -225,6 +340,34 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 	}
 
 	return execClaude(cmd, claudeArgs, env, target)
+}
+
+func parseRunFormat(format string) (*texttemplate.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := texttemplate.New("run-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderRunFormat(w fmtWriter, row runDispatchJSON, tmpl *texttemplate.Template) error {
+	if err := tmpl.Execute(w, row); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+type runDispatchJSON struct {
+	Instance  string `json:"instance"`
+	Agent     string `json:"agent"`
+	PID       int    `json:"pid"`
+	SessionID string `json:"session_id"`
+	StartedAt string `json:"started_at"`
+	Follow    string `json:"follow"`
 }
 
 // execClaude is split out so tests can intercept the exec.
@@ -280,11 +423,11 @@ func agentNames(agents []*loader.Agent) string {
 
 // resolveRunConfig builds the resolved instance config from the five-layer
 // chain in `documentation/topology.md` § Layered config resolution chain:
-//   1. repo config (`<teamDir>/config.toml`)
-//   2. per-instance declared overrides (`instances.toml [instances.<name>.config]`)
-//   3. per-instance state file — either `--instance-config <path>` or the
-//      auto-pickup at `<stateDir>/config.toml`
-//   4. CLI `--set` flags
+//  1. repo config (`<teamDir>/config.toml`)
+//  2. per-instance declared overrides (`instances.toml [instances.<name>.config]`)
+//  3. per-instance state file — either `--instance-config <path>` or the
+//     auto-pickup at `<stateDir>/config.toml`
+//  4. CLI `--set` flags
 //
 // The merged tree is the single source of truth for the spawned session's
 // skills and bash steps.
@@ -436,4 +579,3 @@ func rerenderTmplFiles(teamDir, stateDir string, resolved template.Tree) error {
 	}
 	return nil
 }
-

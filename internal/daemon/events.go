@@ -1,0 +1,131 @@
+package daemon
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+// LifecycleEvent is one append-only daemon lifecycle record. Stored as JSONL
+// at `.agent_team/daemon/events.jsonl` and streamed by GET /v1/events.
+type LifecycleEvent struct {
+	ID       string    `json:"id"`
+	TS       time.Time `json:"ts"`
+	Action   string    `json:"action"`
+	Instance string    `json:"instance,omitempty"`
+	Agent    string    `json:"agent,omitempty"`
+	Status   Status    `json:"status,omitempty"`
+	PID      int       `json:"pid,omitempty"`
+	Message  string    `json:"message,omitempty"`
+}
+
+var lifecycleEventLock sync.Mutex
+
+func lifecycleEventsPath(daemonRoot string) string {
+	return filepath.Join(daemonRoot, "events.jsonl")
+}
+
+// AppendLifecycleEvent appends one lifecycle event. It is intentionally
+// independent from instance metadata writes: callers should treat failures as
+// best-effort observability failures, not as lifecycle failures.
+func AppendLifecycleEvent(daemonRoot string, ev *LifecycleEvent) error {
+	if ev == nil {
+		return errors.New("events: nil event")
+	}
+	if ev.Action == "" {
+		return errors.New("events: action is required")
+	}
+	if ev.ID == "" {
+		ev.ID = newSessionID()
+	}
+	if ev.TS.IsZero() {
+		ev.TS = time.Now().UTC()
+	}
+	if err := os.MkdirAll(daemonRoot, 0o755); err != nil {
+		return fmt.Errorf("events: mkdir: %w", err)
+	}
+	body, err := json.Marshal(ev)
+	if err != nil {
+		return fmt.Errorf("events: marshal: %w", err)
+	}
+	body = append(body, '\n')
+
+	lifecycleEventLock.Lock()
+	defer lifecycleEventLock.Unlock()
+	f, err := os.OpenFile(lifecycleEventsPath(daemonRoot), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("events: open: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.Write(body); err != nil {
+		return fmt.Errorf("events: write: %w", err)
+	}
+	return nil
+}
+
+// StreamLifecycleEvents writes lifecycle JSONL. Missing files stream as empty
+// output. With follow=true, the file is created if missing and tailed until
+// ctx is cancelled.
+func StreamLifecycleEvents(ctx context.Context, w io.Writer, daemonRoot string, follow bool, tailLines int) error {
+	if tailLines < 0 {
+		return errors.New("events: tail must be >= 0")
+	}
+	if err := os.MkdirAll(daemonRoot, 0o755); err != nil {
+		return fmt.Errorf("events: mkdir: %w", err)
+	}
+	f, err := os.OpenFile(lifecycleEventsPath(daemonRoot), os.O_RDONLY|os.O_CREATE, 0o644)
+	if err != nil {
+		return fmt.Errorf("events: open: %w", err)
+	}
+	defer f.Close()
+
+	flusher, _ := w.(http.Flusher)
+	if tailLines > 0 {
+		if err := copyTailLines(w, f, tailLines); err != nil {
+			return err
+		}
+	} else if _, err := io.Copy(w, f); err != nil {
+		return err
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	if !follow {
+		return nil
+	}
+
+	buf := make([]byte, 32*1024)
+	ticker := time.NewTicker(logTailInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+		for {
+			n, rerr := f.Read(buf)
+			if n > 0 {
+				if _, werr := w.Write(buf[:n]); werr != nil {
+					return werr
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			if rerr != nil {
+				if errors.Is(rerr, io.EOF) {
+					break
+				}
+				return rerr
+			}
+		}
+	}
+}

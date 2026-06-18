@@ -3,8 +3,10 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"text/template"
 
 	"github.com/spf13/cobra"
 )
@@ -25,6 +27,8 @@ func newEventPublishCmd() *cobra.Command {
 	var (
 		target  string
 		payload string
+		jsonOut bool
+		format  string
 	)
 	cwd, _ := os.Getwd()
 	c := &cobra.Command{
@@ -32,6 +36,15 @@ func newEventPublishCmd() *cobra.Command {
 		Short: "Publish an event of the given type. The daemon resolves it against declared triggers.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team event publish: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			formatTemplate, err := parseEventPublishFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team event publish: %v\n", err)
+				return exitErr(2)
+			}
 			eventType := args[0]
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
@@ -55,6 +68,12 @@ func newEventPublishCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			out := cmd.OutOrStdout()
+			if jsonOut {
+				return json.NewEncoder(out).Encode(res)
+			}
+			if formatTemplate != nil {
+				return renderEventPublishFormat(out, res, formatTemplate)
+			}
 			if len(res.Matched) == 0 {
 				fmt.Fprintln(out, "(no triggers matched)")
 				return nil
@@ -81,5 +100,26 @@ func newEventPublishCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	c.Flags().StringVar(&payload, "payload", "", "JSON object passed as the event payload (e.g. '{\"target\":\"worker\"}').")
+	c.Flags().BoolVar(&jsonOut, "json", false, "Emit the daemon event outcome as JSON.")
+	c.Flags().StringVar(&format, "format", "", "Render the event outcome with a Go template, e.g. '{{len .Matched}} {{len .Dispatched}}'.")
 	return c
+}
+
+func parseEventPublishFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("event-publish-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderEventPublishFormat(w io.Writer, res *eventResponse, tmpl *template.Template) error {
+	if err := tmpl.Execute(w, res); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }

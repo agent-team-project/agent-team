@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -224,6 +226,7 @@ func (r *EventResolver) onReap(spawned string) {
 		tr.running++
 	}
 	r.mu.Unlock()
+	r.cleanupEphemeralSpawn(spawned)
 	if next == nil {
 		return
 	}
@@ -234,6 +237,13 @@ func (r *EventResolver) onReap(spawned string) {
 		tr.running--
 		r.mu.Unlock()
 	}
+}
+
+func (r *EventResolver) cleanupEphemeralSpawn(spawned string) {
+	if r.teamDir != "" {
+		_ = os.RemoveAll(filepath.Join(r.teamDir, "state", spawned))
+	}
+	_ = r.mgr.Remove(spawned, true, 0)
 }
 
 // declaredOwnerOf identifies which declared ephemeral instance a unique-named

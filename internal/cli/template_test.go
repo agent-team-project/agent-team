@@ -25,6 +25,7 @@ func TestTemplateShow_Bundled(t *testing.T) {
 		"linear.ticket_prefix",
 		"required",
 		"^[A-Z]{2,5}$",
+		"Content hash: sha256:",
 		"Agents in this template:",
 		"manager",
 		"worker",

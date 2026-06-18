@@ -21,6 +21,14 @@ import (
 // through the daemon and falling back to direct exec.
 var errDaemonNotRunning = errors.New("daemon: not running")
 
+type logNotFoundError struct {
+	Instance string
+}
+
+func (e *logNotFoundError) Error() string {
+	return fmt.Sprintf("no log for instance %q (has it been dispatched?)", e.Instance)
+}
+
 // daemonClient talks to agent-teamd over its unix socket. One client per
 // command invocation — the underlying http.Client is short-lived.
 type daemonClient struct {
@@ -33,6 +41,10 @@ type daemonClient struct {
 // constructs an http.Client whose transport dials the unix socket. Returns
 // errDaemonNotRunning if the pidfile is missing or stale.
 func newDaemonClient(teamDir string) (*daemonClient, error) {
+	return newDaemonClientWithTimeout(teamDir, 0)
+}
+
+func newDaemonClientWithTimeout(teamDir string, timeout time.Duration) (*daemonClient, error) {
 	pid, err := daemon.ReadPidfile(daemon.PidPath(teamDir))
 	if err != nil || pid == 0 || !daemon.PidLiveCheck(pid) {
 		return nil, errDaemonNotRunning
@@ -50,7 +62,7 @@ func newDaemonClient(teamDir string) (*daemonClient, error) {
 		DisableKeepAlives: true,
 	}
 	return &daemonClient{
-		hc:      &http.Client{Transport: transport, Timeout: 0}, // 0 = no timeout; logs may stream forever.
+		hc:      &http.Client{Transport: transport, Timeout: timeout},
 		baseURL: "http://daemon", // host name is irrelevant — DialContext fixes the socket.
 		teamDir: teamDir,
 	}, nil
@@ -71,6 +83,27 @@ type dispatchResponse struct {
 	StartedAt  time.Time `json:"started_at"`
 	PID        int       `json:"pid"`
 	SessionID  string    `json:"session_id"`
+}
+
+type messageResponse struct {
+	Delivered bool      `json:"delivered"`
+	ID        string    `json:"id"`
+	TS        time.Time `json:"ts"`
+}
+
+type daemonReconcileResponse struct {
+	Reconciled bool                    `json:"reconciled"`
+	Changed    int                     `json:"changed"`
+	Instances  []*daemon.Metadata      `json:"instances"`
+	Changes    []daemonReconcileChange `json:"changes"`
+}
+
+type daemonReconcileChange struct {
+	Instance string        `json:"instance"`
+	Agent    string        `json:"agent,omitempty"`
+	Before   daemon.Status `json:"before"`
+	After    daemon.Status `json:"after"`
+	PID      int           `json:"pid,omitempty"`
 }
 
 func (c *daemonClient) Dispatch(in dispatchPayload) (*dispatchResponse, error) {
@@ -114,12 +147,86 @@ func (c *daemonClient) Instances() ([]*daemon.Metadata, error) {
 	return out, nil
 }
 
-// LogsStream pipes the chunked text stream of the instance's child.log to w.
-// follow=true keeps the connection open until ctx cancels.
-func (c *daemonClient) LogsStream(ctx context.Context, w io.Writer, instance string, follow bool) error {
-	u := c.baseURL + "/v1/logs/" + url.PathEscape(instance)
+func (c *daemonClient) Reconcile() (*daemonReconcileResponse, error) {
+	resp, err := c.hc.Post(c.baseURL+"/v1/reconcile", "application/json", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return nil, fmt.Errorf("daemon: reconcile: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("daemon: reconcile: %s", readErrorBody(resp))
+	}
+	var out daemonReconcileResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("daemon: reconcile decode: %w", err)
+	}
+	return &out, nil
+}
+
+func (c *daemonClient) Events(ctx context.Context, follow bool, tailLines int) (io.ReadCloser, error) {
+	u := c.baseURL + "/v1/events"
+	q := url.Values{}
 	if follow {
-		u += "?follow=true"
+		q.Set("follow", "true")
+	}
+	if tailLines > 0 {
+		q.Set("tail", fmt.Sprintf("%d", tailLines))
+	}
+	if encoded := q.Encode(); encoded != "" {
+		u += "?" + encoded
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return io.NopCloser(bytes.NewReader(nil)), nil
+		}
+		return nil, fmt.Errorf("daemon: events: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		return nil, fmt.Errorf("daemon: events: %s", readErrorBody(resp))
+	}
+	return resp.Body, nil
+}
+
+func (c *daemonClient) SendMessage(to, from, body string) (*messageResponse, error) {
+	payload, err := json.Marshal(map[string]string{"to": to, "from": from, "body": body})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.hc.Post(c.baseURL+"/v1/message", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("daemon: message: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("daemon: message: %s", readErrorBody(resp))
+	}
+	var out messageResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("daemon: message decode: %w", err)
+	}
+	return &out, nil
+}
+
+// LogsStream pipes the chunked text stream of the instance's child.log to w.
+// follow=true keeps the connection open until ctx cancels. tailLines>0 limits
+// the initial dump to the last N lines before following.
+func (c *daemonClient) LogsStream(ctx context.Context, w io.Writer, instance string, follow bool, tailLines int) error {
+	u := c.baseURL + "/v1/logs/" + url.PathEscape(instance)
+	q := url.Values{}
+	if follow {
+		q.Set("follow", "true")
+	}
+	if tailLines > 0 {
+		q.Set("tail", fmt.Sprintf("%d", tailLines))
+	}
+	if encoded := q.Encode(); encoded != "" {
+		u += "?" + encoded
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
@@ -129,20 +236,20 @@ func (c *daemonClient) LogsStream(ctx context.Context, w io.Writer, instance str
 	if err != nil {
 		// Context cancel during read shows up as a wrapped error — surface
 		// nil so callers can treat user Ctrl-C as a clean exit.
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil
 		}
 		return fmt.Errorf("daemon: logs: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("no log for instance %q (has it been dispatched?)", instance)
+		return &logNotFoundError{Instance: instance}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("daemon: logs: %s", readErrorBody(resp))
 	}
 	if _, err := io.Copy(w, resp.Body); err != nil {
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil
 		}
 		return err
@@ -404,7 +511,18 @@ func (c *daemonClient) TopologyReload() (*topologyResponse, error) {
 
 // StopInstance hits POST /v1/stop. Used by `instance down`.
 func (c *daemonClient) StopInstance(instance string) error {
-	body, _ := json.Marshal(map[string]string{"instance": instance})
+	return c.StopInstanceWithOptions(instance, false, 0)
+}
+
+func (c *daemonClient) StopInstanceWithOptions(instance string, force bool, timeout time.Duration) error {
+	payload := map[string]any{"instance": instance}
+	if force {
+		payload["force"] = true
+	}
+	if timeout > 0 {
+		payload["timeout_ms"] = timeout.Milliseconds()
+	}
+	body, _ := json.Marshal(payload)
 	resp, err := c.hc.Post(c.baseURL+"/v1/stop", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("daemon: stop: %w", err)
@@ -412,6 +530,62 @@ func (c *daemonClient) StopInstance(instance string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("daemon: stop: %s", readErrorBody(resp))
+	}
+	return nil
+}
+
+// StartInstance hits POST /v1/start. Used by `start` / `instance up` when a
+// stopped persistent instance already has daemon metadata and can resume its
+// prior session.
+func (c *daemonClient) StartInstance(instance string) error {
+	body, _ := json.Marshal(map[string]string{"instance": instance})
+	resp, err := c.hc.Post(c.baseURL+"/v1/start", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("daemon: start: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("daemon: start: %s", readErrorBody(resp))
+	}
+	return nil
+}
+
+// RestartInstance hits POST /v1/restart.
+func (c *daemonClient) RestartInstance(instance string) error {
+	return c.RestartInstanceWithOptions(instance, false, 0)
+}
+
+func (c *daemonClient) RestartInstanceWithOptions(instance string, force bool, timeout time.Duration) error {
+	payload := map[string]any{"instance": instance}
+	if force {
+		payload["force"] = true
+	}
+	if timeout > 0 {
+		payload["timeout_ms"] = timeout.Milliseconds()
+	}
+	body, _ := json.Marshal(payload)
+	resp, err := c.hc.Post(c.baseURL+"/v1/restart", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("daemon: restart: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("daemon: restart: %s", readErrorBody(resp))
+	}
+	return nil
+}
+
+// RemoveInstance hits POST /v1/remove. With force=true, the daemon stops a
+// running process before deleting its metadata.
+func (c *daemonClient) RemoveInstance(instance string, force bool) error {
+	body, _ := json.Marshal(map[string]any{"instance": instance, "force": force})
+	resp, err := c.hc.Post(c.baseURL+"/v1/remove", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("daemon: remove: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("daemon: remove: %s", readErrorBody(resp))
 	}
 	return nil
 }

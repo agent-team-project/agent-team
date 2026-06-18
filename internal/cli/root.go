@@ -23,15 +23,39 @@ func (e ExitCode) Error() string { return fmt.Sprintf("exit %d", int(e)) }
 // NewRootCmd builds the root `agent-team` command with all subcommands attached.
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "agent-team",
-		Short:         "Declare and launch a custom set of Claude Code subagents and skills, vendored into any repo.",
-		Long:          "agent-team — declare and launch Claude Code subagents and skills, vendored into any repo.",
+		Use:   "agent-team",
+		Short: "Declare and launch a custom set of Claude Code subagents and skills, vendored into any repo.",
+		Long: "agent-team — declare and launch Claude Code subagents and skills, vendored into any repo.\n\n" +
+			"Docker-like shortcuts:\n" +
+			"  agent-team up    = agent-team start\n" +
+			"  agent-team down  = agent-team stop\n" +
+			"  agent-team ls    = agent-team ps\n" +
+			"  agent-team top   = agent-team stats",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       Version,
 	}
 	root.SetVersionTemplate("agent-team " + Version + "\n")
 	root.AddCommand(newInitCmd())
+	root.AddCommand(newUpgradeCmd())
+	root.AddCommand(newStartCmd())
+	root.AddCommand(newStopCmd())
+	root.AddCommand(newKillCmd())
+	root.AddCommand(newRestartCmd())
+	root.AddCommand(newReloadCmd())
+	root.AddCommand(newPlanCmd())
+	root.AddCommand(newSyncCmd())
+	root.AddCommand(newStatusCmd())
+	root.AddCommand(newHealthCmd())
+	root.AddCommand(newMonitorCmd())
+	root.AddCommand(newWatchCmd())
+	root.AddCommand(newInspectCmd())
+	root.AddCommand(newRmCmd())
+	root.AddCommand(newPruneCmd())
+	root.AddCommand(newWaitCmd())
+	root.AddCommand(newStatsCmd())
+	root.AddCommand(newSendCmd())
+	root.AddCommand(newEventsCmd())
 	root.AddCommand(newRunCmd())
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newInstanceCmd())
@@ -39,6 +63,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newDaemonCmd())
 	root.AddCommand(newPsCmd())
 	root.AddCommand(newLogsCmd())
+	root.AddCommand(newAttachCmd())
 	root.AddCommand(newChannelCmd())
 	root.AddCommand(newChannelsCmd())
 	root.AddCommand(newTopologyCmd())

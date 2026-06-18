@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/spf13/cobra"
 )
 
@@ -144,7 +145,7 @@ func newChannelRmCmd() *cobra.Command {
 // --- run* helpers --------------------------------------------------------
 
 func runChannelLs(stdout, stderr io.Writer, teamDir string) error {
-	client, err := requireDaemon(stderr, teamDir)
+	client, err := channelClientForTeamDir(teamDir)
 	if err != nil {
 		return err
 	}
@@ -170,7 +171,7 @@ func runChannelLs(stdout, stderr io.Writer, teamDir string) error {
 }
 
 func runChannelShow(stdout, stderr io.Writer, teamDir, name string) error {
-	client, err := requireDaemon(stderr, teamDir)
+	client, err := channelClientForTeamDir(teamDir)
 	if err != nil {
 		return err
 	}
@@ -225,7 +226,7 @@ func runChannelShow(stdout, stderr io.Writer, teamDir, name string) error {
 }
 
 func runChannelPublish(stdout, stderr io.Writer, teamDir, name, sender, body string) error {
-	client, err := requireDaemon(stderr, teamDir)
+	client, err := channelClientForTeamDir(teamDir)
 	if err != nil {
 		return err
 	}
@@ -238,7 +239,7 @@ func runChannelPublish(stdout, stderr io.Writer, teamDir, name, sender, body str
 }
 
 func runChannelRm(stdout, stderr io.Writer, teamDir, name string) error {
-	client, err := requireDaemon(stderr, teamDir)
+	client, err := channelClientForTeamDir(teamDir)
 	if err != nil {
 		return err
 	}
@@ -249,20 +250,79 @@ func runChannelRm(stdout, stderr io.Writer, teamDir, name string) error {
 	return nil
 }
 
-// requireDaemon centralises the "daemon must be running for this command"
-// error path. Channels are a daemon-only feature; without one there's nothing
-// to talk to.
-func requireDaemon(stderr io.Writer, teamDir string) (*daemonClient, error) {
+type channelClient interface {
+	ChannelList() ([]*channelInfo, error)
+	ChannelDrain(ctx context.Context, name, instance string, since *int64, wait time.Duration) (*drainResp, error)
+	ChannelPublish(name, sender, body string) (*publishResp, error)
+	ChannelDelete(name string) error
+}
+
+func channelClientForTeamDir(teamDir string) (channelClient, error) {
 	client, err := newDaemonClient(teamDir)
+	if err == nil {
+		return client, nil
+	}
+	if errors.Is(err, errDaemonNotRunning) {
+		return localChannelClient{store: daemon.NewChannelStore(daemon.DaemonRoot(teamDir))}, nil
+	}
+	return nil, err
+}
+
+type localChannelClient struct {
+	store *daemon.ChannelStore
+}
+
+func (c localChannelClient) ChannelList() ([]*channelInfo, error) {
+	infos, err := c.store.List()
 	if err != nil {
-		if errors.Is(err, errDaemonNotRunning) {
-			fmt.Fprintln(stderr,
-				"agent-team: no daemon running — start it with `agent-team daemon start`.")
-			return nil, exitErr(1)
-		}
 		return nil, err
 	}
-	return client, nil
+	out := make([]*channelInfo, 0, len(infos))
+	for _, info := range infos {
+		out = append(out, &channelInfo{
+			Name:          info.Name,
+			Subscribers:   info.Subscribers,
+			MessageCount:  info.MessageCount,
+			LastMessageTS: info.LastMessageTS,
+		})
+	}
+	return out, nil
+}
+
+func (c localChannelClient) ChannelDrain(ctx context.Context, name, instance string, since *int64, wait time.Duration) (*drainResp, error) {
+	dr, err := c.store.Drain(ctx, name, instance, since, wait)
+	if err != nil {
+		return nil, err
+	}
+	out := &drainResp{Cursor: dr.Cursor}
+	for _, msg := range dr.Messages {
+		out.Messages = append(out.Messages, &channelMessage{
+			Seq:    msg.Seq,
+			Sender: msg.Sender,
+			Body:   msg.Body,
+			TS:     msg.TS,
+		})
+	}
+	return out, nil
+}
+
+func (c localChannelClient) ChannelPublish(name, sender, body string) (*publishResp, error) {
+	res, err := c.store.Publish(name, sender, body)
+	if err != nil {
+		return nil, err
+	}
+	return &publishResp{Seq: res.Seq, TS: res.TS}, nil
+}
+
+func (c localChannelClient) ChannelDelete(name string) error {
+	removed, err := c.store.Delete(name)
+	if err != nil {
+		return err
+	}
+	if !removed {
+		return fmt.Errorf("no such channel %q", name)
+	}
+	return nil
 }
 
 // humanAge returns a compact human-readable duration ("3m", "2h", "1d").

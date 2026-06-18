@@ -70,6 +70,14 @@ func Reconcile(daemonRoot string, m *InstanceManager) error {
 			if err := WriteMetadata(daemonRoot, md); err != nil {
 				return err
 			}
+			_ = AppendLifecycleEvent(daemonRoot, &LifecycleEvent{
+				Action:   "exit",
+				Instance: md.Instance,
+				Agent:    md.Agent,
+				Status:   md.Status,
+				PID:      md.PID,
+				Message:  "reconciled missing process",
+			})
 		case StatusStopped, StatusExited, StatusCrashed:
 			// Nothing to reconcile.
 		default:

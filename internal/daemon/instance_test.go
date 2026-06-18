@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -61,6 +64,120 @@ func (f *fakeSpawner) lastCall() []string {
 		return nil
 	}
 	return f.calls[len(f.calls)-1]
+}
+
+func ignoreTermSpawner(t *testing.T) Spawner {
+	t.Helper()
+	return func(args []string, env []string, workspace, stdoutPath, stderrPath string) (*os.Process, error) {
+		stdin, err := os.Open(os.DevNull)
+		if err != nil {
+			return nil, err
+		}
+		stdout, err := os.OpenFile(stdoutPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+		if err != nil {
+			_ = stdin.Close()
+			return nil, err
+		}
+		stderr, err := os.OpenFile(stderrPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+		if err != nil {
+			_ = stdin.Close()
+			_ = stdout.Close()
+			return nil, err
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcessIgnoreTerm")
+		cmd.Env = append(append([]string(nil), env...), "AGENT_TEAM_HELPER_IGNORE_TERM=1")
+		cmd.Dir = workspace
+		cmd.Stdin = stdin
+		cmd.Stdout = stdout
+		cmd.Stderr = stderr
+		err = cmd.Start()
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stderr.Close()
+		if err != nil {
+			return nil, err
+		}
+		return cmd.Process, nil
+	}
+}
+
+func TestHelperProcessIgnoreTerm(t *testing.T) {
+	if os.Getenv("AGENT_TEAM_HELPER_IGNORE_TERM") != "1" {
+		return
+	}
+	signal.Ignore(syscall.SIGTERM)
+	select {}
+}
+
+func TestSignalProcessGroupStopsChildProcess(t *testing.T) {
+	childPIDPath := t.TempDir() + "/child.pid"
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	stdin, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	proc, err := os.StartProcess(shell, []string{"sh", "-c", `sleep 60 & echo $! > "$CHILD_PID_FILE"; wait`}, &os.ProcAttr{
+		Env:   append(os.Environ(), "CHILD_PID_FILE="+childPIDPath),
+		Files: []*os.File{stdin, os.Stdout, os.Stderr},
+		Sys:   &syscall.SysProcAttr{Setsid: true},
+	})
+	if err != nil {
+		t.Fatalf("start process group: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-proc.Pid, syscall.SIGKILL)
+		if body, err := os.ReadFile(childPIDPath); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(body))); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+
+	childPID := 0
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		body, err := os.ReadFile(childPIDPath)
+		if err == nil {
+			childPID, err = strconv.Atoi(strings.TrimSpace(string(body)))
+			if err == nil && childPID > 0 {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if childPID == 0 {
+		t.Fatalf("child pid file was not written")
+	}
+	if !PidLiveCheck(childPID) {
+		t.Fatalf("child pid %d was not live before signal", childPID)
+	}
+
+	if err := signalProcessGroupOrProcess(proc, proc.Pid, syscall.SIGTERM); err != nil {
+		t.Fatalf("signal process group: %v", err)
+	}
+	waitDone := make(chan error, 1)
+	go func() {
+		_, err := proc.Wait()
+		waitDone <- err
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("process group leader did not exit after SIGTERM")
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !PidLiveCheck(childPID) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("child pid %d still live after process-group SIGTERM", childPID)
 }
 
 func TestInstance_DispatchPersistsMetadata(t *testing.T) {
@@ -159,6 +276,35 @@ func TestInstance_StopMarksStopped(t *testing.T) {
 	}
 }
 
+func TestInstance_StopForceKillsAfterTimeout(t *testing.T) {
+	root := t.TempDir()
+	m := NewInstanceManager(root, ignoreTermSpawner(t))
+
+	if _, err := m.Dispatch(DispatchInput{Agent: "w", Name: "stubborn", Workspace: t.TempDir()}); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	start := time.Now()
+	if _, err := m.StopWithOptions("stubborn", StopOptions{Force: true, Timeout: 25 * time.Millisecond}); err != nil {
+		t.Fatalf("force stop: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("force stop took too long: %s", elapsed)
+	}
+	if err := m.WaitForReaper("stubborn", 2*time.Second); err != nil {
+		t.Fatalf("wait reaper: %v", err)
+	}
+	disk, err := ReadMetadata(root, "stubborn")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if disk.Status != StatusStopped {
+		t.Fatalf("status after force stop = %s, want stopped", disk.Status)
+	}
+	if disk.ExitedAt.IsZero() {
+		t.Fatalf("ExitedAt not set after force stop")
+	}
+}
+
 func TestInstance_StartResumesWithSessionID(t *testing.T) {
 	root := t.TempDir()
 	fake := newFakeSpawner(30 * time.Second)
@@ -199,6 +345,182 @@ func TestInstance_StartResumesWithSessionID(t *testing.T) {
 	// Cleanup.
 	_, _ = m.Stop("mgr")
 	waitForStatusNot(t, m, "mgr", StatusRunning)
+}
+
+func TestInstance_RestartStopsThenResumes(t *testing.T) {
+	root := t.TempDir()
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+
+	disp, err := m.Dispatch(DispatchInput{Agent: "manager", Name: "mgr", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	resumed, err := m.Restart("mgr", 10*time.Second)
+	if err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	if resumed.Status != StatusRunning {
+		t.Errorf("status after restart: got %s want running", resumed.Status)
+	}
+	if resumed.SessionID != disp.SessionID {
+		t.Errorf("session changed on restart: %s -> %s", disp.SessionID, resumed.SessionID)
+	}
+	args := fake.lastCall()
+	foundResume := false
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--resume" && args[i+1] == disp.SessionID {
+			foundResume = true
+		}
+	}
+	if !foundResume {
+		t.Errorf("expected restart to resume %s, got: %v", disp.SessionID, args)
+	}
+
+	_, _ = m.Stop("mgr")
+	waitForStatusNot(t, m, "mgr", StatusRunning)
+}
+
+func TestInstance_RestartWithForceEscalatesThenResumes(t *testing.T) {
+	root := t.TempDir()
+	m := NewInstanceManager(root, ignoreTermSpawner(t))
+
+	disp, err := m.Dispatch(DispatchInput{Agent: "manager", Name: "mgr", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = m.StopWithOptions("mgr", StopOptions{Force: true, Timeout: 10 * time.Millisecond})
+		waitForStatusNot(t, m, "mgr", StatusRunning)
+	})
+
+	resumed, err := m.RestartWithOptions("mgr", RestartOptions{Force: true, Timeout: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("force restart: %v", err)
+	}
+	if resumed.Status != StatusRunning {
+		t.Errorf("status after force restart: got %s want running", resumed.Status)
+	}
+	if resumed.SessionID != disp.SessionID {
+		t.Errorf("session changed on force restart: %s -> %s", disp.SessionID, resumed.SessionID)
+	}
+}
+
+func TestInstance_StaleReaperDoesNotOverwriteResumedRun(t *testing.T) {
+	root := t.TempDir()
+	base := ignoreTermSpawner(t)
+	var mu sync.Mutex
+	var procs []*os.Process
+	spawn := func(args []string, env []string, workspace, stdoutPath, stderrPath string) (*os.Process, error) {
+		proc, err := base(args, env, workspace, stdoutPath, stderrPath)
+		if err != nil {
+			return nil, err
+		}
+		mu.Lock()
+		procs = append(procs, proc)
+		mu.Unlock()
+		return proc, nil
+	}
+	m := NewInstanceManager(root, spawn)
+
+	disp, err := m.Dispatch(DispatchInput{Agent: "manager", Name: "mgr", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = m.StopWithOptions("mgr", StopOptions{Force: true, Timeout: 10 * time.Millisecond})
+		_ = m.WaitForReaper("mgr", 2*time.Second)
+	})
+	oldReaped := m.reapedChan("mgr")
+	if oldReaped == nil {
+		t.Fatalf("old reaper channel is nil")
+	}
+	if _, err := m.Stop("mgr"); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	resumed, err := m.Start("mgr")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if resumed.Status != StatusRunning {
+		t.Fatalf("status after start: got %s want running", resumed.Status)
+	}
+	if resumed.SessionID != disp.SessionID {
+		t.Fatalf("session changed on start: %s -> %s", disp.SessionID, resumed.SessionID)
+	}
+
+	mu.Lock()
+	if len(procs) < 2 {
+		mu.Unlock()
+		t.Fatalf("spawned processes = %d, want at least 2", len(procs))
+	}
+	oldProc := procs[0]
+	mu.Unlock()
+	if err := oldProc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		t.Fatalf("kill old process: %v", err)
+	}
+	select {
+	case <-oldReaped:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("old reaper did not finish")
+	}
+
+	disk, err := ReadMetadata(root, "mgr")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if disk.Status != StatusRunning {
+		t.Fatalf("status after stale reaper = %s, want running; disk=%+v", disk.Status, disk)
+	}
+	if disk.PID != resumed.PID {
+		t.Fatalf("pid after stale reaper = %d, want resumed pid %d", disk.PID, resumed.PID)
+	}
+}
+
+func TestInstance_RemoveStoppedDeletesMetadata(t *testing.T) {
+	root := t.TempDir()
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+
+	if _, err := m.Dispatch(DispatchInput{Agent: "manager", Name: "mgr", Workspace: t.TempDir()}); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if _, err := m.Stop("mgr"); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	waitForStatusNot(t, m, "mgr", StatusRunning)
+
+	if err := m.Remove("mgr", false, 10*time.Second); err != nil {
+		t.Fatalf("remove stopped: %v", err)
+	}
+	if _, err := ReadMetadata(root, "mgr"); !os.IsNotExist(err) {
+		t.Fatalf("metadata should be removed, err=%v", err)
+	}
+	if got := m.List(); len(got) != 0 {
+		t.Fatalf("manager should forget removed instance, got %+v", got)
+	}
+}
+
+func TestInstance_RemoveRunningRequiresForce(t *testing.T) {
+	root := t.TempDir()
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+
+	if _, err := m.Dispatch(DispatchInput{Agent: "manager", Name: "mgr", Workspace: t.TempDir()}); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if err := m.Remove("mgr", false, 10*time.Second); err == nil || !strings.Contains(err.Error(), "running") {
+		t.Fatalf("remove running without force err=%v", err)
+	}
+	if _, err := ReadMetadata(root, "mgr"); err != nil {
+		t.Fatalf("metadata should still exist after refused remove: %v", err)
+	}
+	if err := m.Remove("mgr", true, 10*time.Second); err != nil {
+		t.Fatalf("force remove running: %v", err)
+	}
+	if _, err := ReadMetadata(root, "mgr"); !os.IsNotExist(err) {
+		t.Fatalf("metadata should be removed, err=%v", err)
+	}
 }
 
 func TestInstance_DispatchPassesArgsAndEnv(t *testing.T) {
@@ -351,4 +673,3 @@ func waitForStatusNot(t *testing.T, m *InstanceManager, instance string, want St
 		t.Fatalf("after reap, instance %s ExitedAt is zero; disk=%+v", instance, disk)
 	}
 }
-

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -123,6 +125,94 @@ func TestClient_PublishEvent_NoMatch(t *testing.T) {
 	}
 	if len(res.Matched) != 0 {
 		t.Errorf("expected no matches, got %v", res.Matched)
+	}
+}
+
+func TestEventPublishJSON(t *testing.T) {
+	target, err := os.MkdirTemp("/tmp", "agent-team-event-json-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(target)
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), nil)
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"event", "publish", "user_invocation", "--payload", `{"name":"manager"}`, "--json", "--target", target})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("event publish --json: %v\nstderr=%s", err, stderr.String())
+	}
+	var body eventResponse
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode event publish json: %v\nbody=%s", err, out.String())
+	}
+	if len(body.Matched) != 1 || body.Matched[0] != "manager" || len(body.Messaged) != 1 || body.Messaged[0] != "manager" {
+		t.Fatalf("body = %+v, want manager matched and messaged", body)
+	}
+}
+
+func TestEventPublishFormat(t *testing.T) {
+	target, err := os.MkdirTemp("/tmp", "agent-team-event-format-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(target)
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), nil)
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"event", "publish", "user_invocation", "--format", "{{len .Matched}}:{{len .Messaged}}:{{len .Dispatched}}", "--target", target})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("event publish --format: %v\nstderr=%s", err, stderr.String())
+	}
+	if got, want := out.String(), "1:1:0\n"; got != want {
+		t.Fatalf("event publish --format output = %q, want %q", got, want)
+	}
+}
+
+func TestEventPublishFormatRejectsConflictingModes(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"event", "publish", "user_invocation", "--format", "{{len .Matched}}", "--json"}, "--format cannot be combined"},
+		{[]string{"event", "publish", "user_invocation", "--format", "{{"}, "invalid --format template"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		stderr := &bytes.Buffer{}
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
 	}
 }
 

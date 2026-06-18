@@ -1,0 +1,1613 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jamesaud/agent-team/internal/daemon"
+)
+
+func TestMonitorCommandJSONDoesNotExitUnhealthy(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	stdout := &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"monitor", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --json should not fail on unhealthy fleet: %v", err)
+	}
+
+	var body monitorSnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Health == nil || body.Health.Healthy {
+		t.Fatalf("monitor health should report unhealthy daemon-down state: %+v", body.Health)
+	}
+	if body.Plan != nil {
+		t.Fatalf("plan should be omitted unless --plan is set: %+v", body.Plan)
+	}
+	if body.Stats == nil {
+		t.Fatalf("stats should encode as an empty array, not null")
+	}
+	if body.StatsError != "" {
+		t.Fatalf("stats_error = %q, want empty local fallback error", body.StatsError)
+	}
+}
+
+func TestMonitorSummaryJSONUsesHealthSnapshot(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--summary", "--json", "--agent", "manager", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --summary --json should not fail on unhealthy fleet: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body healthResult
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor summary json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Healthy || body.Daemon.Running {
+		t.Fatalf("monitor summary should report daemon-down health: %+v", body)
+	}
+	if body.Summary.Total != 0 {
+		t.Fatalf("summary total = %d, want zero matching runtime rows", body.Summary.Total)
+	}
+	if body.Declared.Persistent != 1 || body.Declared.Missing != 1 {
+		t.Fatalf("declared summary = %+v, want one missing manager declaration", body.Declared)
+	}
+}
+
+func TestMonitorSummaryLatestJSONScopesHealthRows(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "old", Agent: "worker", Status: daemon.StatusStopped, StartedAt: now.Add(-2 * time.Hour)},
+		{Instance: "new", Agent: "worker", Status: daemon.StatusStopped, StartedAt: now.Add(-5 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--summary", "--latest", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --summary --latest --json should not fail: %v\nstderr: %s", err, stderr.String())
+	}
+	var body healthResult
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor summary latest json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Summary.Total != 1 || body.Summary.Stopped != 1 {
+		t.Fatalf("summary = %+v, want one stopped latest row", body.Summary)
+	}
+	if len(body.Instances) != 1 || body.Instances[0].Instance != "new" {
+		t.Fatalf("instances = %+v, want only newest row", body.Instances)
+	}
+}
+
+func TestMonitorStrictTopologyUsesHealthOption(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance: "adhoc",
+		Agent:    "worker",
+		Status:   daemon.StatusRunning,
+		PID:      123,
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	defaultSnapshot, err := collectMonitorSnapshot(teamDir, time.Now(), nil, monitorOptions{})
+	if err != nil {
+		t.Fatalf("collect default monitor: %v", err)
+	}
+	for _, issue := range defaultSnapshot.Health.Issues {
+		if issue.Code == "topology_extra_running" {
+			t.Fatalf("default monitor should not flag topology extras: %+v", defaultSnapshot.Health.Issues)
+		}
+	}
+
+	strictSnapshot, err := collectMonitorSnapshot(teamDir, time.Now(), nil, monitorOptions{StrictTopology: true})
+	if err != nil {
+		t.Fatalf("collect strict monitor: %v", err)
+	}
+	var found bool
+	for _, issue := range strictSnapshot.Health.Issues {
+		if issue.Code == "topology_extra_running" && issue.Instance == "adhoc" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("strict monitor health issues = %+v, want adhoc topology_extra_running", strictSnapshot.Health.Issues)
+	}
+}
+
+func TestMonitorSummaryPlanJSONIncludesPlanSummary(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--summary", "--plan", "--json", "--agent", "manager", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --summary --plan --json: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+	}
+
+	var body monitorSummarySnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor summary plan json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Health == nil || body.Health.Healthy {
+		t.Fatalf("health = %+v, want daemon-down health", body.Health)
+	}
+	if body.Plan == nil {
+		t.Fatalf("plan summary missing: %+v", body)
+	}
+	if body.Plan.Summary.Total != 1 || body.Plan.Summary.Actions["start"] != 1 || !body.Plan.Summary.DryRun {
+		t.Fatalf("plan summary = %+v, want one dry-run manager start", body.Plan.Summary)
+	}
+}
+
+func TestMonitorSummaryResourcesJSONIncludesStatsSummary(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance:  "manager",
+		Agent:     "manager",
+		Status:    daemon.StatusStopped,
+		PID:       321,
+		StartedAt: now.Add(-5 * time.Minute),
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "manager"), `[status]
+phase = "done"
+description = "complete"
+`, now)
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--summary", "--resources", "--all", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --summary --resources --json: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+	}
+
+	var body monitorSummarySnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor summary resources json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Health == nil {
+		t.Fatalf("health missing: %+v", body)
+	}
+	if body.Resources == nil {
+		t.Fatalf("resources summary missing: %+v", body)
+	}
+	if body.Resources.Total != 1 || body.Resources.Stopped != 1 || body.Resources.Measured != 0 || body.Resources.Phases["done"] != 1 {
+		t.Fatalf("resources summary = %+v, want one stopped done manager", body.Resources)
+	}
+	if body.Plan != nil || body.Events != nil {
+		t.Fatalf("plan/events should be omitted unless requested: plan=%+v events=%+v", body.Plan, body.Events)
+	}
+}
+
+func TestMonitorSummaryResourcesHonorsStaleFilter(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	old := time.Now().Add(-staleAfter - time.Minute)
+	fresh := time.Now()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Status: daemon.StatusStopped, PID: 321, StartedAt: old},
+		{Instance: "worker", Agent: "worker", Status: daemon.StatusStopped, PID: 654, StartedAt: fresh},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "manager"), `[status]
+phase = "implementing"
+description = "stale work"
+`, old)
+	writeStatus(t, filepath.Join(teamDir, "state", "worker"), `[status]
+phase = "implementing"
+description = "fresh work"
+`, fresh)
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--summary", "--resources", "--stale", "--all", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --summary --resources --stale --json: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+	}
+
+	var body monitorSummarySnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor stale resources json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Health == nil || body.Health.Summary.Total != 1 || body.Health.Summary.Stale != 1 {
+		t.Fatalf("health summary = %+v, want one stale instance", body.Health)
+	}
+	if body.Resources == nil {
+		t.Fatalf("resources summary missing: %+v", body)
+	}
+	if body.Resources.Total != 1 || body.Resources.Stopped != 1 || body.Resources.Phases["implementing"] != 1 {
+		t.Fatalf("resources summary = %+v, want stale manager only", body.Resources)
+	}
+}
+
+func TestMonitorSummaryResourcesHonorsUnhealthyFilter(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	old := now.Add(-staleAfter - time.Minute)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "crashed", Agent: "worker", Status: daemon.StatusCrashed, PID: 123, StartedAt: old},
+		{Instance: "fresh", Agent: "worker", Status: daemon.StatusStopped, PID: 456, StartedAt: now},
+		{Instance: "stale", Agent: "manager", Status: daemon.StatusStopped, PID: 789, StartedAt: old},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "stale"), `[status]
+phase = "implementing"
+description = "stale work"
+`, old)
+	writeStatus(t, filepath.Join(teamDir, "state", "fresh"), `[status]
+phase = "idle"
+description = "fresh work"
+`, now)
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--summary", "--resources", "--unhealthy", "--all", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --summary --resources --unhealthy --json: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+	}
+
+	var body monitorSummarySnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor unhealthy resources json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Health == nil || body.Health.Summary.Total != 2 || body.Health.Summary.Crashed != 1 || body.Health.Summary.Stale != 1 {
+		t.Fatalf("health summary = %+v, want crashed and stale instances only", body.Health)
+	}
+	if body.Resources == nil {
+		t.Fatalf("resources summary missing: %+v", body)
+	}
+	if body.Resources.Total != 2 || body.Resources.Crashed != 1 || body.Resources.Stale != 1 {
+		t.Fatalf("resources summary = %+v, want crashed and stale instances only", body.Resources)
+	}
+}
+
+func TestMonitorRejectsInvalidLatestLastOptions(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "negative-last",
+			args: []string{"monitor", "--last", "-1"},
+			want: "--last must be >= 0",
+		},
+		{
+			name: "latest-and-last",
+			args: []string{"monitor", "--latest", "--last", "2"},
+			want: "choose one of --latest or --last",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(stdout)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("expected validation error; stdout=%s stderr=%s", stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tt.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tt.want)
+			}
+		})
+	}
+}
+
+func TestMonitorPlanJSONUsesFilters(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--json", "--plan", "--agent", "manager", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --json --plan: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body monitorSnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Plan == nil {
+		t.Fatalf("monitor --plan should include plan: %+v", body)
+	}
+	if body.Plan.Summary.Total != 1 || body.Plan.Summary.Start != 1 {
+		t.Fatalf("plan summary = %+v, want one manager start", body.Plan.Summary)
+	}
+	if len(body.Plan.Instances) != 1 || body.Plan.Instances[0].Instance != "manager" {
+		t.Fatalf("plan rows = %+v, want only manager", body.Plan.Instances)
+	}
+}
+
+func TestMonitorPlanJSONFiltersByAction(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--json", "--plan", "--action", "on_demand", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --json --plan --action on_demand: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body monitorSnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Plan == nil {
+		t.Fatalf("monitor --plan should include plan: %+v", body)
+	}
+	if body.Plan.Summary.Total != 1 || body.Plan.Summary.OnDemand != 1 {
+		t.Fatalf("plan summary = %+v, want one on-demand row", body.Plan.Summary)
+	}
+	if len(body.Plan.Instances) != 1 || body.Plan.Instances[0].Instance != "worker" || body.Plan.Instances[0].Action != "on-demand" {
+		t.Fatalf("plan rows = %+v, want worker on-demand only", body.Plan.Instances)
+	}
+}
+
+func TestMonitorCommandLastJSONLimitsRowsByLatestStarted(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "old", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-3 * time.Hour)},
+		{Instance: "mid", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-2 * time.Hour)},
+		{Instance: "new", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-1 * time.Hour)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--json", "--last", "2", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --json --last 2: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body monitorSnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor json: %v\nbody=%s", err, stdout.String())
+	}
+	if got, want := rowInstances(body.Instances), []string{"new", "mid"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("instances = %v, want %v", got, want)
+	}
+}
+
+func TestMonitorPlanStopExtrasJSON(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance: "adhoc",
+		Agent:    "manager",
+		Status:   daemon.StatusRunning,
+		PID:      os.Getpid(),
+	}); err != nil {
+		t.Fatalf("write adhoc metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--json", "--plan", "--stop-extras", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --json --plan --stop-extras: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body monitorSnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Plan == nil {
+		t.Fatalf("monitor --plan should include plan: %+v", body)
+	}
+	if body.Plan.Summary.Stop != 1 || body.Plan.Summary.Extra != 0 {
+		t.Fatalf("plan summary = %+v, want one stop preview and no remaining extras", body.Plan.Summary)
+	}
+	var found bool
+	for _, row := range body.Plan.Instances {
+		if row.Instance == "adhoc" {
+			found = true
+			if row.Kind != "extra" || row.Status != "running" || row.Action != "stop" {
+				t.Fatalf("adhoc row = %+v, want extra/running/stop", row)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("plan rows missing adhoc: %+v", body.Plan.Instances)
+	}
+}
+
+func TestMonitorStopExtrasRequiresPlan(t *testing.T) {
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--stop-extras"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("monitor --stop-extras succeeded unexpectedly; stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--stop-extras requires --plan") {
+		t.Fatalf("stderr missing stop-extras/plan validation:\n%s", stderr.String())
+	}
+}
+
+func TestMonitorActionRequiresPlan(t *testing.T) {
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--action", "start"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("monitor --action succeeded unexpectedly; stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--action requires --plan") {
+		t.Fatalf("stderr missing action/plan validation:\n%s", stderr.String())
+	}
+}
+
+func TestMonitorRejectsUnknownAction(t *testing.T) {
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--plan", "--action", "pause"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("monitor --plan --action pause succeeded unexpectedly; stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "unknown --action") {
+		t.Fatalf("stderr missing action validation:\n%s", stderr.String())
+	}
+}
+
+func TestMonitorFormatRendersSnapshot(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"monitor",
+		"--plan",
+		"--instance", "manager",
+		"--format", "{{.Health.Healthy}}:{{len .Instances}}:{{.Health.Declared.Missing}}:{{.Plan.Summary.Total}}:{{.StatsError}}",
+		"--target", tmp,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --format: %v\nstderr: %s", err, stderr.String())
+	}
+	want := "false:0:1:1:\n"
+	if got := stdout.String(); got != want {
+		t.Fatalf("monitor --format output = %q, want %q", got, want)
+	}
+}
+
+func TestMonitorFormatRejectsConflictingModes(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "json",
+			args: []string{"monitor", "--format", "{{.Health.Healthy}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "summary",
+			args: []string{"monitor", "--format", "{{.Health.Healthy}}", "--summary"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "invalid-template",
+			args: []string{"monitor", "--format", "{{"},
+			want: "invalid --format template",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(stdout)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("expected monitor --format validation failure, stdout=%s", stdout.String())
+			}
+			if !strings.Contains(stderr.String(), tt.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tt.want)
+			}
+		})
+	}
+}
+
+func TestCollectMonitorSnapshotFiltersInstanceRows(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	for _, name := range []string{"manager", "worker-1"} {
+		stateDir := filepath.Join(teamDir, "state", name)
+		if err := os.MkdirAll(stateDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stateDir, "status.toml"), []byte(`[status]
+phase = "idle"
+description = "waiting"
+`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	psOpts, err := newPsOptions(nil, []string{"manager"}, nil, false)
+	if err != nil {
+		t.Fatalf("newPsOptions: %v", err)
+	}
+	statsOpts, err := newStatsOptions(false, nil, []string{"manager"})
+	if err != nil {
+		t.Fatalf("newStatsOptions: %v", err)
+	}
+
+	snapshot, err := collectMonitorSnapshot(teamDir, time.Now(), nil, monitorOptions{PS: psOpts, Stats: statsOpts})
+	if err != nil {
+		t.Fatalf("collectMonitorSnapshot: %v", err)
+	}
+	if len(snapshot.Instances) != 1 || snapshot.Instances[0].Instance != "manager" {
+		t.Fatalf("instances = %+v, want only manager", snapshot.Instances)
+	}
+	if snapshot.Health == nil || snapshot.Health.Summary.Total != 1 {
+		t.Fatalf("health should be filtered to the manager row: %+v", snapshot.Health)
+	}
+	if snapshot.StatsError != "" {
+		t.Fatalf("stats_error = %q, want empty local fallback error", snapshot.StatsError)
+	}
+}
+
+func TestCollectMonitorSnapshotSortsInstanceRows(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "a-stopped", Agent: "manager", Status: daemon.StatusStopped},
+		{Instance: "b-running", Agent: "manager", Status: daemon.StatusRunning, PID: 42},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	snapshot, err := collectMonitorSnapshot(teamDir, time.Now(), nil, monitorOptions{PS: psOptions{Sort: psSortStatus}})
+	if err != nil {
+		t.Fatalf("collectMonitorSnapshot: %v", err)
+	}
+	if len(snapshot.Instances) != 2 {
+		t.Fatalf("instances = %+v, want two rows", snapshot.Instances)
+	}
+	if got := snapshot.Instances[0].Instance; got != "b-running" {
+		t.Fatalf("first instance = %q, want running row first under status sort; rows=%+v", got, snapshot.Instances)
+	}
+}
+
+func TestCollectMonitorSnapshotSortsInstanceRowsByStarted(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "old", Agent: "manager", Status: daemon.StatusRunning, PID: 42, StartedAt: now.Add(-2 * time.Hour)},
+		{Instance: "new", Agent: "manager", Status: daemon.StatusRunning, PID: 43, StartedAt: now.Add(-5 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	snapshot, err := collectMonitorSnapshot(teamDir, now, nil, monitorOptions{PS: psOptions{Sort: psSortStarted}})
+	if err != nil {
+		t.Fatalf("collectMonitorSnapshot: %v", err)
+	}
+	if len(snapshot.Instances) != 2 {
+		t.Fatalf("instances = %+v, want two rows", snapshot.Instances)
+	}
+	if got := snapshot.Instances[0].Instance; got != "new" {
+		t.Fatalf("first instance = %q, want newest started row first; rows=%+v", got, snapshot.Instances)
+	}
+}
+
+func TestCollectMonitorSnapshotLimitsRowsByLatestStarted(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "old", Agent: "manager", Status: daemon.StatusRunning, PID: 101, StartedAt: now.Add(-3 * time.Hour)},
+		{Instance: "mid", Agent: "manager", Status: daemon.StatusRunning, PID: 202, StartedAt: now.Add(-2 * time.Hour)},
+		{Instance: "new", Agent: "manager", Status: daemon.StatusRunning, PID: 303, StartedAt: now.Add(-1 * time.Hour)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	probe := func(pid int) (processStats, error) {
+		return processStats{CPUPercent: float64(pid), MemoryPercent: 0.1, RSSKiB: int64(pid)}, nil
+	}
+
+	snapshot, err := collectMonitorSnapshot(teamDir, now, probe, monitorOptions{
+		PS:    psOptions{Limit: 2},
+		Stats: statsOptions{Limit: 2},
+	})
+	if err != nil {
+		t.Fatalf("collectMonitorSnapshot: %v", err)
+	}
+	if got, want := rowInstances(snapshot.Instances), []string{"new", "mid"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("instances = %v, want %v", got, want)
+	}
+	if got, want := statsRowInstances(snapshot.Stats), []string{"new", "mid"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("stats = %v, want %v", got, want)
+	}
+}
+
+func TestCollectMonitorSnapshotSortsStatsRows(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "a-low", Agent: "manager", Status: daemon.StatusRunning, PID: 101},
+		{Instance: "b-high", Agent: "manager", Status: daemon.StatusRunning, PID: 202},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	probe := func(pid int) (processStats, error) {
+		return processStats{CPUPercent: float64(pid), MemoryPercent: 0.1, RSSKiB: int64(pid)}, nil
+	}
+
+	snapshot, err := collectMonitorSnapshot(teamDir, time.Now(), probe, monitorOptions{Stats: statsOptions{Sort: statsSortCPU}})
+	if err != nil {
+		t.Fatalf("collectMonitorSnapshot: %v", err)
+	}
+	if len(snapshot.Stats) != 2 {
+		t.Fatalf("stats = %+v, want two rows", snapshot.Stats)
+	}
+	if got := snapshot.Stats[0].Instance; got != "b-high" {
+		t.Fatalf("first stats row = %q, want highest CPU first; rows=%+v", got, snapshot.Stats)
+	}
+}
+
+func TestMonitorInstanceFilterJSONScopesPlanAndHealth(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--json", "--plan", "--instance", "manager", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --json --plan --instance: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body monitorSnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Health == nil || body.Health.Declared.Persistent != 1 || body.Health.Declared.Missing != 1 {
+		t.Fatalf("health declared = %+v, want only missing manager declaration", body.Health)
+	}
+	if body.Plan == nil || len(body.Plan.Instances) != 1 || body.Plan.Instances[0].Instance != "manager" {
+		t.Fatalf("plan rows = %+v, want manager only", body.Plan)
+	}
+	if len(body.Instances) != 0 {
+		t.Fatalf("runtime instances = %+v, want none before start", body.Instances)
+	}
+}
+
+func TestMonitorAllIncludesStoppedStats(t *testing.T) {
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-monitor-all-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), fakeSpawnerForTest(t, 2*time.Second))
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	defer func() {
+		for _, meta := range mgr.List() {
+			if meta.Instance == "running" && meta.Status == daemon.StatusRunning {
+				stopAndWaitForTest(t, mgr, "running")
+				return
+			}
+		}
+	}()
+
+	if _, err := mgr.Dispatch(daemon.DispatchInput{Agent: "manager", Name: "running", Workspace: tmp}); err != nil {
+		t.Fatalf("dispatch running: %v", err)
+	}
+	if _, err := mgr.Dispatch(daemon.DispatchInput{Agent: "manager", Name: "stopped", Workspace: tmp}); err != nil {
+		t.Fatalf("dispatch stopped: %v", err)
+	}
+	stopAndWaitForTest(t, mgr, "stopped")
+
+	probe := func(pid int) (processStats, error) {
+		return processStats{CPUPercent: 1.0, MemoryPercent: 0.5, RSSKiB: 1024}, nil
+	}
+	defaultSnapshot, err := collectMonitorSnapshot(teamDir, time.Now(), probe, monitorOptions{})
+	if err != nil {
+		t.Fatalf("collect default monitor: %v", err)
+	}
+	if statsJSONContains(defaultSnapshot.Stats, "stopped") {
+		t.Fatalf("default monitor stats should exclude stopped rows: %+v", defaultSnapshot.Stats)
+	}
+
+	opts, err := newMonitorOptions(true, nil, nil)
+	if err != nil {
+		t.Fatalf("newMonitorOptions: %v", err)
+	}
+	allSnapshot, err := collectMonitorSnapshot(teamDir, time.Now(), probe, opts)
+	if err != nil {
+		t.Fatalf("collect --all monitor: %v", err)
+	}
+	if !statsJSONContains(allSnapshot.Stats, "running") || !statsJSONContains(allSnapshot.Stats, "stopped") {
+		t.Fatalf("--all monitor stats missing rows: %+v", allSnapshot.Stats)
+	}
+	for _, row := range allSnapshot.Stats {
+		if row.Instance == "stopped" && row.CPUPercent != nil {
+			t.Fatalf("stopped row should not include process metrics: %+v", row)
+		}
+	}
+
+	instanceOpts, err := newMonitorOptionsWithInstances(true, nil, nil, []string{"stopped"})
+	if err != nil {
+		t.Fatalf("newMonitorOptionsWithInstances: %v", err)
+	}
+	filteredSnapshot, err := collectMonitorSnapshot(teamDir, time.Now(), probe, instanceOpts)
+	if err != nil {
+		t.Fatalf("collect --instance monitor: %v", err)
+	}
+	if len(filteredSnapshot.Stats) != 1 || filteredSnapshot.Stats[0].Instance != "stopped" {
+		t.Fatalf("--instance monitor stats = %+v, want stopped only", filteredSnapshot.Stats)
+	}
+}
+
+func TestMonitorEventsJSONUsesFilters(t *testing.T) {
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-monitor-events-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), fakeSpawnerForTest(t, 2*time.Second))
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	defer func() {
+		for _, meta := range mgr.List() {
+			if meta.Status == daemon.StatusRunning {
+				stopAndWaitForTest(t, mgr, meta.Instance)
+			}
+		}
+	}()
+
+	if _, err := mgr.Dispatch(daemon.DispatchInput{Agent: "manager", Name: "manager", Workspace: tmp}); err != nil {
+		t.Fatalf("dispatch manager: %v", err)
+	}
+	if _, err := mgr.Dispatch(daemon.DispatchInput{Agent: "worker", Name: "worker", Workspace: tmp}); err != nil {
+		t.Fatalf("dispatch worker: %v", err)
+	}
+
+	opts, err := newMonitorOptionsWithInstances(true, nil, []string{"manager"}, nil)
+	if err != nil {
+		t.Fatalf("newMonitorOptionsWithInstances: %v", err)
+	}
+	opts.EventTail = 10
+	probe := func(pid int) (processStats, error) {
+		return processStats{CPUPercent: 1.0, MemoryPercent: 0.5, RSSKiB: 1024}, nil
+	}
+	snapshot, err := collectMonitorSnapshot(teamDir, time.Now(), probe, opts)
+	if err != nil {
+		t.Fatalf("collect monitor with events: %v", err)
+	}
+	if snapshot.EventsError != "" {
+		t.Fatalf("events_error = %q", snapshot.EventsError)
+	}
+	if len(snapshot.Events) != 1 || snapshot.Events[0].Instance != "manager" || snapshot.Events[0].Agent != "manager" {
+		t.Fatalf("events = %+v, want only manager event", snapshot.Events)
+	}
+}
+
+func TestMonitorEventsUseLocalLogWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	for _, ev := range []daemon.LifecycleEvent{
+		{
+			TS:       time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
+			Action:   "dispatch",
+			Instance: "manager",
+			Agent:    "manager",
+			Status:   daemon.StatusRunning,
+		},
+		{
+			TS:       time.Date(2026, 6, 17, 12, 1, 0, 0, time.UTC),
+			Action:   "dispatch",
+			Instance: "worker",
+			Agent:    "worker",
+			Status:   daemon.StatusRunning,
+		},
+	} {
+		ev := ev
+		if err := daemon.AppendLifecycleEvent(root, &ev); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+
+	opts, err := newMonitorOptionsWithInstances(true, nil, []string{"manager"}, nil)
+	if err != nil {
+		t.Fatalf("newMonitorOptionsWithInstances: %v", err)
+	}
+	opts.EventTail = 10
+	snapshot, err := collectMonitorSnapshot(teamDir, time.Now(), nil, opts)
+	if err != nil {
+		t.Fatalf("collect monitor with local events: %v", err)
+	}
+	if snapshot.StatsError != "" {
+		t.Fatalf("stats_error = %q, want empty local fallback error", snapshot.StatsError)
+	}
+	if snapshot.EventsError != "" {
+		t.Fatalf("events_error = %q, want empty", snapshot.EventsError)
+	}
+	if len(snapshot.Events) != 1 || snapshot.Events[0].Instance != "manager" || snapshot.Events[0].Agent != "manager" {
+		t.Fatalf("events = %+v, want only manager event", snapshot.Events)
+	}
+}
+
+func TestMonitorEventsFilterByActionAndSince(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	for _, ev := range []daemon.LifecycleEvent{
+		{
+			TS:       time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
+			Action:   "stop",
+			Instance: "old-stop",
+			Agent:    "manager",
+			Status:   daemon.StatusStopped,
+		},
+		{
+			TS:       time.Date(2026, 6, 17, 12, 1, 0, 0, time.UTC),
+			Action:   "dispatch",
+			Instance: "new-dispatch",
+			Agent:    "manager",
+			Status:   daemon.StatusRunning,
+		},
+		{
+			TS:       time.Date(2026, 6, 17, 12, 2, 0, 0, time.UTC),
+			Action:   "stop",
+			Instance: "new-stop",
+			Agent:    "manager",
+			Status:   daemon.StatusStopped,
+		},
+	} {
+		ev := ev
+		if err := daemon.AppendLifecycleEvent(root, &ev); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"monitor",
+		"--events", "10",
+		"--event-action", "stop",
+		"--since", "2026-06-17T12:01:00Z",
+		"--json",
+		"--target", tmp,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor event filters: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot monitorSnapshot
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode monitor json: %v\nbody=%s", err, out.String())
+	}
+	if snapshot.EventsError != "" {
+		t.Fatalf("events_error = %q, want empty", snapshot.EventsError)
+	}
+	if len(snapshot.Events) != 1 || snapshot.Events[0].Instance != "new-stop" {
+		t.Fatalf("events = %+v, want only recent stop", snapshot.Events)
+	}
+}
+
+func TestMonitorEventsTailAppliesAfterFilters(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	for _, ev := range []daemon.LifecycleEvent{
+		{
+			TS:       time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
+			Action:   "dispatch",
+			Instance: "manager-old",
+			Agent:    "manager",
+			Status:   daemon.StatusRunning,
+		},
+		{
+			TS:       time.Date(2026, 6, 17, 12, 1, 0, 0, time.UTC),
+			Action:   "dispatch",
+			Instance: "worker-newer",
+			Agent:    "worker",
+			Status:   daemon.StatusRunning,
+		},
+		{
+			TS:       time.Date(2026, 6, 17, 12, 2, 0, 0, time.UTC),
+			Action:   "stop",
+			Instance: "manager-new",
+			Agent:    "manager",
+			Status:   daemon.StatusStopped,
+		},
+		{
+			TS:       time.Date(2026, 6, 17, 12, 3, 0, 0, time.UTC),
+			Action:   "dispatch",
+			Instance: "worker-newest",
+			Agent:    "worker",
+			Status:   daemon.StatusRunning,
+		},
+	} {
+		ev := ev
+		if err := daemon.AppendLifecycleEvent(root, &ev); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+
+	opts, err := newMonitorOptionsWithInstances(true, nil, []string{"manager"}, nil)
+	if err != nil {
+		t.Fatalf("newMonitorOptionsWithInstances: %v", err)
+	}
+	opts.EventTail = 1
+	snapshot, err := collectMonitorSnapshot(teamDir, time.Now(), nil, opts)
+	if err != nil {
+		t.Fatalf("collect monitor with local events: %v", err)
+	}
+	if snapshot.EventsError != "" {
+		t.Fatalf("events_error = %q, want empty", snapshot.EventsError)
+	}
+	if len(snapshot.Events) != 1 || snapshot.Events[0].Instance != "manager-new" {
+		t.Fatalf("events = %+v, want last matching manager event", snapshot.Events)
+	}
+}
+
+func TestMonitorStatsUseLocalMetadataWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance: "manager",
+		Agent:    "manager",
+		Status:   daemon.StatusStopped,
+		PID:      123,
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	opts, err := newMonitorOptions(true, nil, nil)
+	if err != nil {
+		t.Fatalf("newMonitorOptions: %v", err)
+	}
+	snapshot, err := collectMonitorSnapshot(teamDir, time.Now(), nil, opts)
+	if err != nil {
+		t.Fatalf("collect monitor with local stats: %v", err)
+	}
+	if snapshot.StatsError != "" {
+		t.Fatalf("stats_error = %q, want empty", snapshot.StatsError)
+	}
+	if len(snapshot.Stats) != 1 || snapshot.Stats[0].Instance != "manager" || snapshot.Stats[0].Status != "stopped" || snapshot.Stats[0].CPUPercent != nil {
+		t.Fatalf("stats = %+v, want stopped manager without metrics", snapshot.Stats)
+	}
+}
+
+func TestMonitorPhaseFilterScopesInstancesAndStats(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-5 * time.Minute)},
+		{Instance: "worker", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-3 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "manager"), `
+[status]
+phase = "idle"
+description = "waiting"
+`, now)
+	writeStatus(t, filepath.Join(teamDir, "state", "worker"), `
+[status]
+phase = "blocked"
+description = "needs input"
+`, now)
+
+	opts, err := newMonitorOptionsWithInstancesAndPhases(false, nil, nil, []string{"blocked"}, nil)
+	if err != nil {
+		t.Fatalf("newMonitorOptionsWithInstancesAndPhases: %v", err)
+	}
+	snapshot, err := collectMonitorSnapshot(teamDir, now, func(pid int) (processStats, error) {
+		return processStats{CPUPercent: 1.0, MemoryPercent: 0.5, RSSKiB: 1024}, nil
+	}, opts)
+	if err != nil {
+		t.Fatalf("collect monitor with phase filter: %v", err)
+	}
+	if len(snapshot.Instances) != 1 || snapshot.Instances[0].Instance != "worker" || snapshot.Instances[0].Phase != "blocked" {
+		t.Fatalf("instances = %+v, want blocked worker only", snapshot.Instances)
+	}
+	if len(snapshot.Stats) != 1 || snapshot.Stats[0].Instance != "worker" || snapshot.Stats[0].Phase != "blocked" {
+		t.Fatalf("stats = %+v, want blocked worker only", snapshot.Stats)
+	}
+}
+
+func TestMonitorStaleFilterScopesInstancesAndStats(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	old := now.Add(-staleAfter - time.Minute)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Status: daemon.StatusStopped, PID: 123, StartedAt: old},
+		{Instance: "worker", Agent: "worker", Status: daemon.StatusStopped, PID: 456, StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "manager"), `[status]
+phase = "implementing"
+description = "stale work"
+`, old)
+	writeStatus(t, filepath.Join(teamDir, "state", "worker"), `[status]
+phase = "implementing"
+description = "fresh work"
+`, now)
+
+	opts, err := newMonitorOptionsWithInstancesPhasesAndStale(true, nil, nil, nil, nil, true)
+	if err != nil {
+		t.Fatalf("newMonitorOptionsWithInstancesPhasesAndStale: %v", err)
+	}
+	snapshot, err := collectMonitorSnapshot(teamDir, now, nil, opts)
+	if err != nil {
+		t.Fatalf("collect monitor with stale filter: %v", err)
+	}
+	if len(snapshot.Instances) != 1 || snapshot.Instances[0].Instance != "manager" || !snapshot.Instances[0].Stale {
+		t.Fatalf("instances = %+v, want stale manager only", snapshot.Instances)
+	}
+	if len(snapshot.Stats) != 1 || snapshot.Stats[0].Instance != "manager" || snapshot.Stats[0].Phase != "implementing" {
+		t.Fatalf("stats = %+v, want stale manager only", snapshot.Stats)
+	}
+}
+
+func TestMonitorStaleFilterWithNoMatchesScopesStatsToNone(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now()
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance:  "manager",
+		Agent:     "manager",
+		Status:    daemon.StatusStopped,
+		PID:       123,
+		StartedAt: now,
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "manager"), `[status]
+phase = "implementing"
+description = "fresh work"
+`, now)
+
+	opts, err := newMonitorOptionsWithInstancesPhasesAndStale(true, nil, nil, nil, nil, true)
+	if err != nil {
+		t.Fatalf("newMonitorOptionsWithInstancesPhasesAndStale: %v", err)
+	}
+	snapshot, err := collectMonitorSnapshot(teamDir, now, nil, opts)
+	if err != nil {
+		t.Fatalf("collect monitor with stale filter: %v", err)
+	}
+	if len(snapshot.Instances) != 0 {
+		t.Fatalf("instances = %+v, want no stale rows", snapshot.Instances)
+	}
+	if len(snapshot.Stats) != 0 {
+		t.Fatalf("stats = %+v, want no stale rows", snapshot.Stats)
+	}
+}
+
+func TestMonitorUnhealthyFilterScopesInstancesAndStats(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	old := now.Add(-staleAfter - time.Minute)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "crashed", Agent: "worker", Status: daemon.StatusCrashed, PID: 123, StartedAt: old},
+		{Instance: "fresh", Agent: "worker", Status: daemon.StatusStopped, PID: 456, StartedAt: now},
+		{Instance: "stale", Agent: "manager", Status: daemon.StatusStopped, PID: 789, StartedAt: old},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "stale"), `[status]
+phase = "implementing"
+description = "stale work"
+`, old)
+	writeStatus(t, filepath.Join(teamDir, "state", "fresh"), `[status]
+phase = "idle"
+description = "fresh work"
+`, now)
+
+	opts, err := newMonitorOptionsWithInstancesPhasesStaleAndUnhealthy(true, nil, nil, nil, nil, false, true)
+	if err != nil {
+		t.Fatalf("newMonitorOptionsWithInstancesPhasesStaleAndUnhealthy: %v", err)
+	}
+	snapshot, err := collectMonitorSnapshot(teamDir, now, nil, opts)
+	if err != nil {
+		t.Fatalf("collect monitor with unhealthy filter: %v", err)
+	}
+	if got := strings.Join(rowInstances(snapshot.Instances), ","); got != "crashed,stale" {
+		t.Fatalf("instances = %+v, want crashed and stale rows", snapshot.Instances)
+	}
+	if got := strings.Join(statsRowInstances(snapshot.Stats), ","); got != "crashed,stale" {
+		t.Fatalf("stats = %+v, want crashed and stale rows", snapshot.Stats)
+	}
+	if snapshot.Instances[0].Status != "crashed" || !snapshot.Instances[1].Stale {
+		t.Fatalf("instances = %+v, want crashed row and stale row", snapshot.Instances)
+	}
+}
+
+func statsJSONContains(rows []statsJSONRow, instance string) bool {
+	for _, row := range rows {
+		if row.Instance == instance {
+			return true
+		}
+	}
+	return false
+}
+
+func statsRowInstances(rows []statsJSONRow) []string {
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.Instance)
+	}
+	return out
+}
+
+func TestRenderMonitorShowsHealthInstancesAndStats(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	instanceRows := []instanceRow{
+		{Instance: "manager", Agent: "manager", Lifecycle: string(daemon.StatusRunning), Phase: "idle", Age: "5m", Summary: "waiting", PID: 10},
+	}
+	statsRows := []statsRow{
+		{
+			Instance:       "manager",
+			Agent:          "manager",
+			Status:         string(daemon.StatusRunning),
+			PID:            10,
+			Age:            "5m",
+			CPUPercent:     2.5,
+			MemoryPercent:  1.2,
+			RSSKiB:         12_800,
+			StatsAvailable: true,
+		},
+	}
+	snapshot := &monitorSnapshot{
+		Health:    buildHealth(true, 123, instanceRows, nil, now),
+		Instances: psJSONRows(instanceRows),
+		Stats:     statsJSONRows(statsRows),
+		Events: []daemon.LifecycleEvent{{
+			TS:       now,
+			Action:   "dispatch",
+			Instance: "manager",
+			Agent:    "manager",
+			Status:   daemon.StatusRunning,
+			PID:      10,
+		}},
+		instanceRows: instanceRows,
+		statsRows:    statsRows,
+		eventRows: []daemon.LifecycleEvent{{
+			TS:       now,
+			Action:   "dispatch",
+			Instance: "manager",
+			Agent:    "manager",
+			Status:   daemon.StatusRunning,
+			PID:      10,
+		}},
+	}
+
+	var buf bytes.Buffer
+	if err := renderMonitor(&buf, snapshot); err != nil {
+		t.Fatalf("renderMonitor: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"health: healthy", "instances:", "events:", "dispatch", "manager", "stats:", "2.5", "12.5MiB"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered monitor missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderMonitorIncludesPlanWhenPresent(t *testing.T) {
+	snapshot := &monitorSnapshot{
+		Health: buildHealth(false, 0, nil, nil, time.Now()),
+		Plan: &planResult{
+			Summary: planSummary{Total: 1, Start: 1},
+			Instances: []planRow{{
+				Instance: "manager",
+				Agent:    "manager",
+				Kind:     "persistent",
+				Status:   "unknown",
+				Action:   "start",
+				Detail:   "declared persistent instance has no daemon metadata",
+			}},
+		},
+		Stats:      []statsJSONRow{},
+		statsEmpty: "(no running instances)",
+	}
+
+	var buf bytes.Buffer
+	if err := renderMonitor(&buf, snapshot); err != nil {
+		t.Fatalf("renderMonitor: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"plan:", "INSTANCE", "manager", "summary: total=1 start=1"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered monitor missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestMonitorWatchJSONEmitsSnapshots(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := tmp + "/.agent_team"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	var buf bytes.Buffer
+	if err := runMonitorWatch(ctx, &buf, teamDir, time.Millisecond, time.Now, nil, true, monitorOptions{}, false); err != nil {
+		t.Fatalf("runMonitorWatch json: %v", err)
+	}
+	body := strings.TrimSpace(buf.String())
+	if body == "" {
+		t.Fatalf("watch monitor json output empty")
+	}
+	first := strings.Split(body, "\n")[0]
+	var snapshot monitorSnapshot
+	if err := json.Unmarshal([]byte(first), &snapshot); err != nil {
+		t.Fatalf("first monitor snapshot is not json: %v\nbody=%s", err, body)
+	}
+	if snapshot.Health == nil || snapshot.Health.Daemon.Running {
+		t.Fatalf("snapshot should include daemon-down health: %+v", snapshot.Health)
+	}
+}
+
+func TestMonitorWatchTextClearsWhenRequested(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := tmp + "/.agent_team"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	var buf bytes.Buffer
+	if err := runMonitorWatch(ctx, &buf, teamDir, time.Millisecond, time.Now, nil, false, monitorOptions{}, true); err != nil {
+		t.Fatalf("runMonitorWatch text clear: %v", err)
+	}
+	body := buf.String()
+	if !strings.HasPrefix(body, watchClearSequence) {
+		t.Fatalf("monitor watch should start with clear sequence, got %q", body[:min(len(body), len(watchClearSequence)+20)])
+	}
+	if !strings.Contains(body, "health: unhealthy") || !strings.Contains(body, "instances:") {
+		t.Fatalf("monitor watch text missing snapshot content:\n%s", body)
+	}
+}
+
+func TestMonitorFormatWatchEmitsRows(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := tmp + "/.agent_team"
+	tmpl, err := parseMonitorFormat("{{.Health.Healthy}}:{{len .Instances}}:{{.StatsError}}")
+	if err != nil {
+		t.Fatalf("parseMonitorFormat: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	var buf bytes.Buffer
+	if err := runMonitorFormatWatch(ctx, &buf, teamDir, time.Millisecond, time.Now, nil, monitorOptions{}, tmpl); err != nil {
+		t.Fatalf("runMonitorFormatWatch: %v", err)
+	}
+	first := strings.Split(strings.TrimSpace(buf.String()), "\n")[0]
+	if first != "false:0:" {
+		t.Fatalf("first monitor format watch row = %q, want daemon-down snapshot\nbody=%s", first, buf.String())
+	}
+	if strings.Contains(buf.String(), watchClearSequence) {
+		t.Fatalf("monitor format watch should not emit clear sequence: %q", buf.String())
+	}
+}
+
+func TestMonitorSummaryWatchTextClearsWhenRequested(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := tmp + "/.agent_team"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	var buf bytes.Buffer
+	if err := runMonitorSummaryWatch(ctx, &buf, teamDir, time.Millisecond, time.Now, false, monitorOptions{}, true); err != nil {
+		t.Fatalf("runMonitorSummaryWatch text clear: %v", err)
+	}
+	body := buf.String()
+	if !strings.HasPrefix(body, watchClearSequence) {
+		t.Fatalf("summary watch should start with clear sequence, got %q", body[:min(len(body), len(watchClearSequence)+20)])
+	}
+	if !strings.Contains(body, "health: unhealthy") {
+		t.Fatalf("summary watch text missing health snapshot:\n%s", body)
+	}
+}
+
+func TestMonitorNegativeIntervalFailsFast(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--interval", "-1s"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected interval validation error")
+	}
+	if !strings.Contains(stderr.String(), "--interval must be >= 0") {
+		t.Fatalf("stderr = %q, want interval validation", stderr.String())
+	}
+}
+
+func TestMonitorRejectsNegativeEvents(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--events", "-1"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected events validation error")
+	}
+	if !strings.Contains(stderr.String(), "--events must be >= 0") {
+		t.Fatalf("stderr = %q, want events validation", stderr.String())
+	}
+}
+
+func TestMonitorResourcesRequireSummary(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--resources"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected resources validation error")
+	}
+	if !strings.Contains(stderr.String(), "--resources requires --summary") {
+		t.Fatalf("stderr = %q, want resources validation", stderr.String())
+	}
+}
+
+func TestMonitorEventFiltersRequireEvents(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"monitor", "--since", "10m"}, want: "--since requires --events"},
+		{args: []string{"monitor", "--event-action", "stop"}, want: "--event-action requires --events"},
+		{args: []string{"monitor", "--events", "5", "--since", "recently"}, want: "--since must be a duration"},
+		{args: []string{"monitor", "--events", "5", "--event-action", ","}, want: "--event-action requires at least one non-empty action"},
+	} {
+		cmd := NewRootCmd()
+		stderr := &bytes.Buffer{}
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+	}
+}
+
+func TestMonitorSummaryEventsJSONIncludesEventSummary(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	for _, ev := range []daemon.LifecycleEvent{
+		{
+			TS:       time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
+			Action:   "dispatch",
+			Instance: "manager",
+			Agent:    "manager",
+			Status:   daemon.StatusRunning,
+		},
+		{
+			TS:       time.Date(2026, 6, 17, 12, 1, 0, 0, time.UTC),
+			Action:   "dispatch",
+			Instance: "worker",
+			Agent:    "worker",
+			Status:   daemon.StatusRunning,
+		},
+		{
+			TS:       time.Date(2026, 6, 17, 12, 2, 0, 0, time.UTC),
+			Action:   "stop",
+			Instance: "manager",
+			Agent:    "manager",
+			Status:   daemon.StatusStopped,
+		},
+	} {
+		ev := ev
+		if err := daemon.AppendLifecycleEvent(root, &ev); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--summary", "--events", "5", "--event-action", "stop", "--since", "2026-06-17T12:01:00Z", "--json", "--agent", "manager", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --summary --events --json: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+	}
+
+	var body monitorSummarySnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor summary events json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Health == nil || body.Health.Healthy {
+		t.Fatalf("health = %+v, want daemon-down health", body.Health)
+	}
+	if body.Plan != nil {
+		t.Fatalf("plan summary should be omitted unless --plan is set: %+v", body.Plan)
+	}
+	if body.Events == nil {
+		t.Fatalf("events summary missing: %+v", body)
+	}
+	if body.Events.Total != 1 || body.Events.Actions["stop"] != 1 || body.Events.Statuses["stopped"] != 1 || body.Events.Agents["manager"] != 1 || body.Events.Instances["manager"] != 1 {
+		t.Fatalf("events summary = %+v, want one recent manager stop", body.Events)
+	}
+}
+
+func TestMonitorRejectsUnknownStatus(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--status", "paused"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected status validation error")
+	}
+	if !strings.Contains(stderr.String(), "unknown --status") {
+		t.Fatalf("stderr = %q, want status validation", stderr.String())
+	}
+}
+
+func TestMonitorRejectsUnknownSorts(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"monitor", "--sort", "cpu"}, want: "unknown --sort"},
+		{args: []string{"monitor", "--stats-sort", "latency"}, want: "unknown --stats-sort"},
+	} {
+		cmd := NewRootCmd()
+		stderr := &bytes.Buffer{}
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected sort validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+	}
+}

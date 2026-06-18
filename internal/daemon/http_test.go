@@ -60,6 +60,11 @@ func TestHTTP_Dispatch_StopList(t *testing.T) {
 		t.Fatalf("stop status: got %d, body=%s", resp.StatusCode, readBody(t, resp))
 	}
 	waitForStatusNot(t, m, "w-1", StatusRunning)
+
+	resp = mustPost(t, srv.URL+"/v1/stop", `{"instance":"w-1","timeout_ms":-1}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("negative timeout status: got %d, body=%s", resp.StatusCode, readBody(t, resp))
+	}
 }
 
 func TestHTTP_DispatchValidation(t *testing.T) {
@@ -130,6 +135,79 @@ func TestHTTP_StartResumesSession(t *testing.T) {
 	waitForStatusNot(t, m, "mgr", StatusRunning)
 }
 
+func TestHTTP_RestartResumesSession(t *testing.T) {
+	root := t.TempDir()
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	srv := httptest.NewServer(Handler(m, nil, nil, ""))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/dispatch",
+		`{"agent":"manager","name":"mgr","workspace":"`+t.TempDir()+`"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("dispatch: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var disp struct {
+		SessionID string `json:"session_id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&disp)
+
+	resp = mustPost(t, srv.URL+"/v1/restart", `{"instance":"mgr","timeout_ms":10000}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("restart: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	args := fake.lastCall()
+	foundResume := false
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--resume" && args[i+1] == disp.SessionID {
+			foundResume = true
+		}
+	}
+	if !foundResume {
+		t.Errorf("expected --resume %s, got: %v", disp.SessionID, args)
+	}
+
+	resp = mustPost(t, srv.URL+"/v1/restart", `{"instance":"mgr","timeout_ms":-1}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("negative restart timeout: got %d body=%s", resp.StatusCode, readBody(t, resp))
+	}
+
+	mustPost(t, srv.URL+"/v1/stop", `{"instance":"mgr"}`)
+	waitForStatusNot(t, m, "mgr", StatusRunning)
+}
+
+func TestHTTP_RemoveRequiresForceForRunning(t *testing.T) {
+	root := t.TempDir()
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	srv := httptest.NewServer(Handler(m, nil, nil, ""))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/dispatch",
+		`{"agent":"manager","name":"mgr","workspace":"`+t.TempDir()+`"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("dispatch: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+
+	resp = mustPost(t, srv.URL+"/v1/remove", `{"instance":"mgr"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("remove running without force: got %d body=%s", resp.StatusCode, readBody(t, resp))
+	}
+
+	resp = mustPost(t, srv.URL+"/v1/remove", `{"instance":"mgr","force":true}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("force remove: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	listResp := mustGet(t, srv.URL+"/v1/instances")
+	var list []*Metadata
+	if err := json.NewDecoder(listResp.Body).Decode(&list); err != nil {
+		t.Fatalf("instances body: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("instances after remove = %+v, want empty", list)
+	}
+}
+
 func TestHTTP_MethodGuards(t *testing.T) {
 	m := NewInstanceManager(t.TempDir(), newFakeSpawner(time.Second).spawn)
 	srv := httptest.NewServer(Handler(m, nil, nil, ""))
@@ -145,6 +223,10 @@ func TestHTTP_MethodGuards(t *testing.T) {
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("instances POST: got %d want 405", resp.StatusCode)
 	}
+	resp = mustGet(t, srv.URL+"/v1/reconcile")
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("reconcile GET: got %d want 405", resp.StatusCode)
+	}
 }
 
 func TestHTTP_InstancesEmptyArray(t *testing.T) {
@@ -155,6 +237,49 @@ func TestHTTP_InstancesEmptyArray(t *testing.T) {
 	body := readBody(t, resp)
 	if !strings.HasPrefix(strings.TrimSpace(body), "[") {
 		t.Errorf("expected JSON array, got %q", body)
+	}
+}
+
+func TestHTTP_ReconcileMarksDeadRunningProcessExited(t *testing.T) {
+	root := t.TempDir()
+	oldPidLiveCheck := PidLiveCheck
+	PidLiveCheck = func(pid int) bool { return false }
+	defer func() { PidLiveCheck = oldPidLiveCheck }()
+
+	if err := WriteMetadata(root, &Metadata{
+		Instance:  "orphan",
+		Agent:     "manager",
+		Status:    StatusRunning,
+		PID:       999999,
+		StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	m := NewInstanceManager(root, nil)
+	srv := httptest.NewServer(Handler(m, nil, nil, ""))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/reconcile", `{}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reconcile status: got %d body=%s", resp.StatusCode, readBody(t, resp))
+	}
+	var body reconcileResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode reconcile body: %v", err)
+	}
+	if !body.Reconciled || body.Changed != 1 {
+		t.Fatalf("reconcile body = %+v, want one change", body)
+	}
+	if len(body.Instances) != 1 || body.Instances[0].Status != StatusExited {
+		t.Fatalf("instances = %+v, want orphan exited", body.Instances)
+	}
+	if len(body.Changes) != 1 || body.Changes[0].Before != StatusRunning || body.Changes[0].After != StatusExited {
+		t.Fatalf("changes = %+v, want running -> exited", body.Changes)
+	}
+	list := m.List()
+	if len(list) != 1 || list[0].Status != StatusExited {
+		t.Fatalf("manager list = %+v, want reconciled exited metadata", list)
 	}
 }
 

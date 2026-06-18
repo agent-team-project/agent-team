@@ -1,0 +1,503 @@
+package cli
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jamesaud/agent-team/internal/daemon"
+)
+
+func TestPlanJSONShowsTopologyAndDaemonMetadata(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	if err := daemon.WriteMetadata(daemonRoot, &daemon.Metadata{
+		Instance:  "manager",
+		Agent:     "manager",
+		Status:    daemon.StatusStopped,
+		SessionID: "sid-manager",
+		Workspace: tmp,
+	}); err != nil {
+		t.Fatalf("write manager metadata: %v", err)
+	}
+	if err := daemon.WriteMetadata(daemonRoot, &daemon.Metadata{
+		Instance:  "adhoc",
+		Agent:     "manager",
+		Status:    daemon.StatusStopped,
+		SessionID: "sid-adhoc",
+		Workspace: tmp,
+	}); err != nil {
+		t.Fatalf("write adhoc metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan --json: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body planResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode plan json: %v\nbody=%s", err, out.String())
+	}
+	if body.Daemon.Running {
+		t.Fatalf("daemon should be reported down: %+v", body.Daemon)
+	}
+	if body.Summary.Total != 4 || body.Summary.Start != 1 || body.Summary.Resume != 1 || body.Summary.OnDemand != 1 || body.Summary.Extra != 1 {
+		t.Fatalf("summary = %+v, want start/resume/on-demand/extra counts", body.Summary)
+	}
+	byName := map[string]planRow{}
+	for _, row := range body.Instances {
+		byName[row.Instance] = row
+	}
+	if row := byName["manager"]; row.Kind != "persistent" || row.Status != "stopped" || row.Action != "resume" {
+		t.Fatalf("manager row = %+v, want stopped persistent resume", row)
+	} else if row.Phase != "unknown" {
+		t.Fatalf("manager phase = %q, want unknown", row.Phase)
+	}
+	if row := byName["ticket-manager"]; row.Kind != "persistent" || row.Status != "unknown" || row.Action != "start" {
+		t.Fatalf("ticket-manager row = %+v, want unknown persistent start", row)
+	}
+	if row := byName["worker"]; row.Kind != "ephemeral" || row.Action != "on-demand" {
+		t.Fatalf("worker row = %+v, want ephemeral on-demand", row)
+	}
+	if row := byName["adhoc"]; row.Kind != "extra" || row.Action != "extra" || row.Status != "stopped" {
+		t.Fatalf("adhoc row = %+v, want stopped extra", row)
+	}
+}
+
+func TestPlanSummaryJSONShowsAggregateCounts(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--summary", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan --summary --json: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body lifecycleActionSummaryResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode plan summary json: %v\nbody=%s", err, out.String())
+	}
+	if body.Summary.Total != 3 || body.Summary.Actions["start"] != 2 || body.Summary.Actions["on-demand"] != 1 || !body.Summary.DryRun {
+		t.Fatalf("summary = %+v, want two starts and one on-demand preview", body.Summary)
+	}
+	if body.Summary.Statuses["unknown"] != 3 {
+		t.Fatalf("statuses = %+v, want unknown=3", body.Summary.Statuses)
+	}
+}
+
+func TestPlanStopExtrasMarksOnlyRunningExtras(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	if err := daemon.WriteMetadata(daemonRoot, &daemon.Metadata{
+		Instance:  "adhoc-running",
+		Agent:     "manager",
+		Status:    daemon.StatusRunning,
+		PID:       os.Getpid(),
+		SessionID: "sid-running",
+		Workspace: tmp,
+	}); err != nil {
+		t.Fatalf("write running adhoc metadata: %v", err)
+	}
+	if err := daemon.WriteMetadata(daemonRoot, &daemon.Metadata{
+		Instance:  "adhoc-stopped",
+		Agent:     "manager",
+		Status:    daemon.StatusStopped,
+		SessionID: "sid-stopped",
+		Workspace: tmp,
+	}); err != nil {
+		t.Fatalf("write stopped adhoc metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--stop-extras", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan --stop-extras --json: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body planResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode plan json: %v\nbody=%s", err, out.String())
+	}
+	if body.Summary.Total != 5 || body.Summary.Stop != 1 || body.Summary.Extra != 1 {
+		t.Fatalf("summary = %+v, want one stop preview and one remaining extra", body.Summary)
+	}
+	byName := map[string]planRow{}
+	for _, row := range body.Instances {
+		byName[row.Instance] = row
+	}
+	if row := byName["adhoc-running"]; row.Kind != "extra" || row.Status != "running" || row.Action != "stop" {
+		t.Fatalf("running adhoc row = %+v, want extra/running/stop", row)
+	}
+	if row := byName["adhoc-stopped"]; row.Kind != "extra" || row.Status != "stopped" || row.Action != "extra" {
+		t.Fatalf("stopped adhoc row = %+v, want extra/stopped/extra", row)
+	}
+}
+
+func TestPlanStopExtrasKeepsDeclaredEphemeralChildren(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	if err := daemon.WriteMetadata(daemonRoot, &daemon.Metadata{
+		Instance:  "worker-abc123",
+		Agent:     "worker",
+		Status:    daemon.StatusRunning,
+		PID:       os.Getpid(),
+		SessionID: "sid-worker",
+		Workspace: tmp,
+	}); err != nil {
+		t.Fatalf("write worker child metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--stop-extras", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan --stop-extras --json: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body planResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode plan json: %v\nbody=%s", err, out.String())
+	}
+	if body.Summary.Keep != 1 || body.Summary.Stop != 0 || body.Summary.Extra != 0 {
+		t.Fatalf("summary = %+v, want ephemeral child kept without stop/extra", body.Summary)
+	}
+	byName := map[string]planRow{}
+	for _, row := range body.Instances {
+		byName[row.Instance] = row
+	}
+	if row := byName["worker-abc123"]; row.Kind != "ephemeral" || row.Action != "keep" || !strings.Contains(row.Detail, "worker") {
+		t.Fatalf("worker child row = %+v, want ephemeral keep", row)
+	}
+}
+
+func TestPlanJSONFiltersByPhase(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	writeStatus(t, filepath.Join(teamDir, "state", "manager"), `[status]
+phase = "blocked"
+description = "waiting"
+`, time.Time{})
+	writeStatus(t, filepath.Join(teamDir, "state", "worker"), `[status]
+phase = "idle"
+description = "ready"
+`, time.Time{})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--json", "--phase", "blocked", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan --json --phase blocked: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body planResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode filtered plan json: %v\nbody=%s", err, out.String())
+	}
+	if body.Summary.Total != 1 || body.Summary.Start != 1 {
+		t.Fatalf("summary = %+v, want only blocked manager start row", body.Summary)
+	}
+	if len(body.Instances) != 1 || body.Instances[0].Instance != "manager" || body.Instances[0].Phase != "blocked" {
+		t.Fatalf("instances = %+v, want blocked manager only", body.Instances)
+	}
+}
+
+func TestPlanJSONFiltersByAction(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	if err := daemon.WriteMetadata(daemonRoot, &daemon.Metadata{
+		Instance:  "manager",
+		Agent:     "manager",
+		Status:    daemon.StatusStopped,
+		SessionID: "sid-manager",
+		Workspace: tmp,
+	}); err != nil {
+		t.Fatalf("write manager metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--json", "--action", "start", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan --json --action start: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body planResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode action-filtered plan json: %v\nbody=%s", err, out.String())
+	}
+	if body.Summary.Total != 1 || body.Summary.Start != 1 {
+		t.Fatalf("summary = %+v, want only one start row", body.Summary)
+	}
+	if len(body.Instances) != 1 || body.Instances[0].Instance != "ticket-manager" || body.Instances[0].Action != "start" {
+		t.Fatalf("instances = %+v, want ticket-manager start only", body.Instances)
+	}
+}
+
+func TestPlanStopExtrasFiltersByAction(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance:  "adhoc",
+		Agent:     "worker",
+		Status:    daemon.StatusRunning,
+		PID:       os.Getpid(),
+		SessionID: "sid-adhoc",
+		Workspace: tmp,
+	}); err != nil {
+		t.Fatalf("write adhoc metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--stop-extras", "--json", "--action", "stop", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan --stop-extras --json --action stop: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body planResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode stop-action plan json: %v\nbody=%s", err, out.String())
+	}
+	if body.Summary.Total != 1 || body.Summary.Stop != 1 {
+		t.Fatalf("summary = %+v, want one stop row", body.Summary)
+	}
+	if len(body.Instances) != 1 || body.Instances[0].Instance != "adhoc" || body.Instances[0].Action != "stop" {
+		t.Fatalf("instances = %+v, want adhoc stop only", body.Instances)
+	}
+}
+
+func TestPlanJSONFiltersByAgentAndStatus(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	if err := daemon.WriteMetadata(daemonRoot, &daemon.Metadata{
+		Instance:  "manager",
+		Agent:     "manager",
+		Status:    daemon.StatusStopped,
+		SessionID: "sid-manager",
+		Workspace: tmp,
+	}); err != nil {
+		t.Fatalf("write manager metadata: %v", err)
+	}
+	if err := daemon.WriteMetadata(daemonRoot, &daemon.Metadata{
+		Instance:  "adhoc",
+		Agent:     "manager",
+		Status:    daemon.StatusStopped,
+		SessionID: "sid-adhoc",
+		Workspace: tmp,
+	}); err != nil {
+		t.Fatalf("write adhoc metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--json", "--agent", "manager", "--status", "stopped", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan --json with filters: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body planResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode filtered plan json: %v\nbody=%s", err, out.String())
+	}
+	if body.Summary.Total != 2 || body.Summary.Resume != 1 || body.Summary.Extra != 1 || body.Summary.Start != 0 || body.Summary.OnDemand != 0 {
+		t.Fatalf("summary = %+v, want only stopped manager rows", body.Summary)
+	}
+	byName := map[string]planRow{}
+	for _, row := range body.Instances {
+		byName[row.Instance] = row
+	}
+	if _, ok := byName["manager"]; !ok {
+		t.Fatalf("filtered plan missing manager row: %+v", body.Instances)
+	}
+	if _, ok := byName["adhoc"]; !ok {
+		t.Fatalf("filtered plan missing adhoc row: %+v", body.Instances)
+	}
+	if _, ok := byName["ticket-manager"]; ok {
+		t.Fatalf("filtered plan included ticket-manager row: %+v", body.Instances)
+	}
+	if _, ok := byName["worker"]; ok {
+		t.Fatalf("filtered plan included worker row: %+v", body.Instances)
+	}
+}
+
+func TestPlanJSONFiltersByInstance(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	if err := daemon.WriteMetadata(daemonRoot, &daemon.Metadata{
+		Instance:  "manager",
+		Agent:     "manager",
+		Status:    daemon.StatusStopped,
+		SessionID: "sid-manager",
+		Workspace: tmp,
+	}); err != nil {
+		t.Fatalf("write manager metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--json", "--instance", "manager", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan --json --instance: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body planResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode filtered plan json: %v\nbody=%s", err, out.String())
+	}
+	if body.Summary.Total != 1 || body.Summary.Resume != 1 {
+		t.Fatalf("summary = %+v, want only manager resume", body.Summary)
+	}
+	if len(body.Instances) != 1 || body.Instances[0].Instance != "manager" {
+		t.Fatalf("instances = %+v, want manager only", body.Instances)
+	}
+}
+
+func TestPlanFormatPrintsFilteredRows(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	if err := daemon.WriteMetadata(daemonRoot, &daemon.Metadata{
+		Instance:  "manager",
+		Agent:     "manager",
+		Status:    daemon.StatusStopped,
+		SessionID: "sid-manager",
+		Workspace: tmp,
+	}); err != nil {
+		t.Fatalf("write manager metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--format", "{{.Instance}}:{{.Agent}}:{{.Status}}:{{.Action}}", "--agent", "manager", "--status", "stopped", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan --format: %v\nstderr: %s", err, stderr.String())
+	}
+	if got, want := out.String(), "manager:manager:stopped:resume\n"; got != want {
+		t.Fatalf("formatted plan = %q, want %q", got, want)
+	}
+}
+
+func TestPlanFormatRejectsJSONAndInvalidTemplate(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"plan", "--format", "{{.Instance}}", "--json"}, "--format cannot be combined"},
+		{[]string{"plan", "--format", "{{.Instance}}", "--summary"}, "--format cannot be combined"},
+		{[]string{"plan", "--format", "{{"}, "invalid --format template"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		stderr := &bytes.Buffer{}
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+	}
+}
+
+func TestPlanTextRendersTableAndSummary(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan: %v\nstderr: %s", err, stderr.String())
+	}
+	body := out.String()
+	for _, want := range []string{
+		"daemon: not running",
+		"INSTANCE",
+		"manager",
+		"ticket-manager",
+		"worker",
+		"start",
+		"on-demand",
+		"summary: total=3 start=2 resume=0 keep=0 on-demand=1 extra=0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("plan output missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestPlanRejectsInvalidFilters(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"plan", "--status", "paused"}, `unknown --status "paused"`},
+		{[]string{"plan", "--phase", "reviewing"}, `unknown --phase "reviewing"`},
+		{[]string{"plan", "--phase", "  "}, "non-empty phase"},
+		{[]string{"plan", "--action", "pause"}, `unknown --action "pause"`},
+		{[]string{"plan", "--action", "  "}, "non-empty action"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("%v succeeded unexpectedly; stdout=%s stderr=%s", tc.args, out.String(), stderr.String())
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+	}
+}

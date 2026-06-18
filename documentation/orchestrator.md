@@ -32,11 +32,12 @@ Think Docker containers:
 | Verb | Today | With orchestrator |
 |---|---|---|
 | **create + start** | `agent-team run <agent>` (exec claude directly) | `agent-team run <agent>` → POST /dispatch → daemon spawns claude as a child |
-| **stop** | Ctrl-C the claude session | `agent-team stop <instance>` → daemon SIGTERMs the child, persists session ID |
+| **stop** | Ctrl-C the claude session | `agent-team stop <instance>` → daemon SIGTERMs the instance process group, persists session ID |
 | **start (resume)** | (not possible — session ends with claude) | `agent-team start <instance>` → daemon spawns claude with `--resume <session-id>`, conversation continues |
 | **list running** | (none) | `agent-team ps` (or `instance ls --running`) |
 | **list all** | `agent-team instance ls` | `agent-team ps -a` (or current `instance ls`) |
-| **remove** | `agent-team instance rm` | `agent-team instance rm` (daemon ensures the process is stopped first) |
+| **inspect** | `agent-team instance show <instance>` | `agent-team inspect <instance>` shows runtime metadata + state |
+| **remove** | `agent-team instance rm` | `agent-team rm <instance>` (daemon refuses running instances unless forced) |
 | **logs** | (none) | `agent-team logs <instance>` |
 
 **Ephemeral vs persistent** is a per-agent property, declared in the agent's frontmatter:
@@ -61,8 +62,10 @@ ephemeral: true     # default: false
                      │                                     │
                      │  ┌─ HTTP-over-unix-socket API ───┐  │
                      │  │ POST /v1/dispatch (SQU-28)    │  │
-                     │  │ POST /v1/stop     (SQU-28)    │  │
-                     │  │ POST /v1/start    (SQU-28)    │  │
+                     │  │ POST /v1/stop                  │  │
+                     │  │ POST /v1/start                 │  │
+                     │  │ POST /v1/restart               │  │
+                     │  │ POST /v1/remove                │  │
                      │  │ GET  /v1/instances (SQU-28)   │  │
                      │  │ POST /v1/message  (SQU-29)    │  │
                      │  │ GET  /v1/logs/{id} (SQU-29)   │  │
@@ -95,7 +98,7 @@ ephemeral: true     # default: false
 
 All endpoints over Unix socket at `.agent_team/daemon.sock`. JSON request/response. Versioned `/v1/...` from day one.
 
-**Live in SQU-28:**
+**Live today:**
 
 ```
 POST /v1/dispatch
@@ -110,9 +113,20 @@ POST /v1/start
   { "instance": "manager-billing" }     # resumes a stopped instance via --resume
   → { "instance_id": "...", "session_resumed": true, "pid": <int> }
 
+POST /v1/restart
+  { "instance": "manager-billing", "force": false, "timeout_ms": 30000 }
+  → { "instance_id": "...", "restarted": true, "pid": <int> }
+
+POST /v1/remove
+  { "instance": "worker-squ-14", "force": true }
+  → { "removed": true }
+
 GET /v1/instances
   → [{ "instance": "...", "agent": "...", "status": "running|stopped|exited|crashed",
        "pid": <int>, "session_id": "...", "workspace": "...", "started_at": "...", ... }]
+
+POST /v1/reconcile
+  → { "reconciled": true, "changed": <int>, "instances": [...], "changes": [...] }
 ```
 
 **Landed in SQU-29:**
@@ -122,10 +136,15 @@ POST /v1/message
   { "to": "worker-squ-14", "from": "manager", "body": "<message>" }
   → { "delivered": true, "id": "<uuid>", "ts": "<rfc3339>" }
 
-GET /v1/logs/{instance}[?follow=true]
+GET /v1/logs/{instance}[?follow=true][&tail=N]
   → chunked text stream of <daemon-root>/<instance>/child.log.
     Without follow=true: dump current file and close.
     With follow=true: dump, then tail until ctx cancels.
+    With tail=N: initial dump is limited to the last N lines.
+
+GET /v1/events[?follow=true][&tail=N]
+  → chunked JSONL stream of daemon lifecycle events from <daemon-root>/events.jsonl.
+    Events include dispatch/start/stop/restart/remove/exit/crash records.
 ```
 
 Chunked text over SSE: the consumer is a CLI doing either a one-shot dump or a long-running tail piped to stdout — neither benefits from SSE's reconnect/event-typed semantics, and chunked text is what `curl --no-buffer` and Go's `http.Client` produce naturally.
@@ -143,17 +162,71 @@ agent-team init / doctor / run / agent / skill / instance
 New, daemon-aware:
 
 ```
-agent-team daemon start          # boot agent-teamd in this repo
-agent-team daemon stop
-agent-team daemon status
+agent-team daemon start [--detach=false] [--ready-timeout 3s] [--format '{{.Action}} {{.PID}}'] [--json]
+                                  # boot agent-teamd; detached by default, foreground with --detach=false
+agent-team daemon stop [--timeout 5s] [--format '{{.Action}} {{.Changed}}'] [--json]
+agent-team daemon restart [--timeout 5s] [--ready-timeout 3s] [--detach=false] [--format '{{.Action}} {{.Changed}}'] [--json]
+agent-team daemon reconcile [--format '{{.Changed}} {{len .Instances}}'] [--json]
+agent-team daemon status [-q] [--wait [--down] --timeout 30s --interval 200ms] [--format '{{.Ready}} {{.PID}}'] [--json]
+                                  # process and API-readiness check for agent-teamd
+agent-team daemon logs [-f] [--tail N|all] [--since 10m] [--grep 'error|panic']
 
-agent-team ps                    # list running instances (alias: instance ls --running)
-agent-team logs <instance>
-agent-team start <instance>      # resume a stopped persistent instance
-agent-team stop <instance>       # graceful stop, keep state
+agent-team status [-w] [--no-clear] [--summary [--resources] [--plan [--stop-extras] [--action start]] [--events N [--event-action stop] [--since 10m]] [--strict-topology]] [--latest | --last N] [--format '{{.Instance}} {{.Status}}'] [--json] [--interval 2s] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy]
+                                  # daemon health + instance snapshot; JSON watch emits one object per refresh
+agent-team health [-q] [-w] [--no-clear] [--wait --timeout 30s] [--latest | --last N] [--format '{{.Healthy}} {{.Summary.Running}}'] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--strict-topology] [--json]
+                                  # scriptable fleet health check; exits 1 when unhealthy in one-shot mode
+agent-team monitor [-w] [--no-clear] [-a] [--summary [--resources]] [--plan [--stop-extras] [--action start]] [--latest | --last N] [--events N [--event-action stop] [--since 10m]] [--sort status|agent|phase|stale|unhealthy|started|stopped|exited|name] [--stats-sort cpu|mem|rss|status|agent|phase|stale|unhealthy|name] [--format '{{.Health.Healthy}} {{len .Instances}}'] [--json] [--interval 2s] [--strict-topology] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy]
+                                  # combined health, instance, resource, and event-history snapshot; uses local metadata if the daemon is down
+agent-team watch [--no-clear] [-a] [--summary [--resources]] [--plan [--stop-extras] [--action start]] [--latest | --last N] [--events N [--event-action stop] [--since 10m]] [--sort status|agent|phase|stale|unhealthy|started|stopped|exited|name] [--stats-sort cpu|mem|rss|status|agent|phase|stale|unhealthy|name] [--format '{{.Health.Healthy}} {{len .Instances}}'] [--json] [--interval 2s] [--strict-topology] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy]
+                                  # continuously redraw the combined operator monitor
+agent-team ps [-a] [-w] [--no-clear] [-q] [--summary] [--latest | --last N] [--sort status|agent|phase|stale|unhealthy|started|stopped|exited|name] [--json] [--format '{{.Instance}} {{.Status}}'] [--status running] [--phase blocked] [--stale] [--unhealthy] [--agent worker] [--instance worker-1]
+                                  # list/watch/filter instances, using persisted runtime metadata if the daemon is down
+agent-team stats [<instance>...] [--all] [--latest | --last N] [-w] [--no-clear] [--summary] [--sort cpu|mem|rss|status|agent|phase|stale|unhealthy|name] [--json] [--format '{{.Instance}} {{.CPUPercent}} {{.RSS}}'] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy]
+                                  # CPU/memory snapshot or watch stream; falls back to metadata-only rows if the daemon is down
+agent-team logs [<instance> | --latest | --last N] [--all | --agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--no-prefix] [--list [--format '{{.Instance}} {{.LogPath}}'] [--json]] [--daemon] [--tail N|all] [--since 10m] [--grep 'error|panic'] [-f]
+                                  # list/show/follow instance or daemon logs; reads daemon-managed logs locally if the daemon is down
+agent-team attach [<instance> | --all | --latest | --last N | --agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--tail N|all] [--no-follow [--since 10m] [--grep 'error|panic']]
+                                  # follow one instance's daemon-captured stdout/stderr stream
+agent-team events [--tail N] [--latest | --last N] [--since 24h] [--summary] [-f] [--format '{{.Action}} {{.Instance}}'] [--action dispatch] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--json]
+                                  # lifecycle event history or follow stream; phase/stale/unhealthy narrow by current status.toml; reads local history if the daemon is down
+agent-team start [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status stopped] [--phase idle] [--stale] [--unhealthy] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--ready-timeout 3s] [--wait --timeout 30s] [--attach --tail N|all] [--json]
+                                  # start daemon if needed; no args = persistent declarations, --all/--agent include daemon-known names
+agent-team stop [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [-f] [--rm] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--wait --wait-timeout 30s] [--timeout 10s] [--json]
+                                  # graceful stop, keep state; --all includes ad-hoc/ephemeral instances
+agent-team kill [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--rm] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--timeout 2s] [--wait --wait-timeout 30s] [--json]
+                                  # force-stop with SIGKILL escalation after the grace period
+agent-team restart [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [-f] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--ready-timeout 3s] [--timeout 30s] [--wait --wait-timeout 30s] [--attach --tail N|all] [--json]
+                                  # restart/resume persistent declarations; --all/--agent include daemon-known names
+agent-team reload [--format '{{len .Topology.Instances}} {{.Reconcile.Changed}}'] [--json]
+                                  # re-read instances.toml in the daemon and reconcile runtime metadata
+agent-team plan [--json] [--summary] [--stop-extras] [--format '{{.Instance}} {{.Action}}'] [--agent manager] [--instance manager] [--status running] [--phase idle] [--action start]
+                                  # read-only desired-state preview from instances.toml + daemon metadata
+agent-team sync [-q] [--dry-run] [--stop-extras] [--agent manager] [--instance manager] [--status unknown] [--phase idle] [--action start] [--summary] [--format '{{.Instance}} {{.Action}}'] [--ready-timeout 3s] [--wait --timeout 30s] [--json]
+                                  # reload topology, reconcile metadata, start/resume persistent instances, and optionally stop running extras
+agent-team inspect [<instance>...] [--all] [--latest | --last N] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--format '{{.Instance}} {{if .Runtime}}{{.Runtime.Lifecycle}}{{end}}'] [--json]
+                                  # runtime metadata + state/status/topology detail; reads persisted runtime metadata if the daemon is down
+agent-team wait [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--until terminal|running|stopped|exited|crashed|removed] [--until-phase done] [--timeout 5m] [--interval 500ms] [--dry-run] [--fail-on-crash] [--summary] [--format '{{.Instance}} {{.Status}} {{.Phase}}'] [--json] # wait for lifecycle or work-phase condition; uses persisted metadata if daemon is down
+agent-team send [<instance>] <message...> [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--from user] [--allow-missing] [--dry-run] [--format '{{.To}} {{.ID}}'] [--json]
+                                  # append a message to one instance mailbox or a filtered set; phase/stale/unhealthy selectors use current status.toml
+agent-team channels
+                                  # list pub/sub channels; reads local channel state if the daemon is down
+agent-team channel show <name>
+                                  # show a channel summary and recent messages
+agent-team channel publish <name> <body...> [--sender user]
+                                  # publish to a channel; appends locally if the daemon is down
+agent-team channel rm <name> -f
+                                  # delete a channel and its durable state
+agent-team rm [<instance>...] [-q] [--all] [--finished] [--latest | --last N] [--status stopped] [--phase done] [--stale] [--unhealthy] [--agent manager] [--dry-run] [--summary] [-f] [--format '{{.Instance}} {{.Path}}'] [--json]
+                                  # remove state + daemon metadata; uses persisted metadata if the daemon is down
+agent-team prune [-q] [--dry-run] [--older-than 24h] [--agent manager] [--status exited] [--phase done] [--summary] [--format '{{.Instance}} {{.Path}}'] [--json]
+                                  # non-interactively remove finished persisted daemon metadata and state
+agent-team run <agent> [-n <instance>] [-d | --attach --tail N|all] [--ready-timeout 3s] [-p "..."] [--format '{{.Instance}} {{.PID}}'] [--json]
+                                  # launch direct by default; --detach dispatches and returns, --attach dispatches and follows logs
 ```
 
-`agent-team run <agent>` is daemon-aware (SQU-29): when `--prompt` is set (one-shot mode) AND the daemon is running, the CLI POSTs to `/v1/dispatch` with the full claude argv (so agent / skill resolution stays in the CLI). Without `--prompt` (interactive mode), or with `--no-daemon`, or when no daemon is running, the CLI exec's claude directly. Interactive sessions stay direct because the daemon spawns claude headless against a log file.
+Shortcuts: `agent-team up` = `start`, `agent-team down` = `stop`, `agent-team ls` = `ps`, and `agent-team top` = `stats`.
+
+`agent-team run <agent>` is daemon-aware (SQU-29): when `--prompt` is set (one-shot mode) AND the daemon is running, the CLI POSTs to `/v1/dispatch` with the full claude argv (so agent / skill resolution stays in the CLI). `--detach` and `--attach` make that daemon path explicit, start the daemon if needed, and wait up to `--ready-timeout`; `--detach` returns immediately with a log-follow hint, while `--attach` follows the daemon-captured log. Add `--json` to detached or prompted dispatches to emit metadata for automation. Without `--prompt`, `--detach`, or `--attach`, or with `--no-daemon`, the CLI exec's claude directly. Plain interactive sessions stay direct because users expect an attached terminal.
 
 ## Implementation language
 
@@ -192,7 +265,7 @@ Agent resolution (loading `.agent_team/agents/<name>/agent.md`, building the `--
 
 ### Daemonization mechanism
 
-`agent-team daemon start --detach` spawns `agent-teamd` via `os.StartProcess` with `&syscall.SysProcAttr{Setsid: true}`, redirecting stdin to `/dev/null` and stdout/stderr to `.agent_team/daemon/agent-teamd.log`. The launcher calls `proc.Release()` so it doesn't become the daemon's reaper. We chose `setsid` over a full POSIX double-fork because the parent CLI exits immediately; the daemon ends up reparented to PID 1 either way. Foreground mode (`agent-team daemon start` without `--detach`) just exec's `agent-teamd` directly for live debugging.
+`agent-team daemon start` spawns `agent-teamd` via `os.StartProcess` with `&syscall.SysProcAttr{Setsid: true}`, redirecting stdin to `/dev/null` and stdout/stderr to `.agent_team/daemon/agent-teamd.log`. The launcher calls `proc.Release()` so it doesn't become the daemon's reaper. We chose `setsid` over a full POSIX double-fork because the parent CLI exits immediately; the daemon ends up reparented to PID 1 either way. Foreground mode (`agent-team daemon start --detach=false`) just exec's `agent-teamd` directly for live debugging.
 
 ## Instance status / observability
 
@@ -249,16 +322,26 @@ Anything not passed is preserved from the prior write. `since` is auto-managed b
 
 ### Reader
 
-`agent-team instance ps` walks `.agent_team/state/*/status.toml` and renders a Docker-style table:
+`agent-team ps` walks `.agent_team/state/*/status.toml`, merges daemon runtime metadata when available, and renders a Docker-style table:
 
 ```
-INSTANCE          AGENT           PHASE             AGE   SUMMARY
-manager           manager         idle              2h    waiting on user
-worker-squ-25     worker          implementing      8m    Porting parameter substitution
-ticket-manager    ticket-manager  blocked           4m    asks manager: clarify rendered/ contract
+INSTANCE          AGENT           STATUS   PHASE             PID    AGE   SUMMARY
+manager           manager         running  idle              12345  2h    waiting on user
+worker-squ-25     worker          running  implementing      12346  8m    Porting parameter substitution
+ticket-manager    ticket-manager  running  blocked           12347  4m    asks manager: clarify rendered/ contract
 ```
 
-Instances that have a state dir but no `status.toml` (declared but never spawned, or pre-status-emission) show `—` placeholders for PHASE/AGE so the operator still knows they exist.
+Instances that have a state dir but no `status.toml` (declared but never spawned, or pre-status-emission) show `—` placeholders for PHASE, PID, and AGE so the operator still knows they exist.
+
+With `--summary`, `ps` renders lifecycle status counts plus a second phase-count table; `--summary --json` includes the same phase aggregate under `phases`.
+
+`agent-team stats --summary` adds CPU, memory, and RSS totals for the same runtime rows and reports phase counts in text and JSON, making `agent-team top --summary` a compact fleet-monitoring view.
+
+`agent-team health`, `status --summary`, and `monitor --summary` use the same phase aggregate so the operator can see both lifecycle health and work-state distribution without opening the full instance table. `status --summary --resources` / `monitor --summary --resources` / `watch --summary --resources` add aggregate CPU, memory, RSS, lifecycle, and phase counts, `status --summary --plan` / `monitor --summary --plan` / `watch --summary --plan` add compact desired-state action/status counts, and `status --summary --events N` / `monitor --summary --events N` / `watch --summary --events N` add compact recent lifecycle event counts to the same summary view. `--event-action` and `--since` narrow event tails before rendering or summarizing.
+
+Summary views honor the same agent, status, phase, stale, unhealthy, latest, and last filters as the corresponding table view, so operators can ask for compact health on a scoped slice instead of the whole fleet.
+
+`agent-team start|stop|kill|restart --summary` applies the same lifecycle selection as row output but prints aggregate action/status counts; `agent-team plan --summary` summarizes desired-state preview rows, `agent-team sync --summary` does the same for topology convergence, `agent-team rm|prune --summary` summarizes removed state and daemon metadata, and `agent-team wait --summary` summarizes final wait statuses and phases. `--summary --json` returns a `{ "summary": ... }` object for scripts.
 
 `agent-team instance show <name>` prints the parsed status with all fields, plus the existing state-dir file listing.
 
@@ -287,7 +370,7 @@ Instances that have a state dir but no `status.toml` (declared but never spawned
 
 7. **API surface stability**. Once agents are calling `curl --unix-socket .agent_team/daemon.sock /dispatch`, that's a contract. Versioning the API from day one (`/v1/dispatch`) is cheap insurance.
 
-   **Resolved (SQU-28, extended SQU-29)**: all routes versioned `/v1/...` from day one. SQU-28 shipped `POST /v1/dispatch`, `POST /v1/stop`, `POST /v1/start`, `GET /v1/instances`. SQU-29 added `POST /v1/message` and `GET /v1/logs/{id}` (with `?follow=true`) under the same prefix. `DispatchInput` was extended with `Args` and `Env` so the CLI can hand off the full `--agents/--add-dir/...` machinery without the daemon re-deriving agent resolution.
+   **Resolved (SQU-28, extended SQU-29)**: all routes versioned `/v1/...` from day one. SQU-28 shipped `POST /v1/dispatch`, `POST /v1/stop`, `POST /v1/start`, `GET /v1/instances`. SQU-29 added `POST /v1/message` and `GET /v1/logs/{id}` (with `?follow=true` and `?tail=N`) under the same prefix. `DispatchInput` was extended with `Args` and `Env` so the CLI can hand off the full `--agents/--add-dir/...` machinery without the daemon re-deriving agent resolution.
 
 ## What this doesn't change
 

@@ -153,8 +153,12 @@ func newTemplateShowCmd() *cobra.Command {
 
 func printManifest(cmd *cobra.Command, rt *template.ResolvedTemplate) error {
 	out := cmd.OutOrStdout()
+	hash, err := template.ContentHash(rt)
+	if err != nil {
+		return fmt.Errorf("hash template source: %w", err)
+	}
 	if rt.Manifest == nil {
-		fmt.Fprintf(out, "Ref: %s\n(no template.toml manifest — verbatim copy only)\n", rt.Ref)
+		fmt.Fprintf(out, "Ref: %s\nContent hash: %s\n(no template.toml manifest — verbatim copy only)\n", rt.Ref, hash)
 		return nil
 	}
 	m := rt.Manifest
@@ -162,7 +166,8 @@ func printManifest(cmd *cobra.Command, rt *template.ResolvedTemplate) error {
 	if m.Template.Description != "" {
 		fmt.Fprintf(out, "Description: %s\n", m.Template.Description)
 	}
-	fmt.Fprintf(out, "Ref: %s\n\n", rt.Ref)
+	fmt.Fprintf(out, "Ref: %s\n", rt.Ref)
+	fmt.Fprintf(out, "Content hash: %s\n\n", hash)
 
 	if len(m.Parameters) == 0 {
 		fmt.Fprintln(out, "Parameters: (none)")

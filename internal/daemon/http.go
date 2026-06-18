@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -84,7 +85,9 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 			return
 		}
 		var body struct {
-			Instance string `json:"instance"`
+			Instance      string `json:"instance"`
+			Force         bool   `json:"force"`
+			TimeoutMillis int64  `json:"timeout_ms"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -94,7 +97,14 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 			writeError(w, http.StatusBadRequest, "instance is required")
 			return
 		}
-		_, err := m.Stop(body.Instance)
+		if body.TimeoutMillis < 0 {
+			writeError(w, http.StatusBadRequest, "timeout_ms must be >= 0")
+			return
+		}
+		_, err := m.StopWithOptions(body.Instance, StopOptions{
+			Force:   body.Force,
+			Timeout: time.Duration(body.TimeoutMillis) * time.Millisecond,
+		})
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -108,7 +118,9 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 			return
 		}
 		var body struct {
-			Instance string `json:"instance"`
+			Instance      string `json:"instance"`
+			Force         bool   `json:"force"`
+			TimeoutMillis int64  `json:"timeout_ms"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -124,10 +136,71 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"instance_id":      meta.Instance,
-			"session_resumed":  true,
-			"pid":              meta.PID,
+			"instance_id":     meta.Instance,
+			"session_resumed": true,
+			"pid":             meta.PID,
 		})
+	})
+
+	mux.HandleFunc("/v1/restart", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var body struct {
+			Instance      string `json:"instance"`
+			Force         bool   `json:"force"`
+			TimeoutMillis int64  `json:"timeout_ms"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if strings.TrimSpace(body.Instance) == "" {
+			writeError(w, http.StatusBadRequest, "instance is required")
+			return
+		}
+		if body.TimeoutMillis < 0 {
+			writeError(w, http.StatusBadRequest, "timeout_ms must be >= 0")
+			return
+		}
+		meta, err := m.RestartWithOptions(body.Instance, RestartOptions{
+			Force:   body.Force,
+			Timeout: time.Duration(body.TimeoutMillis) * time.Millisecond,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"instance_id": meta.Instance,
+			"restarted":   true,
+			"pid":         meta.PID,
+		})
+	})
+
+	mux.HandleFunc("/v1/remove", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var body struct {
+			Instance string `json:"instance"`
+			Force    bool   `json:"force"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if strings.TrimSpace(body.Instance) == "" {
+			writeError(w, http.StatusBadRequest, "instance is required")
+			return
+		}
+		if err := m.Remove(body.Instance, body.Force, 10*time.Second); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"removed": true})
 	})
 
 	mux.HandleFunc("/v1/instances", func(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +214,44 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 			list = []*Metadata{}
 		}
 		writeJSON(w, http.StatusOK, list)
+	})
+
+	mux.HandleFunc("/v1/reconcile", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		before, err := ListMetadata(m.daemonRoot)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err := Reconcile(m.daemonRoot, m); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, buildReconcileResponse(before, m.List()))
+	})
+
+	mux.HandleFunc("/v1/events", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		follow := r.URL.Query().Get("follow") == "true"
+		tailLines := 0
+		if rawTail := r.URL.Query().Get("tail"); rawTail != "" {
+			n, err := strconv.Atoi(rawTail)
+			if err != nil || n < 0 {
+				writeError(w, http.StatusBadRequest, "tail must be a non-negative integer")
+				return
+			}
+			tailLines = n
+		}
+		w.Header().Set("Content-Type", "application/jsonl; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		_ = StreamLifecycleEvents(r.Context(), w, m.daemonRoot, follow, tailLines)
 	})
 
 	mux.HandleFunc("/v1/message", func(w http.ResponseWriter, r *http.Request) {
@@ -201,13 +312,22 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 			return
 		}
 		follow := r.URL.Query().Get("follow") == "true"
+		tailLines := 0
+		if rawTail := r.URL.Query().Get("tail"); rawTail != "" {
+			n, err := strconv.Atoi(rawTail)
+			if err != nil || n < 0 {
+				writeError(w, http.StatusBadRequest, "tail must be a non-negative integer")
+				return
+			}
+			tailLines = n
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		// `Transfer-Encoding: chunked` is set automatically by net/http when
 		// we don't set Content-Length and write incrementally — we still set
 		// the Cache-Control hint to make intermediaries unlikely to buffer.
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusOK)
-		if err := StreamLogs(r.Context(), w, m.daemonRoot, instance, follow); err != nil {
+		if err := StreamLogs(r.Context(), w, m.daemonRoot, instance, follow, tailLines); err != nil {
 			// Headers already flushed; we can't switch to a JSON error.
 			// The connection will end here — clients see truncated output,
 			// which is the best we can do post-headers.
@@ -347,6 +467,55 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 	})
 
 	return mux
+}
+
+type reconcileResponse struct {
+	Reconciled bool              `json:"reconciled"`
+	Changed    int               `json:"changed"`
+	Instances  []*Metadata       `json:"instances"`
+	Changes    []reconcileChange `json:"changes"`
+}
+
+type reconcileChange struct {
+	Instance string `json:"instance"`
+	Agent    string `json:"agent,omitempty"`
+	Before   Status `json:"before"`
+	After    Status `json:"after"`
+	PID      int    `json:"pid,omitempty"`
+}
+
+func buildReconcileResponse(before, after []*Metadata) reconcileResponse {
+	beforeByName := map[string]*Metadata{}
+	for _, meta := range before {
+		beforeByName[meta.Instance] = meta
+	}
+	if after == nil {
+		after = []*Metadata{}
+	}
+	sort.Slice(after, func(i, j int) bool { return after[i].Instance < after[j].Instance })
+	resp := reconcileResponse{
+		Reconciled: true,
+		Instances:  after,
+		Changes:    []reconcileChange{},
+	}
+	for _, meta := range after {
+		beforeStatus := Status("")
+		if prior := beforeByName[meta.Instance]; prior != nil {
+			beforeStatus = prior.Status
+		}
+		if beforeStatus == meta.Status {
+			continue
+		}
+		resp.Changes = append(resp.Changes, reconcileChange{
+			Instance: meta.Instance,
+			Agent:    meta.Agent,
+			Before:   beforeStatus,
+			After:    meta.Status,
+			PID:      meta.PID,
+		})
+	}
+	resp.Changed = len(resp.Changes)
+	return resp
 }
 
 // marshalTopology renders the wire format for `/v1/topology` and the

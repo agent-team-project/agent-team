@@ -40,7 +40,7 @@ A consumer's `.agent_team/` directory after instantiation. Contains:
 
 - Rendered agent and skill files (`.tmpl` suffixes resolved and stripped).
 - `config.toml` — resolved parameter values, repo-wide.
-- `.template.lock` (optional, future) — pinned ref + content hash of the source template for reproducibility.
+- `.template.lock` — pinned ref + content hash of the source template for reproducibility.
 
 ### Instance
 
@@ -154,10 +154,15 @@ agent-team init [<ref>] [--set k=v]... [--no-input]
     <ref> defaults to the bundled "default" template.
     Required parameters with no default → prompt interactively, or read from --set, or fail under --no-input.
 
+agent-team upgrade --check [--to <ref>]
+    Read-only preflight available today: compare .agent_team/.template.lock
+    against the locked ref or an explicit target ref.
+
 agent-team upgrade [--to <ref>] [--set k=v]...
-    Re-resolve the current repo's template against a (newer) version.
-    Three-way merges template-default → user-current → new-template-default.
-    User edits to authored files preserved when not in conflict.
+    Future apply mode: re-resolve the current repo's template against a
+    (newer) version. Three-way merges template-default → user-current →
+    new-template-default. User edits to authored files are preserved when not
+    in conflict.
 
 agent-team template ls
     List bundled + cached templates.
@@ -188,7 +193,7 @@ A template ref identifies *what to instantiate*:
 
 - Templates declare `version` in `template.toml` (semver).
 - Refs can pin (`@v1.2.0`), float to a branch (`@main`), or omit (defaults to latest tagged).
-- A future `.template.lock` file in the repo records the exact resolved ref + content hash, enabling reproducible re-instantiation.
+- `.template.lock` records the resolved ref, manifest identity, and source content hash, enabling reproducible re-instantiation and future upgrade planning.
 
 ## Open questions
 

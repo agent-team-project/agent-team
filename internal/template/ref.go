@@ -63,7 +63,12 @@ func (r *Resolver) Resolve(ref string) (*ResolvedTemplate, error) {
 	// Treat as a cache-relative path.
 	cached := filepath.Join(r.CacheRoot, ref)
 	if st, err := os.Stat(cached); err == nil && st.IsDir() {
-		return r.resolveLocal(cached)
+		rt, err := r.resolveLocal(cached)
+		if err != nil {
+			return nil, err
+		}
+		rt.Ref = ref
+		return rt, nil
 	}
 	return nil, fmt.Errorf("template ref %q: not bundled, not a local path, and not in cache (%s)", ref, r.CacheRoot)
 }

@@ -8,27 +8,33 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/jamesaud/agent-team/internal/loader"
+	"github.com/jamesaud/agent-team/internal/template"
 	"github.com/spf13/cobra"
 )
 
 func newDoctorCmd() *cobra.Command {
-	var target string
+	var (
+		target       string
+		strictDaemon bool
+	)
 	cwd, _ := os.Getwd()
 
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Sanity-check the vendored team.",
 		Long: "Sanity-check the vendored team: .agent_team/ layout, config.toml validity, " +
-			"each agent's frontmatter, and skill resolution across all agents.",
+			"template provenance, each agent's frontmatter, skill resolution across all agents, " +
+			"and whether the companion agent-teamd binary is available for daemon-backed lifecycle commands.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDoctor(cmd, target)
+			return runDoctor(cmd, target, strictDaemon)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&strictDaemon, "strict-daemon", false, "Fail when the companion agent-teamd binary is not discoverable.")
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, target string) error {
+func runDoctor(cmd *cobra.Command, target string, strictDaemon bool) error {
 	abs, err := filepath.Abs(target)
 	if err != nil {
 		return exitErr(2)
@@ -39,10 +45,19 @@ func runDoctor(cmd *cobra.Command, target string) error {
 	teamDir := filepath.Join(abs, loader.TeamDirName)
 
 	var problems []string
+	var warnings []string
+	daemonHint := "agent-teamd binary not found — install it alongside agent-team (`go install ./cmd/agent-teamd` if building from source) so `start`, `run --detach`, and other daemon-backed lifecycle commands work."
+	if _, err := findAgentTeamd(); err != nil {
+		if strictDaemon {
+			problems = append(problems, daemonHint)
+		} else {
+			warnings = append(warnings, daemonHint)
+		}
+	}
 
 	if st, err := os.Stat(teamDir); err != nil || !st.IsDir() {
 		problems = append(problems, fmt.Sprintf("%s not found — run `agent-team init` first.", teamDir))
-		return reportDoctor(cmd, problems)
+		return reportDoctor(cmd, problems, warnings)
 	}
 
 	cfgPath := filepath.Join(teamDir, "config.toml")
@@ -64,6 +79,19 @@ func runDoctor(cmd *cobra.Command, target string) error {
 				}
 			}
 		}
+	}
+
+	lockPath := filepath.Join(teamDir, template.LockFileName)
+	if st, err := os.Stat(lockPath); err != nil {
+		if os.IsNotExist(err) {
+			warnings = append(warnings, fmt.Sprintf("%s missing — re-run `agent-team init` with the original template ref and parameters to record provenance for future upgrades.", lockPath))
+		} else {
+			problems = append(problems, fmt.Sprintf("%s cannot be read: %v", lockPath, err))
+		}
+	} else if st.IsDir() {
+		problems = append(problems, fmt.Sprintf("%s is a directory, expected a lock file", lockPath))
+	} else if _, err := template.LoadLock(lockPath); err != nil {
+		problems = append(problems, fmt.Sprintf("%s is not valid template provenance: %v", lockPath, err))
 	}
 
 	agentsDir := filepath.Join(teamDir, "agents")
@@ -98,17 +126,23 @@ func runDoctor(cmd *cobra.Command, target string) error {
 		}
 	}
 
-	return reportDoctor(cmd, problems)
+	return reportDoctor(cmd, problems, warnings)
 }
 
-func reportDoctor(cmd *cobra.Command, problems []string) error {
+func reportDoctor(cmd *cobra.Command, problems, warnings []string) error {
 	if len(problems) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "agent-team doctor: OK")
+		for _, w := range warnings {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  warning: %s\n", w)
+		}
 		return nil
 	}
 	fmt.Fprintln(cmd.ErrOrStderr(), "agent-team doctor: problems found:")
 	for _, p := range problems {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", p)
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  warning: %s\n", w)
 	}
 	return exitErr(1)
 }

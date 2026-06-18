@@ -43,10 +43,22 @@ func TestLogs_NonFollowDumpsCurrent(t *testing.T) {
 	root := t.TempDir()
 	writeChildLog(t, root, "w", "hello world\nline two\n")
 	var buf bytes.Buffer
-	if err := StreamLogs(context.Background(), &buf, root, "w", false); err != nil {
+	if err := StreamLogs(context.Background(), &buf, root, "w", false, 0); err != nil {
 		t.Fatalf("stream: %v", err)
 	}
 	if got := buf.String(); got != "hello world\nline two\n" {
+		t.Errorf("body: got %q", got)
+	}
+}
+
+func TestLogs_NonFollowTailsLines(t *testing.T) {
+	root := t.TempDir()
+	writeChildLog(t, root, "w", "one\ntwo\nthree\nfour\n")
+	var buf bytes.Buffer
+	if err := StreamLogs(context.Background(), &buf, root, "w", false, 2); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if got := buf.String(); got != "three\nfour\n" {
 		t.Errorf("body: got %q", got)
 	}
 }
@@ -66,7 +78,7 @@ func TestLogs_FollowStreamsAppends(t *testing.T) {
 	rec := newSyncBuf()
 	done := make(chan error, 1)
 	go func() {
-		done <- StreamLogs(ctx, rec, root, "w", true)
+		done <- StreamLogs(ctx, rec, root, "w", true, 0)
 	}()
 
 	// Initial dump should land immediately.
@@ -106,7 +118,7 @@ func TestLogs_FollowStreamsAppends(t *testing.T) {
 func TestLogs_MissingInstanceErrors(t *testing.T) {
 	root := t.TempDir()
 	var buf bytes.Buffer
-	err := StreamLogs(context.Background(), &buf, root, "nobody", false)
+	err := StreamLogs(context.Background(), &buf, root, "nobody", false, 0)
 	if err == nil {
 		t.Errorf("want error for missing log")
 	}
@@ -134,7 +146,6 @@ func TestHTTP_Logs_Endpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status: %d", resp.StatusCode)
 	}
@@ -142,6 +153,20 @@ func TestHTTP_Logs_Endpoint(t *testing.T) {
 	if body != "abc\ndef\n" {
 		t.Errorf("body: got %q", body)
 	}
+	resp.Body.Close()
+
+	resp, err = http.Get(srv.URL + "/v1/logs/w?tail=1")
+	if err != nil {
+		t.Fatalf("get tail: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("tail status: %d", resp.StatusCode)
+	}
+	body = readBody(t, resp)
+	if body != "def\n" {
+		t.Errorf("tail body: got %q", body)
+	}
+	resp.Body.Close()
 }
 
 func TestHTTP_Logs_FollowReturnsOnContextEnd(t *testing.T) {

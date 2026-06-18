@@ -37,6 +37,7 @@ func TestInit_DefaultTemplate(t *testing.T) {
 
 	expected := []string{
 		".agent_team/config.toml",
+		".agent_team/.template.lock",
 		".agent_team/agents/ticket-manager/agent.md",
 		".agent_team/agents/ticket-manager/config.toml",
 		".agent_team/agents/manager/agent.md",
@@ -66,6 +67,21 @@ func TestInit_DefaultTemplate(t *testing.T) {
 	}
 	if !strings.Contains(body, `ticket_prefix = "TST"`) {
 		t.Errorf("config.toml missing ticket_prefix: %s", body)
+	}
+	lock, err := os.ReadFile(filepath.Join(tmp, ".agent_team", ".template.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockBody := string(lock)
+	for _, want := range []string{
+		`ref = "bundled"`,
+		`name = "default"`,
+		`version = "1.0.0"`,
+		`content_hash = "sha256:`,
+	} {
+		if !strings.Contains(lockBody, want) {
+			t.Errorf(".template.lock missing %q: %s", want, lockBody)
+		}
 	}
 
 	// template.toml itself must NOT land in the consumer's tree.
@@ -209,6 +225,9 @@ func TestInit_EmptyTemplate(t *testing.T) {
 	if !strings.Contains(string(cfg), "empty-template stub") {
 		t.Errorf("expected EMPTY_CONFIG marker, got: %s", cfg)
 	}
+	if _, err := os.Stat(filepath.Join(teamDir, ".template.lock")); !os.IsNotExist(err) {
+		t.Errorf("empty template should not write .template.lock, got err=%v", err)
+	}
 }
 
 func TestInit_BadTemplate(t *testing.T) {
@@ -269,6 +288,37 @@ func TestInit_SkipsExistingWithoutForce(t *testing.T) {
 	}
 }
 
+func TestInit_PreservesTemplateLockWithoutForce(t *testing.T) {
+	tmp := t.TempDir()
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(initArgsWithRequired(tmp))
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init1: %v", err)
+	}
+
+	lockPath := filepath.Join(tmp, ".agent_team", ".template.lock")
+	if err := os.WriteFile(lockPath, []byte("consumer lock edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd2 := NewRootCmd()
+	cmd2.SetOut(&bytes.Buffer{})
+	cmd2.SetErr(&bytes.Buffer{})
+	cmd2.SetArgs(initArgsWithRequired(tmp))
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("init2: %v", err)
+	}
+	got, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "consumer lock edit" {
+		t.Errorf("lock was overwritten without --force: %s", got)
+	}
+}
+
 func TestInit_ForceOverwritesDirs(t *testing.T) {
 	tmp := t.TempDir()
 	cmd := NewRootCmd()
@@ -296,5 +346,39 @@ func TestInit_ForceOverwritesDirs(t *testing.T) {
 	got, _ := os.ReadFile(target)
 	if string(got) == "MUTATED" {
 		t.Errorf("--force did not overwrite agent.md")
+	}
+}
+
+func TestInit_ForceOverwritesTemplateLock(t *testing.T) {
+	tmp := t.TempDir()
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(initArgsWithRequired(tmp))
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init1: %v", err)
+	}
+
+	lockPath := filepath.Join(tmp, ".agent_team", ".template.lock")
+	if err := os.WriteFile(lockPath, []byte("stale lock"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd2 := NewRootCmd()
+	cmd2.SetOut(&bytes.Buffer{})
+	cmd2.SetErr(&bytes.Buffer{})
+	cmd2.SetArgs(append(initArgsWithRequired(tmp), "--force"))
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("init2: %v", err)
+	}
+	got, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) == "stale lock" {
+		t.Fatal("--force did not overwrite .template.lock")
+	}
+	if !strings.Contains(string(got), `ref = "bundled"`) {
+		t.Errorf("rewritten lock missing bundled ref: %s", got)
 	}
 }

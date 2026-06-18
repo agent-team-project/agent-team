@@ -80,6 +80,29 @@ type DispatchInput struct {
 	Env       []string
 }
 
+// StopOptions controls graceful stop escalation. The default Stop path sends
+// SIGTERM to the instance process group and returns after persisting
+// status=stopped. With Force set, the manager waits for Timeout after SIGTERM,
+// then sends SIGKILL if the child is still alive. A zero Timeout uses
+// stopForceDefaultTimeout.
+type StopOptions struct {
+	Force   bool
+	Timeout time.Duration
+}
+
+// RestartOptions controls the stop half of a restart. By default restart
+// waits Timeout for a graceful stop. With Force set, restart escalates through
+// StopWithOptions, sending SIGKILL if the child does not exit before Timeout.
+type RestartOptions struct {
+	Force   bool
+	Timeout time.Duration
+}
+
+const (
+	stopForceDefaultTimeout = 10 * time.Second
+	stopKillWaitTimeout     = 5 * time.Second
+)
+
 // InstanceManager owns spawn / track / stop for claude children. Concurrency:
 // a single mutex protects the in-memory map; child wait() runs in goroutines.
 type InstanceManager struct {
@@ -188,18 +211,35 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 	m.mu.Lock()
 	m.instances[in.Name] = &tracked{meta: meta, process: proc, reaped: reaped}
 	m.mu.Unlock()
+	m.recordEvent("dispatch", meta, "instance dispatched")
 	go m.reap(in.Name, proc, reaped)
 	return meta, nil
 }
 
-// Stop sends SIGTERM to the child and persists status=stopped. The reaper
-// goroutine will pick up the eventual exit and finalise.
+// Stop sends SIGTERM to the instance process group and persists
+// status=stopped. The reaper goroutine will pick up the eventual exit and
+// finalise.
 //
 // We mark the in-memory status as Stopped BEFORE signalling so the reaper —
 // which can wake up arbitrarily fast on a fast machine, especially under CI
 // load — sees Stopped instead of Running and preserves it. (See `reap`'s
 // switch: it only flips to Crashed/Exited when prior status was Running.)
 func (m *InstanceManager) Stop(instance string) (*Metadata, error) {
+	return m.StopWithOptions(instance, StopOptions{})
+}
+
+// StopWithOptions sends SIGTERM to the instance process group and optionally
+// escalates to SIGKILL if Force is set and the process does not exit within
+// the configured timeout. The user-visible lifecycle remains StatusStopped
+// because the user requested the stop, even if escalation was required.
+func (m *InstanceManager) StopWithOptions(instance string, opts StopOptions) (*Metadata, error) {
+	if opts.Timeout < 0 {
+		return nil, errors.New("stop: timeout must be >= 0")
+	}
+	if opts.Force && opts.Timeout == 0 {
+		opts.Timeout = stopForceDefaultTimeout
+	}
+
 	m.mu.Lock()
 	t, ok := m.instances[instance]
 	if !ok {
@@ -219,16 +259,241 @@ func (m *InstanceManager) Stop(instance string) (*Metadata, error) {
 		return nil, fmt.Errorf("stop: persist: %w", err)
 	}
 	proc := t.process
+	pid := t.meta.PID
+	reaped := t.reaped
 	out := *t.meta
 	m.mu.Unlock()
 
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
+	if proc == nil {
+		var err error
+		proc, err = os.FindProcess(pid)
+		if err != nil {
+			return nil, fmt.Errorf("stop: find pid %d: %w", pid, err)
+		}
+	}
+	if err := signalProcessGroupOrProcess(proc, pid, syscall.SIGTERM); err != nil {
 		// Already gone; the reaper will pick up the wait and finalise.
-		if !errors.Is(err, os.ErrProcessDone) {
+		if !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
 			return nil, fmt.Errorf("stop: signal: %w", err)
 		}
 	}
+	if opts.Force {
+		stopped := waitForProcessExit(pid, reaped, opts.Timeout)
+		if !stopped {
+			if err := signalProcessGroupOrProcess(proc, pid, syscall.SIGKILL); err != nil {
+				if !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+					return nil, fmt.Errorf("stop: kill: %w", err)
+				}
+			}
+			m.recordEvent("kill", &out, "instance stop escalated to SIGKILL")
+			if !waitForProcessExit(pid, reaped, stopKillWaitTimeout) {
+				return nil, fmt.Errorf("stop: pid %d did not exit after SIGKILL", pid)
+			}
+		}
+	}
+	m.recordEvent("stop", &out, "instance stop requested")
 	return &out, nil
+}
+
+func signalProcessGroupOrProcess(proc *os.Process, pid int, sig syscall.Signal) error {
+	if pid > 0 {
+		if err := syscall.Kill(-pid, sig); err == nil {
+			return nil
+		} else if !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
+	}
+	if proc == nil {
+		if pid <= 0 {
+			return os.ErrProcessDone
+		}
+		var err error
+		proc, err = os.FindProcess(pid)
+		if err != nil {
+			return err
+		}
+	}
+	return proc.Signal(sig)
+}
+
+func waitForProcessExit(pid int, reaped <-chan struct{}, timeout time.Duration) bool {
+	if timeout < 0 {
+		timeout = 0
+	}
+	if reaped != nil {
+		if timeout == 0 {
+			select {
+			case <-reaped:
+				return true
+			default:
+				return false
+			}
+		}
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		select {
+		case <-reaped:
+			return true
+		case <-timer.C:
+			return false
+		}
+	}
+	if pid == 0 {
+		return true
+	}
+	if timeout == 0 {
+		return !PidLiveCheck(pid)
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		if !PidLiveCheck(pid) {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return !PidLiveCheck(pid)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// Restart stops a running instance, waits for the old child to exit when the
+// daemon owns a reaper for it, then resumes the same session. If the instance
+// is already stopped/exited/crashed, Restart behaves like Start.
+func (m *InstanceManager) Restart(instance string, timeout time.Duration) (*Metadata, error) {
+	return m.RestartWithOptions(instance, RestartOptions{Timeout: timeout})
+}
+
+func (m *InstanceManager) RestartWithOptions(instance string, opts RestartOptions) (*Metadata, error) {
+	if opts.Timeout < 0 {
+		return nil, errors.New("restart: timeout must be >= 0")
+	}
+	if opts.Timeout == 0 {
+		opts.Timeout = 10 * time.Second
+	}
+
+	m.mu.Lock()
+	t, ok := m.instances[instance]
+	running := ok && t.meta.Status == StatusRunning
+	pid := 0
+	var reaped <-chan struct{}
+	if running {
+		pid = t.meta.PID
+		reaped = t.reaped
+	}
+	m.mu.Unlock()
+
+	if !ok {
+		return m.Start(instance)
+	}
+	if running {
+		if opts.Force {
+			if _, err := m.StopWithOptions(instance, StopOptions{Force: true, Timeout: opts.Timeout}); err != nil {
+				return nil, err
+			}
+		} else if _, err := m.Stop(instance); err != nil {
+			return nil, err
+		}
+		if !opts.Force && reaped != nil {
+			select {
+			case <-reaped:
+			case <-time.After(opts.Timeout):
+				return nil, fmt.Errorf("restart: %q did not stop within %s", instance, opts.Timeout)
+			}
+		} else if !opts.Force {
+			deadline := time.Now().Add(opts.Timeout)
+			for time.Now().Before(deadline) {
+				if !PidLiveCheck(pid) {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			if PidLiveCheck(pid) {
+				return nil, fmt.Errorf("restart: %q pid %d did not stop within %s", instance, pid, opts.Timeout)
+			}
+		}
+	}
+	meta, err := m.Start(instance)
+	if err != nil {
+		return nil, err
+	}
+	m.recordEvent("restart", meta, "instance restarted")
+	return meta, nil
+}
+
+// Remove deletes daemon-owned runtime metadata for an instance. Running
+// instances are refused unless force=true; with force, Remove stops the child
+// first and waits for it to exit before deleting metadata.
+func (m *InstanceManager) Remove(instance string, force bool, timeout time.Duration) error {
+	if instance == "" {
+		return errors.New("remove: instance is required")
+	}
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+
+	m.mu.Lock()
+	t, ok := m.instances[instance]
+	m.mu.Unlock()
+	if !ok {
+		mdisk, err := ReadMetadata(m.daemonRoot, instance)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("remove: unknown instance %q", instance)
+			}
+			return err
+		}
+		t = &tracked{meta: mdisk}
+		m.mu.Lock()
+		if current, exists := m.instances[instance]; exists {
+			t = current
+		} else {
+			m.instances[instance] = t
+		}
+		m.mu.Unlock()
+	}
+
+	m.mu.Lock()
+	running := t.meta.Status == StatusRunning
+	pid := t.meta.PID
+	reaped := t.reaped
+	m.mu.Unlock()
+
+	if running {
+		if !force {
+			return fmt.Errorf("remove: instance %q is running; stop it first or use force", instance)
+		}
+		if _, err := m.Stop(instance); err != nil {
+			return err
+		}
+		if reaped != nil {
+			select {
+			case <-reaped:
+			case <-time.After(timeout):
+				return fmt.Errorf("remove: %q did not stop within %s", instance, timeout)
+			}
+		} else {
+			deadline := time.Now().Add(timeout)
+			for time.Now().Before(deadline) {
+				if !PidLiveCheck(pid) {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			if PidLiveCheck(pid) {
+				return fmt.Errorf("remove: %q pid %d did not stop within %s", instance, pid, timeout)
+			}
+		}
+	}
+
+	m.mu.Lock()
+	eventMeta := *t.meta
+	delete(m.instances, instance)
+	m.mu.Unlock()
+	if err := RemoveInstance(m.daemonRoot, instance); err != nil {
+		return fmt.Errorf("remove: metadata: %w", err)
+	}
+	m.recordEvent("remove", &eventMeta, "instance metadata removed")
+	return nil
 }
 
 // Start resumes a previously-stopped persistent instance. It re-spawns claude
@@ -238,8 +503,8 @@ func (m *InstanceManager) Stop(instance string) (*Metadata, error) {
 func (m *InstanceManager) Start(instance string) (*Metadata, error) {
 	m.mu.Lock()
 	t, ok := m.instances[instance]
-	m.mu.Unlock()
 	if !ok {
+		m.mu.Unlock()
 		// Try loading from disk in case daemon was restarted between stop+start.
 		mdisk, err := ReadMetadata(m.daemonRoot, instance)
 		if err != nil {
@@ -249,48 +514,59 @@ func (m *InstanceManager) Start(instance string) (*Metadata, error) {
 			return nil, err
 		}
 		t = &tracked{meta: mdisk}
+	} else {
+		m.mu.Unlock()
 	}
-	if t.meta.Status == StatusRunning {
-		return t.meta, nil
+	base := *t.meta
+	if base.Status == StatusRunning {
+		return &base, nil
 	}
-	if t.meta.SessionID == "" {
+	if base.SessionID == "" {
 		return nil, fmt.Errorf("start: %q has no session_id; cannot resume", instance)
 	}
-	if t.meta.Workspace == "" {
+	if base.Workspace == "" {
 		return nil, fmt.Errorf("start: %q has no workspace; cannot resume", instance)
 	}
 
-	logPath := t.meta.LogPath
+	logPath := base.LogPath
 	if logPath == "" {
 		logPath = filepath.Join(instanceDir(m.daemonRoot, instance), "child.log")
 	}
-	args := []string{"claude", "--resume", t.meta.SessionID}
-	proc, err := m.spawner(args, os.Environ(), t.meta.Workspace, logPath, logPath)
+	args := []string{"claude", "--resume", base.SessionID}
+	proc, err := m.spawner(args, os.Environ(), base.Workspace, logPath, logPath)
 	if err != nil {
 		return nil, fmt.Errorf("start: spawn: %w", err)
 	}
 
 	now := time.Now().UTC()
-	t.meta.PID = proc.Pid
-	t.meta.StartedAt = now
-	t.meta.StoppedAt = time.Time{}
-	t.meta.ExitedAt = time.Time{}
-	t.meta.ExitCode = nil
-	t.meta.Status = StatusRunning
-	t.meta.LogPath = logPath
-	if err := WriteMetadata(m.daemonRoot, t.meta); err != nil {
+	meta := base
+	meta.PID = proc.Pid
+	meta.StartedAt = now
+	meta.StoppedAt = time.Time{}
+	meta.ExitedAt = time.Time{}
+	meta.ExitCode = nil
+	meta.Status = StatusRunning
+	meta.LogPath = logPath
+	reaped := make(chan struct{})
+	next := &tracked{meta: &meta, process: proc, reaped: reaped}
+
+	m.mu.Lock()
+	if current, exists := m.instances[instance]; exists && current != t && current.meta.Status == StatusRunning {
+		m.mu.Unlock()
+		_ = proc.Kill()
+		return nil, fmt.Errorf("start: instance %q was started concurrently (pid=%d)", instance, current.meta.PID)
+	}
+	m.instances[instance] = next
+	m.mu.Unlock()
+
+	if err := WriteMetadata(m.daemonRoot, &meta); err != nil {
 		_ = proc.Kill()
 		return nil, fmt.Errorf("start: persist: %w", err)
 	}
-	t.process = proc
-	reaped := make(chan struct{})
-	t.reaped = reaped
-
-	m.mu.Lock()
-	m.instances[instance] = t
-	m.mu.Unlock()
+	m.recordEvent("start", &meta, "instance resumed")
 	go m.reap(instance, proc, reaped)
-	return t.meta, nil
+	out := meta
+	return &out, nil
 }
 
 // List returns a snapshot of every instance the manager knows about.
@@ -325,19 +601,29 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 		m.mu.Unlock()
 		return
 	}
+	if t.process != proc {
+		// A newer incarnation of this instance has already been spawned.
+		// This stale reaper must not overwrite the current metadata.
+		m.mu.Unlock()
+		return
+	}
 	now := time.Now().UTC()
 	t.meta.ExitedAt = now
+	eventAction := ""
 
 	switch {
 	case err != nil:
 		// Wait failed (rare). Mark crashed.
 		t.meta.Status = StatusCrashed
+		eventAction = "crash"
 	case state == nil:
 		t.meta.Status = StatusExited
+		eventAction = "exit"
 	case state.ExitCode() == 0:
 		// Clean exit. Preserve StatusStopped if the user asked for stop.
 		if t.meta.Status != StatusStopped {
 			t.meta.Status = StatusExited
+			eventAction = "exit"
 		}
 		ec := 0
 		t.meta.ExitCode = &ec
@@ -348,6 +634,7 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 		// keep it as stopped.
 		if t.meta.Status != StatusStopped {
 			t.meta.Status = StatusCrashed
+			eventAction = "crash"
 		}
 	}
 	if err := WriteMetadata(m.daemonRoot, t.meta); err != nil {
@@ -356,7 +643,11 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 		_ = err
 	}
 	hook := m.reapHook
+	eventMeta := *t.meta
 	m.mu.Unlock()
+	if eventAction != "" {
+		m.recordEvent(eventAction, &eventMeta, "instance process exited")
+	}
 	if hook != nil {
 		hook(instance)
 	}
@@ -385,6 +676,20 @@ func (m *InstanceManager) reapedChan(instance string) <-chan struct{} {
 		return nil
 	}
 	return t.reaped
+}
+
+func (m *InstanceManager) recordEvent(action string, meta *Metadata, message string) {
+	if meta == nil {
+		return
+	}
+	_ = AppendLifecycleEvent(m.daemonRoot, &LifecycleEvent{
+		Action:   action,
+		Instance: meta.Instance,
+		Agent:    meta.Agent,
+		Status:   meta.Status,
+		PID:      meta.PID,
+		Message:  message,
+	})
 }
 
 // WaitForReaper blocks until the per-instance reaper goroutine has finalised

@@ -20,8 +20,8 @@ import (
 // Only the fields the reader needs for rendering / staleness logic are
 // declared. `omitempty` lets the encoder skip absent sections.
 type statusFile struct {
-	Status   statusSection   `toml:"status"`
-	Work     *workSection    `toml:"work,omitempty"`
+	Status   statusSection    `toml:"status"`
+	Work     *workSection     `toml:"work,omitempty"`
 	Blocking *blockingSection `toml:"blocking,omitempty"`
 }
 
@@ -56,6 +56,9 @@ type instanceRow struct {
 	HasFile   bool   // false → row was inferred from the empty state dir
 	Lifecycle string // daemon-reported (running/stopped/exited/crashed); empty when no daemon
 	PID       int    // daemon-reported; 0 when no daemon
+	StartedAt time.Time
+	StoppedAt time.Time
+	ExitedAt  time.Time
 }
 
 // staleAfter is the threshold past which a non-idle/non-done instance is
@@ -82,6 +85,15 @@ func loadInstanceRows(teamDir string, agentNames map[string]bool, now time.Time)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Instance < rows[j].Instance })
 	return rows
+}
+
+func statusPhaseByInstance(teamDir string, now time.Time) map[string]string {
+	rows := loadInstanceRows(teamDir, loadAgentNames(teamDir), now)
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		out[row.Instance] = psPhaseKey(row)
+	}
+	return out
 }
 
 func instanceRowFor(stateRoot, instance string, agentNames map[string]bool, now time.Time) instanceRow {
@@ -234,56 +246,3 @@ func loadAgentNames(teamDir string) map[string]bool {
 	}
 	return out
 }
-
-// printInstanceStatus appends a status panel to `instance show <name>` when
-// status.toml is present. No-op otherwise so existing show output is
-// preserved for instances that haven't emitted.
-func printInstanceStatus(w io.Writer, stateDir string, now time.Time) {
-	path := filepath.Join(stateDir, "status.toml")
-	st, err := os.Stat(path)
-	if err != nil {
-		return
-	}
-	var sf statusFile
-	if _, err := toml.DecodeFile(path, &sf); err != nil {
-		fmt.Fprintf(w, "status: (parse error: %v)\n\n", err)
-		return
-	}
-
-	fmt.Fprintln(w, "status:")
-	fmt.Fprintf(w, "  phase:        %s\n", sf.Status.Phase)
-	if sf.Status.Description != "" {
-		fmt.Fprintf(w, "  description:  %s\n", sf.Status.Description)
-	}
-	if sf.Status.Since != "" {
-		fmt.Fprintf(w, "  since:        %s\n", sf.Status.Since)
-	}
-	if sf.Status.LastAction != "" {
-		fmt.Fprintf(w, "  last_action:  %s\n", sf.Status.LastAction)
-	}
-	fmt.Fprintf(w, "  age:          %s\n", formatAge(now.Sub(st.ModTime())))
-	if sf.Status.Phase != "idle" && sf.Status.Phase != "done" && now.Sub(st.ModTime()) > staleAfter {
-		fmt.Fprintln(w, "  stale:        yes (mtime > 10m on a non-idle phase)")
-	}
-
-	if sf.Work != nil {
-		fmt.Fprintln(w, "work:")
-		if sf.Work.Ticket != "" {
-			fmt.Fprintf(w, "  ticket:  %s\n", sf.Work.Ticket)
-		}
-		if sf.Work.PR != "" {
-			fmt.Fprintf(w, "  pr:      %s\n", sf.Work.PR)
-		}
-		if sf.Work.Branch != "" {
-			fmt.Fprintf(w, "  branch:  %s\n", sf.Work.Branch)
-		}
-	}
-
-	if sf.Blocking != nil {
-		fmt.Fprintln(w, "blocking:")
-		fmt.Fprintf(w, "  reason:  %s\n", sf.Blocking.Reason)
-		fmt.Fprintf(w, "  ask_to:  %s\n", sf.Blocking.AskTo)
-	}
-	fmt.Fprintln(w)
-}
-

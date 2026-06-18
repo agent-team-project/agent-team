@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -189,6 +191,52 @@ func TestClient_ChannelUnsubscribe_Idempotent(t *testing.T) {
 	r2, _ := c.ChannelUnsubscribe("#x", "alice")
 	if r2.Unsubscribed {
 		t.Errorf("second unsubscribe: %+v", r2)
+	}
+}
+
+func TestChannelCommandsUseLocalStoreWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	if err := runChannelPublish(out, stderr, teamDir, "#ops", "tester", "offline broadcast"); err != nil {
+		t.Fatalf("publish local channel: %v\nstderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(out.String(), "published seq=1") {
+		t.Fatalf("publish output = %q, want seq=1", out.String())
+	}
+
+	out.Reset()
+	if err := runChannelLs(out, stderr, teamDir); err != nil {
+		t.Fatalf("list local channels: %v\nstderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(out.String(), "#ops") || !strings.Contains(out.String(), "1") {
+		t.Fatalf("list output = %q, want #ops with one message", out.String())
+	}
+
+	out.Reset()
+	if err := runChannelShow(out, stderr, teamDir, "#ops"); err != nil {
+		t.Fatalf("show local channel: %v\nstderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(out.String(), "offline broadcast") || !strings.Contains(out.String(), "messages:      1") {
+		t.Fatalf("show output = %q, want local message", out.String())
+	}
+
+	out.Reset()
+	if err := runChannelRm(out, stderr, teamDir, "#ops"); err != nil {
+		t.Fatalf("rm local channel: %v\nstderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(out.String(), "removed #ops") {
+		t.Fatalf("rm output = %q, want removal", out.String())
+	}
+
+	out.Reset()
+	if err := runChannelLs(out, stderr, teamDir); err != nil {
+		t.Fatalf("list after rm: %v\nstderr=%s", err, stderr.String())
+	}
+	if strings.TrimSpace(out.String()) != "(no channels)" {
+		t.Fatalf("list after rm = %q, want no channels", out.String())
 	}
 }
 

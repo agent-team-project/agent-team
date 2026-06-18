@@ -112,6 +112,62 @@ func TestEvent_EphemeralDispatchUnderCapacity(t *testing.T) {
 	}
 }
 
+func TestEvent_EphemeralReapCleansMetadataAndState(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(t.TempDir(), ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeSpawner(time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
+	srv := httptest.NewServer(Handler(m, nil, resolver, root))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"agent.dispatch","payload":{"target":"worker"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var got struct {
+		Dispatched []map[string]any `json:"dispatched"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Dispatched) != 1 {
+		t.Fatalf("expected 1 dispatched, got %+v", got)
+	}
+	id, _ := got.Dispatched[0]["instance_id"].(string)
+	if id == "" {
+		t.Fatalf("missing dispatched instance id: %+v", got)
+	}
+	stateDir := filepath.Join(teamDir, "state", id)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ch := m.reapedChan(id)
+	if ch == nil {
+		t.Fatalf("instance %s has no reaper channel", id)
+	}
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("reaper for %s did not finish", id)
+	}
+
+	if _, err := ReadMetadata(root, id); !os.IsNotExist(err) {
+		t.Fatalf("metadata for %s should be removed, err=%v", id, err)
+	}
+	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
+		t.Fatalf("state dir for %s should be removed, err=%v", id, err)
+	}
+	running, queued := resolver.QueueDepth("worker")
+	if running != 0 || queued != 0 {
+		t.Fatalf("queue depth after reap = running:%d queued:%d, want zero", running, queued)
+	}
+}
+
 func TestEvent_EphemeralReplicasQueueing(t *testing.T) {
 	root := t.TempDir()
 	fake := newFakeSpawner(30 * time.Second)

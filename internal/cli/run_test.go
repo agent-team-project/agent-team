@@ -2,14 +2,22 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
 )
 
@@ -18,15 +26,15 @@ import (
 // cleans up via defer, so the recorder snapshots filesystem state synchronously
 // while the dir is still alive.
 type runCapture struct {
-	args         []string
-	env          []string
-	cwd          string
-	rc           error
-	skillsDirOK  bool
-	promptBody   string
-	addDir       string
-	promptFile   string
-	agentsJSON   string
+	args        []string
+	env         []string
+	cwd         string
+	rc          error
+	skillsDirOK bool
+	promptBody  string
+	addDir      string
+	promptFile  string
+	agentsJSON  string
 }
 
 func captureRun(t *testing.T, rc error) (*runCapture, func()) {
@@ -57,6 +65,54 @@ func captureRun(t *testing.T, rc error) (*runCapture, func()) {
 		return cap.rc
 	}
 	return cap, func() { execClaude = prev }
+}
+
+func startRunTestDaemon(t *testing.T, teamDir string, mgr *daemon.InstanceManager) func() {
+	t.Helper()
+	if err := os.MkdirAll(daemon.DaemonRoot(teamDir), 0o755); err != nil {
+		t.Fatalf("mkdir daemon root: %v", err)
+	}
+	socket := daemon.SocketPath(teamDir)
+	_ = os.Remove(socket)
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen unix daemon socket: %v", err)
+	}
+	var resolver *daemon.EventResolver
+	if topo, err := topology.LoadFromTeamDir(teamDir); err == nil {
+		resolver = daemon.NewEventResolver(mgr, teamDir, topo)
+	}
+	srv := &http.Server{Handler: daemon.Handler(mgr, nil, resolver, teamDir)}
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	if err := os.WriteFile(daemon.PidPath(teamDir), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+		t.Fatalf("write daemon pidfile: %v", err)
+	}
+	return func() {
+		_ = srv.Close()
+		_ = ln.Close()
+		_ = os.Remove(socket)
+		_ = os.Remove(daemon.PidPath(teamDir))
+	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsEnvPrefix(env []string, prefix string) bool {
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // initInto runs `init` against a tmp dir to produce a real .agent_team/ tree.
@@ -224,6 +280,345 @@ func TestRun_MissingTeamDir(t *testing.T) {
 	var ec ExitCode
 	if !errors.As(err, &ec) || int(ec) != 2 {
 		t.Errorf("expected exit 2, got %v", err)
+	}
+}
+
+func TestRunJSONRequiresPrompt(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "manager", "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected --json without --prompt to fail")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || code != 2 {
+		t.Fatalf("err = %v, want exit 2", err)
+	}
+	if !strings.Contains(stderr.String(), "--json requires --prompt or --detach") {
+		t.Fatalf("stderr = %q, want --json requires --prompt or --detach", stderr.String())
+	}
+}
+
+func TestRunJSONRejectsNoDaemon(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "manager", "--prompt", "hello", "--json", "--no-daemon"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected --json with --no-daemon to fail")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || code != 2 {
+		t.Fatalf("err = %v, want exit 2", err)
+	}
+	if !strings.Contains(stderr.String(), "--json cannot be combined with --no-daemon") {
+		t.Fatalf("stderr = %q, want --no-daemon validation", stderr.String())
+	}
+}
+
+func TestRunDetachRejectsNoDaemon(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "manager", "--detach", "--no-daemon"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected --detach with --no-daemon to fail")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || code != 2 {
+		t.Fatalf("err = %v, want exit 2", err)
+	}
+	if !strings.Contains(stderr.String(), "--detach cannot be combined with --no-daemon") {
+		t.Fatalf("stderr = %q, want --detach validation", stderr.String())
+	}
+}
+
+func TestRunNegativeReadyTimeoutFailsFast(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "manager", "--detach", "--ready-timeout", "-1s"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected ready-timeout validation error")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || code != 2 {
+		t.Fatalf("err = %v, want exit 2", err)
+	}
+	if !strings.Contains(stderr.String(), "--ready-timeout must be >= 0") {
+		t.Fatalf("stderr = %q, want ready-timeout validation", stderr.String())
+	}
+}
+
+func TestRunJSONRequiresRunningDaemon(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "manager", "--prompt", "hello", "--json", "--target", tmp})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected --json without daemon to fail")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || code != 2 {
+		t.Fatalf("err = %v, want exit 2", err)
+	}
+	if !strings.Contains(stderr.String(), "daemon is not running") {
+		t.Fatalf("stderr = %q, want daemon hint", stderr.String())
+	}
+}
+
+func TestRunFormatRejectsConflictingModes(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"run", "manager", "--format", "{{.Instance}}"}, "--format requires --prompt or --detach"},
+		{[]string{"run", "manager", "--detach", "--format", "{{.Instance}}", "--json"}, "--format cannot be combined with --json"},
+		{[]string{"run", "manager", "--prompt", "hello", "--format", "{{.Instance}}", "--no-daemon"}, "--format cannot be combined with --no-daemon"},
+		{[]string{"run", "manager", "--detach", "--format", "{{"}, "invalid --format template"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		stderr := &bytes.Buffer{}
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+	}
+}
+
+func TestRunAttachRejectsConflictingModes(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"run", "manager", "--attach", "--json"}, "--attach cannot be combined with --json"},
+		{[]string{"run", "manager", "--attach", "--format", "{{.Instance}}"}, "--format cannot be combined with --attach"},
+		{[]string{"run", "manager", "--attach", "--no-daemon"}, "--attach cannot be combined with --no-daemon"},
+		{[]string{"run", "manager", "--attach", "--detach"}, "choose one of --detach or --attach"},
+		{[]string{"run", "manager", "--tail", "all"}, "--tail requires --attach"},
+		{[]string{"run", "manager", "--attach", "--tail", "-1"}, "--tail must be >= 0"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		stderr := &bytes.Buffer{}
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+	}
+}
+
+func TestRunFormatRequiresRunningDaemon(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "manager", "--prompt", "hello", "--format", "{{.Instance}}", "--target", tmp})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected --format without daemon to fail")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || code != 2 {
+		t.Fatalf("err = %v, want exit 2", err)
+	}
+	if !strings.Contains(stderr.String(), "daemon is not running") {
+		t.Fatalf("stderr = %q, want daemon hint", stderr.String())
+	}
+}
+
+func TestRunAttachDispatchesThroughDaemonAndFollowsLog(t *testing.T) {
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-run-attach-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	base := fakeSpawnerForTest(t, 2*time.Second)
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), func(args []string, env []string, workspace, stdoutPath, stderrPath string) (*os.Process, error) {
+		if err := os.MkdirAll(filepath.Dir(stdoutPath), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(stdoutPath, []byte("attach log\n"), 0o644); err != nil {
+			return nil, err
+		}
+		return base(args, env, workspace, stdoutPath, stderrPath)
+	})
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	defer func() {
+		for _, meta := range mgr.List() {
+			if meta.Instance == "manager-attach" && meta.Status == daemon.StatusRunning {
+				stopAndWaitForTest(t, mgr, "manager-attach")
+				return
+			}
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetContext(ctx)
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "manager", "--name", "manager-attach", "--target", tmp, "--attach", "--tail", "all"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run --attach: %v\nstdout=%s\nstderr=%s", err, out.String(), stderr.String())
+	}
+	body := out.String()
+	for _, want := range []string{"dispatched manager-attach", "attaching to manager-attach", "attach log\n"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("run --attach output missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestRunDetachDispatchesThroughDaemonWithoutPrompt(t *testing.T) {
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-run-detach-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	wantWorkspace := tmp
+	if eval, err := filepath.EvalSymlinks(tmp); err == nil {
+		wantWorkspace = eval
+	}
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	base := fakeSpawnerForTest(t, 2*time.Second)
+	var (
+		mu       sync.Mutex
+		gotArgs  []string
+		gotEnv   []string
+		gotSpace string
+	)
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), func(args []string, env []string, workspace, stdoutPath, stderrPath string) (*os.Process, error) {
+		mu.Lock()
+		gotArgs = append([]string(nil), args...)
+		gotEnv = append([]string(nil), env...)
+		gotSpace = workspace
+		mu.Unlock()
+		return base(args, env, workspace, stdoutPath, stderrPath)
+	})
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	defer func() {
+		for _, meta := range mgr.List() {
+			if meta.Instance == "manager" {
+				stopAndWaitForTest(t, mgr, "manager")
+				return
+			}
+		}
+	}()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--detach", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run --detach --json: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body runDispatchJSON
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("json body: %v\nstdout: %s", err, out.String())
+	}
+	if body.Instance != "manager" || body.Agent != "manager" || body.PID == 0 || body.SessionID == "" || body.Follow == "" {
+		t.Fatalf("dispatch body = %+v", body)
+	}
+
+	mu.Lock()
+	args := append([]string(nil), gotArgs...)
+	env := append([]string(nil), gotEnv...)
+	workspace := gotSpace
+	mu.Unlock()
+	if workspace != wantWorkspace {
+		t.Fatalf("workspace = %q, want %q", workspace, wantWorkspace)
+	}
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-p" {
+			t.Fatalf("detached no-prompt dispatch should not add -p, args=%v", args)
+		}
+	}
+	for _, want := range []string{"--agents", "--add-dir", "--append-system-prompt-file"} {
+		if !containsString(args, want) {
+			t.Fatalf("detached dispatch args missing %s: %v", want, args)
+		}
+	}
+	if !containsEnvPrefix(env, "AGENT_TEAM_INSTANCE=manager") {
+		t.Fatalf("detached dispatch env missing AGENT_TEAM_INSTANCE: %v", env)
+	}
+}
+
+func TestRunDetachFormatPrintsDispatchMetadata(t *testing.T) {
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-run-format-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), fakeSpawnerForTest(t, 2*time.Second))
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	defer func() {
+		for _, meta := range mgr.List() {
+			if meta.Instance == "manager-format" {
+				stopAndWaitForTest(t, mgr, "manager-format")
+				return
+			}
+		}
+	}()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "manager", "--name", "manager-format", "--target", tmp, "--detach", "--format", "{{.Instance}}:{{.Agent}}:{{.PID}}:{{.Follow}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run --detach --format: %v\nstderr: %s", err, stderr.String())
+	}
+	parts := strings.SplitN(strings.TrimSpace(out.String()), ":", 4)
+	if len(parts) != 4 {
+		t.Fatalf("formatted run output = %q, want four fields", out.String())
+	}
+	if parts[0] != "manager-format" || parts[1] != "manager" || parts[2] == "0" || parts[3] == "" {
+		t.Fatalf("formatted run output = %q, want populated dispatch metadata", out.String())
 	}
 }
 
