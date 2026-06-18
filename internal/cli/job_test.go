@@ -268,16 +268,56 @@ func TestJobCreateDryRunDoesNotWrite(t *testing.T) {
 		}
 	}
 
-	conflict := NewRootCmd()
-	conflictOut, conflictErr := &bytes.Buffer{}, &bytes.Buffer{}
-	conflict.SetOut(conflictOut)
-	conflict.SetErr(conflictErr)
-	conflict.SetArgs([]string{"job", "create", "SQU-45", "--repo", tmp, "--dry-run", "--dispatch"})
-	if err := conflict.Execute(); err == nil {
-		t.Fatalf("job create --dry-run --dispatch succeeded: stdout=%s", conflictOut.String())
+	dispatchCmd := NewRootCmd()
+	dispatchOut, dispatchErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dispatchCmd.SetOut(dispatchOut)
+	dispatchCmd.SetErr(dispatchErr)
+	dispatchCmd.SetArgs([]string{"job", "create", "SQU-45", "--repo", tmp, "--dry-run", "--dispatch", "--json"})
+	if err := dispatchCmd.Execute(); err != nil {
+		t.Fatalf("job create --dry-run --dispatch: %v\nstderr=%s", err, dispatchErr.String())
 	}
-	if !strings.Contains(conflictErr.String(), "--dry-run cannot be combined with --dispatch") {
-		t.Fatalf("conflict stderr = %q", conflictErr.String())
+	var dispatchPreview jobDispatchPreview
+	if err := json.Unmarshal(dispatchOut.Bytes(), &dispatchPreview); err != nil {
+		t.Fatalf("decode create dispatch dry-run json: %v\nbody=%s", err, dispatchOut.String())
+	}
+	if !dispatchPreview.DryRun || dispatchPreview.Job == nil || dispatchPreview.Job.ID != "squ-45" {
+		t.Fatalf("dispatch preview = %+v", dispatchPreview)
+	}
+	if dispatchPreview.Dispatch == nil || dispatchPreview.Dispatch.RequestedName != "worker-squ-45" {
+		t.Fatalf("dispatch route preview = %+v", dispatchPreview.Dispatch)
+	}
+	payload := dispatchPreview.Dispatch.Preview.Payload
+	if payload["job_id"] != "squ-45" || payload["workspace"] != "worktree" {
+		t.Fatalf("dispatch payload = %+v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".agent_team", "jobs", "squ-45.toml")); !os.IsNotExist(err) {
+		t.Fatalf("dispatch dry-run wrote job file, err=%v", err)
+	}
+
+	pipelineCmd := NewRootCmd()
+	pipelineOut, pipelineErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipelineCmd.SetOut(pipelineOut)
+	pipelineCmd.SetErr(pipelineErr)
+	pipelineCmd.SetArgs([]string{"job", "create", "SQU-46", "--repo", tmp, "--pipeline", "ticket_to_pr", "--dry-run", "--dispatch", "--json"})
+	if err := pipelineCmd.Execute(); err != nil {
+		t.Fatalf("pipeline job create --dry-run --dispatch: %v\nstderr=%s", err, pipelineErr.String())
+	}
+	var advancePreview jobAdvancePreview
+	if err := json.Unmarshal(pipelineOut.Bytes(), &advancePreview); err != nil {
+		t.Fatalf("decode pipeline dispatch dry-run json: %v\nbody=%s", err, pipelineOut.String())
+	}
+	if !advancePreview.DryRun || advancePreview.Job == nil || advancePreview.Job.ID != "squ-46" || advancePreview.Step == nil || advancePreview.Step.ID != "implement" {
+		t.Fatalf("advance preview = %+v", advancePreview)
+	}
+	if advancePreview.Dispatch == nil || advancePreview.Dispatch.RequestedName != "worker-squ-46-implement" {
+		t.Fatalf("advance route preview = %+v", advancePreview.Dispatch)
+	}
+	advancePayload := advancePreview.Dispatch.Preview.Payload
+	if advancePayload["pipeline"] != "ticket_to_pr" || advancePayload["pipeline_step"] != "implement" || advancePayload["job_id"] != "squ-46" {
+		t.Fatalf("advance payload = %+v", advancePayload)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".agent_team", "jobs", "squ-46.toml")); !os.IsNotExist(err) {
+		t.Fatalf("pipeline dispatch dry-run wrote job file, err=%v", err)
 	}
 }
 

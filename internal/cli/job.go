@@ -148,10 +148,6 @@ func newJobCreateCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if dryRun && dispatchNow {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --dry-run cannot be combined with --dispatch.")
-				return exitErr(2)
-			}
 			tmpl, err := parseJobFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
@@ -212,6 +208,29 @@ func newJobCreateCmd() *cobra.Command {
 				return exitErr(2)
 			}
 			if dryRun {
+				if dispatchNow {
+					if len(j.Steps) > 0 {
+						preview, err := previewJobAdvanceDispatch(teamDir, j, workspace)
+						if err != nil {
+							fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
+							return exitErr(1)
+						}
+						return renderJobAdvancePreview(cmd.OutOrStdout(), preview, jsonOut, tmpl)
+					}
+					payload, requestedName, err := buildDispatchEventPayload(j.Target, j.Ticket, j.Kickoff, j.Instance, "", workspace)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
+						return exitErr(2)
+					}
+					payload["job_id"] = j.ID
+					payload["job"] = j.ID
+					preview, err := previewDispatchPayload(teamDir, j.Target, requestedName, payload)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
+						return exitErr(1)
+					}
+					return renderJobDispatchPreview(cmd.OutOrStdout(), j, preview, jsonOut, tmpl)
+				}
 				return renderJobCreatePreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
 			data := map[string]string{
@@ -4678,6 +4697,80 @@ func renderJobDispatchPreview(w io.Writer, j *job.Job, dispatch *dispatchRoutePr
 		return nil
 	}
 	return renderEventPublishRoutePreview(w, dispatch.Preview)
+}
+
+type jobAdvancePreview struct {
+	Job      *job.Job              `json:"job"`
+	Step     *job.Step             `json:"step,omitempty"`
+	Dispatch *dispatchRoutePreview `json:"dispatch,omitempty"`
+	Message  string                `json:"message,omitempty"`
+	DryRun   bool                  `json:"dry_run"`
+}
+
+func previewJobAdvanceDispatch(teamDir string, j *job.Job, workspace string) (*jobAdvancePreview, error) {
+	step := nextReadyJobStep(j)
+	if step == nil {
+		message := "no ready steps"
+		if allJobStepsDone(j) {
+			message = "all steps done"
+		}
+		return &jobAdvancePreview{Job: j, Message: message, DryRun: true}, nil
+	}
+	name := step.Instance
+	if strings.TrimSpace(name) == "" {
+		name = step.Target + "-" + j.ID + "-" + job.NormalizeID(step.ID)
+	}
+	payload, requestedName, err := buildDispatchEventPayload(step.Target, j.Ticket, j.Kickoff, name, "job:"+j.ID, workspace)
+	if err != nil {
+		return nil, err
+	}
+	payload["job_id"] = j.ID
+	payload["job"] = j.ID
+	if j.Pipeline != "" {
+		payload["pipeline"] = j.Pipeline
+	}
+	payload["pipeline_step"] = step.ID
+	dispatch, err := previewDispatchPayload(teamDir, step.Target, requestedName, payload)
+	if err != nil {
+		return nil, err
+	}
+	return &jobAdvancePreview{Job: j, Step: step, Dispatch: dispatch, DryRun: true}, nil
+}
+
+func renderJobAdvancePreview(w io.Writer, preview *jobAdvancePreview, jsonOut bool, tmpl *template.Template) error {
+	if preview == nil {
+		preview = &jobAdvancePreview{DryRun: true}
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(preview)
+	}
+	if tmpl != nil {
+		if err := tmpl.Execute(w, preview); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(w)
+		return err
+	}
+	if preview.Message != "" {
+		fmt.Fprintf(w, "Job: %s dry-run advance %s\n", preview.Job.ID, preview.Message)
+		return nil
+	}
+	requestedName := ""
+	if preview.Dispatch != nil {
+		requestedName = preview.Dispatch.RequestedName
+	}
+	stepID := ""
+	target := ""
+	if preview.Step != nil {
+		stepID = preview.Step.ID
+		target = preview.Step.Target
+	}
+	fmt.Fprintf(w, "Job: %s dry-run advance step=%s target=%s instance=%s\n", preview.Job.ID, stepID, target, requestedName)
+	if preview.Dispatch == nil || preview.Dispatch.Preview == nil || !eventPublishPreviewHasRoutes(preview.Dispatch.Preview) {
+		fmt.Fprintln(w, "(no triggers matched)")
+		return nil
+	}
+	return renderEventPublishRoutePreview(w, preview.Dispatch.Preview)
 }
 
 func parseJobShowEventsTail(raw string) (int, error) {
