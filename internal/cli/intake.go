@@ -45,6 +45,7 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 		payload       string
 		payloadFile   string
 		dryRun        bool
+		previewRoutes bool
 		reconcileJob  bool
 		cleanupMerged bool
 		jsonOut       bool
@@ -64,6 +65,10 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake github: --cleanup-merged requires --reconcile-job.")
 				return exitErr(2)
 			}
+			if previewRoutes && !dryRun {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake %s: --preview-triggers requires --dry-run.\n", provider)
+				return exitErr(2)
+			}
 			tmpl, err := parseIntakeFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake %s: %v\n", provider, err)
@@ -81,24 +86,34 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 			}
 			var reconcile *job.ReconcileResult
 			var cleanupPreview *jobCleanupPreview
+			var triggerPreview *eventPublishPreview
 			cleanup := ""
-			if provider == "github" && reconcileJob {
+			if (provider == "github" && reconcileJob) || previewRoutes {
 				teamDir, err := resolveTeamDir(cmd, target)
 				if err != nil {
 					return err
 				}
-				if dryRun {
-					reconcile, cleanupPreview, err = previewGitHubIntakeJob(teamDir, ev, cleanupMerged)
-				} else {
-					reconcile, cleanup, err = reconcileGitHubIntakeJob(teamDir, ev, cleanupMerged)
+				if provider == "github" && reconcileJob {
+					if dryRun {
+						reconcile, cleanupPreview, err = previewGitHubIntakeJob(teamDir, ev, cleanupMerged)
+					} else {
+						reconcile, cleanup, err = reconcileGitHubIntakeJob(teamDir, ev, cleanupMerged)
+					}
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake github: %v\n", err)
+						return exitErr(1)
+					}
 				}
-				if err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake github: %v\n", err)
-					return exitErr(1)
+				if previewRoutes {
+					triggerPreview, err = previewEventPublish(teamDir, ev.Type, ev.Payload)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake %s: %v\n", provider, err)
+						return exitErr(1)
+					}
 				}
 			}
 			if dryRun {
-				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, reconcile, cleanupPreview)
+				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, reconcile, cleanupPreview, triggerPreview)
 			}
 			return publishIntakeEventWithJob(cmd, target, ev, jsonOut, tmpl, reconcile, cleanup)
 		},
@@ -107,6 +122,7 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 	cmd.Flags().StringVar(&payload, "payload", "", "Webhook JSON object.")
 	cmd.Flags().StringVar(&payloadFile, "payload-file", "", "Read webhook JSON from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Normalize and print the event without publishing to the daemon.")
+	cmd.Flags().BoolVar(&previewRoutes, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
 	if provider == "github" {
 		cmd.Flags().BoolVar(&reconcileJob, "reconcile-job", false, "Also reconcile the normalized PR event into the owning durable job.")
 		cmd.Flags().BoolVar(&cleanupMerged, "cleanup-merged", false, "With --reconcile-job, remove the job-owned worktree and branch after a merged PR event.")
@@ -150,7 +166,7 @@ func newIntakeScheduleCmd() *cobra.Command {
 			}
 			ev := &intake.Event{Type: "schedule", Payload: body}
 			if dryRun {
-				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, nil, nil)
+				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, nil, nil, nil)
 			}
 			return publishIntakeEvent(cmd, target, ev, jsonOut, tmpl)
 		},
@@ -196,6 +212,7 @@ type intakePublishResult struct {
 	Reconcile      *job.ReconcileResult `json:"reconcile,omitempty"`
 	Cleanup        string               `json:"cleanup,omitempty"`
 	CleanupPreview *jobCleanupPreview   `json:"cleanup_preview,omitempty"`
+	Preview        *eventPublishPreview `json:"preview,omitempty"`
 	DryRun         bool                 `json:"dry_run,omitempty"`
 }
 
@@ -210,8 +227,8 @@ func parseIntakeFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
-func renderIntakeDryRun(w io.Writer, ev *intake.Event, jsonOut bool, tmpl *template.Template, reconcile *job.ReconcileResult, cleanupPreview *jobCleanupPreview) error {
-	result := intakePublishResult{Event: ev, Reconcile: reconcile, CleanupPreview: cleanupPreview, DryRun: true}
+func renderIntakeDryRun(w io.Writer, ev *intake.Event, jsonOut bool, tmpl *template.Template, reconcile *job.ReconcileResult, cleanupPreview *jobCleanupPreview, triggerPreview *eventPublishPreview) error {
+	result := intakePublishResult{Event: ev, Reconcile: reconcile, CleanupPreview: cleanupPreview, Preview: triggerPreview, DryRun: true}
 	if jsonOut {
 		return json.NewEncoder(w).Encode(result)
 	}
@@ -238,6 +255,18 @@ func renderIntakeDryRun(w io.Writer, ev *intake.Event, jsonOut bool, tmpl *templ
 	}
 	if cleanupPreview != nil {
 		fmt.Fprintf(w, "Cleanup: %s\n", cleanupPreview.Summary)
+	}
+	if triggerPreview != nil {
+		if len(triggerPreview.Matched) == 0 && len(triggerPreview.Pipelines) == 0 {
+			fmt.Fprintln(w, "Triggers: none")
+		} else {
+			if len(triggerPreview.Matched) > 0 {
+				fmt.Fprintf(w, "Matched: %s\n", strings.Join(triggerPreview.Matched, ", "))
+			}
+			if len(triggerPreview.Pipelines) > 0 {
+				fmt.Fprintf(w, "Pipelines: %s\n", strings.Join(triggerPreview.Pipelines, ", "))
+			}
+		}
 	}
 	return nil
 }

@@ -97,6 +97,71 @@ func TestIntakePayloadFileDashReadsStdin(t *testing.T) {
 	}
 }
 
+func TestIntakeLinearDryRunPreviewTriggers(t *testing.T) {
+	target := t.TempDir()
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.manager]
+agent = "manager"
+
+[[instances.manager.triggers]]
+event = "ticket.created"
+
+[pipelines.ticket_triage]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_triage.steps]]
+id = "triage"
+target = "manager"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := `{"action":"Issue created","data":{"identifier":"SQU-105","title":"Preview routing"}}`
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "linear", "--payload", payload, "--target", target, "--dry-run", "--preview-triggers", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake linear dry-run preview: %v\nstderr=%s", err, stderr.String())
+	}
+	var result intakePublishResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode dry-run preview json: %v\nbody=%s", err, out.String())
+	}
+	if !result.DryRun || result.Event == nil || result.Event.Type != "ticket.created" {
+		t.Fatalf("dry-run preview result = %+v", result)
+	}
+	if result.Preview == nil || !result.Preview.DryRun || len(result.Preview.Matched) != 1 || result.Preview.Matched[0] != "manager" {
+		t.Fatalf("trigger preview = %+v", result.Preview)
+	}
+	if len(result.Preview.Pipelines) != 1 || result.Preview.Pipelines[0] != "ticket_triage" {
+		t.Fatalf("pipeline preview = %+v", result.Preview)
+	}
+	if _, err := job.Read(teamDir, "squ-105"); !os.IsNotExist(err) {
+		t.Fatalf("dry-run preview wrote job, err=%v", err)
+	}
+}
+
+func TestIntakePreviewTriggersRequiresDryRun(t *testing.T) {
+	payload := `{"action":"Issue created","data":{"identifier":"SQU-106"}}`
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "linear", "--payload", payload, "--preview-triggers"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("intake --preview-triggers without dry-run succeeded: stdout=%s", out.String())
+	}
+	if !strings.Contains(stderr.String(), "--preview-triggers requires --dry-run") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestIntakeGitHubReconcilesOwningJob(t *testing.T) {
 	target, _, cleanup := setupIntakePipelineRepo(t)
 	defer cleanup()
