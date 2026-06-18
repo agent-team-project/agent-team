@@ -340,6 +340,98 @@ func TestScheduleFireUsesDaemonAndPreservesDryRun(t *testing.T) {
 	}
 }
 
+func TestScheduleFireDryRunDoesNotRequireDaemonAndCanPreviewRoutes(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeScheduleTopology(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	path := filepath.Join(teamDir, "instances.toml")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read instances.toml: %v", err)
+	}
+	body = append(body, []byte(`
+[pipelines.nightly_pipeline]
+trigger.event = "schedule"
+trigger.match.name = "nightly"
+
+[[pipelines.nightly_pipeline.steps]]
+id = "triage"
+target = "manager"
+`)...)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("write instances.toml: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"schedule", "fire", "--repo", tmp, "--dry-run", "--preview-triggers", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("schedule fire dry-run preview without daemon: %v\nstderr=%s", err, stderr.String())
+	}
+	var result scheduleFireResultWithPreviews
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode schedule fire preview json: %v\nbody=%s", err, out.String())
+	}
+	if result.ScheduleFireResult == nil || !result.DryRun || result.WouldFire != 1 || len(result.Schedules) != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if item := result.Schedules[0]; item.Name != "nightly" || item.Reason != "run_on_start" || item.Payload["kind"] != "nightly" {
+		t.Fatalf("schedule item = %+v", item)
+	}
+	preview := result.Previews["nightly"]
+	if preview == nil || len(preview.Matched) != 1 || preview.Matched[0] != "manager" || len(preview.PipelineJobs) != 1 {
+		t.Fatalf("route preview = %+v", preview)
+	}
+	if pipelineJob := preview.PipelineJobs[0]; pipelineJob.Action != "would_create" || pipelineJob.Pipeline != "nightly_pipeline" || pipelineJob.Target != "manager" || !pipelineJob.GeneratedTicket {
+		t.Fatalf("pipeline job preview = %+v", pipelineJob)
+	}
+
+	textCmd := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	textCmd.SetOut(textOut)
+	textCmd.SetErr(textErr)
+	textCmd.SetArgs([]string{"schedule", "fire", "--repo", tmp, "--dry-run", "--preview-triggers"})
+	if err := textCmd.Execute(); err != nil {
+		t.Fatalf("schedule fire dry-run preview text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"schedule fire dry-run: would_fire=1", "Routes for nightly:", "Matched: manager", "Pipelines: nightly_pipeline", "Jobs:", "ticket=<generated>"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("schedule fire preview text missing %q:\n%s", want, textOut.String())
+		}
+	}
+	if _, err := daemon.ReadScheduleState(daemon.DaemonRoot(teamDir), "nightly"); !os.IsNotExist(err) {
+		t.Fatalf("dry-run wrote schedule state, err=%v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(teamDir, "jobs"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read jobs dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("dry-run schedule fire preview wrote jobs = %+v", entries)
+	}
+}
+
+func TestScheduleFirePreviewTriggersRequiresDryRun(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeScheduleTopology(t, tmp)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"schedule", "fire", "--repo", tmp, "--preview-triggers"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("schedule fire --preview-triggers without dry-run succeeded: stdout=%s", out.String())
+	}
+	if !strings.Contains(stderr.String(), "--preview-triggers requires --dry-run") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestScheduleShowMissing(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

@@ -177,10 +177,11 @@ func newScheduleNextCmd() *cobra.Command {
 
 func newScheduleFireCmd() *cobra.Command {
 	var (
-		repo    string
-		dryRun  bool
-		jsonOut bool
-		format  string
+		repo          string
+		dryRun        bool
+		previewRoutes bool
+		jsonOut       bool
+		format        string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -192,6 +193,10 @@ func newScheduleFireCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team schedule fire: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
+			if previewRoutes && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team schedule fire: --preview-triggers requires --dry-run.")
+				return exitErr(2)
+			}
 			tmpl, err := parseScheduleFireFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team schedule fire: %v\n", err)
@@ -200,6 +205,14 @@ func newScheduleFireCmd() *cobra.Command {
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
+			}
+			if dryRun {
+				result, previews, err := previewScheduleFire(teamDir, previewRoutes)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team schedule fire: %v\n", err)
+					return exitErr(1)
+				}
+				return renderScheduleFireResultWithPreviews(cmd.OutOrStdout(), result, previews, jsonOut, tmpl)
 			}
 			dc, err := newDaemonClient(teamDir)
 			if err != nil {
@@ -220,6 +233,7 @@ func newScheduleFireCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview due schedules without publishing events or writing schedule clocks.")
+	cmd.Flags().BoolVar(&previewRoutes, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit fire results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the fire result with a Go template, e.g. '{{.Fired}} {{len .Schedules}}'.")
 	return cmd
@@ -306,6 +320,41 @@ func scheduleEventPayload(info scheduleInfo, overrideRaw string) (map[string]any
 	payload["source"] = "schedule"
 	payload["name"] = info.Name
 	return payload, nil
+}
+
+func previewScheduleFire(teamDir string, previewRoutes bool) (*daemon.ScheduleFireResult, map[string]*eventPublishPreview, error) {
+	schedules, err := loadScheduleInfos(teamDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	rows := dueScheduleRows(schedules, time.Now().UTC())
+	result := &daemon.ScheduleFireResult{DryRun: true, Schedules: []daemon.ScheduleFireItem{}}
+	var previews map[string]*eventPublishPreview
+	if previewRoutes {
+		previews = map[string]*eventPublishPreview{}
+	}
+	for _, row := range rows {
+		payload, err := scheduleEventPayload(row, "")
+		if err != nil {
+			return nil, nil, err
+		}
+		item := daemon.ScheduleFireItem{
+			Name:      row.Name,
+			EventType: topology.EventSchedule,
+			Payload:   payload,
+			Reason:    row.DueReason,
+		}
+		result.WouldFire++
+		result.Schedules = append(result.Schedules, item)
+		if previewRoutes {
+			preview, err := previewEventPublish(teamDir, topology.EventSchedule, payload)
+			if err != nil {
+				return nil, nil, err
+			}
+			previews[row.Name] = preview
+		}
+	}
+	return result, previews, nil
 }
 
 type scheduleInfo struct {
@@ -611,6 +660,44 @@ func renderScheduleFireResult(w io.Writer, result *daemon.ScheduleFireResult, js
 			item.Name, item.Reason, item.EventType, summariseScheduleFireOutcomes(item.Outcomes), summariseSchedulePayload(item.Payload))
 	}
 	return tw.Flush()
+}
+
+type scheduleFireResultWithPreviews struct {
+	*daemon.ScheduleFireResult
+	Previews map[string]*eventPublishPreview `json:"previews,omitempty"`
+}
+
+func renderScheduleFireResultWithPreviews(w io.Writer, result *daemon.ScheduleFireResult, previews map[string]*eventPublishPreview, jsonOut bool, tmpl *template.Template) error {
+	if result == nil {
+		result = &daemon.ScheduleFireResult{Schedules: []daemon.ScheduleFireItem{}}
+	}
+	if len(previews) == 0 {
+		return renderScheduleFireResult(w, result, jsonOut, tmpl)
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(scheduleFireResultWithPreviews{ScheduleFireResult: result, Previews: previews})
+	}
+	if tmpl != nil {
+		return renderScheduleFireResult(w, result, false, tmpl)
+	}
+	if err := renderScheduleFireResult(w, result, false, nil); err != nil {
+		return err
+	}
+	for _, item := range result.Schedules {
+		preview := previews[item.Name]
+		if preview == nil {
+			continue
+		}
+		fmt.Fprintf(w, "Routes for %s:\n", item.Name)
+		if !eventPublishPreviewHasRoutes(preview) {
+			fmt.Fprintln(w, "  none")
+			continue
+		}
+		if err := renderEventPublishRoutePreview(w, preview); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func summariseScheduleFireOutcomes(outcomes []daemon.EventOutcome) string {
