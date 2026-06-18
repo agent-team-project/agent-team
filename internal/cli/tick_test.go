@@ -92,6 +92,9 @@ branch = "worker-squ-94"
 	if len(preview.Advance) != 1 || preview.Advance[0].Action != "would_advance" || !preview.Advance[0].DryRun {
 		t.Fatalf("tick preview advance = %+v", preview.Advance)
 	}
+	if preview.Advance[0].Preview != nil {
+		t.Fatalf("plain tick dry-run unexpectedly included route preview = %+v", preview.Advance[0].Preview)
+	}
 	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-tick"); err != nil {
 		t.Fatalf("tick dry-run removed queue item: %v", err)
 	}
@@ -108,6 +111,47 @@ branch = "worker-squ-94"
 	}
 	if statusUnchanged.Status != job.StatusQueued {
 		t.Fatalf("tick dry-run mutated status job = %+v", statusUnchanged)
+	}
+
+	routeDry := NewRootCmd()
+	routeDryOut, routeDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	routeDry.SetOut(routeDryOut)
+	routeDry.SetErr(routeDryErr)
+	routeDry.SetArgs([]string{"tick", "--target", target, "--workspace", "repo", "--dry-run", "--preview-routes", "--json"})
+	if err := routeDry.Execute(); err != nil {
+		t.Fatalf("tick dry-run preview-routes: %v\nstderr=%s", err, routeDryErr.String())
+	}
+	var routePreview tickResult
+	if err := json.Unmarshal(routeDryOut.Bytes(), &routePreview); err != nil {
+		t.Fatalf("decode tick dry-run preview-routes json: %v\nbody=%s", err, routeDryOut.String())
+	}
+	if len(routePreview.Advance) != 1 || routePreview.Advance[0].Preview == nil || routePreview.Advance[0].Preview.Step == nil || routePreview.Advance[0].Preview.Step.ID != "implement" {
+		t.Fatalf("tick route preview advance = %+v", routePreview.Advance)
+	}
+	if routePreview.Advance[0].Preview.Dispatch == nil || routePreview.Advance[0].Preview.Dispatch.RequestedName != "worker-squ-93-implement" {
+		t.Fatalf("tick route dispatch preview = %+v", routePreview.Advance[0].Preview.Dispatch)
+	}
+	dispatchPreview := routePreview.Advance[0].Preview.Dispatch.Preview
+	if dispatchPreview == nil || dispatchPreview.Type != "agent.dispatch" || len(dispatchPreview.Matched) != 1 || dispatchPreview.Matched[0] != "worker" {
+		t.Fatalf("tick dispatch route preview = %+v", dispatchPreview)
+	}
+	payload := dispatchPreview.Payload
+	if payload["job_id"] != "squ-93" || payload["pipeline"] != "ticket_to_pr" || payload["pipeline_step"] != "implement" || payload["workspace"] != "repo" {
+		t.Fatalf("tick route preview payload = %+v", payload)
+	}
+
+	textDry := NewRootCmd()
+	textDryOut, textDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	textDry.SetOut(textDryOut)
+	textDry.SetErr(textDryErr)
+	textDry.SetArgs([]string{"tick", "--target", target, "--workspace", "repo", "--dry-run", "--preview-routes", "--skip-reconcile", "--skip-schedules", "--skip-drain"})
+	if err := textDry.Execute(); err != nil {
+		t.Fatalf("tick dry-run preview-routes text: %v\nstderr=%s", err, textDryErr.String())
+	}
+	for _, want := range []string{"Pipeline advance:", "Routes:", "squ-93 step=implement target=worker instance=worker-squ-93-implement", "Matched: worker"} {
+		if !strings.Contains(textDryOut.String(), want) {
+			t.Fatalf("tick route preview text missing %q:\n%s", want, textDryOut.String())
+		}
 	}
 
 	cmd := NewRootCmd()
@@ -269,6 +313,18 @@ func TestTickUntilIdleRejectsDryRun(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--until-idle cannot be combined with --dry-run") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+
+	previewRoutes := NewRootCmd()
+	previewRoutesOut, previewRoutesErr := &bytes.Buffer{}, &bytes.Buffer{}
+	previewRoutes.SetOut(previewRoutesOut)
+	previewRoutes.SetErr(previewRoutesErr)
+	previewRoutes.SetArgs([]string{"tick", "--preview-routes"})
+	if err := previewRoutes.Execute(); err == nil {
+		t.Fatalf("tick --preview-routes without --dry-run succeeded: stdout=%s", previewRoutesOut.String())
+	}
+	if !strings.Contains(previewRoutesErr.String(), "--preview-routes requires --dry-run") {
+		t.Fatalf("stderr = %q", previewRoutesErr.String())
 	}
 }
 

@@ -24,6 +24,7 @@ func newTickCmd() *cobra.Command {
 		skipDrain     bool
 		skipAdvance   bool
 		dryRun        bool
+		previewRoutes bool
 		watch         bool
 		untilIdle     bool
 		jsonOut       bool
@@ -59,6 +60,10 @@ func newTickCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team tick: --until-idle cannot be combined with --dry-run.")
 				return exitErr(2)
 			}
+			if previewRoutes && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team tick: --preview-routes requires --dry-run.")
+				return exitErr(2)
+			}
 			if maxCycles <= 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team tick: --max-cycles must be > 0.")
 				return exitErr(2)
@@ -82,6 +87,7 @@ func newTickCmd() *cobra.Command {
 				SkipDrain:     skipDrain,
 				SkipAdvance:   skipAdvance,
 				DryRun:        dryRun,
+				PreviewRoutes: previewRoutes,
 			}
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -127,6 +133,7 @@ func newTickCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipDrain, "skip-drain", false, "Skip queue draining.")
 	cmd.Flags().BoolVar(&skipAdvance, "skip-advance", false, "Skip pipeline advancement.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview job status reconciliation, schedule firing, queue drain, and pipeline advancement without mutating state.")
+	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include route and dispatch payload previews for ready pipeline steps.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Run tick repeatedly until interrupted.")
 	cmd.Flags().BoolVar(&untilIdle, "until-idle", false, "Run tick cycles until no immediate schedule, queue, or pipeline work remains.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
@@ -142,6 +149,7 @@ type tickOptions struct {
 	SkipDrain     bool
 	SkipAdvance   bool
 	DryRun        bool
+	PreviewRoutes bool
 }
 
 type tickResult struct {
@@ -195,7 +203,7 @@ func runTick(cmd *cobra.Command, teamDir, workspace string, limit int, opts tick
 		result.Queue = drain
 	}
 	if !opts.SkipAdvance {
-		advanced, err := advanceReadyPipelineJobs(cmd, teamDir, "", workspace, limit, opts.DryRun, false)
+		advanced, err := advanceReadyPipelineJobs(cmd, teamDir, "", workspace, limit, opts.DryRun, opts.PreviewRoutes)
 		if err != nil {
 			return nil, err
 		}
