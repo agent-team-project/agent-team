@@ -183,20 +183,20 @@ agent-team send [<instance>] <message...> [--all] [--latest | --last N] [--agent
                                                 # send a daemon mailbox message; phase/stale/unhealthy selectors use current status.toml; appends locally if the daemon is down
 agent-team dispatch <target> <ticket> [kickoff...] [--name <instance>] [--source <instance>] [--workspace auto|worktree|repo] [--kickoff "..."] [--kickoff-file <path>] [--format '{{len .Dispatched}}'] [--json]
                                                 # publish an agent.dispatch topology event; e.g. dispatch worker SQU-42
-agent-team job create <ticket> [kickoff...] [--target worker] [--ticket-url <url>] [--pipeline ticket_to_pr] [--dispatch] [--workspace auto|worktree|repo] [--instance <name>] [--json]
+agent-team job create <ticket> [kickoff...] [--target worker] [--ticket-url <url>] [--pipeline ticket_to_pr] [--dispatch] [--workspace auto|worktree|repo] [--instance <name>] [--dry-run] [--json]
 agent-team job ls [-w] [--summary] [--sort id|status|target|updated|created] [--status queued|running|blocked|done|failed] [--target-agent worker] [--pipeline name] [--instance name] [--json]
 agent-team job show <job-id> [--events N|all] [--json] | triage [-w] [--min-severity critical|warning|info] [--reason queue_dead] [--no-clear] [--json] | next <job-id> [--json] | ready [--state ready|queued|all] [--json] | events <job-id> [-f] [--tail N|all] [--type closed] [--actor cli] [--since 24h] [--json]
 agent-team job retry <job-id> [--dispatch] [--workspace auto|worktree|repo] [--json]
                                                 # reopen a failed/closed job and optionally dispatch another attempt immediately
 agent-team job dispatch|start|stop|kill|wait|logs|attach|send|unblock|update|close|reopen|cleanup|rm|prune|step|advance|reconcile ...
                                                 # create, monitor, dispatch, control, and clean up durable work units
-agent-team pipeline ls [--json] | show <pipeline> [--json] | jobs <pipeline> [--status running] [--json] | ready <pipeline>|--all [--state ready|all] [--json] | advance <pipeline>|--all [--limit N] [--dry-run] [--json] | run <pipeline> <ticket> [--ticket-url <url>] [--dispatch] [--json]
+agent-team pipeline ls [--json] | show <pipeline> [--json] | jobs <pipeline> [--status running] [--json] | ready <pipeline>|--all [--state ready|all] [--json] | advance <pipeline>|--all [--limit N] [--dry-run] [--json] | run <pipeline> <ticket> [--ticket-url <url>] [--dispatch] [--dry-run] [--json]
                                                 # inspect declared pipeline workflows from instances.toml
 agent-team schedule ls [--json] | due [--format '{{.Name}} {{.DueReason}}'] [--json] | next [--limit N] [--format '{{.Name}} {{.NextRun}}'] [--json] | fire [--dry-run] [--format '{{.Fired}} {{len .Schedules}}'] [--json] | show <schedule> [--json] | run <schedule> [--payload <json>] [--dry-run] [--json]
                                                 # inspect due/upcoming schedules, fire all due schedule events, or manually publish one declared schedule event
 agent-team queue ls [-w] [--summary] [--state pending|dead] [--instance worker] [--event-type agent.dispatch] [--job SQU-42] [--ready] [--json] | show <id> | drain [--dry-run] [--json] | drop <id>|--all [--dry-run] | retry <id>|--all [--dry-run] | prune [--state dead|pending|all] [--older-than 24h] [--dry-run]
                                                 # inspect, drain, retry, drop, and prune persisted daemon dispatch queue items; human queue rows include ACTION hints
-agent-team intake linear|github (--payload <json> | --payload-file <path|->) [--dry-run] [--preview-triggers] [--format '{{.Event.Type}}'] [--json] [github: --reconcile-job [--cleanup-merged]] | schedule <name> [--dry-run] [--format '{{.Event.Type}}'] [--json]
+agent-team intake linear|github (--payload <json> | --payload-file <path|->) [--dry-run] [--preview-triggers] [--format '{{.Event.Type}}'] [--json] [github: --reconcile-job [--cleanup-merged]] | schedule <name> [--dry-run] [--preview-triggers] [--format '{{.Event.Type}}'] [--json]
                                                 # normalize external webhook or schedule events, optionally without publishing
 agent-team channels                             # list pub/sub channels; reads local channel state if the daemon is down
 agent-team channel show <name>                  # show a channel summary and recent messages

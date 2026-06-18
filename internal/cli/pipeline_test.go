@@ -337,6 +337,65 @@ func TestPipelineRunCreatesDurableJob(t *testing.T) {
 	}
 }
 
+func TestPipelineRunDryRunDoesNotWrite(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"pipeline", "run", "ticket_to_pr", "SQU-306",
+		"--repo", root,
+		"--kickoff", "preview pipeline",
+		"--dry-run",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline run dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var preview jobCreatePreview
+	if err := json.Unmarshal(out.Bytes(), &preview); err != nil {
+		t.Fatalf("decode pipeline run dry-run json: %v\nbody=%s", err, out.String())
+	}
+	if !preview.DryRun || preview.Job == nil || preview.Job.ID != "squ-306" || preview.Job.Pipeline != "ticket_to_pr" || len(preview.Job.Steps) != 2 {
+		t.Fatalf("preview = %+v", preview)
+	}
+	if preview.Job.Steps[0].ID != "implement" || preview.Job.Steps[0].Status != job.StatusQueued || preview.Job.Steps[1].Status != job.StatusBlocked {
+		t.Fatalf("preview steps = %+v", preview.Job.Steps)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".agent_team", "jobs", "squ-306.toml")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run wrote pipeline job file, err=%v", err)
+	}
+
+	textCmd := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	textCmd.SetOut(textOut)
+	textCmd.SetErr(textErr)
+	textCmd.SetArgs([]string{"pipeline", "run", "ticket_to_pr", "SQU-307", "--repo", root, "--dry-run"})
+	if err := textCmd.Execute(); err != nil {
+		t.Fatalf("pipeline run dry-run text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"Dry run: true", "ID:          squ-307", "Pipeline:    ticket_to_pr", "implement"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("pipeline dry-run text missing %q:\n%s", want, textOut.String())
+		}
+	}
+
+	conflict := NewRootCmd()
+	conflictOut, conflictErr := &bytes.Buffer{}, &bytes.Buffer{}
+	conflict.SetOut(conflictOut)
+	conflict.SetErr(conflictErr)
+	conflict.SetArgs([]string{"pipeline", "run", "ticket_to_pr", "SQU-308", "--repo", root, "--dry-run", "--dispatch"})
+	if err := conflict.Execute(); err == nil {
+		t.Fatalf("pipeline run --dry-run --dispatch succeeded: stdout=%s", conflictOut.String())
+	}
+	if !strings.Contains(conflictErr.String(), "--dry-run cannot be combined with --dispatch") {
+		t.Fatalf("conflict stderr = %q", conflictErr.String())
+	}
+}
+
 func TestPipelineRunDispatchesFirstStep(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "agent-team-pipeline-run-")
 	if err != nil {

@@ -224,6 +224,63 @@ branch = "worker-squ-208"
 	}
 }
 
+func TestJobCreateDryRunDoesNotWrite(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"job", "create", "SQU-43",
+		"--target", "worker",
+		"--kickoff", "preview this job",
+		"--repo", tmp,
+		"--dry-run",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job create dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var preview jobCreatePreview
+	if err := json.Unmarshal(out.Bytes(), &preview); err != nil {
+		t.Fatalf("decode job create dry-run json: %v\nbody=%s", err, out.String())
+	}
+	if !preview.DryRun || preview.Job == nil || preview.Job.ID != "squ-43" || preview.Job.Kickoff != "SQU-43: preview this job" {
+		t.Fatalf("preview = %+v", preview)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".agent_team", "jobs", "squ-43.toml")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run wrote job file, err=%v", err)
+	}
+
+	textCmd := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	textCmd.SetOut(textOut)
+	textCmd.SetErr(textErr)
+	textCmd.SetArgs([]string{"job", "create", "SQU-44", "--target", "worker", "--repo", tmp, "--dry-run"})
+	if err := textCmd.Execute(); err != nil {
+		t.Fatalf("job create dry-run text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"Dry run: true", "ID:          squ-44", "Status:      queued"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("dry-run text missing %q:\n%s", want, textOut.String())
+		}
+	}
+
+	conflict := NewRootCmd()
+	conflictOut, conflictErr := &bytes.Buffer{}, &bytes.Buffer{}
+	conflict.SetOut(conflictOut)
+	conflict.SetErr(conflictErr)
+	conflict.SetArgs([]string{"job", "create", "SQU-45", "--repo", tmp, "--dry-run", "--dispatch"})
+	if err := conflict.Execute(); err == nil {
+		t.Fatalf("job create --dry-run --dispatch succeeded: stdout=%s", conflictOut.String())
+	}
+	if !strings.Contains(conflictErr.String(), "--dry-run cannot be combined with --dispatch") {
+		t.Fatalf("conflict stderr = %q", conflictErr.String())
+	}
+}
+
 func TestJobCreateFromTicketURLUsesTicketSlugID(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

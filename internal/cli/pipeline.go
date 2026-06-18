@@ -262,6 +262,7 @@ func newPipelineRunCmd() *cobra.Command {
 		kickoffFile string
 		dispatchNow bool
 		workspace   string
+		dryRun      bool
 		jsonOut     bool
 		format      string
 	)
@@ -273,6 +274,10 @@ func newPipelineRunCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline run: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if dryRun && dispatchNow {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline run: --dry-run cannot be combined with --dispatch.")
 				return exitErr(2)
 			}
 			tmpl, err := parseJobFormat(format)
@@ -319,6 +324,9 @@ func newPipelineRunCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline run: job %q already exists.\n", j.ID)
 				return exitErr(2)
 			}
+			if dryRun {
+				return renderJobCreatePreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
+			}
 			data := map[string]string{
 				"ticket":   j.Ticket,
 				"target":   j.Target,
@@ -353,6 +361,7 @@ func newPipelineRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&kickoffFile, "kickoff-file", "", "Read kickoff text from a file.")
 	cmd.Flags().BoolVar(&dispatchNow, "dispatch", false, "Dispatch the first ready pipeline step immediately using the running daemon.")
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for --dispatch: auto, worktree, or repo.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the pipeline job that would be created without writing it.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the created job or advance result as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the created or advanced job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd

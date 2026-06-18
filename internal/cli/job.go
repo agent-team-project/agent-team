@@ -134,6 +134,7 @@ func newJobCreateCmd() *cobra.Command {
 		instance    string
 		dispatchNow bool
 		workspace   string
+		dryRun      bool
 		jsonOut     bool
 		format      string
 	)
@@ -145,6 +146,10 @@ func newJobCreateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if dryRun && dispatchNow {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --dry-run cannot be combined with --dispatch.")
 				return exitErr(2)
 			}
 			tmpl, err := parseJobFormat(format)
@@ -206,6 +211,9 @@ func newJobCreateCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: job %q already exists.\n", j.ID)
 				return exitErr(2)
 			}
+			if dryRun {
+				return renderJobCreatePreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
+			}
 			data := map[string]string{
 				"ticket": j.Ticket,
 				"target": j.Target,
@@ -260,6 +268,7 @@ func newJobCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&instance, "instance", "", "Instance name that owns the job (default set during dispatch).")
 	cmd.Flags().BoolVar(&dispatchNow, "dispatch", false, "Dispatch the created job immediately using the running daemon.")
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for --dispatch: auto, worktree, or repo.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the job that would be created without writing it.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
@@ -4603,6 +4612,23 @@ func renderJobResult(w io.Writer, j *job.Job, jsonOut bool, tmpl *template.Templ
 	if tmpl != nil {
 		return renderJobTemplate(w, j, tmpl)
 	}
+	renderJobDetail(w, j)
+	return nil
+}
+
+type jobCreatePreview struct {
+	Job    *job.Job `json:"job"`
+	DryRun bool     `json:"dry_run"`
+}
+
+func renderJobCreatePreview(w io.Writer, j *job.Job, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(jobCreatePreview{Job: j, DryRun: true})
+	}
+	if tmpl != nil {
+		return renderJobTemplate(w, j, tmpl)
+	}
+	fmt.Fprintln(w, "Dry run: true")
 	renderJobDetail(w, j)
 	return nil
 }
