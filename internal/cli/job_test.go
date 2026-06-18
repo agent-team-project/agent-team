@@ -116,6 +116,73 @@ func TestJobCreateListShowClose(t *testing.T) {
 	}
 }
 
+func TestJobShowIncludesQueueItems(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	j, err := job.New("SQU-109", "worker", "implement queued work", time.Now())
+	if err != nil {
+		t.Fatalf("job.New: %v", err)
+	}
+	j.Instance = "worker-squ-109"
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("job.Write: %v", err)
+	}
+	now := time.Now().UTC()
+	item := &daemon.QueueItem{
+		ID:         "q-job-show",
+		State:      daemon.QueueStateDead,
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-109",
+		Payload: map[string]any{
+			"job_id":  "squ-109",
+			"ticket":  "SQU-109",
+			"target":  "worker",
+			"kickoff": "implement queued work",
+		},
+		Attempts:       daemon.MaxQueueAttempts,
+		LastError:      "spawn failed",
+		QueuedAt:       now.Add(-time.Hour),
+		UpdatedAt:      now,
+		DeadLetteredAt: now,
+	}
+	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+		t.Fatalf("WriteQueueItem: %v", err)
+	}
+
+	show := NewRootCmd()
+	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
+	show.SetOut(showOut)
+	show.SetErr(showErr)
+	show.SetArgs([]string{"job", "show", "SQU-109", "--repo", tmp})
+	if err := show.Execute(); err != nil {
+		t.Fatalf("job show: %v\nstderr=%s", err, showErr.String())
+	}
+	for _, want := range []string{"Queue:", "q-job-show", "state=dead", "instance_id=worker-squ-109"} {
+		if !strings.Contains(showOut.String(), want) {
+			t.Fatalf("job show missing %q:\n%s", want, showOut.String())
+		}
+	}
+
+	showJSON := NewRootCmd()
+	jsonOut, jsonErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showJSON.SetOut(jsonOut)
+	showJSON.SetErr(jsonErr)
+	showJSON.SetArgs([]string{"job", "show", "SQU-109", "--repo", tmp, "--json"})
+	if err := showJSON.Execute(); err != nil {
+		t.Fatalf("job show json: %v\nstderr=%s", err, jsonErr.String())
+	}
+	var body job.Job
+	if err := json.Unmarshal(jsonOut.Bytes(), &body); err != nil {
+		t.Fatalf("decode job show json: %v\nbody=%s", err, jsonOut.String())
+	}
+	if body.ID != "squ-109" {
+		t.Fatalf("json body = %+v", body)
+	}
+}
+
 func TestJobCreateFromPipeline(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

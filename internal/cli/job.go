@@ -15,6 +15,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/jamesaud/agent-team/internal/intake"
 	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/jamesaud/agent-team/internal/topology"
@@ -402,11 +403,11 @@ func newJobShowCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job show: %v\n", err)
 				return exitErr(2)
 			}
-			j, err := readJobFromRepo(cmd, repo, args[0])
+			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
 			if err != nil {
 				return err
 			}
-			return renderJobResult(cmd.OutOrStdout(), j, jsonOut, tmpl)
+			return renderJobShowResult(cmd.OutOrStdout(), teamDir, j, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
@@ -2576,6 +2577,58 @@ func containsFold(value, substr string) bool {
 	return strings.Contains(strings.ToLower(value), strings.ToLower(substr))
 }
 
+func queueItemsForJob(teamDir string, j *job.Job) ([]*daemon.QueueItem, error) {
+	items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return nil, err
+	}
+	matches := make([]*daemon.QueueItem, 0, len(items))
+	for _, item := range items {
+		if queueItemMatchesJob(item, j) {
+			matches = append(matches, item)
+		}
+	}
+	return matches, nil
+}
+
+func queueItemMatchesJob(item *daemon.QueueItem, j *job.Job) bool {
+	if item == nil || j == nil {
+		return false
+	}
+	for _, key := range []string{"job_id", "job"} {
+		if id := job.NormalizeID(queuePayloadString(item.Payload, key)); id != "" && id == j.ID {
+			return true
+		}
+	}
+	if ticket := queuePayloadString(item.Payload, "ticket"); ticket != "" {
+		if job.NormalizeID(ticket) == j.ID || strings.EqualFold(strings.TrimSpace(ticket), strings.TrimSpace(j.Ticket)) {
+			return true
+		}
+	}
+	if strings.TrimSpace(j.Instance) != "" && item.InstanceID == j.Instance {
+		return true
+	}
+	return false
+}
+
+func queuePayloadString(payload map[string]any, key string) string {
+	if payload == nil {
+		return ""
+	}
+	value, ok := payload[key]
+	if !ok {
+		return ""
+	}
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
 func applyDispatchResponseToJob(j *job.Job, requestedName string, res *eventResponse) {
 	now := time.Now().UTC()
 	j.UpdatedAt = now
@@ -3200,6 +3253,18 @@ func renderJobResult(w io.Writer, j *job.Job, jsonOut bool, tmpl *template.Templ
 	return nil
 }
 
+func renderJobShowResult(w io.Writer, teamDir string, j *job.Job, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut || tmpl != nil {
+		return renderJobResult(w, j, jsonOut, tmpl)
+	}
+	queueItems, err := queueItemsForJob(teamDir, j)
+	if err != nil {
+		return err
+	}
+	renderJobDetailWithQueue(w, j, queueItems)
+	return nil
+}
+
 func renderJobTemplate(w io.Writer, j *job.Job, tmpl *template.Template) error {
 	if err := tmpl.Execute(w, j); err != nil {
 		return err
@@ -3223,6 +3288,10 @@ func renderJobTable(w io.Writer, jobs []*job.Job) {
 }
 
 func renderJobDetail(w io.Writer, j *job.Job) {
+	renderJobDetailWithQueue(w, j, nil)
+}
+
+func renderJobDetailWithQueue(w io.Writer, j *job.Job, queueItems []*daemon.QueueItem) {
 	fmt.Fprintf(w, "ID:          %s\n", j.ID)
 	fmt.Fprintf(w, "Status:      %s\n", j.Status)
 	fmt.Fprintf(w, "Ticket:      %s\n", j.Ticket)
@@ -3267,6 +3336,13 @@ func renderJobDetail(w io.Writer, j *job.Job) {
 			}
 			fmt.Fprintf(w, "  %s  target=%s status=%s instance=%s after=%s\n",
 				step.ID, step.Target, step.Status, instance, after)
+		}
+	}
+	if len(queueItems) > 0 {
+		fmt.Fprintln(w, "Queue:")
+		for _, item := range queueItems {
+			fmt.Fprintf(w, "  %s  state=%s instance=%s instance_id=%s attempts=%d next_retry=%s\n",
+				item.ID, item.State, item.Instance, item.InstanceID, item.Attempts, queueTime(item.NextRetry))
 		}
 	}
 	fmt.Fprintf(w, "Created:     %s\n", j.CreatedAt.Format(time.RFC3339))
