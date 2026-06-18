@@ -41,6 +41,8 @@ type Topology struct {
 	// Instances is keyed by the declared instance name (the `[instances.<n>]`
 	// table key in the TOML).
 	Instances map[string]*Instance
+	// Pipelines is keyed by the declared pipeline name (`[pipelines.<n>]`).
+	Pipelines map[string]*Pipeline
 }
 
 // Instance is one declared instance.
@@ -76,6 +78,20 @@ type Trigger struct {
 type MatchValue struct {
 	Single string
 	List   []string
+}
+
+// Pipeline is a declarative multi-step workflow triggered by an event.
+type Pipeline struct {
+	Name    string
+	Trigger *Trigger
+	Steps   []*PipelineStep
+}
+
+// PipelineStep is one target dispatch in a pipeline.
+type PipelineStep struct {
+	ID     string
+	Target string
+	After  []string
 }
 
 // Eval returns true iff `payload[key]` matches this expression. The payload
@@ -151,6 +167,23 @@ func (t *Topology) Resolve(eventType string, payload map[string]any) []*Instance
 	return matched
 }
 
+// ResolvePipelines returns pipelines whose trigger matches the event.
+func (t *Topology) ResolvePipelines(eventType string, payload map[string]any) []*Pipeline {
+	if t == nil {
+		return nil
+	}
+	var matched []*Pipeline
+	for _, p := range t.SortedPipelines() {
+		if p.Trigger == nil || p.Trigger.Event != eventType {
+			continue
+		}
+		if p.Trigger.Matches(payload) {
+			matched = append(matched, p)
+		}
+	}
+	return matched
+}
+
 // SortedInstances returns the instances ordered by name for deterministic
 // iteration in tests, CLI output, and HTTP responses.
 func (t *Topology) SortedInstances() []*Instance {
@@ -160,6 +193,19 @@ func (t *Topology) SortedInstances() []*Instance {
 	out := make([]*Instance, 0, len(t.Instances))
 	for _, i := range t.Instances {
 		out = append(out, i)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// SortedPipelines returns pipelines ordered by name for deterministic execution.
+func (t *Topology) SortedPipelines() []*Pipeline {
+	if t == nil {
+		return nil
+	}
+	out := make([]*Pipeline, 0, len(t.Pipelines))
+	for _, p := range t.Pipelines {
+		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -193,15 +239,21 @@ func (t *Topology) Find(name string) *Instance {
 // how lenient toml.Decode is.
 type rawTopology struct {
 	Instances map[string]*rawInstance `toml:"instances"`
+	Pipelines map[string]*rawPipeline `toml:"pipelines"`
 }
 
 type rawInstance struct {
-	Agent       string                 `toml:"agent"`
-	Ephemeral   bool                   `toml:"ephemeral"`
-	Description string                 `toml:"description"`
-	Replicas    *int                   `toml:"replicas"`
-	Config      map[string]any         `toml:"config"`
-	Triggers    []map[string]any       `toml:"triggers"`
+	Agent       string           `toml:"agent"`
+	Ephemeral   bool             `toml:"ephemeral"`
+	Description string           `toml:"description"`
+	Replicas    *int             `toml:"replicas"`
+	Config      map[string]any   `toml:"config"`
+	Triggers    []map[string]any `toml:"triggers"`
+}
+
+type rawPipeline struct {
+	Trigger map[string]any   `toml:"trigger"`
+	Steps   []map[string]any `toml:"steps"`
 }
 
 // Parse decodes a single `instances.toml` body. Used by Load and tests.
@@ -214,7 +266,10 @@ func Parse(body []byte) (*Topology, error) {
 }
 
 func finalise(raw *rawTopology) (*Topology, error) {
-	t := &Topology{Instances: make(map[string]*Instance, len(raw.Instances))}
+	t := &Topology{
+		Instances: make(map[string]*Instance, len(raw.Instances)),
+		Pipelines: make(map[string]*Pipeline, len(raw.Pipelines)),
+	}
 	for name, ri := range raw.Instances {
 		if ri == nil {
 			continue
@@ -224,6 +279,16 @@ func finalise(raw *rawTopology) (*Topology, error) {
 			return nil, err
 		}
 		t.Instances[name] = inst
+	}
+	for name, rp := range raw.Pipelines {
+		if rp == nil {
+			continue
+		}
+		p, err := finalisePipeline(name, rp)
+		if err != nil {
+			return nil, err
+		}
+		t.Pipelines[name] = p
 	}
 	return t, nil
 }
@@ -264,6 +329,18 @@ func finaliseInstance(name string, ri *rawInstance) (*Instance, error) {
 		Config:      cfg,
 		Triggers:    triggers,
 	}, nil
+}
+
+func finalisePipeline(name string, rp *rawPipeline) (*Pipeline, error) {
+	trigger, err := parsePipelineTrigger(name, rp.Trigger)
+	if err != nil {
+		return nil, err
+	}
+	steps, err := parsePipelineSteps(name, rp.Steps)
+	if err != nil {
+		return nil, err
+	}
+	return &Pipeline{Name: name, Trigger: trigger, Steps: steps}, nil
 }
 
 // flatten copies src into dst, preserving the dotted-key shape that
@@ -315,6 +392,81 @@ func parseTriggers(instanceName string, raw []map[string]any) ([]*Trigger, error
 		out = append(out, trig)
 	}
 	return out, nil
+}
+
+func parsePipelineTrigger(name string, raw map[string]any) (*Trigger, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("pipeline %q: trigger.event is required", name)
+	}
+	triggers, err := parseTriggers("pipeline "+name, []map[string]any{raw})
+	if err != nil {
+		return nil, err
+	}
+	return triggers[0], nil
+}
+
+func parsePipelineSteps(name string, raw []map[string]any) ([]*PipelineStep, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("pipeline %q: at least one step is required", name)
+	}
+	seen := map[string]bool{}
+	steps := make([]*PipelineStep, 0, len(raw))
+	for i, body := range raw {
+		id, ok := body["id"].(string)
+		id = strings.TrimSpace(id)
+		if !ok || id == "" {
+			return nil, fmt.Errorf("pipeline %q step[%d]: id is required", name, i)
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("pipeline %q step[%d]: duplicate id %q", name, i, id)
+		}
+		seen[id] = true
+		target, ok := body["target"].(string)
+		target = strings.TrimSpace(target)
+		if !ok || target == "" {
+			return nil, fmt.Errorf("pipeline %q step[%d]: target is required", name, i)
+		}
+		after, err := parseStepAfter(body["after"])
+		if err != nil {
+			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
+		}
+		steps = append(steps, &PipelineStep{ID: id, Target: target, After: after})
+	}
+	for _, step := range steps {
+		for _, dep := range step.After {
+			if !seen[dep] {
+				return nil, fmt.Errorf("pipeline %q step %q: after references unknown step %q", name, step.ID, dep)
+			}
+		}
+	}
+	return steps, nil
+}
+
+func parseStepAfter(raw any) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	switch v := raw.(type) {
+	case string:
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return nil, fmt.Errorf("after cannot be empty")
+		}
+		return []string{v}, nil
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			s = strings.TrimSpace(s)
+			if !ok || s == "" {
+				return nil, fmt.Errorf("after values must be non-empty strings")
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("after must be a string or list of strings")
+	}
 }
 
 func parseMatchValue(v any) (MatchValue, error) {

@@ -34,3 +34,15 @@ description = "Code-writing agent. Spawned on `agent.dispatch` (see assign-worke
 [[instances.worker.triggers]]
 event        = "agent.dispatch"
 match.target = "worker"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id     = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id     = "review"
+target = "manager"
+after  = ["implement"]

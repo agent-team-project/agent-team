@@ -30,8 +30,8 @@ func newTopologyCmd() *cobra.Command {
 
 func newTopologyShowCmd() *cobra.Command {
 	var (
-		target  string
-		asJSON  bool
+		target string
+		asJSON bool
 	)
 	cwd, _ := os.Getwd()
 	c := &cobra.Command{
@@ -129,7 +129,15 @@ func toResponseLike(top *topology.Topology) map[string]any {
 			"triggers":    triggersAsMaps(inst.Triggers),
 		})
 	}
-	return map[string]any{"instances": out}
+	pipelines := make([]map[string]any, 0, len(top.Pipelines))
+	for _, pipeline := range top.SortedPipelines() {
+		pipelines = append(pipelines, map[string]any{
+			"name":    pipeline.Name,
+			"trigger": triggerAsMap(pipeline.Trigger),
+			"steps":   pipelineStepsAsMaps(pipeline.Steps),
+		})
+	}
+	return map[string]any{"instances": out, "pipelines": pipelines}
 }
 
 func triggersAsMaps(triggers []*topology.Trigger) []map[string]any {
@@ -148,35 +156,92 @@ func triggersAsMaps(triggers []*topology.Trigger) []map[string]any {
 	return out
 }
 
+func triggerAsMap(t *topology.Trigger) map[string]any {
+	if t == nil {
+		return nil
+	}
+	match := map[string]any{}
+	for k, mv := range t.Match {
+		if mv.Single != "" {
+			match[k] = mv.Single
+		} else if len(mv.List) > 0 {
+			match[k] = mv.List
+		}
+	}
+	return map[string]any{"event": t.Event, "match": match}
+}
+
+func pipelineStepsAsMaps(steps []*topology.PipelineStep) []map[string]any {
+	out := make([]map[string]any, 0, len(steps))
+	for _, step := range steps {
+		out = append(out, map[string]any{"id": step.ID, "target": step.Target, "after": step.After})
+	}
+	return out
+}
+
 func printDaemonTopology(w io.Writer, res *topologyResponse) {
-	if len(res.Instances) == 0 {
-		fmt.Fprintln(w, "(no instances declared)")
+	if len(res.Instances) == 0 && len(res.Pipelines) == 0 {
+		fmt.Fprintln(w, "(no topology declared)")
 		return
 	}
-	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tAGENT\tEPHEMERAL\tREPLICAS\tTRIGGERS\tRUNNING\tQUEUED")
-	for _, i := range res.Instances {
-		eph := "no"
-		if i.Ephemeral {
-			eph = "yes"
+	if len(res.Instances) > 0 {
+		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "NAME\tAGENT\tEPHEMERAL\tREPLICAS\tTRIGGERS\tRUNNING\tQUEUED")
+		for _, i := range res.Instances {
+			eph := "no"
+			if i.Ephemeral {
+				eph = "yes"
+			}
+			trigSummary := summariseTriggers(i.Triggers)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%d\t%d\n",
+				i.Name, i.Agent, eph, i.Replicas, trigSummary, i.Running, i.Queued)
 		}
-		trigSummary := summariseTriggers(i.Triggers)
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%d\t%d\n",
-			i.Name, i.Agent, eph, i.Replicas, trigSummary, i.Running, i.Queued)
+		_ = tw.Flush()
+	}
+	if len(res.Pipelines) > 0 {
+		if len(res.Instances) > 0 {
+			fmt.Fprintln(w)
+		}
+		printDaemonPipelines(w, res.Pipelines)
+	}
+}
+
+func printLocalTopology(w io.Writer, top *topology.Topology) {
+	if len(top.Instances) > 0 {
+		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "NAME\tAGENT\tEPHEMERAL\tREPLICAS\tTRIGGERS")
+		for _, inst := range top.SortedInstances() {
+			eph := "no"
+			if inst.Ephemeral {
+				eph = "yes"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
+				inst.Name, inst.Agent, eph, inst.Replicas, summariseLocalTriggers(inst.Triggers))
+		}
+		_ = tw.Flush()
+	}
+	if len(top.Pipelines) > 0 {
+		if len(top.Instances) > 0 {
+			fmt.Fprintln(w)
+		}
+		printLocalPipelines(w, top.SortedPipelines())
+	}
+}
+
+func printDaemonPipelines(w io.Writer, pipelines []topologyPipeline) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "PIPELINE\tTRIGGER\tSTEPS")
+	for _, pipeline := range pipelines {
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", pipeline.Name, summariseTriggerMap(pipeline.Trigger), summarisePipelineStepMaps(pipeline.Steps))
 	}
 	_ = tw.Flush()
 }
 
-func printLocalTopology(w io.Writer, top *topology.Topology) {
+func printLocalPipelines(w io.Writer, pipelines []*topology.Pipeline) {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tAGENT\tEPHEMERAL\tREPLICAS\tTRIGGERS")
-	for _, inst := range top.SortedInstances() {
-		eph := "no"
-		if inst.Ephemeral {
-			eph = "yes"
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
-			inst.Name, inst.Agent, eph, inst.Replicas, summariseLocalTriggers(inst.Triggers))
+	fmt.Fprintln(tw, "PIPELINE\tTRIGGER\tSTEPS")
+	for _, pipeline := range pipelines {
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", pipeline.Name, summariseLocalTrigger(pipeline.Trigger), summariseLocalPipelineSteps(pipeline.Steps))
 	}
 	_ = tw.Flush()
 }
@@ -219,6 +284,62 @@ func summariseLocalTriggers(triggers []*topology.Trigger) string {
 		} else {
 			parts = append(parts, t.Event)
 		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func summariseTriggerMap(trigger map[string]interface{}) string {
+	if len(trigger) == 0 {
+		return "—"
+	}
+	event, _ := trigger["event"].(string)
+	match, _ := trigger["match"].(map[string]interface{})
+	if len(match) == 0 {
+		return event
+	}
+	keys := make([]string, 0, len(match))
+	for key := range match {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return fmt.Sprintf("%s(%s)", event, strings.Join(keys, ","))
+}
+
+func summariseLocalTrigger(trigger *topology.Trigger) string {
+	if trigger == nil {
+		return "—"
+	}
+	if len(trigger.Match) == 0 {
+		return trigger.Event
+	}
+	keys := make([]string, 0, len(trigger.Match))
+	for key := range trigger.Match {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return fmt.Sprintf("%s(%s)", trigger.Event, strings.Join(keys, ","))
+}
+
+func summarisePipelineStepMaps(steps []map[string]interface{}) string {
+	if len(steps) == 0 {
+		return "—"
+	}
+	parts := make([]string, 0, len(steps))
+	for _, step := range steps {
+		id, _ := step["id"].(string)
+		target, _ := step["target"].(string)
+		parts = append(parts, id+"→"+target)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func summariseLocalPipelineSteps(steps []*topology.PipelineStep) string {
+	if len(steps) == 0 {
+		return "—"
+	}
+	parts := make([]string, 0, len(steps))
+	for _, step := range steps {
+		parts = append(parts, step.ID+"→"+step.Target)
 	}
 	return strings.Join(parts, ", ")
 }

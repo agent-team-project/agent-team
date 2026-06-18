@@ -32,6 +32,7 @@ type Job struct {
 	Target     string    `toml:"target"`
 	Kickoff    string    `toml:"kickoff,omitempty"`
 	Instance   string    `toml:"instance,omitempty"`
+	Pipeline   string    `toml:"pipeline,omitempty"`
 	Status     Status    `toml:"status"`
 	Branch     string    `toml:"branch,omitempty"`
 	Worktree   string    `toml:"worktree,omitempty"`
@@ -40,6 +41,18 @@ type Job struct {
 	LastStatus string    `toml:"last_status,omitempty"`
 	CreatedAt  time.Time `toml:"created_at"`
 	UpdatedAt  time.Time `toml:"updated_at"`
+	Steps      []Step    `toml:"steps,omitempty"`
+}
+
+// Step is a pipeline step snapshot recorded on a job.
+type Step struct {
+	ID         string    `toml:"id"`
+	Target     string    `toml:"target"`
+	Status     Status    `toml:"status"`
+	Instance   string    `toml:"instance,omitempty"`
+	After      []string  `toml:"after,omitempty"`
+	StartedAt  time.Time `toml:"started_at,omitempty"`
+	FinishedAt time.Time `toml:"finished_at,omitempty"`
 }
 
 // Directory returns the jobs directory for a team root.
@@ -143,6 +156,22 @@ func Validate(j *Job) error {
 	}
 	if j.UpdatedAt.IsZero() {
 		return errors.New("updated_at is required")
+	}
+	seenSteps := map[string]bool{}
+	for i, step := range j.Steps {
+		if strings.TrimSpace(step.ID) == "" {
+			return fmt.Errorf("steps[%d]: id is required", i)
+		}
+		if seenSteps[step.ID] {
+			return fmt.Errorf("steps[%d]: duplicate id %q", i, step.ID)
+		}
+		seenSteps[step.ID] = true
+		if strings.TrimSpace(step.Target) == "" {
+			return fmt.Errorf("steps[%d]: target is required", i)
+		}
+		if !ValidStatus(step.Status) {
+			return fmt.Errorf("steps[%d]: unknown status %q", i, step.Status)
+		}
 	}
 	return nil
 }

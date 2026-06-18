@@ -93,6 +93,63 @@ func TestParse_Sample(t *testing.T) {
 	}
 }
 
+func TestParse_Pipelines(t *testing.T) {
+	top, err := Parse([]byte(`
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+trigger.match.project = "Core"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	p := top.Pipelines["ticket_to_pr"]
+	if p == nil {
+		t.Fatal("pipeline missing")
+	}
+	if p.Trigger.Event != "ticket.created" || p.Trigger.Match["project"].Single != "Core" {
+		t.Fatalf("trigger = %+v", p.Trigger)
+	}
+	if len(p.Steps) != 2 || p.Steps[1].After[0] != "implement" {
+		t.Fatalf("steps = %+v", p.Steps)
+	}
+	matched := top.ResolvePipelines("ticket.created", map[string]any{"project": "Core"})
+	if len(matched) != 1 || matched[0].Name != "ticket_to_pr" {
+		t.Fatalf("matched = %+v", matched)
+	}
+}
+
+func TestParse_PipelineRejectsUnknownAfter(t *testing.T) {
+	_, err := Parse([]byte(`
+[pipelines.bad]
+trigger.event = "ticket.created"
+
+[[pipelines.bad.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+`))
+	if err == nil {
+		t.Fatal("expected unknown after error")
+	}
+}
+
 func TestParse_RejectsMissingAgent(t *testing.T) {
 	_, err := Parse([]byte(`
 [instances.broken]

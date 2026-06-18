@@ -629,7 +629,7 @@ func buildReconcileResponse(before, after []*Metadata) reconcileResponse {
 // so the client can render Docker-ps-style status without a second call.
 func marshalTopology(topo *topology.Topology, events *EventResolver) map[string]any {
 	if topo == nil {
-		return map[string]any{"instances": []any{}}
+		return map[string]any{"instances": []any{}, "pipelines": []any{}}
 	}
 	out := make([]map[string]any, 0, len(topo.Instances))
 	for _, inst := range topo.SortedInstances() {
@@ -649,7 +649,15 @@ func marshalTopology(topo *topology.Topology, events *EventResolver) map[string]
 		}
 		out = append(out, entry)
 	}
-	return map[string]any{"instances": out}
+	pipelines := make([]map[string]any, 0, len(topo.Pipelines))
+	for _, pipeline := range topo.SortedPipelines() {
+		pipelines = append(pipelines, map[string]any{
+			"name":    pipeline.Name,
+			"trigger": marshalTrigger(pipeline.Trigger),
+			"steps":   marshalPipelineSteps(pipeline.Steps),
+		})
+	}
+	return map[string]any{"instances": out, "pipelines": pipelines}
 }
 
 func marshalTriggers(triggers []*topology.Trigger) []map[string]any {
@@ -666,6 +674,33 @@ func marshalTriggers(triggers []*topology.Trigger) []map[string]any {
 		out = append(out, map[string]any{
 			"event": t.Event,
 			"match": match,
+		})
+	}
+	return out
+}
+
+func marshalTrigger(t *topology.Trigger) map[string]any {
+	if t == nil {
+		return nil
+	}
+	match := map[string]any{}
+	for k, mv := range t.Match {
+		if mv.Single != "" {
+			match[k] = mv.Single
+		} else if len(mv.List) > 0 {
+			match[k] = mv.List
+		}
+	}
+	return map[string]any{"event": t.Event, "match": match}
+}
+
+func marshalPipelineSteps(steps []*topology.PipelineStep) []map[string]any {
+	out := make([]map[string]any, 0, len(steps))
+	for _, step := range steps {
+		out = append(out, map[string]any{
+			"id":     step.ID,
+			"target": step.Target,
+			"after":  step.After,
 		})
 	}
 	return out

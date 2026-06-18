@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	jobstore "github.com/jamesaud/agent-team/internal/job"
 	"github.com/jamesaud/agent-team/internal/topology"
 )
 
@@ -550,6 +551,69 @@ func TestEvent_PersistedQueueRecoveryDrainsReadyItem(t *testing.T) {
 	}
 	if fake.callCount() != 1 {
 		t.Fatalf("spawn calls=%d, want 1", fake.callCount())
+	}
+}
+
+func TestEvent_PipelineCreatesJobAndDispatchesFirstStep(t *testing.T) {
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	top, err := topology.Parse([]byte(`
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+`))
+	if err != nil {
+		t.Fatalf("parse topology: %v", err)
+	}
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+	srv := httptest.NewServer(Handler(m, nil, resolver, teamDir))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"ticket.created","payload":{"ticket":"SQU-92","kickoff":"implement SQU-92","workspace":"repo"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var got struct {
+		Dispatched []map[string]any `json:"dispatched"`
+		Rejected   []map[string]any `json:"rejected"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Rejected) != 0 || len(got.Dispatched) != 1 {
+		t.Fatalf("response = %+v", got)
+	}
+	if id, _ := got.Dispatched[0]["instance_id"].(string); id != "worker-squ-92" {
+		t.Fatalf("instance_id = %q, want worker-squ-92", id)
+	}
+	j, err := jobstore.Read(teamDir, "squ-92")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if j.Pipeline != "ticket_to_pr" || j.Status != jobstore.StatusRunning || len(j.Steps) != 2 {
+		t.Fatalf("job = %+v", j)
+	}
+	if j.Steps[0].ID != "implement" || j.Steps[0].Status != jobstore.StatusRunning || j.Steps[0].Instance != "worker-squ-92" {
+		t.Fatalf("first step = %+v", j.Steps[0])
 	}
 }
 

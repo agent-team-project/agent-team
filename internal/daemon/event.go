@@ -127,6 +127,9 @@ func (r *EventResolver) Event(eventType string, payload map[string]any) ([]Event
 	for _, inst := range matched {
 		out = append(out, r.actuate(inst, eventType, payload))
 	}
+	for _, pipeline := range t.ResolvePipelines(eventType, payload) {
+		out = append(out, r.actuatePipeline(pipeline, eventType, payload)...)
+	}
 	return out, nil
 }
 
@@ -135,6 +138,179 @@ func (r *EventResolver) actuate(inst *topology.Instance, eventType string, paylo
 		return r.actuateEphemeral(inst, eventType, payload)
 	}
 	return r.actuatePersistent(inst, eventType, payload)
+}
+
+func (r *EventResolver) actuatePipeline(pipeline *topology.Pipeline, eventType string, payload map[string]any) []EventOutcome {
+	if pipeline == nil || len(pipeline.Steps) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	ticket := pipelineTicket(pipeline.Name, payload)
+	kickoff := pipelineKickoff(eventType, payload)
+	j, err := jobstore.New(ticket, pipeline.Steps[0].Target, kickoff, now)
+	if err != nil {
+		return []EventOutcome{{Instance: "pipeline:" + pipeline.Name, Action: "rejected", Reason: err.Error()}}
+	}
+	j.Pipeline = pipeline.Name
+	j.Steps = pipelineJobSteps(pipeline)
+	if existing, err := jobstore.Read(r.teamDir, j.ID); err == nil {
+		j = existing
+		j.Pipeline = pipeline.Name
+		if len(j.Steps) == 0 {
+			j.Steps = pipelineJobSteps(pipeline)
+		}
+		j.UpdatedAt = now
+	}
+	if err := jobstore.Write(r.teamDir, j); err != nil {
+		return []EventOutcome{{Instance: "pipeline:" + pipeline.Name, Action: "rejected", Reason: err.Error()}}
+	}
+	step := firstRunnablePipelineStep(pipeline)
+	if step == nil {
+		return []EventOutcome{{Instance: "pipeline:" + pipeline.Name, Action: "rejected", Reason: "no runnable step"}}
+	}
+	outcomes := r.dispatchPipelineStep(pipeline, step, j, payload)
+	if latest, err := jobstore.Read(r.teamDir, j.ID); err == nil {
+		j = latest
+	}
+	applyPipelineStepOutcome(j, step.ID, outcomes)
+	_ = jobstore.Write(r.teamDir, j)
+	return outcomes
+}
+
+func (r *EventResolver) dispatchPipelineStep(pipeline *topology.Pipeline, step *topology.PipelineStep, j *jobstore.Job, payload map[string]any) []EventOutcome {
+	dispatchPayload := copyPayload(payload)
+	dispatchPayload["source"] = "pipeline:" + pipeline.Name
+	dispatchPayload["target"] = step.Target
+	dispatchPayload["job_id"] = j.ID
+	dispatchPayload["job"] = j.ID
+	dispatchPayload["pipeline"] = pipeline.Name
+	dispatchPayload["pipeline_step"] = step.ID
+	dispatchPayload["ticket"] = j.Ticket
+	dispatchPayload["kickoff"] = j.Kickoff
+	if payloadString(dispatchPayload, "name") == "" {
+		dispatchPayload["name"] = step.Target + "-" + j.ID
+	}
+	if payloadString(dispatchPayload, "workspace") == "" && step.Target == "worker" {
+		dispatchPayload["workspace"] = "worktree"
+	}
+
+	r.mu.Lock()
+	t := r.topo
+	r.mu.Unlock()
+	if t == nil {
+		return []EventOutcome{{Instance: step.Target, Action: "rejected", Reason: "topology not configured"}}
+	}
+	matched := t.Resolve(topology.EventAgentDispatch, dispatchPayload)
+	if len(matched) == 0 {
+		if inst := t.Find(step.Target); inst != nil {
+			matched = []*topology.Instance{inst}
+		}
+	}
+	if len(matched) == 0 {
+		return []EventOutcome{{Instance: step.Target, Action: "rejected", Reason: "no agent.dispatch trigger matched pipeline step"}}
+	}
+	out := make([]EventOutcome, 0, len(matched))
+	for _, inst := range matched {
+		out = append(out, r.actuate(inst, topology.EventAgentDispatch, dispatchPayload))
+	}
+	return out
+}
+
+func copyPayload(payload map[string]any) map[string]any {
+	out := make(map[string]any, len(payload)+8)
+	for k, v := range payload {
+		out[k] = v
+	}
+	return out
+}
+
+func pipelineTicket(pipeline string, payload map[string]any) string {
+	for _, key := range []string{"ticket", "ticket_id", "id"} {
+		if v := payloadString(payload, key); v != "" {
+			return v
+		}
+	}
+	return pipeline + "-" + newSessionID()[0:8]
+}
+
+func pipelineKickoff(eventType string, payload map[string]any) string {
+	if kickoff := payloadString(payload, "kickoff"); kickoff != "" {
+		return kickoff
+	}
+	body, _ := json.Marshal(map[string]any{"event": eventType, "payload": payload})
+	return string(body)
+}
+
+func pipelineJobSteps(pipeline *topology.Pipeline) []jobstore.Step {
+	steps := make([]jobstore.Step, 0, len(pipeline.Steps))
+	for i, step := range pipeline.Steps {
+		status := jobstore.StatusQueued
+		if i > 0 {
+			status = jobstore.StatusBlocked
+		}
+		steps = append(steps, jobstore.Step{
+			ID:     step.ID,
+			Target: step.Target,
+			Status: status,
+			After:  append([]string(nil), step.After...),
+		})
+	}
+	return steps
+}
+
+func firstRunnablePipelineStep(pipeline *topology.Pipeline) *topology.PipelineStep {
+	for _, step := range pipeline.Steps {
+		if len(step.After) == 0 {
+			return step
+		}
+	}
+	return pipeline.Steps[0]
+}
+
+func applyPipelineStepOutcome(j *jobstore.Job, stepID string, outcomes []EventOutcome) {
+	now := time.Now().UTC()
+	j.UpdatedAt = now
+	j.LastEvent = "pipeline_step"
+	for _, oc := range outcomes {
+		if oc.Action == "dispatched" || oc.Action == "messaged" {
+			markPipelineStep(j, stepID, jobstore.StatusRunning, oc.InstanceID, now)
+			j.Status = jobstore.StatusRunning
+			j.LastStatus = "running " + stepID
+			return
+		}
+		if oc.Action == "queued" {
+			markPipelineStep(j, stepID, jobstore.StatusQueued, oc.InstanceID, now)
+			j.Status = jobstore.StatusQueued
+			j.LastStatus = "queued " + stepID
+			return
+		}
+	}
+	reason := "step rejected"
+	if len(outcomes) > 0 && outcomes[0].Reason != "" {
+		reason = outcomes[0].Reason
+	}
+	markPipelineStep(j, stepID, jobstore.StatusFailed, "", now)
+	j.Status = jobstore.StatusFailed
+	j.LastStatus = reason
+}
+
+func markPipelineStep(j *jobstore.Job, stepID string, status jobstore.Status, instance string, now time.Time) {
+	for i := range j.Steps {
+		if j.Steps[i].ID != stepID {
+			continue
+		}
+		j.Steps[i].Status = status
+		if instance != "" {
+			j.Steps[i].Instance = instance
+		}
+		if j.Steps[i].StartedAt.IsZero() {
+			j.Steps[i].StartedAt = now
+		}
+		if status == jobstore.StatusDone || status == jobstore.StatusFailed {
+			j.Steps[i].FinishedAt = now
+		}
+		return
+	}
 }
 
 func (r *EventResolver) actuatePersistent(inst *topology.Instance, eventType string, payload map[string]any) EventOutcome {

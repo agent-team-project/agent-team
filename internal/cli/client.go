@@ -523,6 +523,7 @@ func (c *daemonClient) QueueRetry(id string) (*daemon.EventOutcome, error) {
 // topologyResponse mirrors the wire shape of /v1/topology.
 type topologyResponse struct {
 	Instances []topologyInstance `json:"instances"`
+	Pipelines []topologyPipeline `json:"pipelines"`
 }
 
 type topologyInstance struct {
@@ -535,6 +536,12 @@ type topologyInstance struct {
 	Triggers    []map[string]interface{} `json:"triggers"`
 	Running     int                      `json:"running"`
 	Queued      int                      `json:"queued"`
+}
+
+type topologyPipeline struct {
+	Name    string                   `json:"name"`
+	Trigger map[string]interface{}   `json:"trigger"`
+	Steps   []map[string]interface{} `json:"steps"`
 }
 
 func (c *daemonClient) Topology() (*topologyResponse, error) {

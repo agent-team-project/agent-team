@@ -656,6 +656,9 @@ func renderJobDetail(w io.Writer, j *job.Job) {
 	if j.Instance != "" {
 		fmt.Fprintf(w, "Instance:    %s\n", j.Instance)
 	}
+	if j.Pipeline != "" {
+		fmt.Fprintf(w, "Pipeline:    %s\n", j.Pipeline)
+	}
 	if j.Branch != "" {
 		fmt.Fprintf(w, "Branch:      %s\n", j.Branch)
 	}
@@ -673,6 +676,21 @@ func renderJobDetail(w io.Writer, j *job.Job) {
 	}
 	if j.Kickoff != "" {
 		fmt.Fprintf(w, "Kickoff:     %s\n", j.Kickoff)
+	}
+	if len(j.Steps) > 0 {
+		fmt.Fprintln(w, "Steps:")
+		for _, step := range j.Steps {
+			instance := step.Instance
+			if instance == "" {
+				instance = "-"
+			}
+			after := "-"
+			if len(step.After) > 0 {
+				after = strings.Join(step.After, ",")
+			}
+			fmt.Fprintf(w, "  %s  target=%s status=%s instance=%s after=%s\n",
+				step.ID, step.Target, step.Status, instance, after)
+		}
 	}
 	fmt.Fprintf(w, "Created:     %s\n", j.CreatedAt.Format(time.RFC3339))
 	fmt.Fprintf(w, "Updated:     %s\n", j.UpdatedAt.Format(time.RFC3339))

@@ -128,6 +128,38 @@ func TestClient_PublishEvent_NoMatch(t *testing.T) {
 	}
 }
 
+func TestTopologyShowIncludesPipelines(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := topoFixture + `
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+`
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"topology", "show", "--target", root})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("topology show: %v\nstderr=%s", err, stderr.String())
+	}
+	for _, want := range []string{"PIPELINE", "ticket_to_pr", "ticket.created", "implement"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("topology output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
 func TestEventPublishJSON(t *testing.T) {
 	target, err := os.MkdirTemp("/tmp", "agent-team-event-json-")
 	if err != nil {
