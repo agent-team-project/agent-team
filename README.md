@@ -175,7 +175,7 @@ agent-team send [<instance>] <message...> [--all] [--latest | --last N] [--agent
                                                 # send a daemon mailbox message; phase/stale/unhealthy selectors use current status.toml; appends locally if the daemon is down
 agent-team dispatch <target> <ticket> [kickoff...] [--name <instance>] [--source <instance>] [--workspace auto|worktree|repo] [--kickoff "..."] [--kickoff-file <path>] [--format '{{len .Dispatched}}'] [--json]
                                                 # publish an agent.dispatch topology event; e.g. dispatch worker SQU-42
-agent-team job create <ticket> [kickoff...] [--target worker] [--instance <name>] [--json]
+agent-team job create <ticket> [kickoff...] [--target worker] [--pipeline ticket_to_pr] [--instance <name>] [--json]
 agent-team job ls [-w] [--summary] [--sort id|status|target|updated|created] [--status queued|running|blocked|done|failed] [--target-agent worker] [--pipeline name] [--instance name] [--json]
 agent-team job show <job-id> | next <job-id> [--json] | ready [--state ready|queued|all] [--json] | events <job-id> [-f] [--tail N|all] [--type closed] [--actor cli] [--since 24h] [--json]
 agent-team job dispatch|start|stop|kill|wait|logs|attach|send|update|close|reopen|cleanup|rm|prune|step|advance ...

@@ -116,6 +116,71 @@ func TestJobCreateListShowClose(t *testing.T) {
 	}
 }
 
+func TestJobCreateFromPipeline(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{
+		"job", "create", "SQU-214",
+		"--repo", tmp,
+		"--pipeline", "ticket_to_pr",
+		"--kickoff", "manual pipeline kickoff",
+		"--json",
+	})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("job create pipeline: %v\nstderr=%s", err, createErr.String())
+	}
+	var created job.Job
+	if err := json.Unmarshal(createOut.Bytes(), &created); err != nil {
+		t.Fatalf("decode pipeline job json: %v\nbody=%s", err, createOut.String())
+	}
+	if created.Pipeline != "ticket_to_pr" || created.Target != "worker" || len(created.Steps) != 2 {
+		t.Fatalf("created pipeline job = %+v", created)
+	}
+	if created.Steps[0].ID != "implement" || created.Steps[0].Status != job.StatusQueued {
+		t.Fatalf("first step = %+v", created.Steps[0])
+	}
+	if created.Steps[1].ID != "review" || created.Steps[1].Status != job.StatusBlocked || strings.Join(created.Steps[1].After, ",") != "implement" {
+		t.Fatalf("second step = %+v", created.Steps[1])
+	}
+	events, err := job.ListEvents(teamDir, "squ-214")
+	if err != nil {
+		t.Fatalf("list pipeline create events: %v", err)
+	}
+	if len(events) != 1 || events[0].Data["pipeline"] != "ticket_to_pr" {
+		t.Fatalf("create events = %+v", events)
+	}
+
+	next := NewRootCmd()
+	nextOut, nextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	next.SetOut(nextOut)
+	next.SetErr(nextErr)
+	next.SetArgs([]string{"job", "next", "squ-214", "--repo", tmp, "--format", "{{.State}} {{.Step.ID}}"})
+	if err := next.Execute(); err != nil {
+		t.Fatalf("job next pipeline create: %v\nstderr=%s", err, nextErr.String())
+	}
+	if got := strings.TrimSpace(nextOut.String()); got != "queued implement" {
+		t.Fatalf("next output = %q", got)
+	}
+
+	mismatch := NewRootCmd()
+	mismatchOut, mismatchErr := &bytes.Buffer{}, &bytes.Buffer{}
+	mismatch.SetOut(mismatchOut)
+	mismatch.SetErr(mismatchErr)
+	mismatch.SetArgs([]string{"job", "create", "SQU-215", "--repo", tmp, "--pipeline", "ticket_to_pr", "--target", "manager"})
+	if err := mismatch.Execute(); err == nil {
+		t.Fatalf("job create pipeline target mismatch succeeded")
+	}
+	if !strings.Contains(mismatchErr.String(), "does not match first step target") {
+		t.Fatalf("mismatch stderr = %q", mismatchErr.String())
+	}
+}
+
 func TestJobEventsFilters(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

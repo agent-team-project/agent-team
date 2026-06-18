@@ -17,6 +17,7 @@ import (
 
 	"github.com/jamesaud/agent-team/internal/intake"
 	"github.com/jamesaud/agent-team/internal/job"
+	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
 )
 
@@ -122,6 +123,7 @@ func newJobCreateCmd() *cobra.Command {
 	var (
 		repo        string
 		targetAgent string
+		pipeline    string
 		id          string
 		kickoff     string
 		kickoffFile string
@@ -154,10 +156,29 @@ func newJobCreateCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
 				return exitErr(2)
 			}
-			j, err := job.New(ticket, targetAgent, kickoffText, time.Now())
+			target := strings.TrimSpace(targetAgent)
+			var pipelineDef *topology.Pipeline
+			if strings.TrimSpace(pipeline) != "" {
+				pipelineDef, err = loadJobCreatePipeline(teamDir, pipeline)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
+					return exitErr(2)
+				}
+				firstTarget := pipelineDef.Steps[0].Target
+				if cmd.Flags().Changed("target") && target != firstTarget {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: --target %q does not match first step target %q for pipeline %q.\n", target, firstTarget, pipelineDef.Name)
+					return exitErr(2)
+				}
+				target = firstTarget
+			}
+			j, err := job.New(ticket, target, kickoffText, time.Now())
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
 				return exitErr(2)
+			}
+			if pipelineDef != nil {
+				j.Pipeline = pipelineDef.Name
+				j.Steps = jobStepsFromPipeline(pipelineDef)
 			}
 			if strings.TrimSpace(id) != "" {
 				normalized := job.NormalizeID(id)
@@ -176,10 +197,14 @@ func newJobCreateCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: job %q already exists.\n", j.ID)
 				return exitErr(2)
 			}
-			if err := writeJobWithAudit(teamDir, j, "created", "cli", "created "+j.Ticket, map[string]string{
+			data := map[string]string{
 				"ticket": j.Ticket,
 				"target": j.Target,
-			}); err != nil {
+			}
+			if j.Pipeline != "" {
+				data["pipeline"] = j.Pipeline
+			}
+			if err := writeJobWithAudit(teamDir, j, "created", "cli", "created "+j.Ticket, data); err != nil {
 				return err
 			}
 			return renderJobResult(cmd.OutOrStdout(), j, jsonOut, tmpl)
@@ -187,6 +212,7 @@ func newJobCreateCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().StringVar(&targetAgent, "target", "worker", "Target agent that should own this job.")
+	cmd.Flags().StringVar(&pipeline, "pipeline", "", "Create this job from a declared pipeline in instances.toml.")
 	cmd.Flags().StringVar(&id, "id", "", "Override the normalized job id (default: ticket slug).")
 	cmd.Flags().StringVar(&kickoff, "kickoff", "", "Kickoff text for the target agent.")
 	cmd.Flags().StringVar(&kickoffFile, "kickoff-file", "", "Read kickoff text from a file.")
@@ -194,6 +220,45 @@ func newJobCreateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
+}
+
+func loadJobCreatePipeline(teamDir, name string) (*topology.Pipeline, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("--pipeline requires a non-empty pipeline name")
+	}
+	top, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	if top == nil {
+		return nil, fmt.Errorf("pipeline %q not found", name)
+	}
+	p := top.Pipelines[name]
+	if p == nil {
+		return nil, fmt.Errorf("pipeline %q not found", name)
+	}
+	if len(p.Steps) == 0 {
+		return nil, fmt.Errorf("pipeline %q has no steps", name)
+	}
+	return p, nil
+}
+
+func jobStepsFromPipeline(p *topology.Pipeline) []job.Step {
+	steps := make([]job.Step, 0, len(p.Steps))
+	for i, step := range p.Steps {
+		status := job.StatusQueued
+		if i > 0 {
+			status = job.StatusBlocked
+		}
+		steps = append(steps, job.Step{
+			ID:     step.ID,
+			Target: step.Target,
+			Status: status,
+			After:  append([]string(nil), step.After...),
+		})
+	}
+	return steps
 }
 
 func newJobLsCmd() *cobra.Command {
