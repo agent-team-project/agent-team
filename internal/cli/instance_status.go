@@ -62,6 +62,7 @@ type instanceRow struct {
 	PR        string
 	Workspace string
 	PID       int // daemon-reported; 0 when no daemon
+	StatusAt  time.Time
 	StartedAt time.Time
 	StoppedAt time.Time
 	ExitedAt  time.Time
@@ -119,6 +120,7 @@ func instanceRowFor(stateRoot, instance string, agentNames map[string]bool, now 
 		return row
 	}
 	row.HasFile = true
+	row.StatusAt = st.ModTime()
 
 	var sf statusFile
 	if _, err := toml.DecodeFile(statusPath, &sf); err != nil {

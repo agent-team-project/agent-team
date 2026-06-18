@@ -3494,6 +3494,9 @@ func reconcileJobsFromStatus(teamDir string, dryRun bool, now time.Time) ([]jobS
 		if j == nil {
 			continue
 		}
+		if statusRowSupersededByUnblock(j, row) {
+			continue
+		}
 		result := reconcileJobFromStatusRow(j, row, matchedBy, dryRun, now)
 		if result.Changed && !dryRun {
 			data := map[string]string{
@@ -3520,6 +3523,16 @@ func reconcileJobsFromStatus(teamDir string, dryRun bool, now time.Time) ([]jobS
 		results = append(results, result)
 	}
 	return results, nil
+}
+
+func statusRowSupersededByUnblock(j *job.Job, row instanceRow) bool {
+	if j == nil || strings.ToLower(strings.TrimSpace(row.Phase)) != "blocked" || j.LastEvent != "unblocked" {
+		return false
+	}
+	if j.UpdatedAt.IsZero() || row.StatusAt.IsZero() {
+		return false
+	}
+	return !row.StatusAt.After(j.UpdatedAt)
 }
 
 func jobForStatusRow(jobs []*job.Job, row instanceRow) (*job.Job, string) {

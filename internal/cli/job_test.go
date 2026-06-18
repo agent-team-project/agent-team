@@ -2232,6 +2232,34 @@ branch = "worker-squ-84"
 	if len(events) != 1 || events[0].Type != "unblocked" || events[0].Data["status_preview"] != "true" || events[0].Data["phase"] != "blocked" {
 		t.Fatalf("events = %+v", events)
 	}
+
+	show := NewRootCmd()
+	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
+	show.SetOut(showOut)
+	show.SetErr(showErr)
+	show.SetArgs([]string{"job", "show", "SQU-84", "--repo", tmp})
+	if err := show.Execute(); err != nil {
+		t.Fatalf("job show after unblock: %v\nstderr=%s", err, showErr.String())
+	}
+	if strings.Contains(showOut.String(), "Status Preview:") {
+		t.Fatalf("stale blocked status should be superseded after unblock:\n%s", showOut.String())
+	}
+
+	triage := NewRootCmd()
+	triageOut, triageErr := &bytes.Buffer{}, &bytes.Buffer{}
+	triage.SetOut(triageOut)
+	triage.SetErr(triageErr)
+	triage.SetArgs([]string{"job", "triage", "--repo", tmp, "--json"})
+	if err := triage.Execute(); err != nil {
+		t.Fatalf("job triage after unblock: %v\nstderr=%s", err, triageErr.String())
+	}
+	var snapshot jobTriageSnapshot
+	if err := json.Unmarshal(triageOut.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode triage json: %v\nbody=%s", err, triageOut.String())
+	}
+	if len(snapshot.StatusPreviews) != 0 || len(snapshot.Attention) != 0 {
+		t.Fatalf("triage should ignore stale blocked status after unblock: %+v", snapshot)
+	}
 }
 
 func TestJobUnblockDryRunDoesNotMutateOrSend(t *testing.T) {
