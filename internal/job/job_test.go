@@ -26,6 +26,41 @@ func TestNormalizeID(t *testing.T) {
 	}
 }
 
+func TestTicketIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		raw       string
+		ticket    string
+		ticketURL string
+		id        string
+	}{
+		{raw: "SQU-42", ticket: "SQU-42", id: "squ-42"},
+		{
+			raw:       "https://linear.app/squirtlesquad/issue/SQU-42/status-monitor",
+			ticket:    "SQU-42",
+			ticketURL: "https://linear.app/squirtlesquad/issue/SQU-42/status-monitor",
+			id:        "squ-42",
+		},
+		{
+			raw:       "https://linear.app/squirtlesquad/issue/squ-43/lowercase",
+			ticket:    "SQU-43",
+			ticketURL: "https://linear.app/squirtlesquad/issue/squ-43/lowercase",
+			id:        "squ-43",
+		},
+	} {
+		ticket, ticketURL := TicketIdentity(tc.raw)
+		if ticket != tc.ticket || ticketURL != tc.ticketURL {
+			t.Fatalf("TicketIdentity(%q) = %q, %q; want %q, %q", tc.raw, ticket, ticketURL, tc.ticket, tc.ticketURL)
+		}
+		j, err := New(tc.raw, "worker", "kickoff", time.Now())
+		if err != nil {
+			t.Fatalf("New(%q): %v", tc.raw, err)
+		}
+		if j.ID != tc.id || j.Ticket != tc.ticket || j.TicketURL != tc.ticketURL {
+			t.Fatalf("job from %q = %+v", tc.raw, j)
+		}
+	}
+}
+
 func TestJobReadWriteList(t *testing.T) {
 	teamDir := filepath.Join(t.TempDir(), ".agent_team")
 	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
@@ -60,6 +95,38 @@ func TestJobReadWriteList(t *testing.T) {
 	}
 	if len(jobs) != 2 || jobs[0].ID != "squ-41" || jobs[1].ID != "squ-42" {
 		t.Fatalf("List = %+v, want sorted ids", jobs)
+	}
+}
+
+func TestJobReadAndEventsAcceptTicketURL(t *testing.T) {
+	teamDir := filepath.Join(t.TempDir(), ".agent_team")
+	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	ticketURL := "https://linear.app/squirtlesquad/issue/SQU-44/from-url"
+	j, err := New(ticketURL, "worker", "from url", now)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	j.LastEvent = "created"
+	j.LastStatus = "created"
+	if err := Write(teamDir, j); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := AppendSnapshotEvent(teamDir, j, "", "test", "", nil); err != nil {
+		t.Fatalf("AppendSnapshotEvent: %v", err)
+	}
+	read, err := Read(teamDir, ticketURL)
+	if err != nil {
+		t.Fatalf("Read URL: %v", err)
+	}
+	if read.ID != "squ-44" || read.Ticket != "SQU-44" || read.TicketURL != ticketURL {
+		t.Fatalf("read = %+v", read)
+	}
+	events, err := ListEvents(teamDir, ticketURL)
+	if err != nil {
+		t.Fatalf("ListEvents URL: %v", err)
+	}
+	if len(events) != 1 || events[0].JobID != "squ-44" {
+		t.Fatalf("events = %+v", events)
 	}
 }
 

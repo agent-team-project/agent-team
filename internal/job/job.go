@@ -6,12 +6,15 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
 )
+
+var ticketIdentifierPattern = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])([a-z][a-z0-9]{1,9}-[0-9]+)(?:$|[^a-z0-9])`)
 
 // Status is the durable lifecycle state of a work unit.
 type Status string
@@ -85,6 +88,46 @@ func NormalizeID(raw string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+// IDFromInput returns the normalized durable job id implied by raw input.
+// It accepts either a plain job/ticket id or a ticket URL containing an id.
+func IDFromInput(raw string) string {
+	ticket, _ := TicketIdentity(raw)
+	return NormalizeID(ticket)
+}
+
+// TicketIdentity returns the display ticket and canonical URL implied by raw.
+// Plain ticket identifiers are returned unchanged. URL input keeps the URL in
+// ticket_url and, when possible, extracts identifiers like SQU-42 for the
+// durable ticket/id fields.
+func TicketIdentity(raw string) (ticket, ticketURL string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", ""
+	}
+	if !looksLikeTicketURL(raw) {
+		return raw, ""
+	}
+	ticketURL = raw
+	if id := ExtractTicketIdentifier(raw); id != "" {
+		return id, ticketURL
+	}
+	return raw, ticketURL
+}
+
+// ExtractTicketIdentifier finds ticket identifiers such as SQU-42 in free text.
+func ExtractTicketIdentifier(raw string) string {
+	matches := ticketIdentifierPattern.FindStringSubmatch(strings.TrimSpace(raw))
+	if len(matches) < 2 {
+		return ""
+	}
+	return strings.ToUpper(matches[1])
+}
+
+func looksLikeTicketURL(raw string) bool {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	return strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://")
+}
+
 // ValidStatus reports whether s is a supported job lifecycle state.
 func ValidStatus(s Status) bool {
 	switch s {
@@ -106,7 +149,7 @@ func ParseStatus(raw string) (Status, error) {
 
 // New builds a queued job with normalized defaults.
 func New(ticket, target, kickoff string, now time.Time) (*Job, error) {
-	ticket = strings.TrimSpace(ticket)
+	ticket, ticketURL := TicketIdentity(ticket)
 	target = strings.TrimSpace(target)
 	kickoff = strings.TrimSpace(kickoff)
 	if ticket == "" {
@@ -115,7 +158,7 @@ func New(ticket, target, kickoff string, now time.Time) (*Job, error) {
 	if target == "" {
 		return nil, errors.New("target is required")
 	}
-	id := NormalizeID(ticket)
+	id := IDFromInput(ticket)
 	if id == "" {
 		return nil, fmt.Errorf("ticket %q produced an empty job id", ticket)
 	}
@@ -123,6 +166,7 @@ func New(ticket, target, kickoff string, now time.Time) (*Job, error) {
 	return &Job{
 		ID:        id,
 		Ticket:    ticket,
+		TicketURL: ticketURL,
 		Target:    target,
 		Kickoff:   kickoff,
 		Status:    StatusQueued,
@@ -178,7 +222,7 @@ func Validate(j *Job) error {
 
 // Read loads a single job by normalized or raw id.
 func Read(teamDir, rawID string) (*Job, error) {
-	id := NormalizeID(rawID)
+	id := IDFromInput(rawID)
 	if id == "" {
 		return nil, fmt.Errorf("job id %q produced an empty normalized id", rawID)
 	}

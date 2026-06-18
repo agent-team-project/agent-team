@@ -135,6 +135,46 @@ func TestJobCreateListShowClose(t *testing.T) {
 	}
 }
 
+func TestJobCreateFromTicketURLUsesTicketSlugID(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	ticketURL := "https://linear.app/squirtlesquad/issue/SQU-82/create-from-url"
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "create", ticketURL, "--repo", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job create url: %v\nstderr=%s", err, stderr.String())
+	}
+	var created job.Job
+	if err := json.Unmarshal(out.Bytes(), &created); err != nil {
+		t.Fatalf("decode create url json: %v\nbody=%s", err, out.String())
+	}
+	if created.ID != "squ-82" || created.Ticket != "SQU-82" || created.TicketURL != ticketURL {
+		t.Fatalf("created = %+v", created)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".agent_team", "jobs", "squ-82.toml")); err != nil {
+		t.Fatalf("expected slug job file: %v", err)
+	}
+	show := NewRootCmd()
+	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
+	show.SetOut(showOut)
+	show.SetErr(showErr)
+	show.SetArgs([]string{"job", "show", ticketURL, "--repo", tmp, "--json"})
+	if err := show.Execute(); err != nil {
+		t.Fatalf("job show url: %v\nstderr=%s", err, showErr.String())
+	}
+	var shown job.Job
+	if err := json.Unmarshal(showOut.Bytes(), &shown); err != nil {
+		t.Fatalf("decode show url json: %v\nbody=%s", err, showOut.String())
+	}
+	if shown.ID != "squ-82" || shown.TicketURL != ticketURL {
+		t.Fatalf("shown = %+v", shown)
+	}
+}
+
 func TestJobShowIncludesQueueItems(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

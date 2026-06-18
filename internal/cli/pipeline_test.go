@@ -292,9 +292,8 @@ func TestPipelineRunCreatesDurableJob(t *testing.T) {
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
 	cmd.SetArgs([]string{
-		"pipeline", "run", "ticket_to_pr", "SQU-304",
+		"pipeline", "run", "ticket_to_pr", "https://linear.app/squirtlesquad/issue/SQU-304/run-pipeline",
 		"--repo", root,
-		"--ticket-url", "https://linear.app/squirtlesquad/issue/SQU-304/run-pipeline",
 		"--kickoff", "run pipeline",
 		"--json",
 	})

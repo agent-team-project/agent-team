@@ -27,7 +27,7 @@ type Event struct {
 
 // EventPath returns the JSONL event log path for a job id.
 func EventPath(teamDir, rawID string) string {
-	id := NormalizeID(rawID)
+	id := IDFromInput(rawID)
 	return filepath.Join(Directory(teamDir), id+".events.jsonl")
 }
 
@@ -36,7 +36,7 @@ func AppendEvent(teamDir string, ev *Event) error {
 	if ev == nil {
 		return errors.New("job event is nil")
 	}
-	ev.JobID = NormalizeID(ev.JobID)
+	ev.JobID = IDFromInput(ev.JobID)
 	if ev.JobID == "" {
 		return errors.New("job event job_id is required")
 	}
@@ -104,7 +104,7 @@ func AppendSnapshotEvent(teamDir string, j *Job, eventType, actor, message strin
 
 // ListEvents reads a job event log. A missing log returns an empty slice.
 func ListEvents(teamDir, rawID string) ([]Event, error) {
-	id := NormalizeID(rawID)
+	id := IDFromInput(rawID)
 	if id == "" {
 		return nil, fmt.Errorf("job id %q produced an empty normalized id", rawID)
 	}
