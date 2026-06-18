@@ -1301,6 +1301,7 @@ func newJobReopenCmd() *cobra.Command {
 		dispatchNow bool
 		source      string
 		workspace   string
+		dryRun      bool
 		jsonOut     bool
 		format      string
 	)
@@ -1352,6 +1353,32 @@ func newJobReopenCmd() *cobra.Command {
 				}
 			}
 			j.UpdatedAt = time.Now().UTC()
+			if dryRun {
+				if dispatchNow {
+					if len(j.Steps) > 0 {
+						preview, err := previewJobAdvanceDispatch(teamDir, j, workspace)
+						if err != nil {
+							fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reopen: %v\n", err)
+							return exitErr(1)
+						}
+						return renderJobAdvancePreview(cmd.OutOrStdout(), preview, jsonOut, tmpl)
+					}
+					payload, requestedName, err := buildDispatchEventPayload(j.Target, j.Ticket, j.Kickoff, j.Instance, source, workspace)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reopen: %v\n", err)
+						return exitErr(2)
+					}
+					payload["job_id"] = j.ID
+					payload["job"] = j.ID
+					preview, err := previewDispatchPayload(teamDir, j.Target, requestedName, payload)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reopen: %v\n", err)
+						return exitErr(1)
+					}
+					return renderJobDispatchPreview(cmd.OutOrStdout(), j, preview, jsonOut, tmpl)
+				}
+				return renderJobReopenPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
+			}
 			if err := writeJobWithAudit(teamDir, j, "", "cli", "", data); err != nil {
 				return err
 			}
@@ -1393,8 +1420,9 @@ func newJobReopenCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dispatchNow, "dispatch", false, "Dispatch the reopened job immediately using the running daemon.")
 	cmd.Flags().StringVar(&source, "source", "", "Source instance for --dispatch (default: AGENT_TEAM_INSTANCE or cli).")
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for --dispatch: auto, worktree, or repo.")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
-	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the reopened job and optional dispatch without writing job or daemon state.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job or dry-run preview as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or dry-run preview with a Go template.")
 	return cmd
 }
 
@@ -4781,6 +4809,23 @@ func renderJobAdvancePreview(w io.Writer, preview *jobAdvancePreview, jsonOut bo
 		return nil
 	}
 	return renderEventPublishRoutePreview(w, preview.Dispatch.Preview)
+}
+
+type jobReopenPreview struct {
+	Job    *job.Job `json:"job"`
+	DryRun bool     `json:"dry_run"`
+}
+
+func renderJobReopenPreview(w io.Writer, j *job.Job, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(jobReopenPreview{Job: j, DryRun: true})
+	}
+	if tmpl != nil {
+		return renderJobTemplate(w, j, tmpl)
+	}
+	fmt.Fprintln(w, "Dry run: true")
+	renderJobDetail(w, j)
+	return nil
 }
 
 func parseJobShowEventsTail(raw string) (int, error) {

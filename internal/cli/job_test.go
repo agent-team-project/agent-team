@@ -1545,6 +1545,36 @@ func TestJobReopenResetsStatusAndAudits(t *testing.T) {
 		t.Fatalf("write failed job: %v", err)
 	}
 
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"job", "reopen", "SQU-68", "--repo", tmp, "--message", "retry after fix", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("job reopen dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview jobReopenPreview
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode reopen dry-run json: %v\nbody=%s", err, dryOut.String())
+	}
+	if !preview.DryRun || preview.Job == nil || preview.Job.Status != job.StatusQueued || preview.Job.LastEvent != "reopened" || preview.Job.LastStatus != "retry after fix" {
+		t.Fatalf("preview = %+v", preview)
+	}
+	unchanged, err := job.Read(teamDir, "squ-68")
+	if err != nil {
+		t.Fatalf("read dry-run job: %v", err)
+	}
+	if unchanged.Status != job.StatusFailed || unchanged.LastEvent != "dispatch_failed" {
+		t.Fatalf("dry-run mutated job = %+v", unchanged)
+	}
+	previewEvents, err := job.ListEvents(teamDir, "squ-68")
+	if err != nil {
+		t.Fatalf("ListEvents dry-run: %v", err)
+	}
+	if len(previewEvents) != 0 {
+		t.Fatalf("dry-run wrote events = %+v", previewEvents)
+	}
+
 	reopen := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	reopen.SetOut(out)
@@ -1587,6 +1617,43 @@ func TestJobRetryDispatchesReopenedJob(t *testing.T) {
 	}
 	if err := job.Write(teamDir, failed); err != nil {
 		t.Fatalf("write failed job: %v", err)
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"job", "retry", "SQU-80", "--repo", target, "--dispatch", "--workspace", "repo", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("job retry --dispatch dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview jobDispatchPreview
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode retry dispatch dry-run json: %v\nbody=%s", err, dryOut.String())
+	}
+	if !preview.DryRun || preview.Job == nil || preview.Job.Status != job.StatusQueued || preview.Job.LastEvent != "reopened" {
+		t.Fatalf("preview = %+v", preview)
+	}
+	if preview.Dispatch == nil || preview.Dispatch.RequestedName != "worker-squ-80" {
+		t.Fatalf("dispatch preview = %+v", preview.Dispatch)
+	}
+	previewPayload := preview.Dispatch.Preview.Payload
+	if previewPayload["job_id"] != "squ-80" || previewPayload["workspace"] != "repo" {
+		t.Fatalf("payload = %+v", previewPayload)
+	}
+	unchanged, err := job.Read(teamDir, "squ-80")
+	if err != nil {
+		t.Fatalf("read dry-run job: %v", err)
+	}
+	if unchanged.Status != job.StatusFailed || unchanged.LastEvent != "dispatch_failed" {
+		t.Fatalf("dry-run mutated job = %+v", unchanged)
+	}
+	previewEvents, err := job.ListEvents(teamDir, "squ-80")
+	if err != nil {
+		t.Fatalf("ListEvents dry-run: %v", err)
+	}
+	if len(previewEvents) != 0 {
+		t.Fatalf("dry-run wrote events = %+v", previewEvents)
 	}
 
 	cmd := NewRootCmd()
@@ -1645,6 +1712,46 @@ func TestJobRetryDispatchResetsFailedPipelineStep(t *testing.T) {
 	}
 	if err := job.Write(teamDir, j); err != nil {
 		t.Fatalf("write failed pipeline job: %v", err)
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"job", "retry", "squ-81", "--repo", target, "--dispatch", "--workspace", "repo", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("job retry pipeline dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview jobAdvancePreview
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode retry pipeline dry-run json: %v\nbody=%s", err, dryOut.String())
+	}
+	if !preview.DryRun || preview.Job == nil || preview.Job.Status != job.StatusQueued || preview.Job.LastEvent != "reopened" || preview.Step == nil || preview.Step.ID != "review" {
+		t.Fatalf("preview = %+v", preview)
+	}
+	if preview.Step.Status != job.StatusBlocked || preview.Step.Instance != "" || !preview.Step.FinishedAt.IsZero() {
+		t.Fatalf("preview step = %+v", preview.Step)
+	}
+	if preview.Dispatch == nil || preview.Dispatch.RequestedName != "manager-squ-81-review" {
+		t.Fatalf("dispatch preview = %+v", preview.Dispatch)
+	}
+	payload := preview.Dispatch.Preview.Payload
+	if payload["pipeline"] != "ticket_triage" || payload["pipeline_step"] != "review" || payload["job_id"] != "squ-81" || payload["workspace"] != "repo" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	unchanged, err := job.Read(teamDir, "squ-81")
+	if err != nil {
+		t.Fatalf("read dry-run job: %v", err)
+	}
+	if unchanged.Status != job.StatusFailed || unchanged.Steps[1].Status != job.StatusFailed || unchanged.Steps[1].Instance != "manager-old" || unchanged.Steps[1].FinishedAt.IsZero() {
+		t.Fatalf("dry-run mutated job = %+v", unchanged)
+	}
+	previewEvents, err := job.ListEvents(teamDir, "squ-81")
+	if err != nil {
+		t.Fatalf("ListEvents dry-run: %v", err)
+	}
+	if len(previewEvents) != 0 {
+		t.Fatalf("dry-run wrote events = %+v", previewEvents)
 	}
 
 	cmd := NewRootCmd()
