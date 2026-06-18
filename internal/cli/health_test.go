@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -606,6 +607,109 @@ func TestHealthCommandJobsReportsJobAttention(t *testing.T) {
 		t.Fatal("health --jobs text succeeded unexpectedly")
 	}
 	for _, want := range []string{"jobs: total=1", "attention=1", "job_attention", "job=squ-91", "action=agent-team job retry squ-91 --dispatch"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("health text missing %q:\n%s", want, textOut.String())
+		}
+	}
+}
+
+func TestHealthCommandJobsIncludesPipelineStatus(t *testing.T) {
+	tmp := t.TempDir()
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+after = ["review"]
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-93",
+			Ticket:    "SQU-93",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusFailed,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusFailed},
+			},
+		},
+		{
+			ID:        "squ-94",
+			Ticket:    "SQU-94",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusBlocked,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusBlocked, After: []string{"review"}},
+				{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"implement"}},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"health", "--jobs", "--json", "--target", tmp})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("health --jobs succeeded unexpectedly")
+	}
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 1 {
+		t.Fatalf("expected exit 1, got %v", err)
+	}
+	var body healthResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode health pipeline json: %v\nbody=%s stderr=%s", err, out.String(), stderr.String())
+	}
+	if len(body.PipelineStatus) != 1 || body.PipelineStatus[0].Pipeline != "ticket_to_pr" || body.PipelineStatus[0].FailedSteps != 1 || body.PipelineStatus[0].BlockedSteps != 1 {
+		t.Fatalf("pipeline status = %+v", body.PipelineStatus)
+	}
+	var sawFailed, sawBlocked bool
+	for _, issue := range body.Issues {
+		switch issue.Code {
+		case "pipeline_failed_step":
+			sawFailed = containsString(issue.Actions, "agent-team pipeline ready ticket_to_pr --state failed")
+		case "pipeline_blocked_step":
+			sawBlocked = containsString(issue.Actions, "agent-team pipeline ready ticket_to_pr --state blocked")
+		}
+	}
+	if !sawFailed || !sawBlocked {
+		t.Fatalf("issues = %+v, missing pipeline issues", body.Issues)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"health", "--jobs", "--target", tmp})
+	if err := text.Execute(); err == nil {
+		t.Fatal("health --jobs text succeeded unexpectedly")
+	}
+	for _, want := range []string{"pipeline status: pipelines=1 jobs=2 ready_steps=0 failed_steps=1", "pipeline_failed_step", "pipeline_blocked_step", "agent-team pipeline ready ticket_to_pr --state failed", "agent-team pipeline ready ticket_to_pr --state blocked"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("health text missing %q:\n%s", want, textOut.String())
 		}

@@ -192,16 +192,17 @@ func newHealthOptionsWithInstancesAndUnhealthy(statusFilters, agentFilters, phas
 }
 
 type healthResult struct {
-	Healthy   bool                       `json:"healthy"`
-	Daemon    healthDaemon               `json:"daemon"`
-	Summary   psSummaryJSON              `json:"summary"`
-	Queue     queueSummary               `json:"queue"`
-	Jobs      *jobTriageSnapshot         `json:"jobs,omitempty"`
-	JobStatus []jobStatusReconcileResult `json:"job_status_preview,omitempty"`
-	Declared  healthDeclared             `json:"declared"`
-	Issues    []healthIssue              `json:"issues"`
-	CheckedAt string                     `json:"checked_at"`
-	Instances []healthInstance           `json:"instances,omitempty"`
+	Healthy        bool                       `json:"healthy"`
+	Daemon         healthDaemon               `json:"daemon"`
+	Summary        psSummaryJSON              `json:"summary"`
+	Queue          queueSummary               `json:"queue"`
+	Jobs           *jobTriageSnapshot         `json:"jobs,omitempty"`
+	JobStatus      []jobStatusReconcileResult `json:"job_status_preview,omitempty"`
+	PipelineStatus []pipelineStatusRow        `json:"pipeline_status,omitempty"`
+	Declared       healthDeclared             `json:"declared"`
+	Issues         []healthIssue              `json:"issues"`
+	CheckedAt      string                     `json:"checked_at"`
+	Instances      []healthInstance           `json:"instances,omitempty"`
 }
 
 type healthDaemon struct {
@@ -545,6 +546,37 @@ func addJobHealth(result *healthResult, teamDir string, now time.Time) error {
 			fmt.Sprintf("agent-team job unblock %s <answer...>", preview.JobID),
 		})
 	}
+	pipelineStatus, err := collectPipelineStatusRows(teamDir, "")
+	if err != nil {
+		return err
+	}
+	result.PipelineStatus = pipelineStatus
+	for _, row := range pipelineStatus {
+		if row.FailedSteps > 0 {
+			result.addIssueWithSeverityAndActions(
+				"pipeline_failed_step",
+				"error",
+				"",
+				"",
+				"",
+				"",
+				fmt.Sprintf("pipeline %q has %d failed step(s)", row.Pipeline, row.FailedSteps),
+				row.Actions,
+			)
+		}
+		if row.BlockedSteps > 0 {
+			result.addIssueWithSeverityAndActions(
+				"pipeline_blocked_step",
+				"warning",
+				"",
+				"",
+				"",
+				"",
+				fmt.Sprintf("pipeline %q has %d blocked step(s)", row.Pipeline, row.BlockedSteps),
+				row.Actions,
+			)
+		}
+	}
 	return nil
 }
 
@@ -705,6 +737,14 @@ func renderHealth(w io.Writer, result *healthResult) {
 			len(result.JobStatus),
 			countChangedJobStatusPreviews(result.JobStatus),
 			countJobStatusPreviewsByAfter(result.JobStatus, job.StatusBlocked),
+		)
+	}
+	if result.PipelineStatus != nil {
+		fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d failed_steps=%d\n",
+			len(result.PipelineStatus),
+			countPipelineStatusJobs(result.PipelineStatus),
+			countPipelineStatusReadySteps(result.PipelineStatus),
+			countPipelineStatusFailedSteps(result.PipelineStatus),
 		)
 	}
 	fmt.Fprint(w, "phases:")
