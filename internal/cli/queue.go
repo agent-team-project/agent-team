@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"os/signal"
 	"strings"
 	"text/tabwriter"
 	"text/template"
@@ -33,8 +35,11 @@ func newQueueLsCmd() *cobra.Command {
 	var (
 		target      string
 		stateFilter string
+		watch       bool
+		noClear     bool
 		jsonOut     bool
 		format      string
+		interval    time.Duration
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -44,6 +49,10 @@ func newQueueLsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue ls: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue ls: --interval must be >= 0.")
 				return exitErr(2)
 			}
 			tmpl, err := parseQueueFormat(format)
@@ -60,25 +69,21 @@ func newQueueLsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
-			if err != nil {
-				return err
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				return runQueueListWatch(ctx, cmd.OutOrStdout(), teamDir, state, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
-			filtered := filterQueueItems(items, state)
-			if jsonOut {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(filtered)
-			}
-			if tmpl != nil {
-				return renderQueueItemsFormat(cmd.OutOrStdout(), filtered, tmpl)
-			}
-			renderQueueTable(cmd.OutOrStdout(), filtered)
-			return nil
+			return runQueueList(cmd.OutOrStdout(), teamDir, state, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVar(&stateFilter, "state", "", "Filter by queue state: pending or dead.")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the queue table until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	return cmd
 }
 
@@ -250,6 +255,48 @@ func filterQueueItems(items []*daemon.QueueItem, state string) []*daemon.QueueIt
 		}
 	}
 	return out
+}
+
+func runQueueList(w io.Writer, teamDir, state string, jsonOut bool, tmpl *template.Template) error {
+	items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return err
+	}
+	filtered := filterQueueItems(items, state)
+	if jsonOut {
+		return json.NewEncoder(w).Encode(filtered)
+	}
+	if tmpl != nil {
+		return renderQueueItemsFormat(w, filtered, tmpl)
+	}
+	renderQueueTable(w, filtered)
+	return nil
+}
+
+func runQueueListWatch(ctx context.Context, w io.Writer, teamDir, state string, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if !jsonOut {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+		}
+		if err := runQueueList(w, teamDir, state, jsonOut, tmpl); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
 }
 
 func parseQueueFormat(format string) (*template.Template, error) {

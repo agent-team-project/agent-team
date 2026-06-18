@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -71,6 +72,35 @@ func TestQueueCommandListShowDropLocal(t *testing.T) {
 	}
 	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-local"); !os.IsNotExist(err) {
 		t.Fatalf("queue item still exists or unexpected err=%v", err)
+	}
+}
+
+func TestQueueListWatchRendersSnapshot(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	item := &daemon.QueueItem{
+		ID:         "q-watch",
+		State:      daemon.QueueStatePending,
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-92",
+		Payload:    map[string]any{"target": "worker", "ticket": "SQU-92"},
+		QueuedAt:   now,
+		UpdatedAt:  now,
+	}
+	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+		t.Fatalf("WriteQueueItem: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out bytes.Buffer
+	if err := runQueueListWatch(ctx, &out, teamDir, daemon.QueueStatePending, false, nil, time.Millisecond, false); err != nil {
+		t.Fatalf("runQueueListWatch: %v", err)
+	}
+	if !strings.Contains(out.String(), "q-watch") || strings.Contains(out.String(), watchClearSequence) {
+		t.Fatalf("watch output = %q", out.String())
 	}
 }
 
