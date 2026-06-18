@@ -1114,6 +1114,7 @@ func newJobCleanupCmd() *cobra.Command {
 	var (
 		repo    string
 		merged  bool
+		dryRun  bool
 		jsonOut bool
 		format  string
 	)
@@ -1127,7 +1128,11 @@ func newJobCleanupCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if !merged {
+			if dryRun && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: --format cannot be combined with --dry-run.")
+				return exitErr(2)
+			}
+			if !merged && !dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: pass --merged after confirming the job's PR has merged.")
 				return exitErr(2)
 			}
@@ -1141,6 +1146,18 @@ func newJobCleanupCmd() *cobra.Command {
 				return err
 			}
 			repoRoot := filepath.Dir(teamDir)
+			if dryRun {
+				preview, err := previewJobCleanup(repoRoot, j)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job cleanup: %v\n", err)
+					return exitErr(1)
+				}
+				if jsonOut {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(preview)
+				}
+				renderJobCleanupPreview(cmd.OutOrStdout(), preview)
+				return nil
+			}
 			summary, err := cleanupJobOwnedWorktree(repoRoot, j)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job cleanup: %v\n", err)
@@ -1166,6 +1183,7 @@ func newJobCleanupCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&merged, "merged", false, "Confirm the job's PR has merged before removing its worktree and branch.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the job-owned worktree and branch cleanup without removing anything.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.LastStatus}}'.")
 	return cmd
@@ -1881,6 +1899,18 @@ type jobRemoveResult struct {
 	JobPath       string     `json:"job_path"`
 	EventPath     string     `json:"event_path"`
 	EventsRemoved bool       `json:"events_removed"`
+}
+
+type jobCleanupPreview struct {
+	JobID               string `json:"job_id"`
+	Worktree            string `json:"worktree,omitempty"`
+	Branch              string `json:"branch,omitempty"`
+	WorktreeExists      bool   `json:"worktree_exists"`
+	BranchExists        bool   `json:"branch_exists"`
+	WouldRemoveWorktree bool   `json:"would_remove_worktree"`
+	WouldRemoveBranch   bool   `json:"would_remove_branch"`
+	Summary             string `json:"summary"`
+	DryRun              bool   `json:"dry_run"`
 }
 
 type jobSummary struct {
@@ -3581,6 +3611,60 @@ func renderJobNextResult(w io.Writer, res jobNextResult, jsonOut bool, tmpl *tem
 	fmt.Fprintf(w, "Job: %s next step=%s state=%s status=%s target=%s instance=%s after=%s waiting_for=%s\n",
 		res.JobID, res.Step.ID, res.State, res.Step.Status, res.Step.Target, emptyDash(res.Step.Instance), after, waiting)
 	return nil
+}
+
+func previewJobCleanup(repoRoot string, j *job.Job) (jobCleanupPreview, error) {
+	preview := jobCleanupPreview{
+		JobID:    j.ID,
+		Worktree: strings.TrimSpace(j.Worktree),
+		Branch:   strings.TrimSpace(j.Branch),
+		DryRun:   true,
+	}
+	if preview.Worktree != "" {
+		if err := validateJobOwnedWorktree(repoRoot, preview.Worktree); err != nil {
+			return preview, err
+		}
+		exists, err := pathExists(preview.Worktree)
+		if err != nil {
+			return preview, err
+		}
+		preview.WorktreeExists = exists
+		preview.WouldRemoveWorktree = exists
+	}
+	if preview.Branch != "" {
+		exists, err := gitBranchExists(repoRoot, preview.Branch)
+		if err != nil {
+			return preview, err
+		}
+		preview.BranchExists = exists
+		preview.WouldRemoveBranch = exists
+	}
+	preview.Summary = jobCleanupPreviewSummary(preview)
+	return preview, nil
+}
+
+func jobCleanupPreviewSummary(preview jobCleanupPreview) string {
+	wouldRemove := []string{}
+	if preview.WouldRemoveWorktree {
+		wouldRemove = append(wouldRemove, "worktree")
+	}
+	if preview.WouldRemoveBranch {
+		wouldRemove = append(wouldRemove, "branch")
+	}
+	if len(wouldRemove) == 0 {
+		return "nothing to clean"
+	}
+	return "would remove " + strings.Join(wouldRemove, " and ")
+}
+
+func renderJobCleanupPreview(w io.Writer, preview jobCleanupPreview) {
+	fmt.Fprintf(w, "Job: %s cleanup dry-run (%s)\n", preview.JobID, preview.Summary)
+	if preview.Worktree != "" {
+		fmt.Fprintf(w, "Worktree: %s exists=%s remove=%s\n", preview.Worktree, yesNo(preview.WorktreeExists), yesNo(preview.WouldRemoveWorktree))
+	}
+	if preview.Branch != "" {
+		fmt.Fprintf(w, "Branch:   %s exists=%s remove=%s\n", preview.Branch, yesNo(preview.BranchExists), yesNo(preview.WouldRemoveBranch))
+	}
 }
 
 func cleanupJobOwnedWorktree(repoRoot string, j *job.Job) (string, error) {

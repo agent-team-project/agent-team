@@ -1707,6 +1707,7 @@ func TestJobDispatchRecordsWorktreeAndCleanup(t *testing.T) {
 	target, mgr, cleanup := setupDispatchCommandRepo(t)
 	defer cleanup()
 	initGitRepoForJobTest(t, target)
+	teamDir := filepath.Join(target, ".agent_team")
 
 	create := NewRootCmd()
 	create.SetOut(&bytes.Buffer{})
@@ -1730,7 +1731,7 @@ func TestJobDispatchRecordsWorktreeAndCleanup(t *testing.T) {
 	if err := dispatch.Execute(); err != nil {
 		t.Fatalf("job dispatch: %v\nstderr=%s", err, dispatchErr.String())
 	}
-	dispatched, err := job.Read(filepath.Join(target, ".agent_team"), "squ-44")
+	dispatched, err := job.Read(teamDir, "squ-44")
 	if err != nil {
 		t.Fatalf("read job: %v", err)
 	}
@@ -1780,6 +1781,35 @@ func TestJobDispatchRecordsWorktreeAndCleanup(t *testing.T) {
 	}
 
 	stopAndWaitForTest(t, mgr, "worker-squ-44")
+
+	previewCmd := NewRootCmd()
+	previewOut, previewErr := &bytes.Buffer{}, &bytes.Buffer{}
+	previewCmd.SetOut(previewOut)
+	previewCmd.SetErr(previewErr)
+	previewCmd.SetArgs([]string{"job", "cleanup", "squ-44", "--dry-run", "--repo", target, "--json"})
+	if err := previewCmd.Execute(); err != nil {
+		t.Fatalf("job cleanup dry-run: %v\nstderr=%s", err, previewErr.String())
+	}
+	var preview jobCleanupPreview
+	if err := json.Unmarshal(previewOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode cleanup dry-run json: %v\nbody=%s", err, previewOut.String())
+	}
+	if !preview.DryRun || !preview.WouldRemoveWorktree || !preview.WouldRemoveBranch || preview.Summary != "would remove worktree and branch" {
+		t.Fatalf("cleanup preview = %+v", preview)
+	}
+	stillOwned, err := job.Read(teamDir, "squ-44")
+	if err != nil {
+		t.Fatalf("read dry-run job: %v", err)
+	}
+	if stillOwned.Worktree != dispatched.Worktree || stillOwned.Branch != dispatched.Branch {
+		t.Fatalf("dry-run mutated job = %+v", stillOwned)
+	}
+	if _, err := os.Stat(dispatched.Worktree); err != nil {
+		t.Fatalf("dry-run removed worktree or stat failed: %v", err)
+	}
+	if !branchExists(t, target, dispatched.Branch) {
+		t.Fatalf("dry-run removed branch %s", dispatched.Branch)
+	}
 
 	cleanupCmd := NewRootCmd()
 	cleanupOut, cleanupErr := &bytes.Buffer{}, &bytes.Buffer{}
