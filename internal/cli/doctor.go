@@ -8,14 +8,16 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/jamesaud/agent-team/internal/loader"
+	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/jamesaud/agent-team/internal/template"
 	"github.com/spf13/cobra"
 )
 
 func newDoctorCmd() *cobra.Command {
 	var (
-		target       string
-		strictDaemon bool
+		target        string
+		strictDaemon  bool
+		strictRuntime bool
 	)
 	cwd, _ := os.Getwd()
 
@@ -24,17 +26,18 @@ func newDoctorCmd() *cobra.Command {
 		Short: "Sanity-check the vendored team.",
 		Long: "Sanity-check the vendored team: .agent_team/ layout, config.toml validity, " +
 			"template provenance, each agent's frontmatter, skill resolution across all agents, " +
-			"and whether the companion agent-teamd binary is available for daemon-backed lifecycle commands.",
+			"the selected runtime binary, and whether the companion agent-teamd binary is available for daemon-backed lifecycle commands.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDoctor(cmd, target, strictDaemon)
+			return runDoctor(cmd, target, strictDaemon, strictRuntime)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&strictDaemon, "strict-daemon", false, "Fail when the companion agent-teamd binary is not discoverable.")
+	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when the selected LLM runtime binary is not discoverable.")
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, target string, strictDaemon bool) error {
+func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime bool) error {
 	abs, err := filepath.Abs(target)
 	if err != nil {
 		return exitErr(2)
@@ -52,6 +55,16 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon bool) error {
 			problems = append(problems, daemonHint)
 		} else {
 			warnings = append(warnings, daemonHint)
+		}
+	}
+	if info, err := collectRuntimeInfo(); err != nil {
+		problems = append(problems, err.Error())
+	} else if !info.Available {
+		runtimeHint := fmt.Sprintf("runtime binary %q for %s not found — set %s or install the selected runtime.", info.Binary, info.Runtime, runtimebin.EnvBinary)
+		if strictRuntime {
+			problems = append(problems, runtimeHint)
+		} else {
+			warnings = append(warnings, runtimeHint)
 		}
 	}
 

@@ -203,7 +203,8 @@ agent-team prune [-q] [--dry-run] [--older-than 24h] [--agent manager] [--status
 agent-team run <agent> [-n <instance>] [-d | --attach --tail N|all] [--ready-timeout 3s] [--set k=v]... [-p "..."] [--format '{{.Instance}} {{.PID}}'] [--json]
                                                 # launch Claude Code as <agent>; --detach dispatches via daemon
 agent-team upgrade --check [--to <ref>]         # compare .template.lock with a template ref
-agent-team doctor [--strict-daemon]             # validate layout, config, provenance, skill wiring, and daemon binary availability
+agent-team doctor [--strict-daemon] [--strict-runtime]
+                                                # validate layout, config, provenance, skill wiring, selected runtime, and daemon binary availability
 agent-team --version                            # print version
 
 agent-team template ls                          # list bundled + cached templates
