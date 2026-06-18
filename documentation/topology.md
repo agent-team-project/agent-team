@@ -399,6 +399,8 @@ POST /event
 
 A fresh worker spawns under the requested safe child name. If no `payload.name` is supplied, the daemon falls back to `worker-<short-hex>`. The daemon creates `.agent_team/state/<worker-name>/`, writes the resolved config from repo + declared instance overrides, stages the same `--agents` / skill runtime that `agent-team run` uses, exports `AGENT_TEAM_ROOT`, `AGENT_TEAM_INSTANCE`, and `AGENT_TEAM_STATE_DIR`, and, because `workspace = "worktree"` was requested, launches the child in `.claude/worktrees/<worker-name>-<id>/`. When the worker exits, the replica slot frees up — capped at the declared `replicas = 3`.
 
+For manual operation, `agent-team dispatch worker SQU-42 "implement SQU-42"` builds the same `agent.dispatch` payload without requiring the caller to hand-write JSON. `agent-team event publish ...` remains the low-level escape hatch for other event types and custom payloads.
+
 ### Inspecting and stopping
 
 ```sh

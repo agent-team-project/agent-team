@@ -173,6 +173,8 @@ agent-team wait [<instance>...] [-q] [--all] [--latest | --last N] [--agent mana
                                                 # wait for lifecycle or work-phase conditions, using persisted metadata if the daemon is down
 agent-team send [<instance>] <message...> [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--from user] [--allow-missing] [--dry-run] [--format '{{.To}} {{.ID}}'] [--json]
                                                 # send a daemon mailbox message; phase/stale/unhealthy selectors use current status.toml; appends locally if the daemon is down
+agent-team dispatch <target> <ticket> [kickoff...] [--name <instance>] [--source <instance>] [--workspace auto|worktree|repo] [--kickoff "..."] [--kickoff-file <path>] [--format '{{len .Dispatched}}'] [--json]
+                                                # publish an agent.dispatch topology event; e.g. dispatch worker SQU-42
 agent-team channels                             # list pub/sub channels; reads local channel state if the daemon is down
 agent-team channel show <name>                  # show a channel summary and recent messages
 agent-team channel publish <name> <body...> [--sender user]
