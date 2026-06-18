@@ -241,6 +241,8 @@ claude --agents '<json>' --add-dir <tmpdir> --append-system-prompt-file <kickoff
 
 With `--detach`, with `--attach`, or with `--prompt` when the daemon is already running, the CLI sends that same resolved argv/env to `agent-teamd`. `--detach` returns a log-follow hint, while `--attach` follows the daemon-captured log immediately.
 
+The executable defaults to `claude`. Set `AGENT_TEAM_RUNTIME_BIN` to point the existing Claude-compatible adapter at another binary or wrapper.
+
 The named agent's prompt becomes the session's system prompt; all other agents stay registered as subagents so the named agent can dispatch them via the Task tool. The launcher creates `.agent_team/state/<instance>/` (defaults the instance name to the agent name; pass `--name` for a unique identifier) and exports:
 
 - `AGENT_TEAM_ROOT` — absolute path to `.agent_team/`

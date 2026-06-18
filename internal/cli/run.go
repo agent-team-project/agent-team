@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/loader"
+	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/jamesaud/agent-team/internal/template"
 	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
@@ -372,7 +373,8 @@ type runDispatchJSON struct {
 
 // execClaude is split out so tests can intercept the exec.
 var execClaude = func(cmd *cobra.Command, args []string, env []string, cwd string) error {
-	c := exec.Command("claude", args...)
+	bin := runtimebin.Binary()
+	c := exec.Command(bin, args...)
 	c.Env = env
 	c.Dir = cwd
 	c.Stdin = os.Stdin
@@ -381,7 +383,7 @@ var execClaude = func(cmd *cobra.Command, args []string, env []string, cwd strin
 	if err := c.Run(); err != nil {
 		var execErr *exec.Error
 		if errors.As(err, &execErr) && errors.Is(execErr.Err, exec.ErrNotFound) {
-			fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: `claude` CLI not found in PATH. Install Claude Code first.")
+			fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: runtime CLI %q not found in PATH. Install it first or set %s.\n", bin, runtimebin.EnvBinary)
 			return exitErr(127)
 		}
 		var exitErrTyped *exec.ExitError

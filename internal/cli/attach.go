@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
 )
@@ -316,7 +317,8 @@ func lookupInstanceMeta(dc *daemonClient, instance string) (*daemon.Metadata, er
 // requiring a real claude binary. The default wires stdin/stdout/stderr to the
 // user's terminal so claude's TUI is fully interactive.
 var execClaudeAttach = func(cmd *cobra.Command, args []string, cwd string) error {
-	c := exec.Command("claude", args...)
+	bin := runtimebin.Binary()
+	c := exec.Command(bin, args...)
 	c.Dir = cwd
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
@@ -324,7 +326,7 @@ var execClaudeAttach = func(cmd *cobra.Command, args []string, cwd string) error
 	if err := c.Run(); err != nil {
 		var execErr *exec.Error
 		if errors.As(err, &execErr) && errors.Is(execErr.Err, exec.ErrNotFound) {
-			fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: `claude` CLI not found in PATH. Install Claude Code first.")
+			fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: runtime CLI %q not found in PATH. Install it first or set %s.\n", bin, runtimebin.EnvBinary)
 			return exitErr(127)
 		}
 		var exitErrTyped *exec.ExitError

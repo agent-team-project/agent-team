@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/jamesaud/agent-team/internal/runtimebin"
 )
 
 // fakeSpawner records args and returns a controllable, real-but-trivial child
@@ -233,6 +235,30 @@ func TestInstance_DispatchPersistsMetadata(t *testing.T) {
 		t.Fatalf("stop: %v", err)
 	}
 	waitForStatusNot(t, m, "worker-squ-1", StatusRunning)
+}
+
+func TestInstance_DispatchUsesRuntimeBinaryEnv(t *testing.T) {
+	t.Setenv(runtimebin.EnvBinary, "codex")
+	root := t.TempDir()
+	fake := newFakeSpawner(2 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+
+	if _, err := m.Dispatch(DispatchInput{
+		Agent:     "worker",
+		Name:      "worker-runtime",
+		Prompt:    "hello",
+		Workspace: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	args := fake.lastCall()
+	if len(args) == 0 || args[0] != "codex" {
+		t.Fatalf("spawn args = %v, want runtime binary codex", args)
+	}
+	if _, err := m.Stop("worker-runtime"); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	waitForStatusNot(t, m, "worker-runtime", StatusRunning)
 }
 
 func TestInstance_DispatchRefusesDuplicateName(t *testing.T) {

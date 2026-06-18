@@ -12,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/jamesaud/agent-team/internal/runtimebin"
 )
 
 // Spawner abstracts the claude child-process call so tests can inject a fake.
@@ -174,7 +176,7 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 	}
 	logPath := filepath.Join(instanceDir(m.daemonRoot, in.Name), "child.log")
 
-	args := []string{"claude", "--session-id", sessionID}
+	args := []string{runtimebin.Binary(), "--session-id", sessionID}
 	if len(in.Args) > 0 {
 		args = append(args, in.Args...)
 	} else if in.Prompt != "" {
@@ -532,7 +534,7 @@ func (m *InstanceManager) Start(instance string) (*Metadata, error) {
 	if logPath == "" {
 		logPath = filepath.Join(instanceDir(m.daemonRoot, instance), "child.log")
 	}
-	args := []string{"claude", "--resume", base.SessionID}
+	args := []string{runtimebin.Binary(), "--resume", base.SessionID}
 	proc, err := m.spawner(args, os.Environ(), base.Workspace, logPath, logPath)
 	if err != nil {
 		return nil, fmt.Errorf("start: spawn: %w", err)
