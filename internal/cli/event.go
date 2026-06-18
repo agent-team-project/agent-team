@@ -25,10 +25,11 @@ func newEventCmd() *cobra.Command {
 
 func newEventPublishCmd() *cobra.Command {
 	var (
-		target  string
-		payload string
-		jsonOut bool
-		format  string
+		target      string
+		payload     string
+		payloadFile string
+		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	c := &cobra.Command{
@@ -38,6 +39,10 @@ func newEventPublishCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team event publish: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if strings.TrimSpace(payload) != "" && strings.TrimSpace(payloadFile) != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team event publish: choose one of --payload or --payload-file.")
 				return exitErr(2)
 			}
 			formatTemplate, err := parseEventPublishFormat(format)
@@ -51,10 +56,21 @@ func newEventPublishCmd() *cobra.Command {
 				return err
 			}
 			body := map[string]any{}
-			if strings.TrimSpace(payload) != "" {
-				if err := json.Unmarshal([]byte(payload), &body); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: --payload is not valid JSON: %v\n", err)
+			payloadBody := []byte(strings.TrimSpace(payload))
+			if strings.TrimSpace(payloadFile) != "" {
+				payloadBody, err = readPayloadFile(payloadFile)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team event publish: %v\n", err)
 					return exitErr(2)
+				}
+			}
+			if len(payloadBody) > 0 {
+				if err := json.Unmarshal(payloadBody, &body); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team event publish: payload is not valid JSON: %v\n", err)
+					return exitErr(2)
+				}
+				if body == nil {
+					body = map[string]any{}
 				}
 			}
 			dc, err := newDaemonClient(teamDir)
@@ -100,6 +116,7 @@ func newEventPublishCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	c.Flags().StringVar(&payload, "payload", "", "JSON object passed as the event payload (e.g. '{\"target\":\"worker\"}').")
+	c.Flags().StringVar(&payloadFile, "payload-file", "", "Read event payload JSON from a file, or '-' for stdin.")
 	c.Flags().BoolVar(&jsonOut, "json", false, "Emit the daemon event outcome as JSON.")
 	c.Flags().StringVar(&format, "format", "", "Render the event outcome with a Go template, e.g. '{{len .Matched}} {{len .Dispatched}}'.")
 	return c

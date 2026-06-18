@@ -223,6 +223,43 @@ func TestEventPublishJSON(t *testing.T) {
 	}
 }
 
+func TestEventPublishPayloadFileDash(t *testing.T) {
+	target, err := os.MkdirTemp("/tmp", "agent-team-event-stdin-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(target)
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), nil)
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	prev := intakeInput
+	intakeInput = strings.NewReader(`{"name":"manager"}`)
+	t.Cleanup(func() { intakeInput = prev })
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"event", "publish", "user_invocation", "--payload-file", "-", "--json", "--target", target})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("event publish stdin --json: %v\nstderr=%s", err, stderr.String())
+	}
+	var body eventResponse
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode event publish stdin json: %v\nbody=%s", err, out.String())
+	}
+	if len(body.Matched) != 1 || body.Matched[0] != "manager" || len(body.Messaged) != 1 || body.Messaged[0] != "manager" {
+		t.Fatalf("body = %+v, want manager matched and messaged", body)
+	}
+}
+
 func TestEventPublishFormat(t *testing.T) {
 	target, err := os.MkdirTemp("/tmp", "agent-team-event-format-")
 	if err != nil {
@@ -260,6 +297,7 @@ func TestEventPublishFormatRejectsConflictingModes(t *testing.T) {
 	}{
 		{[]string{"event", "publish", "user_invocation", "--format", "{{len .Matched}}", "--json"}, "--format cannot be combined"},
 		{[]string{"event", "publish", "user_invocation", "--format", "{{"}, "invalid --format template"},
+		{[]string{"event", "publish", "user_invocation", "--payload", `{}`, "--payload-file", "-"}, "choose one of --payload or --payload-file"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

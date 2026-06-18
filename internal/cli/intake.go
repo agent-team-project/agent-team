@@ -172,6 +172,10 @@ func intakePayload(payload, payloadFile string) ([]byte, error) {
 	if hasPayload {
 		return []byte(payload), nil
 	}
+	return readPayloadFile(payloadFile)
+}
+
+func readPayloadFile(payloadFile string) ([]byte, error) {
 	if strings.TrimSpace(payloadFile) == "-" {
 		body, err := io.ReadAll(intakeInput)
 		if err != nil {
