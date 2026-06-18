@@ -211,7 +211,7 @@ agent-team --version                            # print version
 
 agent-team template ls                          # list bundled + cached templates
 agent-team template show [<ref>]                # print manifest (default: bundled)
-agent-team template pull <path> [--as <n>]      # copy a local template into the cache
+agent-team template pull <ref> [--as <n>]       # copy a local template or clone a git ref into the cache
 agent-team template rm <ref>                    # remove a cached template
 agent-team template run <ref> <agent> [--target <dir>] [--keep] [--set k=v]... [-p "..."]
                                                 # one-shot: init into a (temp)dir + spawn the agent
@@ -235,8 +235,7 @@ Use `monitor --jobs --schedules` or `job triage` plus `schedule next` to inspect
 - **empty / `bundled`** — the default template embedded in the binary.
 - **a local path** (`./eng-team`, `/abs/path`) — useful when authoring a template.
 - **a cached name** — anything previously `template pull`'d.
-
-Git URL refs (`github.com/foo/bar@v0.1.0`) are tracked as a follow-up — see [`documentation/templates.md`](./documentation/templates.md) § Refs.
+- **a Git ref after pull** — `agent-team template pull github.com/foo/bar@v0.1.0`, then `agent-team init github.com/foo/bar@v0.1.0`. HTTPS, SSH, `git@host:path.git@ref`, and `file://...@ref` sources are supported; use `--as <cache-ref>` to store under a custom cache key.
 
 ## How `run` works
 

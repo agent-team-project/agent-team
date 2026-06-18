@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,6 +73,111 @@ func TestTemplateRm_RejectsBundled(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "cannot rm the bundled template") {
 		t.Errorf("missing rejection message: %s", errOut.String())
+	}
+}
+
+func TestParseGitTemplateRef(t *testing.T) {
+	tests := []struct {
+		name     string
+		ref      string
+		cloneURL string
+		revision string
+		cacheKey string
+	}{
+		{
+			name:     "github shorthand",
+			ref:      "github.com/acme/eng-team@v1.0.0",
+			cloneURL: "https://github.com/acme/eng-team",
+			revision: "v1.0.0",
+			cacheKey: "github.com/acme/eng-team@v1.0.0",
+		},
+		{
+			name:     "https",
+			ref:      "https://github.com/acme/eng-team.git@v1.0.0",
+			cloneURL: "https://github.com/acme/eng-team.git",
+			revision: "v1.0.0",
+			cacheKey: "github.com/acme/eng-team@v1.0.0",
+		},
+		{
+			name:     "scp",
+			ref:      "git@github.com:acme/eng-team.git@main",
+			cloneURL: "git@github.com:acme/eng-team.git",
+			revision: "main",
+			cacheKey: "github.com/acme/eng-team@main",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok, err := parseGitTemplateRef(tt.ref)
+			if err != nil {
+				t.Fatalf("parseGitTemplateRef: %v", err)
+			}
+			if !ok {
+				t.Fatal("parseGitTemplateRef ok=false")
+			}
+			if got.CloneURL != tt.cloneURL || got.Revision != tt.revision || got.CacheKey != tt.cacheKey {
+				t.Fatalf("parsed = %+v", got)
+			}
+		})
+	}
+}
+
+func TestTemplatePullGitRefCachesAndShow(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "template.toml"), []byte(`[template]
+name = "git-template"
+version = "1.0.0"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitForTemplateTest(t, repo, "init")
+	runGitForTemplateTest(t, repo, "config", "user.email", "test@example.com")
+	runGitForTemplateTest(t, repo, "config", "user.name", "Test User")
+	runGitForTemplateTest(t, repo, "add", "template.toml")
+	runGitForTemplateTest(t, repo, "commit", "-m", "init")
+	runGitForTemplateTest(t, repo, "tag", "v1.0.0")
+
+	gitURL := (&url.URL{Scheme: "file", Path: repo}).String() + "@v1.0.0"
+	cacheRef := "github.com/acme/git-template@v1.0.0"
+	pull := NewRootCmd()
+	pullOut, pullErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pull.SetOut(pullOut)
+	pull.SetErr(pullErr)
+	pull.SetArgs([]string{"template", "pull", gitURL, "--as", cacheRef})
+	if err := pull.Execute(); err != nil {
+		t.Fatalf("template pull git ref: %v\nstdout=%s\nstderr=%s", err, pullOut.String(), pullErr.String())
+	}
+	cached := filepath.Join(home, ".agent-team", "cache", filepath.FromSlash(cacheRef))
+	if _, err := os.Stat(filepath.Join(cached, "template.toml")); err != nil {
+		t.Fatalf("template.toml not cached: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cached, ".git")); !os.IsNotExist(err) {
+		t.Fatalf(".git should not be retained in template cache, err=%v", err)
+	}
+
+	show := NewRootCmd()
+	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
+	show.SetOut(showOut)
+	show.SetErr(showErr)
+	show.SetArgs([]string{"template", "show", cacheRef})
+	if err := show.Execute(); err != nil {
+		t.Fatalf("template show cached git ref: %v\nstdout=%s\nstderr=%s", err, showOut.String(), showErr.String())
+	}
+	if !strings.Contains(showOut.String(), "Template: git-template v1.0.0") {
+		t.Fatalf("show output missing cached template:\n%s", showOut.String())
+	}
+}
+
+func runGitForTemplateTest(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, string(out))
 	}
 }
 

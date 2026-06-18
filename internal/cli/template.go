@@ -3,7 +3,9 @@ package cli
 import (
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -230,10 +232,10 @@ func newTemplatePullCmd() *cobra.Command {
 	var asRef string
 	c := &cobra.Command{
 		Use:   "pull <ref>",
-		Short: "Copy a local template into the cache so it can be referenced later.",
-		Long: "Pull a template into ~/.agent-team/cache/<ref>. Today this only supports local-path " +
-			"sources — point at a directory on disk and it gets copied. Bundled templates need no pull " +
-			"(they're embedded in the binary). Git-URL refs are a planned follow-up.",
+		Short: "Fetch a template into the cache so it can be referenced later.",
+		Long: "Pull a template into ~/.agent-team/cache/<ref>. Local directory refs are copied. " +
+			"Git refs such as github.com/acme/eng-team@v1.0.0 or https://github.com/acme/eng-team.git@v1.0.0 " +
+			"are cloned at the requested revision. Bundled templates need no pull because they are embedded in the binary.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := args[0]
@@ -244,22 +246,51 @@ func newTemplatePullCmd() *cobra.Command {
 			r := newResolver()
 
 			st, err := os.Stat(ref)
-			if err != nil || !st.IsDir() {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: pull only supports local directories today; %q is not a directory\n", ref)
+			if err == nil && st.IsDir() {
+				rt, err := r.Resolve(ref)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
+					return exitErr(2)
+				}
+				cacheKey := asRef
+				if cacheKey == "" {
+					cacheKey = inferCacheKey(rt)
+				}
+				dst, err := cacheDestination(r.CacheRoot, cacheKey)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
+					return exitErr(2)
+				}
+				if err := copyDirAll(rt.OnDiskRoot, dst); err != nil {
+					return fmt.Errorf("copy to cache: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "pulled %s into %s\n", ref, dst)
+				return nil
+			}
+
+			gitRef, ok, parseErr := parseGitTemplateRef(ref)
+			if parseErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", parseErr)
 				return exitErr(2)
 			}
-			rt, err := r.Resolve(ref)
-			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
+			if !ok {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %q is not a local template directory or supported git ref\n", ref)
 				return exitErr(2)
 			}
 			cacheKey := asRef
 			if cacheKey == "" {
-				cacheKey = inferCacheKey(rt)
+				cacheKey = gitRef.CacheKey
 			}
-			dst := filepath.Join(r.CacheRoot, cacheKey)
-			if err := copyDirAll(rt.OnDiskRoot, dst); err != nil {
-				return fmt.Errorf("copy to cache: %w", err)
+			dst, err := cacheDestination(r.CacheRoot, cacheKey)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
+				return exitErr(2)
+			}
+			if isMutableGitRevision(gitRef.Revision) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: warning: pulling mutable git revision %q; prefer an immutable tag or commit\n", gitRef.Revision)
+			}
+			if err := cloneGitTemplate(gitRef, r.CacheRoot, dst); err != nil {
+				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "pulled %s into %s\n", ref, dst)
 			return nil
@@ -267,6 +298,167 @@ func newTemplatePullCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&asRef, "as", "", "Cache key to store under (defaults to <name>@<version> from manifest, or basename).")
 	return c
+}
+
+type gitTemplateRef struct {
+	Input    string
+	Source   string
+	CloneURL string
+	Revision string
+	CacheKey string
+}
+
+func parseGitTemplateRef(ref string) (gitTemplateRef, bool, error) {
+	ref = strings.TrimSpace(ref)
+	at := strings.LastIndex(ref, "@")
+	if at <= 0 || at == len(ref)-1 {
+		if strings.Contains(ref, "://") || strings.HasPrefix(ref, "git@") {
+			return gitTemplateRef{}, false, fmt.Errorf("git template ref %q must include @<revision>", ref)
+		}
+		return gitTemplateRef{}, false, nil
+	}
+	source := strings.TrimSpace(ref[:at])
+	revision := strings.TrimSpace(ref[at+1:])
+	if source == "" || revision == "" {
+		return gitTemplateRef{}, false, fmt.Errorf("git template ref %q must include source and revision", ref)
+	}
+	cloneURL, cacheSource, ok, err := normalizeGitTemplateSource(source)
+	if err != nil || !ok {
+		return gitTemplateRef{}, ok, err
+	}
+	return gitTemplateRef{
+		Input:    ref,
+		Source:   source,
+		CloneURL: cloneURL,
+		Revision: revision,
+		CacheKey: cacheSource + "@" + revision,
+	}, true, nil
+}
+
+func normalizeGitTemplateSource(source string) (cloneURL, cacheSource string, ok bool, err error) {
+	if strings.Contains(source, "://") {
+		u, parseErr := url.Parse(source)
+		if parseErr != nil {
+			return "", "", true, fmt.Errorf("git template ref %q: %w", source, parseErr)
+		}
+		switch u.Scheme {
+		case "http", "https", "ssh":
+			cacheSource = strings.TrimPrefix(u.Host+strings.TrimSuffix(u.EscapedPath(), ".git"), "/")
+		case "file":
+			path := filepath.ToSlash(filepath.Clean(u.Path))
+			cacheSource = "file/" + strings.Trim(strings.TrimSuffix(path, ".git"), "/")
+		default:
+			return "", "", true, fmt.Errorf("git template ref %q: unsupported scheme %q", source, u.Scheme)
+		}
+		cacheSource = strings.Trim(cacheSource, "/")
+		if cacheSource == "" {
+			return "", "", true, fmt.Errorf("git template ref %q: could not infer cache key", source)
+		}
+		return source, cacheSource, true, nil
+	}
+	if strings.HasPrefix(source, "git@") {
+		colon := strings.Index(source, ":")
+		if colon < 0 {
+			return "", "", true, fmt.Errorf("git template ref %q: expected git@host:path form", source)
+		}
+		host := strings.TrimPrefix(source[:colon], "git@")
+		path := strings.TrimSuffix(source[colon+1:], ".git")
+		if host == "" || path == "" {
+			return "", "", true, fmt.Errorf("git template ref %q: expected git@host:path form", source)
+		}
+		return source, host + "/" + strings.Trim(path, "/"), true, nil
+	}
+	parts := strings.Split(source, "/")
+	if len(parts) >= 3 && (strings.Contains(parts[0], ".") || parts[0] == "localhost") {
+		return "https://" + source, strings.TrimSuffix(source, ".git"), true, nil
+	}
+	return "", "", false, nil
+}
+
+func cacheDestination(cacheRoot, cacheKey string) (string, error) {
+	rawKey := strings.TrimSpace(cacheKey)
+	if rawKey == "" {
+		return "", fmt.Errorf("cache key is required")
+	}
+	for _, part := range strings.FieldsFunc(rawKey, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".." {
+			return "", fmt.Errorf("cache key %q cannot contain '..'", rawKey)
+		}
+	}
+	cacheKey = filepath.Clean(filepath.FromSlash(rawKey))
+	if cacheKey == "." || cacheKey == "" {
+		return "", fmt.Errorf("cache key is required")
+	}
+	if filepath.IsAbs(cacheKey) {
+		return "", fmt.Errorf("cache key %q must be relative", cacheKey)
+	}
+	return filepath.Join(cacheRoot, cacheKey), nil
+}
+
+func cloneGitTemplate(ref gitTemplateRef, cacheRoot, dst string) error {
+	if _, err := exec.LookPath("git"); err != nil {
+		return fmt.Errorf("git is required to pull %s: %w", ref.Input, err)
+	}
+	if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.MkdirTemp(cacheRoot, ".pull-*")
+	if err != nil {
+		return err
+	}
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
+	if err := runGitClone(ref.CloneURL, ref.Revision, tmp); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(filepath.Join(tmp, ".git")); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dst); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return err
+	}
+	removeTmp = false
+	return nil
+}
+
+func runGitClone(cloneURL, revision, dst string) error {
+	cmd := exec.Command("git", "clone", "--depth", "1", "--branch", revision, cloneURL, dst)
+	if _, err := cmd.CombinedOutput(); err == nil {
+		return nil
+	} else {
+		_ = os.RemoveAll(dst)
+		if mkdirErr := os.MkdirAll(dst, 0o755); mkdirErr != nil {
+			return mkdirErr
+		}
+		full := exec.Command("git", "clone", cloneURL, dst)
+		if fullOut, fullErr := full.CombinedOutput(); fullErr != nil {
+			return fmt.Errorf("git clone: %w: %s", fullErr, strings.TrimSpace(string(fullOut)))
+		}
+		checkout := exec.Command("git", "-C", dst, "checkout", revision)
+		if checkoutOut, checkoutErr := checkout.CombinedOutput(); checkoutErr != nil {
+			return fmt.Errorf("git checkout %s: %w: %s", revision, checkoutErr, strings.TrimSpace(string(checkoutOut)))
+		}
+		return nil
+	}
+}
+
+func isMutableGitRevision(revision string) bool {
+	switch strings.ToLower(strings.TrimSpace(revision)) {
+	case "head", "main", "master", "trunk", "develop", "dev":
+		return true
+	default:
+		return false
+	}
 }
 
 func inferCacheKey(rt *template.ResolvedTemplate) string {

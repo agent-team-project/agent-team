@@ -51,8 +51,8 @@ type Resolver struct {
 //     directory.
 //   - any other string — looked up in the cache root as a relative path.
 //
-// Git URL refs are deferred to a follow-up (out of scope for v1.2 launch per
-// SQU-22).
+// Git sources are fetched by `agent-team template pull` into the cache first;
+// after that, init/show/run resolve them through the same cache-relative path.
 func (r *Resolver) Resolve(ref string) (*ResolvedTemplate, error) {
 	if ref == "" || ref == BundledRef {
 		return r.resolveBundled()

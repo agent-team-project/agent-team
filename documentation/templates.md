@@ -191,7 +191,7 @@ A template ref identifies *what to instantiate*:
 
 - **Bundled** (no ref): `agent-team init` → uses the default template embedded in the binary.
 - **Local path**: `agent-team init ./path/to/template` → useful for template authoring / development.
-- **Git URL** (v1.3+): `agent-team init github.com/foo/bar@v0.1.0` → fetches via `git clone`, caches under `~/.agent-team/cache/<host>/<owner>/<repo>@<version>/`. Pinned refs (`@v0.1.0`) preferred; unpinned (`@main`) issues a warning.
+- **Git URL**: `agent-team template pull github.com/foo/bar@v0.1.0` → fetches via `git clone`, caches under `~/.agent-team/cache/<host>/<owner>/<repo>@<version>/`; after that `agent-team init github.com/foo/bar@v0.1.0` resolves from the cache. Pinned refs (`@v0.1.0`) are preferred; mutable refs such as `@main` warn on pull.
 - **OCI / registry** (later): defer until git refs prove insufficient.
 
 ## Versioning
