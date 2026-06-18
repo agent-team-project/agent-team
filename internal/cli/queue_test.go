@@ -78,6 +78,25 @@ func TestQueueCommandListShowDropLocal(t *testing.T) {
 		t.Fatalf("shown = %+v", shown)
 	}
 
+	dryDrop := NewRootCmd()
+	dryDropOut, dryDropErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryDrop.SetOut(dryDropOut)
+	dryDrop.SetErr(dryDropErr)
+	dryDrop.SetArgs([]string{"queue", "drop", "q-local", "--target", tmp, "--dry-run", "--json"})
+	if err := dryDrop.Execute(); err != nil {
+		t.Fatalf("queue drop dry-run: %v\nstderr=%s", err, dryDropErr.String())
+	}
+	var dryDropResults []queueDropResult
+	if err := json.Unmarshal(dryDropOut.Bytes(), &dryDropResults); err != nil {
+		t.Fatalf("decode drop dry-run: %v\nbody=%s", err, dryDropOut.String())
+	}
+	if len(dryDropResults) != 1 || dryDropResults[0].ID != "q-local" || dryDropResults[0].Action != "would_drop" || !dryDropResults[0].DryRun {
+		t.Fatalf("dry drop results = %+v", dryDropResults)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-local"); err != nil {
+		t.Fatalf("drop dry-run removed queue item: %v", err)
+	}
+
 	drop := NewRootCmd()
 	dropOut, dropErr := &bytes.Buffer{}, &bytes.Buffer{}
 	drop.SetOut(dropOut)
@@ -668,6 +687,65 @@ func TestQueuePruneLocal(t *testing.T) {
 	}
 	if len(all) != 2 || !all[0].Dropped || !all[1].Dropped {
 		t.Fatalf("all results = %+v", all)
+	}
+}
+
+func TestQueueRetryDryRunSingleDoesNotRequireDaemon(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	item := &daemon.QueueItem{
+		ID:         "q-retry-one",
+		State:      daemon.QueueStateDead,
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-96",
+		Payload:    map[string]any{"target": "worker", "ticket": "SQU-96"},
+		Attempts:   daemon.MaxQueueAttempts,
+		LastError:  "spawn failed",
+		QueuedAt:   now.Add(-time.Hour),
+		UpdatedAt:  now.Add(-time.Hour),
+	}
+	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+		t.Fatalf("WriteQueueItem: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"queue", "retry", "q-retry-one", "--target", tmp, "--dry-run", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("queue retry dry-run single: %v\nstderr=%s", err, stderr.String())
+	}
+	var results []queueRetryResult
+	if err := json.Unmarshal(out.Bytes(), &results); err != nil {
+		t.Fatalf("decode retry dry-run: %v\nbody=%s", err, out.String())
+	}
+	if len(results) != 1 || results[0].ID != "q-retry-one" || results[0].Action != "would_retry" || !results[0].DryRun {
+		t.Fatalf("retry dry-run results = %+v", results)
+	}
+	unchanged, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-retry-one")
+	if err != nil {
+		t.Fatalf("retry dry-run removed item: %v", err)
+	}
+	if unchanged.State != daemon.QueueStateDead || unchanged.LastError != "spawn failed" || unchanged.Attempts != daemon.MaxQueueAttempts {
+		t.Fatalf("retry dry-run changed item = %+v", unchanged)
+	}
+
+	textCmd := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	textCmd.SetOut(textOut)
+	textCmd.SetErr(textErr)
+	textCmd.SetArgs([]string{"queue", "retry", "q-retry-one", "--target", tmp, "--dry-run"})
+	if err := textCmd.Execute(); err != nil {
+		t.Fatalf("queue retry dry-run single text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"q-retry-one", "would_retry", "worker-squ-96"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("retry dry-run text missing %q:\n%s", want, textOut.String())
+		}
 	}
 }
 

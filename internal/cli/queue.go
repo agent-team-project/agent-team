@@ -196,11 +196,29 @@ func newQueueDropCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue drop: requires one id unless --all is set.")
 				return exitErr(2)
 			}
-			if dryRun || stateFilter != "" || len(instances) > 0 || len(eventTypes) > 0 || len(jobs) > 0 || readyOnly || limit > 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue drop: --dry-run, --state, --instance, --event-type, --job, --ready, and --limit require --all.")
+			if stateFilter != "" || len(instances) > 0 || len(eventTypes) > 0 || len(jobs) > 0 || readyOnly || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue drop: --state, --instance, --event-type, --job, --ready, and --limit require --all.")
 				return exitErr(2)
 			}
 			id := args[0]
+			if dryRun {
+				item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id)
+				if err != nil {
+					if errors.Is(err, fs.ErrNotExist) {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue drop: queue item %q not found.\n", id)
+						return exitErr(2)
+					}
+					return err
+				}
+				return renderQueueDropResults(cmd.OutOrStdout(), []queueDropResult{{
+					ID:         item.ID,
+					State:      item.State,
+					Instance:   item.Instance,
+					InstanceID: item.InstanceID,
+					Action:     "would_drop",
+					DryRun:     true,
+				}}, jsonOut)
+			}
 			if dc, err := newDaemonClient(teamDir); err == nil {
 				err = dc.QueueDrop(id)
 				if err != nil {
@@ -288,11 +306,29 @@ func newQueueRetryCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue retry: requires one id unless --all is set.")
 				return exitErr(2)
 			}
-			if dryRun || stateFilter != "" || len(instances) > 0 || len(eventTypes) > 0 || len(jobs) > 0 || readyOnly || limit > 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue retry: --dry-run, --state, --instance, --event-type, --job, --ready, and --limit require --all.")
+			if stateFilter != "" || len(instances) > 0 || len(eventTypes) > 0 || len(jobs) > 0 || readyOnly || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue retry: --state, --instance, --event-type, --job, --ready, and --limit require --all.")
 				return exitErr(2)
 			}
 			id := args[0]
+			if dryRun {
+				item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id)
+				if err != nil {
+					if errors.Is(err, fs.ErrNotExist) {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue retry: queue item %q not found.\n", id)
+						return exitErr(2)
+					}
+					return err
+				}
+				return renderQueueRetryResults(cmd.OutOrStdout(), []queueRetryResult{{
+					ID:         item.ID,
+					State:      item.State,
+					Instance:   item.Instance,
+					InstanceID: item.InstanceID,
+					Action:     "would_retry",
+					DryRun:     true,
+				}}, jsonOut)
+			}
 			if dc, err := newDaemonClient(teamDir); err == nil {
 				outcome, err := dc.QueueRetry(id)
 				if err != nil {
