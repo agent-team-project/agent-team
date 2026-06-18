@@ -241,6 +241,34 @@ func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 		t.Fatalf("pipeline ready format output = %q", formatOut.String())
 	}
 
+	all := NewRootCmd()
+	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
+	all.SetOut(allOut)
+	all.SetErr(allErr)
+	all.SetArgs([]string{"pipeline", "ready", "--all", "--repo", root, "--json"})
+	if err := all.Execute(); err != nil {
+		t.Fatalf("pipeline ready --all json: %v\nstderr=%s", err, allErr.String())
+	}
+	var allRows []jobReadyRow
+	if err := json.Unmarshal(allOut.Bytes(), &allRows); err != nil {
+		t.Fatalf("decode pipeline ready all json: %v\nbody=%s", err, allOut.String())
+	}
+	if len(allRows) != 2 || allRows[0].JobID != "squ-310" || allRows[1].JobID != "squ-312" || allRows[1].Pipeline != "nightly" {
+		t.Fatalf("all ready rows = %+v", allRows)
+	}
+
+	invalidAll := NewRootCmd()
+	invalidAllOut, invalidAllErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidAll.SetOut(invalidAllOut)
+	invalidAll.SetErr(invalidAllErr)
+	invalidAll.SetArgs([]string{"pipeline", "ready", "ticket_to_pr", "--all", "--repo", root})
+	if err := invalidAll.Execute(); err == nil {
+		t.Fatalf("pipeline ready <pipeline> --all succeeded")
+	}
+	if !strings.Contains(invalidAllErr.String(), "--all cannot be combined") {
+		t.Fatalf("invalid all stderr = %q", invalidAllErr.String())
+	}
+
 	invalid := NewRootCmd()
 	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
 	invalid.SetOut(invalidOut)

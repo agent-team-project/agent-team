@@ -131,17 +131,26 @@ func newPipelineReadyCmd() *cobra.Command {
 	var (
 		repo    string
 		states  []string
+		all     bool
 		jsonOut bool
 		format  string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "ready <pipeline>",
-		Short: "List ready jobs for one pipeline.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "ready <pipeline>|--all",
+		Short: "List ready pipeline jobs.",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if !all && len(args) != 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: pass a pipeline name or --all.")
 				return exitErr(2)
 			}
 			stateFilter, err := parseJobNextStateFilter(states, !cmd.Flags().Changed("state"))
@@ -158,11 +167,20 @@ func newPipelineReadyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runJobReady(cmd.OutOrStdout(), teamDir, strings.TrimSpace(args[0]), stateFilter, jsonOut, tmpl)
+			pipelineName := ""
+			if !all {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if !all && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: pipeline name is required.")
+				return exitErr(2)
+			}
+			return runJobReady(cmd.OutOrStdout(), teamDir, pipelineName, stateFilter, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().StringSliceVar(&states, "state", nil, "Next-step state to include: ready, queued, running, blocked, failed, done, none, or all. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&all, "all", false, "List ready jobs across all pipelines.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit ready rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.")
 	return cmd

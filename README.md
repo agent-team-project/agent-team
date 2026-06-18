@@ -182,7 +182,7 @@ agent-team job ls [-w] [--summary] [--sort id|status|target|updated|created] [--
 agent-team job show <job-id> | next <job-id> [--json] | ready [--state ready|queued|all] [--json] | events <job-id> [-f] [--tail N|all] [--type closed] [--actor cli] [--since 24h] [--json]
 agent-team job dispatch|start|stop|kill|wait|logs|attach|send|update|close|reopen|cleanup|rm|prune|step|advance|reconcile ...
                                                 # create, monitor, dispatch, control, and clean up durable work units
-agent-team pipeline ls [--json] | show <pipeline> [--json] | jobs <pipeline> [--status running] [--json] | ready <pipeline> [--state ready|all] [--json] | advance <pipeline>|--all [--limit N] [--dry-run] [--json] | run <pipeline> <ticket> [--dispatch] [--json]
+agent-team pipeline ls [--json] | show <pipeline> [--json] | jobs <pipeline> [--status running] [--json] | ready <pipeline>|--all [--state ready|all] [--json] | advance <pipeline>|--all [--limit N] [--dry-run] [--json] | run <pipeline> <ticket> [--dispatch] [--json]
                                                 # inspect declared pipeline workflows from instances.toml
 agent-team schedule ls [--json] | show <schedule> [--json] | run <schedule> [--payload <json>] [--dry-run] [--json]
                                                 # inspect and manually publish declared schedule events
