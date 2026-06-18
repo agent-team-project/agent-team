@@ -363,6 +363,75 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	}
 }
 
+func TestJobTriageIncludesBlockedStatusPreview(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC().Truncate(time.Second)
+	j := mustNewJob(t, "SQU-207", "worker")
+	j.Status = job.StatusQueued
+	j.UpdatedAt = now
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write queued job: %v", err)
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "worker-squ-207"), `[status]
+phase = "blocked"
+description = "needs token"
+since = "2026-06-18T12:00:00Z"
+
+[work]
+job = "squ-207"
+ticket = "SQU-207"
+branch = "worker-squ-207"
+`, now)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "triage", "--repo", tmp, "--stale-after", "24h"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job triage: %v\nstderr=%s", err, stderr.String())
+	}
+	for _, want := range []string{
+		"job status: previews=1 changes=1 blocked=1",
+		"Attention:",
+		"squ-207",
+		"status_file_blocked",
+		"needs token",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("job triage missing %q:\n%s", want, out.String())
+		}
+	}
+
+	jsonCmd := NewRootCmd()
+	jsonOut, jsonErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jsonCmd.SetOut(jsonOut)
+	jsonCmd.SetErr(jsonErr)
+	jsonCmd.SetArgs([]string{"job", "triage", "--repo", tmp, "--stale-after", "24h", "--json"})
+	if err := jsonCmd.Execute(); err != nil {
+		t.Fatalf("job triage json: %v\nstderr=%s", err, jsonErr.String())
+	}
+	var snapshot jobTriageSnapshot
+	if err := json.Unmarshal(jsonOut.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode triage json: %v\nbody=%s", err, jsonOut.String())
+	}
+	if len(snapshot.StatusPreviews) != 1 || snapshot.StatusPreviews[0].JobID != "squ-207" || snapshot.StatusPreviews[0].After != job.StatusBlocked {
+		t.Fatalf("status previews = %+v", snapshot.StatusPreviews)
+	}
+	if len(snapshot.Attention) != 1 || snapshot.Attention[0].JobID != "squ-207" || !containsString(snapshot.Attention[0].Reasons, "status_file_blocked") {
+		t.Fatalf("attention = %+v", snapshot.Attention)
+	}
+	updated, err := job.Read(teamDir, "squ-207")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if updated.Status != job.StatusQueued {
+		t.Fatalf("triage should not mutate job status: %+v", updated)
+	}
+}
+
 func TestJobTriageWatchRendersOnceWhenContextCancelled(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

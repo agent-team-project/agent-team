@@ -122,7 +122,7 @@ branch = "worker-squ-121"
 	if err := text.Execute(); err != nil {
 		t.Fatalf("repair --jobs text dry-run: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"job_attention=0", "job_status_changes=1", "job_status_blocked=1"} {
+	for _, want := range []string{"job_attention=1", "job_status_changes=1", "job_status_blocked=1"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("repair text missing %q:\n%s", want, textOut.String())
 		}

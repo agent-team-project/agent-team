@@ -257,8 +257,15 @@ branch = "worker-squ-702"
 	if err := json.Unmarshal(summaryOut.Bytes(), &summaryBody); err != nil {
 		t.Fatalf("decode monitor summary jobs json: %v\nbody=%s", err, summaryOut.String())
 	}
-	if summaryBody.Jobs == nil || summaryBody.Jobs.Summary.Failed != 1 || len(summaryBody.Jobs.Attention) != 1 {
+	if summaryBody.Jobs == nil || summaryBody.Jobs.Summary.Failed != 1 || len(summaryBody.Jobs.Attention) != 2 {
 		t.Fatalf("summary jobs = %+v", summaryBody.Jobs)
+	}
+	summaryAttention := map[string]bool{}
+	for _, item := range summaryBody.Jobs.Attention {
+		summaryAttention[item.JobID] = true
+	}
+	if !summaryAttention["squ-701"] || !summaryAttention["squ-702"] {
+		t.Fatalf("summary attention = %+v", summaryBody.Jobs.Attention)
 	}
 	if len(summaryBody.JobStatus) != 1 || summaryBody.JobStatus[0].JobID != "squ-702" || summaryBody.JobStatus[0].After != job.StatusBlocked || !summaryBody.JobStatus[0].Changed {
 		t.Fatalf("summary job status = %+v", summaryBody.JobStatus)
@@ -288,8 +295,15 @@ branch = "worker-squ-702"
 	if err := json.Unmarshal(fullOut.Bytes(), &fullBody); err != nil {
 		t.Fatalf("decode monitor jobs json: %v\nbody=%s", err, fullOut.String())
 	}
-	if fullBody.Jobs == nil || len(fullBody.Jobs.Attention) != 1 || fullBody.Jobs.Attention[0].JobID != "squ-701" {
+	if fullBody.Jobs == nil || len(fullBody.Jobs.Attention) != 2 {
 		t.Fatalf("full jobs = %+v", fullBody.Jobs)
+	}
+	fullAttention := map[string]bool{}
+	for _, item := range fullBody.Jobs.Attention {
+		fullAttention[item.JobID] = true
+	}
+	if !fullAttention["squ-701"] || !fullAttention["squ-702"] {
+		t.Fatalf("full attention = %+v", fullBody.Jobs.Attention)
 	}
 	if len(fullBody.JobStatus) != 1 || fullBody.JobStatus[0].JobID != "squ-702" || fullBody.JobStatus[0].After != job.StatusBlocked {
 		t.Fatalf("full job status = %+v", fullBody.JobStatus)

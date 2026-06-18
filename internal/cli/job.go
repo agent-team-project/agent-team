@@ -1562,7 +1562,7 @@ func newJobTriageCmd() *cobra.Command {
 		Use:   "triage",
 		Short: "Show jobs that need operator attention.",
 		Long: "Show a compact work queue triage view from durable jobs, persisted daemon queue items, " +
-			"and ready pipeline steps.",
+			"status-file update previews, and ready pipeline steps.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if staleAfter < 0 {
@@ -2177,11 +2177,12 @@ type jobSummary struct {
 }
 
 type jobTriageSnapshot struct {
-	CheckedAt  time.Time       `json:"checked_at"`
-	Summary    jobSummary      `json:"summary"`
-	Queue      queueSummary    `json:"queue"`
-	Attention  []jobTriageItem `json:"attention"`
-	ReadySteps []jobReadyRow   `json:"ready_steps,omitempty"`
+	CheckedAt      time.Time                  `json:"checked_at"`
+	Summary        jobSummary                 `json:"summary"`
+	Queue          queueSummary               `json:"queue"`
+	StatusPreviews []jobStatusReconcileResult `json:"status_previews,omitempty"`
+	Attention      []jobTriageItem            `json:"attention"`
+	ReadySteps     []jobReadyRow              `json:"ready_steps,omitempty"`
 }
 
 type jobTriageItem struct {
@@ -2406,17 +2407,23 @@ func collectJobTriage(teamDir string, now time.Time, staleAfter time.Duration) (
 			attention = append(attention, item)
 		}
 	}
+	statusPreviews, err := reconcileJobsFromStatus(teamDir, true, now)
+	if err != nil {
+		return jobTriageSnapshot{}, err
+	}
+	attention = addStatusPreviewsToJobTriage(attention, jobs, statusPreviews, now)
 	sortJobTriageItems(attention)
 	readySteps, err := collectJobReadyRows(teamDir, "", map[string]bool{"ready": true})
 	if err != nil {
 		return jobTriageSnapshot{}, err
 	}
 	return jobTriageSnapshot{
-		CheckedAt:  now,
-		Summary:    summarizeJobs(jobs),
-		Queue:      summarizeQueueItems(queueItems, now),
-		Attention:  attention,
-		ReadySteps: readySteps,
+		CheckedAt:      now,
+		Summary:        summarizeJobs(jobs),
+		Queue:          summarizeQueueItems(queueItems, now),
+		StatusPreviews: statusPreviews,
+		Attention:      attention,
+		ReadySteps:     readySteps,
 	}, nil
 }
 
@@ -2587,6 +2594,13 @@ func renderJobTriage(w io.Writer, snapshot jobTriageSnapshot, jsonOut bool) erro
 	}
 	renderJobSummary(w, snapshot.Summary)
 	renderQueueSummary(w, snapshot.Queue)
+	if len(snapshot.StatusPreviews) > 0 {
+		fmt.Fprintf(w, "job status: previews=%d changes=%d blocked=%d\n",
+			len(snapshot.StatusPreviews),
+			countChangedJobStatusPreviews(snapshot.StatusPreviews),
+			countJobStatusPreviewsByAfter(snapshot.StatusPreviews, job.StatusBlocked),
+		)
+	}
 	fmt.Fprintln(w)
 	renderJobTriageAttention(w, snapshot.Attention)
 	if len(snapshot.ReadySteps) > 0 {
@@ -2636,6 +2650,67 @@ func jobTriageQueueSummary(item jobTriageItem) string {
 		return "-"
 	}
 	return strings.Join(parts, ",")
+}
+
+func addStatusPreviewsToJobTriage(items []jobTriageItem, jobs []*job.Job, previews []jobStatusReconcileResult, now time.Time) []jobTriageItem {
+	if len(previews) == 0 {
+		return items
+	}
+	jobsByID := make(map[string]*job.Job, len(jobs))
+	for _, j := range jobs {
+		jobsByID[j.ID] = j
+	}
+	itemIndexes := make(map[string]int, len(items))
+	for idx, item := range items {
+		itemIndexes[item.JobID] = idx
+	}
+	for _, preview := range previews {
+		if !preview.Changed || preview.After != job.StatusBlocked {
+			continue
+		}
+		if idx, ok := itemIndexes[preview.JobID]; ok {
+			items[idx].Status = preview.After
+			items[idx].Reasons = appendStringOnce(items[idx].Reasons, "status_file_blocked")
+			if strings.TrimSpace(preview.Message) != "" {
+				items[idx].Message = preview.Message
+			}
+			if strings.TrimSpace(items[idx].Instance) == "" {
+				items[idx].Instance = preview.Instance
+			}
+			continue
+		}
+		j := jobsByID[preview.JobID]
+		item := jobTriageItem{
+			JobID:     preview.JobID,
+			Status:    preview.After,
+			Severity:  "error",
+			Reasons:   []string{"status_file_blocked"},
+			Message:   preview.Message,
+			Instance:  preview.Instance,
+			UpdatedAt: now,
+		}
+		if j != nil {
+			item.Ticket = j.Ticket
+			item.Target = j.Target
+			item.Pipeline = j.Pipeline
+			item.UpdatedAt = j.UpdatedAt
+			if strings.TrimSpace(item.Instance) == "" {
+				item.Instance = j.Instance
+			}
+		}
+		items = append(items, item)
+		itemIndexes[item.JobID] = len(items) - 1
+	}
+	return items
+}
+
+func appendStringOnce(items []string, value string) []string {
+	for _, item := range items {
+		if item == value {
+			return items
+		}
+	}
+	return append(items, value)
 }
 
 func renderJobSummary(w io.Writer, summary jobSummary) {
