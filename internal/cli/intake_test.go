@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,6 +53,28 @@ func TestIntakeLinearCreatesPipelineJob(t *testing.T) {
 	_ = mgr
 }
 
+func TestIntakeLinearDryRunNormalizesWithoutDaemon(t *testing.T) {
+	payload := `{"action":"Issue created","data":{"identifier":"SQU-102","title":"Dry run intake","team":{"key":"SQU"}}}`
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "linear", "--payload", payload, "--dry-run", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake linear dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var result intakePublishResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode dry-run json: %v\nbody=%s", err, out.String())
+	}
+	if !result.DryRun || result.Outcome != nil {
+		t.Fatalf("dry-run result = %+v", result)
+	}
+	if result.Event.Type != "ticket.created" || result.Event.Payload["ticket"] != "SQU-102" || result.Event.Payload["team"] != "SQU" {
+		t.Fatalf("event = %+v", result.Event)
+	}
+}
+
 func TestIntakeSchedulePublishesScheduleEvent(t *testing.T) {
 	target, _, cleanup := setupIntakePipelineRepo(t)
 	defer cleanup()
@@ -70,6 +93,22 @@ func TestIntakeSchedulePublishesScheduleEvent(t *testing.T) {
 	}
 	if result.Event.Type != "schedule" || result.Event.Payload["name"] != "nightly" {
 		t.Fatalf("event = %+v", result.Event)
+	}
+}
+
+func TestIntakeScheduleDryRunText(t *testing.T) {
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "schedule", "nightly", "--payload", `{"workspace":"repo"}`, "--dry-run"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake schedule dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	for _, want := range []string{"Event: schedule", "KEY", "name", "nightly", "source", "schedule", "workspace", "repo"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("dry-run text missing %q:\n%s", want, out.String())
+		}
 	}
 }
 

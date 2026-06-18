@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/jamesaud/agent-team/internal/intake"
 	"github.com/spf13/cobra"
@@ -37,6 +39,7 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 		target      string
 		payload     string
 		payloadFile string
+		dryRun      bool
 		jsonOut     bool
 	)
 	cwd, _ := os.Getwd()
@@ -55,12 +58,16 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake %s: %v\n", provider, err)
 				return exitErr(2)
 			}
+			if dryRun {
+				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut)
+			}
 			return publishIntakeEvent(cmd, target, ev, jsonOut)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVar(&payload, "payload", "", "Webhook JSON object.")
 	cmd.Flags().StringVar(&payloadFile, "payload-file", "", "Read webhook JSON from a file.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Normalize and print the event without publishing to the daemon.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit normalized event and daemon outcome as JSON.")
 	return cmd
 }
@@ -69,6 +76,7 @@ func newIntakeScheduleCmd() *cobra.Command {
 	var (
 		target  string
 		payload string
+		dryRun  bool
 		jsonOut bool
 	)
 	cwd, _ := os.Getwd()
@@ -86,11 +94,16 @@ func newIntakeScheduleCmd() *cobra.Command {
 				body["source"] = "schedule"
 				body["name"] = args[0]
 			}
-			return publishIntakeEvent(cmd, target, &intake.Event{Type: "schedule", Payload: body}, jsonOut)
+			ev := &intake.Event{Type: "schedule", Payload: body}
+			if dryRun {
+				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut)
+			}
+			return publishIntakeEvent(cmd, target, ev, jsonOut)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVar(&payload, "payload", "", "Additional JSON object merged into the schedule payload.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Normalize and print the event without publishing to the daemon.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit normalized event and daemon outcome as JSON.")
 	return cmd
 }
@@ -114,6 +127,29 @@ func intakePayload(payload, payloadFile string) ([]byte, error) {
 type intakePublishResult struct {
 	Event   *intake.Event  `json:"event"`
 	Outcome *eventResponse `json:"outcome"`
+	DryRun  bool           `json:"dry_run,omitempty"`
+}
+
+func renderIntakeDryRun(w io.Writer, ev *intake.Event, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(intakePublishResult{Event: ev, DryRun: true})
+	}
+	fmt.Fprintf(w, "Event: %s\n", ev.Type)
+	if len(ev.Payload) == 0 {
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "KEY\tVALUE")
+	keys := make([]string, 0, len(ev.Payload))
+	for key := range ev.Payload {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fmt.Fprintf(tw, "%s\t%v\n", key, ev.Payload[key])
+	}
+	_ = tw.Flush()
+	return nil
 }
 
 func publishIntakeEvent(cmd *cobra.Command, target string, ev *intake.Event, jsonOut bool) error {
