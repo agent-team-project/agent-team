@@ -10,6 +10,10 @@ import (
 // LoadFromFile parses a single instances.toml file. Missing file returns
 // (nil, nil) — the caller decides whether absence is an error.
 func LoadFromFile(path string) (*Topology, error) {
+	return loadFromFileWithTeamValidation(path, true)
+}
+
+func loadFromFileWithTeamValidation(path string, validateTeamRefs bool) (*Topology, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -17,7 +21,7 @@ func LoadFromFile(path string) (*Topology, error) {
 		}
 		return nil, err
 	}
-	t, err := Parse(body)
+	t, err := parseWithTeamValidation(body, validateTeamRefs)
 	if err != nil {
 		return nil, err
 	}
@@ -33,18 +37,18 @@ func LoadFromFile(path string) (*Topology, error) {
 // Either argument may be empty string to skip that layer. If both layers are
 // missing, returns (nil, nil) — callers treat that as "no topology declared".
 func LoadLayered(templatePath, repoPath string) (*Topology, error) {
-	templateLayer, err := LoadFromFile(templatePath)
+	templateLayer, err := loadFromFileWithTeamValidation(templatePath, false)
 	if err != nil {
 		return nil, err
 	}
-	repoLayer, err := LoadFromFile(repoPath)
+	repoLayer, err := loadFromFileWithTeamValidation(repoPath, false)
 	if err != nil {
 		return nil, err
 	}
 	if templateLayer == nil && repoLayer == nil {
 		return nil, nil
 	}
-	merged := &Topology{Instances: map[string]*Instance{}, Pipelines: map[string]*Pipeline{}, Schedules: map[string]*Schedule{}}
+	merged := &Topology{Instances: map[string]*Instance{}, Pipelines: map[string]*Pipeline{}, Schedules: map[string]*Schedule{}, Teams: map[string]*Team{}}
 	if templateLayer != nil {
 		for name, inst := range templateLayer.Instances {
 			merged.Instances[name] = inst
@@ -54,6 +58,9 @@ func LoadLayered(templatePath, repoPath string) (*Topology, error) {
 		}
 		for name, schedule := range templateLayer.Schedules {
 			merged.Schedules[name] = schedule
+		}
+		for name, team := range templateLayer.Teams {
+			merged.Teams[name] = team
 		}
 	}
 	if repoLayer != nil {
@@ -66,6 +73,12 @@ func LoadLayered(templatePath, repoPath string) (*Topology, error) {
 		for name, schedule := range repoLayer.Schedules {
 			merged.Schedules[name] = schedule
 		}
+		for name, team := range repoLayer.Teams {
+			merged.Teams[name] = team
+		}
+	}
+	if err := validateTopologyTeams(merged); err != nil {
+		return nil, err
 	}
 	return merged, nil
 }

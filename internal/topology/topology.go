@@ -46,6 +46,8 @@ type Topology struct {
 	Pipelines map[string]*Pipeline
 	// Schedules is keyed by the declared schedule name (`[schedules.<n>]`).
 	Schedules map[string]*Schedule
+	// Teams is keyed by the declared team name (`[teams.<n>]`).
+	Teams map[string]*Team
 }
 
 // Instance is one declared instance.
@@ -103,6 +105,15 @@ type Schedule struct {
 	Every      time.Duration
 	RunOnStart bool
 	Payload    map[string]any
+}
+
+// Team names a group of instances, pipelines, and schedules owned together.
+type Team struct {
+	Name        string
+	Description string
+	Instances   []string
+	Pipelines   []string
+	Schedules   []string
 }
 
 // EventPayload returns the payload published for this schedule tick.
@@ -246,6 +257,19 @@ func (t *Topology) SortedSchedules() []*Schedule {
 	return out
 }
 
+// SortedTeams returns teams ordered by name for deterministic output.
+func (t *Topology) SortedTeams() []*Team {
+	if t == nil {
+		return nil
+	}
+	out := make([]*Team, 0, len(t.Teams))
+	for _, team := range t.Teams {
+		out = append(out, team)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 // PersistentNames returns the names of declared non-ephemeral instances, in
 // sorted order. `instance up` brings these up by default.
 func (t *Topology) PersistentNames() []string {
@@ -269,6 +293,14 @@ func (t *Topology) Find(name string) *Instance {
 	return t.Instances[name]
 }
 
+// FindTeam returns the declared team by name, or nil if none.
+func (t *Topology) FindTeam(name string) *Team {
+	if t == nil {
+		return nil
+	}
+	return t.Teams[name]
+}
+
 // rawTopology mirrors the on-wire TOML schema. We keep parsing in two stages
 // so the public Topology can carry validated, normalised values regardless of
 // how lenient toml.Decode is.
@@ -276,6 +308,7 @@ type rawTopology struct {
 	Instances map[string]*rawInstance `toml:"instances"`
 	Pipelines map[string]*rawPipeline `toml:"pipelines"`
 	Schedules map[string]*rawSchedule `toml:"schedules"`
+	Teams     map[string]*rawTeam     `toml:"teams"`
 }
 
 type rawInstance struct {
@@ -299,20 +332,32 @@ type rawSchedule struct {
 	Payload    map[string]any `toml:"payload"`
 }
 
+type rawTeam struct {
+	Description string   `toml:"description"`
+	Instances   []string `toml:"instances"`
+	Pipelines   []string `toml:"pipelines"`
+	Schedules   []string `toml:"schedules"`
+}
+
 // Parse decodes a single `instances.toml` body. Used by Load and tests.
 func Parse(body []byte) (*Topology, error) {
+	return parseWithTeamValidation(body, true)
+}
+
+func parseWithTeamValidation(body []byte, validateTeamRefs bool) (*Topology, error) {
 	var raw rawTopology
 	if _, err := toml.Decode(string(body), &raw); err != nil {
 		return nil, fmt.Errorf("instances.toml: %w", err)
 	}
-	return finalise(&raw)
+	return finalise(&raw, validateTeamRefs)
 }
 
-func finalise(raw *rawTopology) (*Topology, error) {
+func finalise(raw *rawTopology, validateTeamRefs bool) (*Topology, error) {
 	t := &Topology{
 		Instances: make(map[string]*Instance, len(raw.Instances)),
 		Pipelines: make(map[string]*Pipeline, len(raw.Pipelines)),
 		Schedules: make(map[string]*Schedule, len(raw.Schedules)),
+		Teams:     make(map[string]*Team, len(raw.Teams)),
 	}
 	for name, ri := range raw.Instances {
 		if ri == nil {
@@ -343,6 +388,16 @@ func finalise(raw *rawTopology) (*Topology, error) {
 			return nil, err
 		}
 		t.Schedules[name] = s
+	}
+	for name, rt := range raw.Teams {
+		if rt == nil {
+			continue
+		}
+		team, err := finaliseTeam(name, rt, t, validateTeamRefs)
+		if err != nil {
+			return nil, err
+		}
+		t.Teams[name] = team
 	}
 	return t, nil
 }
@@ -417,6 +472,98 @@ func finaliseSchedule(name string, rs *rawSchedule) (*Schedule, error) {
 		payload[k] = v
 	}
 	return &Schedule{Name: name, Every: every, RunOnStart: rs.RunOnStart, Payload: payload}, nil
+}
+
+func finaliseTeam(name string, rt *rawTeam, t *Topology, validateRefs bool) (*Team, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("team name is required")
+	}
+	instances, err := cleanTeamRefs("team", name, "instances", rt.Instances)
+	if err != nil {
+		return nil, err
+	}
+	pipelines, err := cleanTeamRefs("team", name, "pipelines", rt.Pipelines)
+	if err != nil {
+		return nil, err
+	}
+	schedules, err := cleanTeamRefs("team", name, "schedules", rt.Schedules)
+	if err != nil {
+		return nil, err
+	}
+	if len(instances) == 0 && len(pipelines) == 0 && len(schedules) == 0 {
+		return nil, fmt.Errorf("team %q: at least one of instances, pipelines, or schedules is required", name)
+	}
+	if !validateRefs {
+		return &Team{
+			Name:        name,
+			Description: strings.TrimSpace(rt.Description),
+			Instances:   instances,
+			Pipelines:   pipelines,
+			Schedules:   schedules,
+		}, nil
+	}
+	team := &Team{
+		Name:        name,
+		Description: strings.TrimSpace(rt.Description),
+		Instances:   instances,
+		Pipelines:   pipelines,
+		Schedules:   schedules,
+	}
+	if err := validateTeamReferences(t, team); err != nil {
+		return nil, err
+	}
+	return team, nil
+}
+
+func validateTopologyTeams(t *Topology) error {
+	if t == nil {
+		return nil
+	}
+	for _, team := range t.SortedTeams() {
+		if err := validateTeamReferences(t, team); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateTeamReferences(t *Topology, team *Team) error {
+	if t == nil || team == nil {
+		return nil
+	}
+	for _, ref := range team.Instances {
+		if t.Instances[ref] == nil {
+			return fmt.Errorf("team %q: instances references unknown instance %q", team.Name, ref)
+		}
+	}
+	for _, ref := range team.Pipelines {
+		if t.Pipelines[ref] == nil {
+			return fmt.Errorf("team %q: pipelines references unknown pipeline %q", team.Name, ref)
+		}
+	}
+	for _, ref := range team.Schedules {
+		if t.Schedules[ref] == nil {
+			return fmt.Errorf("team %q: schedules references unknown schedule %q", team.Name, ref)
+		}
+	}
+	return nil
+}
+
+func cleanTeamRefs(kind, name, field string, refs []string) ([]string, error) {
+	out := make([]string, 0, len(refs))
+	seen := map[string]bool{}
+	for i, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return nil, fmt.Errorf("%s %q: %s[%d] must be non-empty", kind, name, field, i)
+		}
+		if seen[ref] {
+			return nil, fmt.Errorf("%s %q: %s contains duplicate %q", kind, name, field, ref)
+		}
+		seen[ref] = true
+		out = append(out, ref)
+	}
+	return out, nil
 }
 
 // flatten copies src into dst, preserving the dotted-key shape that

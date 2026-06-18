@@ -47,6 +47,11 @@ id     = "review"
 target = "manager"
 after  = ["implement"]
 
+[teams.delivery]
+description = "Default software-delivery team for ticket intake, implementation, and review."
+instances   = ["manager", "ticket-manager", "worker"]
+pipelines   = ["ticket_to_pr"]
+
 # Optional fixed-interval schedule. Uncomment and adapt to publish a `schedule`
 # event with name = "nightly" every 24 hours.
 #

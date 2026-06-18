@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -132,6 +133,79 @@ after = ["implement"]
 	matched := top.ResolvePipelines("ticket.created", map[string]any{"project": "Core"})
 	if len(matched) != 1 || matched[0].Name != "ticket_to_pr" {
 		t.Fatalf("matched = %+v", matched)
+	}
+}
+
+func TestParse_Teams(t *testing.T) {
+	top, err := Parse([]byte(`
+[instances.manager]
+agent = "manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[schedules.nightly]
+every = "24h"
+
+[teams.delivery]
+description = "Default delivery team."
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+schedules = ["nightly"]
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	team := top.Teams["delivery"]
+	if team == nil {
+		t.Fatal("team missing")
+	}
+	if team.Description != "Default delivery team." {
+		t.Fatalf("description = %q", team.Description)
+	}
+	if !reflect.DeepEqual(team.Instances, []string{"manager", "worker"}) {
+		t.Fatalf("instances = %+v", team.Instances)
+	}
+	if !reflect.DeepEqual(team.Pipelines, []string{"ticket_to_pr"}) {
+		t.Fatalf("pipelines = %+v", team.Pipelines)
+	}
+	if !reflect.DeepEqual(team.Schedules, []string{"nightly"}) {
+		t.Fatalf("schedules = %+v", team.Schedules)
+	}
+	if got := top.SortedTeams(); len(got) != 1 || got[0].Name != "delivery" {
+		t.Fatalf("SortedTeams = %+v", got)
+	}
+	if top.FindTeam("delivery") != team {
+		t.Fatalf("FindTeam did not return team")
+	}
+}
+
+func TestParse_TeamRejectsUnknownReference(t *testing.T) {
+	_, err := Parse([]byte(`
+[instances.manager]
+agent = "manager"
+
+[teams.delivery]
+instances = ["manager"]
+pipelines = ["missing"]
+`))
+	if err == nil {
+		t.Fatal("expected unknown pipeline error")
+	}
+	if !strings.Contains(err.Error(), `team "delivery": pipelines references unknown pipeline "missing"`) {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -335,6 +409,46 @@ agent = "ticket-manager"
 	}
 	if top.Instances["tm-extra"] == nil {
 		t.Error("repo-only entry missing")
+	}
+}
+
+func TestLoadLayered_TeamCanReferenceMergedTopology(t *testing.T) {
+	tmpl := filepath.Join(t.TempDir(), "tmpl.toml")
+	repo := filepath.Join(t.TempDir(), "repo.toml")
+	if err := os.WriteFile(tmpl, []byte(`
+[instances.manager]
+agent = "manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repo, []byte(`
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	top, err := LoadLayered(tmpl, repo)
+	if err != nil {
+		t.Fatalf("LoadLayered: %v", err)
+	}
+	team := top.Teams["delivery"]
+	if team == nil {
+		t.Fatal("team missing")
+	}
+	if !reflect.DeepEqual(team.Instances, []string{"manager", "worker"}) || !reflect.DeepEqual(team.Pipelines, []string{"ticket_to_pr"}) {
+		t.Fatalf("team = %+v", team)
 	}
 }
 

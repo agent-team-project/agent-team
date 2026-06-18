@@ -98,9 +98,27 @@ replicas  = 3            # max 3 concurrent
 event  = "agent.dispatch"
 match.target = "worker"
 
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id     = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id     = "review"
+target = "manager"
+after  = ["implement"]
+
 [schedules.nightly]
 every = "24h"
 payload.workspace = "repo"
+
+[teams.delivery]
+description = "Default software-delivery team."
+instances   = ["manager", "tm-platform", "tm-mobile", "worker"]
+pipelines   = ["ticket_to_pr"]
+schedules   = ["nightly"]
 ```
 
 ### Field reference
@@ -123,6 +141,19 @@ Schedules live under `[schedules.<name>]`. They publish a `schedule` event with 
 | `every` | yes | — | Go duration string such as `15m`, `1h`, or `24h`. |
 | `run_on_start` | no | `false` | If true, publish once when the daemon scheduler starts, then follow `every`. |
 | `payload.<key>` | no | — | Extra payload keys used by trigger matches or downstream agents. |
+
+### Team field reference
+
+Teams live under `[teams.<name>]`. They group declared instances, pipelines, and schedules into an operator-facing ownership unit for commands such as `agent-team team status <name>`.
+
+| Field | Required | Default | Meaning |
+|---|---|---|---|
+| `description` | no | empty | Human-readable purpose for the team. |
+| `instances` | no | empty | Declared instance names owned by the team. References must exist under `[instances]`. |
+| `pipelines` | no | empty | Declared pipeline names owned by the team. References must exist under `[pipelines]`. |
+| `schedules` | no | empty | Declared schedule names owned by the team. References must exist under `[schedules]`. |
+
+At least one of `instances`, `pipelines`, or `schedules` is required.
 
 ### Trigger field reference
 

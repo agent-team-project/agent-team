@@ -1,0 +1,162 @@
+package cli
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jamesaud/agent-team/internal/job"
+)
+
+func TestTeamCommandsListShowAndStatus(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.ticket-manager]
+agent = "ticket-manager"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+
+[schedules.nightly]
+every = "24h"
+
+[teams.delivery]
+description = "Default delivery team."
+instances = ["manager", "ticket-manager", "worker"]
+pipelines = ["ticket_to_pr"]
+schedules = ["nightly"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	writeStatus(t, filepath.Join(teamDir, "state", "manager"), `[status]
+phase = "idle"
+description = "ready"
+since = "2026-06-18T12:00:00Z"
+`, now)
+	pipelineJob := &job.Job{
+		ID:        "squ-801",
+		Ticket:    "SQU-801",
+		Target:    "worker",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusDone},
+			{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"implement"}},
+		},
+	}
+	if err := job.Write(teamDir, pipelineJob); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	list := NewRootCmd()
+	listOut, listErr := &bytes.Buffer{}, &bytes.Buffer{}
+	list.SetOut(listOut)
+	list.SetErr(listErr)
+	list.SetArgs([]string{"team", "ls", "--repo", root})
+	if err := list.Execute(); err != nil {
+		t.Fatalf("team ls: %v\nstderr=%s", err, listErr.String())
+	}
+	for _, want := range []string{"TEAM", "delivery", "Default delivery team.", "3", "1"} {
+		if !strings.Contains(listOut.String(), want) {
+			t.Fatalf("team ls missing %q:\n%s", want, listOut.String())
+		}
+	}
+
+	show := NewRootCmd()
+	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
+	show.SetOut(showOut)
+	show.SetErr(showErr)
+	show.SetArgs([]string{"team", "show", "delivery", "--repo", root, "--json"})
+	if err := show.Execute(); err != nil {
+		t.Fatalf("team show: %v\nstderr=%s", err, showErr.String())
+	}
+	var info teamInfo
+	if err := json.Unmarshal(showOut.Bytes(), &info); err != nil {
+		t.Fatalf("decode team show: %v\nbody=%s", err, showOut.String())
+	}
+	if info.Name != "delivery" || len(info.Instances) != 3 || len(info.Pipelines) != 1 || len(info.Schedules) != 1 {
+		t.Fatalf("team info = %+v", info)
+	}
+
+	status := NewRootCmd()
+	statusOut, statusErr := &bytes.Buffer{}, &bytes.Buffer{}
+	status.SetOut(statusOut)
+	status.SetErr(statusErr)
+	status.SetArgs([]string{"team", "status", "delivery", "--repo", root, "--json"})
+	if err := status.Execute(); err != nil {
+		t.Fatalf("team status: %v\nstderr=%s", err, statusErr.String())
+	}
+	var snapshot teamStatusSnapshot
+	if err := json.Unmarshal(statusOut.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode team status: %v\nbody=%s", err, statusOut.String())
+	}
+	if snapshot.Team.Name != "delivery" || snapshot.InstanceSummary.Total != 3 || snapshot.JobSummary.Total != 1 {
+		t.Fatalf("team status summary = %+v", snapshot)
+	}
+	if len(snapshot.PipelineStatus) != 1 || snapshot.PipelineStatus[0].Pipeline != "ticket_to_pr" || snapshot.PipelineStatus[0].ReadySteps != 1 {
+		t.Fatalf("pipeline status = %+v", snapshot.PipelineStatus)
+	}
+	if !containsString(snapshot.Actions, "agent-team start manager ticket-manager") {
+		t.Fatalf("actions missing persistent start hint: %+v", snapshot.Actions)
+	}
+	if containsString(snapshot.Actions, "agent-team start worker") {
+		t.Fatalf("actions should not start ephemeral worker: %+v", snapshot.Actions)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"team", "status", "delivery", "--repo", root})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("team status text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"Team: delivery", "instances: total=3", "jobs: total=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1", "Actions:", "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("team status text missing %q:\n%s", want, textOut.String())
+		}
+	}
+}
+
+func TestTeamShowMissingFails(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "show", "missing", "--repo", root})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("team show missing succeeded")
+	}
+	if !strings.Contains(stderr.String(), `team "missing" not found`) {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
