@@ -180,6 +180,8 @@ agent-team job ls [-w] [--summary] [--status queued|running|blocked|done|failed]
 agent-team job show <job-id> | events <job-id> [-f] [--tail N|all] [--json]
 agent-team job dispatch|start|stop|kill|wait|logs|attach|send|update|close|reopen|cleanup|rm|prune|step|advance ...
                                                 # create, monitor, dispatch, control, and clean up durable work units
+agent-team queue ls [-w] [--summary] [--state pending|dead] [--json] | show|retry|drop <id> | prune [--state dead|pending|all] [--older-than 24h] [--dry-run]
+                                                # inspect, retry, drop, and prune persisted daemon dispatch queue items
 agent-team channels                             # list pub/sub channels; reads local channel state if the daemon is down
 agent-team channel show <name>                  # show a channel summary and recent messages
 agent-team channel publish <name> <body...> [--sender user]
