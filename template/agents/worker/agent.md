@@ -31,6 +31,7 @@ When launched by daemon dispatch, prefer the job context exported in your enviro
 
 - `AGENT_TEAM_JOB_ID` — durable job id under `.agent_team/jobs/`.
 - `AGENT_TEAM_TICKET` — ticket identifier.
+- `AGENT_TEAM_TICKET_URL` — canonical ticket URL when the dispatcher has one.
 - `AGENT_TEAM_PIPELINE` / `AGENT_TEAM_PIPELINE_STEP` — present when this worker owns one pipeline step.
 - `AGENT_TEAM_BRANCH` / `AGENT_TEAM_WORKTREE` — present for daemon-created worktree runs.
 

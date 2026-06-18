@@ -185,11 +185,17 @@ func (r *EventResolver) actuatePipeline(pipeline *topology.Pipeline, eventType s
 		return []EventOutcome{{Instance: "pipeline:" + pipeline.Name, Action: "rejected", Reason: err.Error()}}
 	}
 	j.Pipeline = pipeline.Name
+	if ticketURL := payloadString(payload, "ticket_url"); ticketURL != "" {
+		j.TicketURL = ticketURL
+	}
 	j.Steps = pipelineJobSteps(pipeline)
 	pipelineEvent := "pipeline_created"
 	if existing, err := jobstore.Read(r.teamDir, j.ID); err == nil {
 		j = existing
 		j.Pipeline = pipeline.Name
+		if ticketURL := payloadString(payload, "ticket_url"); ticketURL != "" {
+			j.TicketURL = ticketURL
+		}
 		if len(j.Steps) == 0 {
 			j.Steps = pipelineJobSteps(pipeline)
 		}
@@ -201,10 +207,14 @@ func (r *EventResolver) actuatePipeline(pipeline *topology.Pipeline, eventType s
 	if err := jobstore.Write(r.teamDir, j); err != nil {
 		return []EventOutcome{{Instance: "pipeline:" + pipeline.Name, Action: "rejected", Reason: err.Error()}}
 	}
-	if err := jobstore.AppendSnapshotEvent(r.teamDir, j, pipelineEvent, "daemon", "", map[string]string{
+	data := map[string]string{
 		"pipeline": pipeline.Name,
 		"event":    eventType,
-	}); err != nil {
+	}
+	if j.TicketURL != "" {
+		data["ticket_url"] = j.TicketURL
+	}
+	if err := jobstore.AppendSnapshotEvent(r.teamDir, j, pipelineEvent, "daemon", "", data); err != nil {
 		return []EventOutcome{{Instance: "pipeline:" + pipeline.Name, Action: "rejected", Reason: err.Error()}}
 	}
 	step := firstRunnablePipelineStep(pipeline)
@@ -623,6 +633,9 @@ func (r *EventResolver) upsertDispatchJob(payload map[string]any, instance strin
 	if ticket != "" {
 		j.Ticket = ticket
 	}
+	if ticketURL := payloadString(payload, "ticket_url"); ticketURL != "" {
+		j.TicketURL = ticketURL
+	}
 	if pipeline := payloadString(payload, "pipeline"); pipeline != "" {
 		j.Pipeline = pipeline
 	}
@@ -656,7 +669,7 @@ func (r *EventResolver) upsertDispatchJob(payload map[string]any, instance strin
 
 func dispatchJobEventData(payload map[string]any, branch, worktreePath string) map[string]string {
 	data := map[string]string{}
-	for _, key := range []string{"target", "agent", "pipeline", "pipeline_step", "ticket"} {
+	for _, key := range []string{"target", "agent", "pipeline", "pipeline_step", "ticket", "ticket_url"} {
 		if value := payloadString(payload, key); value != "" {
 			data[key] = value
 		}
@@ -698,6 +711,9 @@ func dispatchContextEnv(payload map[string]any, branch, worktreePath string) []s
 	}
 	if ticket := payloadString(payload, "ticket"); ticket != "" {
 		env = append(env, "AGENT_TEAM_TICKET="+ticket)
+	}
+	if ticketURL := payloadString(payload, "ticket_url"); ticketURL != "" {
+		env = append(env, "AGENT_TEAM_TICKET_URL="+ticketURL)
 	}
 	if pipeline := payloadString(payload, "pipeline"); pipeline != "" {
 		env = append(env, "AGENT_TEAM_PIPELINE="+pipeline)

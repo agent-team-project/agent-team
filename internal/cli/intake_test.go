@@ -17,7 +17,7 @@ func TestIntakeLinearCreatesPipelineJob(t *testing.T) {
 	target, mgr, cleanup := setupIntakePipelineRepo(t)
 	defer cleanup()
 
-	payload := `{"action":"Issue created","data":{"identifier":"SQU-101","title":"Add intake"}}`
+	payload := `{"action":"Issue created","data":{"identifier":"SQU-101","url":"https://linear.app/squirtlesquad/issue/SQU-101/add-intake","title":"Add intake"}}`
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
@@ -40,7 +40,7 @@ func TestIntakeLinearCreatesPipelineJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read job: %v", err)
 	}
-	if j.Pipeline != "ticket_triage" || len(j.Steps) != 1 || j.Steps[0].Target != "manager" {
+	if j.Pipeline != "ticket_triage" || len(j.Steps) != 1 || j.Steps[0].Target != "manager" || j.TicketURL != "https://linear.app/squirtlesquad/issue/SQU-101/add-intake" {
 		t.Fatalf("job = %+v", j)
 	}
 	messages, err := daemon.ReadMessages(daemon.DaemonRoot(filepath.Join(target, ".agent_team")), "manager")

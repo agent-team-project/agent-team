@@ -303,7 +303,7 @@ func TestEvent_TicketDispatchCreatesJobAndExportsContext(t *testing.T) {
 	defer srv.Close()
 
 	resp := mustPost(t, srv.URL+"/v1/event",
-		`{"type":"agent.dispatch","payload":{"target":"worker","name":"worker-squ-95","ticket":"SQU-95","kickoff":"implement SQU-95","workspace":"repo"}}`)
+		`{"type":"agent.dispatch","payload":{"target":"worker","name":"worker-squ-95","ticket":"SQU-95","ticket_url":"https://linear.app/squirtlesquad/issue/SQU-95/context","kickoff":"implement SQU-95","workspace":"repo"}}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -311,7 +311,7 @@ func TestEvent_TicketDispatchCreatesJobAndExportsContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read job: %v", err)
 	}
-	if j.Status != jobstore.StatusRunning || j.Instance != "worker-squ-95" || j.Target != "worker" || j.Kickoff != "implement SQU-95" {
+	if j.Status != jobstore.StatusRunning || j.Instance != "worker-squ-95" || j.Target != "worker" || j.Kickoff != "implement SQU-95" || j.TicketURL != "https://linear.app/squirtlesquad/issue/SQU-95/context" {
 		t.Fatalf("job = %+v", j)
 	}
 	meta, err := ReadMetadata(root, "worker-squ-95")
@@ -325,6 +325,7 @@ func TestEvent_TicketDispatchCreatesJobAndExportsContext(t *testing.T) {
 	for _, want := range []string{
 		"AGENT_TEAM_JOB_ID=squ-95",
 		"AGENT_TEAM_TICKET=SQU-95",
+		"AGENT_TEAM_TICKET_URL=https://linear.app/squirtlesquad/issue/SQU-95/context",
 	} {
 		if !containsString(env, want) {
 			t.Fatalf("env missing %q in %v", want, env)
@@ -782,7 +783,7 @@ after = ["implement"]
 	defer srv.Close()
 
 	resp := mustPost(t, srv.URL+"/v1/event",
-		`{"type":"ticket.created","payload":{"ticket":"SQU-92","kickoff":"implement SQU-92","workspace":"repo"}}`)
+		`{"type":"ticket.created","payload":{"ticket":"SQU-92","ticket_url":"https://linear.app/squirtlesquad/issue/SQU-92/pipeline","kickoff":"implement SQU-92","workspace":"repo"}}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -803,7 +804,7 @@ after = ["implement"]
 	if err != nil {
 		t.Fatalf("read job: %v", err)
 	}
-	if j.Pipeline != "ticket_to_pr" || j.Status != jobstore.StatusRunning || len(j.Steps) != 2 {
+	if j.Pipeline != "ticket_to_pr" || j.Status != jobstore.StatusRunning || len(j.Steps) != 2 || j.TicketURL != "https://linear.app/squirtlesquad/issue/SQU-92/pipeline" {
 		t.Fatalf("job = %+v", j)
 	}
 	if j.Steps[0].ID != "implement" || j.Steps[0].Status != jobstore.StatusRunning || j.Steps[0].Instance != "worker-squ-92" {
