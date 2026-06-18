@@ -1464,6 +1464,108 @@ func TestJobReconcileGitHubMergedCleansOwnedWorktree(t *testing.T) {
 	}
 }
 
+func TestJobNextReportsPipelineState(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-203",
+		Ticket:    "SQU-203",
+		Target:    "manager",
+		Kickoff:   "SQU-203: pipeline state",
+		Pipeline:  "ticket_triage",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "triage", Target: "manager", Status: job.StatusDone, Instance: "manager", StartedAt: now, FinishedAt: now},
+			{ID: "review", Target: "worker", Status: job.StatusBlocked, After: []string{"triage"}},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write ready job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "next", "squ-203", "--repo", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job next ready: %v\nstderr=%s", err, stderr.String())
+	}
+	var ready jobNextResult
+	if err := json.Unmarshal(out.Bytes(), &ready); err != nil {
+		t.Fatalf("decode ready json: %v\nbody=%s", err, out.String())
+	}
+	if ready.State != "ready" || ready.Step == nil || ready.Step.ID != "review" || len(ready.WaitingFor) != 0 {
+		t.Fatalf("ready result = %+v", ready)
+	}
+
+	j.Steps[1].Status = job.StatusRunning
+	j.Steps[1].Instance = "worker-squ-203-review"
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write running job: %v", err)
+	}
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "next", "squ-203", "--repo", tmp, "--format", "{{.State}} {{.Step.ID}} {{.Step.Instance}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job next format: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "running review worker-squ-203-review" {
+		t.Fatalf("formatted next = %q", got)
+	}
+
+	j.Steps[1].Status = job.StatusDone
+	j.Steps[1].FinishedAt = now
+	j.Status = job.StatusDone
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write done job: %v", err)
+	}
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "next", "squ-203", "--repo", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job next done: %v\nstderr=%s", err, stderr.String())
+	}
+	var done jobNextResult
+	if err := json.Unmarshal(out.Bytes(), &done); err != nil {
+		t.Fatalf("decode done json: %v\nbody=%s", err, out.String())
+	}
+	if done.State != "done" || done.Step != nil || done.Message != "all steps done" {
+		t.Fatalf("done result = %+v", done)
+	}
+
+	noSteps := &job.Job{
+		ID:        "squ-204",
+		Ticket:    "SQU-204",
+		Target:    "worker",
+		Status:    job.StatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, noSteps); err != nil {
+		t.Fatalf("write no-step job: %v", err)
+	}
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "next", "squ-204", "--repo", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job next no steps: %v\nstderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(out.String(), "state=none") || !strings.Contains(out.String(), "job has no pipeline steps") {
+		t.Fatalf("no-step output = %q", out.String())
+	}
+}
+
 func TestJobAdvanceDispatchesNextReadyStep(t *testing.T) {
 	target, _, cleanup := setupIntakePipelineRepo(t)
 	defer cleanup()

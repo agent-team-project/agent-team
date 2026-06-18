@@ -45,6 +45,7 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobCleanupCmd())
 	cmd.AddCommand(newJobRmCmd())
 	cmd.AddCommand(newJobPruneCmd())
+	cmd.AddCommand(newJobNextCmd())
 	cmd.AddCommand(newJobStepCmd())
 	cmd.AddCommand(newJobAdvanceCmd())
 	cmd.AddCommand(newJobReconcileCmd())
@@ -1213,6 +1214,40 @@ func newJobPruneCmd() *cobra.Command {
 	return cmd
 }
 
+func newJobNextCmd() *cobra.Command {
+	var (
+		repo    string
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "next <job-id>",
+		Short: "Show the next pipeline step for a job without dispatching it.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job next: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobNextFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job next: %v\n", err)
+				return exitErr(2)
+			}
+			j, err := readJobFromRepo(cmd, repo, args[0])
+			if err != nil {
+				return err
+			}
+			return renderJobNextResult(cmd.OutOrStdout(), inspectNextJobStep(j), jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the next-step state as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the next-step state with a Go template, e.g. '{{.State}} {{.Step.ID}}'.")
+	return cmd
+}
+
 func newJobStepCmd() *cobra.Command {
 	var (
 		repo      string
@@ -2355,6 +2390,17 @@ type jobAdvanceResult struct {
 	Message string         `json:"message,omitempty"`
 }
 
+type jobNextResult struct {
+	JobID      string     `json:"job_id"`
+	Ticket     string     `json:"ticket"`
+	Pipeline   string     `json:"pipeline,omitempty"`
+	JobStatus  job.Status `json:"job_status"`
+	State      string     `json:"state"`
+	Step       *job.Step  `json:"step,omitempty"`
+	WaitingFor []string   `json:"waiting_for,omitempty"`
+	Message    string     `json:"message"`
+}
+
 func updateJobStep(j *job.Job, stepID string, status job.Status, update jobStepUpdate) error {
 	idx := jobStepIndex(j, stepID)
 	if idx == -1 {
@@ -2528,6 +2574,105 @@ done:
 	j.LastStatus = lastStatus
 }
 
+func inspectNextJobStep(j *job.Job) jobNextResult {
+	res := jobNextResult{
+		JobID:     j.ID,
+		Ticket:    j.Ticket,
+		Pipeline:  j.Pipeline,
+		JobStatus: j.Status,
+	}
+	if len(j.Steps) == 0 {
+		res.State = "none"
+		res.Message = "job has no pipeline steps"
+		return res
+	}
+	if step := nextReadyJobStep(j); step != nil {
+		res.Step = cloneJobStep(step)
+		res.State = "ready"
+		if step.Status == job.StatusQueued {
+			res.State = "queued"
+			res.Message = "step " + step.ID + " is queued and ready"
+		} else {
+			res.Message = "step " + step.ID + " is ready"
+		}
+		return res
+	}
+	if step := firstJobStepWithStatus(j, job.StatusRunning); step != nil {
+		res.State = "running"
+		res.Step = cloneJobStep(step)
+		res.Message = "step " + step.ID + " is running"
+		return res
+	}
+	if step := firstJobStepWithStatus(j, job.StatusQueued); step != nil {
+		res.State = "queued"
+		res.Step = cloneJobStep(step)
+		res.WaitingFor = unmetJobStepDependencies(j, step)
+		res.Message = "step " + step.ID + " is queued"
+		return res
+	}
+	if allJobStepsDone(j) {
+		res.State = "done"
+		res.Message = "all steps done"
+		return res
+	}
+	if step := firstJobStepWithStatus(j, job.StatusFailed); step != nil {
+		res.State = "failed"
+		res.Step = cloneJobStep(step)
+		res.Message = "step " + step.ID + " failed"
+		return res
+	}
+	if step := firstJobStepWithStatus(j, job.StatusBlocked); step != nil {
+		res.State = "blocked"
+		res.Step = cloneJobStep(step)
+		res.WaitingFor = unmetJobStepDependencies(j, step)
+		if len(res.WaitingFor) > 0 {
+			res.Message = "step " + step.ID + " is waiting for " + strings.Join(res.WaitingFor, ",")
+		} else {
+			res.Message = "step " + step.ID + " is blocked"
+		}
+		return res
+	}
+	res.State = "blocked"
+	res.Message = "no ready steps"
+	return res
+}
+
+func cloneJobStep(step *job.Step) *job.Step {
+	if step == nil {
+		return nil
+	}
+	cloned := *step
+	return &cloned
+}
+
+func firstJobStepWithStatus(j *job.Job, status job.Status) *job.Step {
+	for i := range j.Steps {
+		if j.Steps[i].Status == status {
+			return &j.Steps[i]
+		}
+	}
+	return nil
+}
+
+func unmetJobStepDependencies(j *job.Job, step *job.Step) []string {
+	if step == nil || len(step.After) == 0 {
+		return nil
+	}
+	done := map[string]bool{}
+	for _, candidate := range j.Steps {
+		if candidate.Status == job.StatusDone {
+			done[candidate.ID] = true
+		}
+	}
+	var waiting []string
+	for _, dep := range step.After {
+		if !done[dep] {
+			waiting = append(waiting, dep)
+		}
+	}
+	return waiting
+}
+
 func nextReadyJobStep(j *job.Job) *job.Step {
 	done := map[string]bool{}
 	for _, step := range j.Steps {
@@ -2603,6 +2748,34 @@ func renderJobAdvanceResult(w io.Writer, res *jobAdvanceResult) error {
 	if res.Event != nil {
 		renderDispatchOutcome(w, "", "", res.Event)
 	}
+	return nil
+}
+
+func renderJobNextResult(w io.Writer, res jobNextResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(res)
+	}
+	if tmpl != nil {
+		if err := tmpl.Execute(w, res); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(w)
+		return err
+	}
+	if res.Step == nil {
+		fmt.Fprintf(w, "Job: %s state=%s message=%q\n", res.JobID, res.State, res.Message)
+		return nil
+	}
+	after := "-"
+	if len(res.Step.After) > 0 {
+		after = strings.Join(res.Step.After, ",")
+	}
+	waiting := "-"
+	if len(res.WaitingFor) > 0 {
+		waiting = strings.Join(res.WaitingFor, ",")
+	}
+	fmt.Fprintf(w, "Job: %s next step=%s state=%s status=%s target=%s instance=%s after=%s waiting_for=%s\n",
+		res.JobID, res.Step.ID, res.State, res.Step.Status, res.Step.Target, emptyDash(res.Step.Instance), after, waiting)
 	return nil
 }
 
@@ -2696,6 +2869,17 @@ func parseJobEventFormat(format string) (*template.Template, error) {
 		return nil, nil
 	}
 	tmpl, err := template.New("job-event-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func parseJobNextFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("job-next-format").Parse(format)
 	if err != nil {
 		return nil, fmt.Errorf("invalid --format template: %w", err)
 	}
