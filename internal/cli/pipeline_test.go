@@ -500,12 +500,75 @@ func TestPipelineAdvanceDryRunAndDispatch(t *testing.T) {
 	if len(preview) != 1 || preview[0].JobID != "squ-401" || preview[0].StepID != "review" || preview[0].Action != "would_advance" || !preview[0].DryRun {
 		t.Fatalf("preview = %+v", preview)
 	}
+	if preview[0].Preview != nil {
+		t.Fatalf("plain dry-run unexpectedly included route preview = %+v", preview[0].Preview)
+	}
 	unchanged, err := job.Read(teamDir, "squ-401")
 	if err != nil {
 		t.Fatalf("read unchanged job: %v", err)
 	}
 	if unchanged.Steps[1].Status != job.StatusBlocked {
 		t.Fatalf("dry-run changed job = %+v", unchanged)
+	}
+
+	routeDry := NewRootCmd()
+	routeDryOut, routeDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	routeDry.SetOut(routeDryOut)
+	routeDry.SetErr(routeDryErr)
+	routeDry.SetArgs([]string{"pipeline", "advance", "ticket_triage", "--repo", target, "--limit", "1", "--dry-run", "--preview-routes", "--json"})
+	if err := routeDry.Execute(); err != nil {
+		t.Fatalf("pipeline advance dry-run preview-routes: %v\nstderr=%s", err, routeDryErr.String())
+	}
+	var routePreview []pipelineAdvanceResult
+	if err := json.Unmarshal(routeDryOut.Bytes(), &routePreview); err != nil {
+		t.Fatalf("decode advance dry-run preview-routes: %v\nbody=%s", err, routeDryOut.String())
+	}
+	if len(routePreview) != 1 || routePreview[0].Preview == nil || routePreview[0].Preview.Step == nil || routePreview[0].Preview.Step.ID != "review" {
+		t.Fatalf("route preview = %+v", routePreview)
+	}
+	if routePreview[0].Preview.Dispatch == nil || routePreview[0].Preview.Dispatch.RequestedName != "manager-squ-401-review" {
+		t.Fatalf("route dispatch preview = %+v", routePreview[0].Preview.Dispatch)
+	}
+	dispatchPreview := routePreview[0].Preview.Dispatch.Preview
+	if dispatchPreview == nil || dispatchPreview.Type != "agent.dispatch" || len(dispatchPreview.Matched) != 1 || dispatchPreview.Matched[0] != "manager" {
+		t.Fatalf("dispatch route preview = %+v", dispatchPreview)
+	}
+	payload := dispatchPreview.Payload
+	if payload["job_id"] != "squ-401" || payload["pipeline"] != "ticket_triage" || payload["pipeline_step"] != "review" || payload["workspace"] != "repo" {
+		t.Fatalf("route preview payload = %+v", payload)
+	}
+	routeUnchanged, err := job.Read(teamDir, "squ-401")
+	if err != nil {
+		t.Fatalf("read route preview unchanged job: %v", err)
+	}
+	if routeUnchanged.Steps[1].Status != job.StatusBlocked {
+		t.Fatalf("route preview changed job = %+v", routeUnchanged)
+	}
+
+	textDry := NewRootCmd()
+	textDryOut, textDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	textDry.SetOut(textDryOut)
+	textDry.SetErr(textDryErr)
+	textDry.SetArgs([]string{"pipeline", "advance", "ticket_triage", "--repo", target, "--limit", "1", "--dry-run", "--preview-routes"})
+	if err := textDry.Execute(); err != nil {
+		t.Fatalf("pipeline advance dry-run preview-routes text: %v\nstderr=%s", err, textDryErr.String())
+	}
+	for _, want := range []string{"Routes:", "squ-401 step=review target=manager instance=manager-squ-401-review", "Matched: manager"} {
+		if !strings.Contains(textDryOut.String(), want) {
+			t.Fatalf("route preview text missing %q:\n%s", want, textDryOut.String())
+		}
+	}
+
+	invalidRoutes := NewRootCmd()
+	invalidRoutesOut, invalidRoutesErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidRoutes.SetOut(invalidRoutesOut)
+	invalidRoutes.SetErr(invalidRoutesErr)
+	invalidRoutes.SetArgs([]string{"pipeline", "advance", "ticket_triage", "--repo", target, "--preview-routes"})
+	if err := invalidRoutes.Execute(); err == nil {
+		t.Fatalf("pipeline advance --preview-routes without --dry-run succeeded")
+	}
+	if !strings.Contains(invalidRoutesErr.String(), "--preview-routes requires --dry-run") {
+		t.Fatalf("invalid preview-routes stderr = %q", invalidRoutesErr.String())
 	}
 
 	run := NewRootCmd()

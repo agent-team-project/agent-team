@@ -195,7 +195,7 @@ func runTick(cmd *cobra.Command, teamDir, workspace string, limit int, opts tick
 		result.Queue = drain
 	}
 	if !opts.SkipAdvance {
-		advanced, err := advanceReadyPipelineJobs(cmd, teamDir, "", workspace, limit, opts.DryRun)
+		advanced, err := advanceReadyPipelineJobs(cmd, teamDir, "", workspace, limit, opts.DryRun, false)
 		if err != nil {
 			return nil, err
 		}

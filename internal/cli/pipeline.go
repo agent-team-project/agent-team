@@ -188,13 +188,14 @@ func newPipelineReadyCmd() *cobra.Command {
 
 func newPipelineAdvanceCmd() *cobra.Command {
 	var (
-		repo      string
-		workspace string
-		limit     int
-		all       bool
-		dryRun    bool
-		jsonOut   bool
-		format    string
+		repo          string
+		workspace     string
+		limit         int
+		all           bool
+		dryRun        bool
+		previewRoutes bool
+		jsonOut       bool
+		format        string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -219,6 +220,10 @@ func newPipelineAdvanceCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --limit must be >= 0.")
 				return exitErr(2)
 			}
+			if previewRoutes && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --preview-routes requires --dry-run.")
+				return exitErr(2)
+			}
 			tmpl, err := parsePipelineAdvanceFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline advance: %v\n", err)
@@ -236,7 +241,7 @@ func newPipelineAdvanceCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: pipeline name is required.")
 				return exitErr(2)
 			}
-			results, err := advanceReadyPipelineJobs(cmd, teamDir, pipelineName, workspace, limit, dryRun)
+			results, err := advanceReadyPipelineJobs(cmd, teamDir, pipelineName, workspace, limit, dryRun, previewRoutes)
 			if err != nil {
 				return err
 			}
@@ -248,6 +253,7 @@ func newPipelineAdvanceCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Advance at most this many ready jobs; 0 means no limit.")
 	cmd.Flags().BoolVar(&all, "all", false, "Advance ready steps across all pipelines.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview ready steps without dispatching them.")
+	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include local topology route and dispatch payload previews.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit advance results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd
@@ -384,19 +390,20 @@ type pipelineStepInfo struct {
 }
 
 type pipelineAdvanceResult struct {
-	JobID      string         `json:"job_id"`
-	Ticket     string         `json:"ticket"`
-	Pipeline   string         `json:"pipeline"`
-	StepID     string         `json:"step_id,omitempty"`
-	Target     string         `json:"target,omitempty"`
-	StepStatus job.Status     `json:"step_status,omitempty"`
-	Instance   string         `json:"instance,omitempty"`
-	Action     string         `json:"action"`
-	DryRun     bool           `json:"dry_run,omitempty"`
-	Message    string         `json:"message,omitempty"`
-	Job        *job.Job       `json:"job,omitempty"`
-	Step       *job.Step      `json:"step,omitempty"`
-	Event      *eventResponse `json:"event,omitempty"`
+	JobID      string             `json:"job_id"`
+	Ticket     string             `json:"ticket"`
+	Pipeline   string             `json:"pipeline"`
+	StepID     string             `json:"step_id,omitempty"`
+	Target     string             `json:"target,omitempty"`
+	StepStatus job.Status         `json:"step_status,omitempty"`
+	Instance   string             `json:"instance,omitempty"`
+	Action     string             `json:"action"`
+	DryRun     bool               `json:"dry_run,omitempty"`
+	Message    string             `json:"message,omitempty"`
+	Job        *job.Job           `json:"job,omitempty"`
+	Step       *job.Step          `json:"step,omitempty"`
+	Event      *eventResponse     `json:"event,omitempty"`
+	Preview    *jobAdvancePreview `json:"preview,omitempty"`
 }
 
 func loadPipelineInfos(teamDir string) ([]pipelineInfo, error) {
@@ -445,7 +452,7 @@ func pipelineInfoFromTopology(p *topology.Pipeline) pipelineInfo {
 	}
 }
 
-func advanceReadyPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace string, limit int, dryRun bool) ([]pipelineAdvanceResult, error) {
+func advanceReadyPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace string, limit int, dryRun bool, previewRoutes bool) ([]pipelineAdvanceResult, error) {
 	rows, err := collectJobReadyRows(teamDir, pipeline, map[string]bool{"ready": true})
 	if err != nil {
 		return nil, err
@@ -468,6 +475,24 @@ func advanceReadyPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace s
 			Message:    row.Message,
 		}
 		if dryRun {
+			if previewRoutes {
+				j, err := job.Read(teamDir, row.JobID)
+				if err != nil {
+					return nil, err
+				}
+				preview, err := previewJobAdvanceDispatch(teamDir, j, workspace)
+				if err != nil {
+					return nil, err
+				}
+				result.Preview = preview
+				result.Message = preview.Message
+				if preview.Step != nil {
+					result.StepID = preview.Step.ID
+					result.Target = preview.Step.Target
+					result.StepStatus = preview.Step.Status
+					result.Instance = preview.Step.Instance
+				}
+			}
 			results = append(results, result)
 			continue
 		}
@@ -590,7 +615,7 @@ func renderPipelineAdvanceResults(w io.Writer, results []pipelineAdvanceResult, 
 		return nil
 	}
 	renderPipelineAdvanceTable(w, results)
-	return nil
+	return renderPipelineAdvanceRoutePreviews(w, results)
 }
 
 func renderPipelineAdvanceTable(w io.Writer, results []pipelineAdvanceResult) {
@@ -613,4 +638,35 @@ func renderPipelineAdvanceTable(w io.Writer, results []pipelineAdvanceResult) {
 		)
 	}
 	_ = tw.Flush()
+}
+
+func renderPipelineAdvanceRoutePreviews(w io.Writer, results []pipelineAdvanceResult) error {
+	wroteHeader := false
+	for _, result := range results {
+		if result.Preview == nil {
+			continue
+		}
+		if !wroteHeader {
+			fmt.Fprintln(w, "Routes:")
+			wroteHeader = true
+		}
+		requestedName := ""
+		if result.Preview.Dispatch != nil {
+			requestedName = result.Preview.Dispatch.RequestedName
+		}
+		fmt.Fprintf(w, "%s step=%s target=%s instance=%s\n",
+			result.JobID,
+			emptyDash(result.StepID),
+			emptyDash(result.Target),
+			emptyDash(requestedName),
+		)
+		if result.Preview.Dispatch == nil || result.Preview.Dispatch.Preview == nil || !eventPublishPreviewHasRoutes(result.Preview.Dispatch.Preview) {
+			fmt.Fprintln(w, "(no triggers matched)")
+			continue
+		}
+		if err := renderEventPublishRoutePreview(w, result.Preview.Dispatch.Preview); err != nil {
+			return err
+		}
+	}
+	return nil
 }
