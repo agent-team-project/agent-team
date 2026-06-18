@@ -458,6 +458,98 @@ func TestJobReopenRefusesRunningUnlessForced(t *testing.T) {
 	}
 }
 
+func TestJobUpdateSetsClearsAndAuditsMetadata(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-70",
+		Ticket:    "SQU-70",
+		Target:    "worker",
+		Status:    job.StatusQueued,
+		Branch:    "old-branch",
+		Worktree:  "/tmp/old-worktree",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	update := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	update.SetOut(out)
+	update.SetErr(stderr)
+	update.SetArgs([]string{
+		"job", "update", "SQU-70",
+		"--repo", tmp,
+		"--status", "running",
+		"--instance", "worker-squ-70",
+		"--pr", "https://github.com/acme/repo/pull/70",
+		"--message", "metadata repaired",
+		"--json",
+	})
+	if err := update.Execute(); err != nil {
+		t.Fatalf("job update: %v\nstderr=%s", err, stderr.String())
+	}
+	var updated job.Job
+	if err := json.Unmarshal(out.Bytes(), &updated); err != nil {
+		t.Fatalf("decode update json: %v\nbody=%s", err, out.String())
+	}
+	if updated.Status != job.StatusRunning || updated.Instance != "worker-squ-70" || updated.PR == "" || updated.LastStatus != "metadata repaired" {
+		t.Fatalf("updated = %+v", updated)
+	}
+	events, err := job.ListEvents(teamDir, "squ-70")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "updated" || events[0].Data["status"] != "running" || events[0].Data["instance"] != "worker-squ-70" {
+		t.Fatalf("events = %+v", events)
+	}
+
+	clear := NewRootCmd()
+	clearOut, clearErr := &bytes.Buffer{}, &bytes.Buffer{}
+	clear.SetOut(clearOut)
+	clear.SetErr(clearErr)
+	clear.SetArgs([]string{"job", "update", "squ-70", "--repo", tmp, "--clear", "branch,worktree,pr", "--format", "{{.Branch}}|{{.Worktree}}|{{.PR}}|{{.LastStatus}}"})
+	if err := clear.Execute(); err != nil {
+		t.Fatalf("job update clear: %v\nstderr=%s", err, clearErr.String())
+	}
+	if got := strings.TrimSpace(clearOut.String()); got != "|||updated branch,pr,worktree" {
+		t.Fatalf("clear output = %q", got)
+	}
+}
+
+func TestJobUpdateRequiresChange(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-71",
+		Ticket:    "SQU-71",
+		Target:    "worker",
+		Status:    job.StatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "update", "squ-71", "--repo", tmp})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("job update without changes succeeded unexpectedly")
+	}
+	if !strings.Contains(stderr.String(), "pass at least one update flag") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestJobListWatchRendersSnapshot(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

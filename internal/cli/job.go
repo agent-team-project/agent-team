@@ -39,6 +39,7 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobStopCmd())
 	cmd.AddCommand(newJobKillCmd())
 	cmd.AddCommand(newJobCloseCmd())
+	cmd.AddCommand(newJobUpdateCmd())
 	cmd.AddCommand(newJobReopenCmd())
 	cmd.AddCommand(newJobCleanupCmd())
 	cmd.AddCommand(newJobRmCmd())
@@ -840,6 +841,117 @@ func newJobCloseCmd() *cobra.Command {
 	return cmd
 }
 
+func newJobUpdateCmd() *cobra.Command {
+	var (
+		repo      string
+		status    string
+		target    string
+		ticketURL string
+		instance  string
+		branch    string
+		worktree  string
+		pr        string
+		message   string
+		clear     []string
+		jsonOut   bool
+		format    string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "update <job-id>",
+		Short: "Update job metadata.",
+		Long:  "Update durable job metadata such as status, owner instance, branch, worktree, and PR URL.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job update: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job update: %v\n", err)
+				return exitErr(2)
+			}
+			clearSet, err := parseJobUpdateClear(clear)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job update: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
+			if err != nil {
+				return err
+			}
+			changed := map[string]string{}
+			if cmd.Flags().Changed("status") {
+				next, err := job.ParseStatus(status)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job update: %v\n", err)
+					return exitErr(2)
+				}
+				j.Status = next
+				changed["status"] = string(next)
+			}
+			if cmd.Flags().Changed("target") {
+				if strings.TrimSpace(target) == "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job update: --target cannot be empty.")
+					return exitErr(2)
+				}
+				j.Target = strings.TrimSpace(target)
+				changed["target"] = j.Target
+			}
+			if cmd.Flags().Changed("ticket-url") {
+				j.TicketURL = strings.TrimSpace(ticketURL)
+				changed["ticket_url"] = j.TicketURL
+			}
+			if cmd.Flags().Changed("instance") {
+				j.Instance = strings.TrimSpace(instance)
+				changed["instance"] = j.Instance
+			}
+			if cmd.Flags().Changed("branch") {
+				j.Branch = strings.TrimSpace(branch)
+				changed["branch"] = j.Branch
+			}
+			if cmd.Flags().Changed("worktree") {
+				j.Worktree = strings.TrimSpace(worktree)
+				changed["worktree"] = j.Worktree
+			}
+			if cmd.Flags().Changed("pr") {
+				j.PR = strings.TrimSpace(pr)
+				changed["pr"] = j.PR
+			}
+			applyJobUpdateClears(j, clearSet, changed)
+			if len(changed) == 0 && strings.TrimSpace(message) == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job update: pass at least one update flag.")
+				return exitErr(2)
+			}
+			j.LastEvent = "updated"
+			if strings.TrimSpace(message) != "" {
+				j.LastStatus = strings.TrimSpace(message)
+			} else {
+				j.LastStatus = "updated " + jobUpdateFieldList(changed)
+			}
+			j.UpdatedAt = time.Now().UTC()
+			if err := writeJobWithAudit(teamDir, j, "", "cli", "", changed); err != nil {
+				return err
+			}
+			return renderJobResult(cmd.OutOrStdout(), j, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&status, "status", "", "Set lifecycle status: queued, running, blocked, done, or failed.")
+	cmd.Flags().StringVar(&target, "target", "", "Set target agent.")
+	cmd.Flags().StringVar(&ticketURL, "ticket-url", "", "Set ticket URL.")
+	cmd.Flags().StringVar(&instance, "instance", "", "Set owning instance.")
+	cmd.Flags().StringVar(&branch, "branch", "", "Set branch.")
+	cmd.Flags().StringVar(&worktree, "worktree", "", "Set worktree path.")
+	cmd.Flags().StringVar(&pr, "pr", "", "Set PR URL or number.")
+	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on the job.")
+	cmd.Flags().StringSliceVar(&clear, "clear", nil, "Clear metadata fields: ticket-url, instance, branch, worktree, pr, or pipeline. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
+	return cmd
+}
+
 func newJobReopenCmd() *cobra.Command {
 	var (
 		repo    string
@@ -1617,6 +1729,53 @@ func parseJobPruneStatuses(raw []string, useDefault bool) (map[job.Status]bool, 
 
 func jobStatusTerminal(status job.Status) bool {
 	return status == job.StatusDone || status == job.StatusFailed
+}
+
+func parseJobUpdateClear(raw []string) (map[string]bool, error) {
+	fields := map[string]bool{}
+	for _, value := range splitFilterValues(raw) {
+		field := strings.ToLower(strings.TrimSpace(value))
+		if field == "" {
+			continue
+		}
+		switch field {
+		case "ticket-url", "ticket_url":
+			fields["ticket_url"] = true
+		case "instance", "branch", "worktree", "pr", "pipeline":
+			fields[field] = true
+		default:
+			return nil, fmt.Errorf("--clear accepts ticket-url, instance, branch, worktree, pr, or pipeline")
+		}
+	}
+	return fields, nil
+}
+
+func applyJobUpdateClears(j *job.Job, clearSet map[string]bool, changed map[string]string) {
+	for field := range clearSet {
+		switch field {
+		case "ticket_url":
+			j.TicketURL = ""
+		case "instance":
+			j.Instance = ""
+		case "branch":
+			j.Branch = ""
+		case "worktree":
+			j.Worktree = ""
+		case "pr":
+			j.PR = ""
+		case "pipeline":
+			j.Pipeline = ""
+		}
+		changed[field] = ""
+	}
+}
+
+func jobUpdateFieldList(changed map[string]string) string {
+	counts := map[string]int{}
+	for field := range changed {
+		counts[field] = 1
+	}
+	return strings.Join(sortedCountKeys(counts), ",")
 }
 
 func removeJobFiles(teamDir string, j *job.Job, opts jobRemoveOptions) (jobRemoveResult, error) {
