@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/intake"
 	"github.com/jamesaud/agent-team/internal/topology"
 )
 
@@ -398,37 +400,42 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		matched := make([]string, 0, len(outcomes))
-		dispatched := make([]map[string]any, 0)
-		queued := make([]string, 0)
-		messaged := make([]string, 0)
-		rejected := make([]map[string]string, 0)
-		for _, oc := range outcomes {
-			matched = append(matched, oc.Instance)
-			switch oc.Action {
-			case "dispatched":
-				dispatched = append(dispatched, map[string]any{
-					"instance":    oc.Instance,
-					"instance_id": oc.InstanceID,
-				})
-			case "queued":
-				queued = append(queued, oc.Instance)
-			case "messaged":
-				messaged = append(messaged, oc.Instance)
-			case "rejected":
-				rejected = append(rejected, map[string]string{
-					"instance": oc.Instance,
-					"reason":   oc.Reason,
-				})
-			}
+		writeJSON(w, http.StatusOK, eventResponseMap(outcomes))
+	})
+
+	mux.HandleFunc("/v1/intake/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"matched":    matched,
-			"dispatched": dispatched,
-			"queued":     queued,
-			"messaged":   messaged,
-			"rejected":   rejected,
-		})
+		if events == nil {
+			writeError(w, http.StatusServiceUnavailable, "topology not configured")
+			return
+		}
+		provider := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/intake/"), "/")
+		var ev *intake.Event
+		var err error
+		switch provider {
+		case "linear":
+			ev, err = intake.NormalizeLinear(readRequestBody(r))
+		case "github":
+			ev, err = intake.NormalizeGitHub(readRequestBody(r))
+		default:
+			writeError(w, http.StatusBadRequest, "unknown intake provider")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		outcomes, err := events.Event(ev.Type, ev.Payload)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		resp := eventResponseMap(outcomes)
+		resp["event"] = ev
+		writeJSON(w, http.StatusOK, resp)
 	})
 
 	mux.HandleFunc("/v1/queue", func(w http.ResponseWriter, r *http.Request) {
@@ -550,6 +557,45 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 	})
 
 	return mux
+}
+
+func eventResponseMap(outcomes []EventOutcome) map[string]any {
+	matched := make([]string, 0, len(outcomes))
+	dispatched := make([]map[string]any, 0)
+	queued := make([]string, 0)
+	messaged := make([]string, 0)
+	rejected := make([]map[string]string, 0)
+	for _, oc := range outcomes {
+		matched = append(matched, oc.Instance)
+		switch oc.Action {
+		case "dispatched":
+			dispatched = append(dispatched, map[string]any{
+				"instance":    oc.Instance,
+				"instance_id": oc.InstanceID,
+			})
+		case "queued":
+			queued = append(queued, oc.Instance)
+		case "messaged":
+			messaged = append(messaged, oc.Instance)
+		case "rejected":
+			rejected = append(rejected, map[string]string{
+				"instance": oc.Instance,
+				"reason":   oc.Reason,
+			})
+		}
+	}
+	return map[string]any{
+		"matched":    matched,
+		"dispatched": dispatched,
+		"queued":     queued,
+		"messaged":   messaged,
+		"rejected":   rejected,
+	}
+}
+
+func readRequestBody(r *http.Request) []byte {
+	body, _ := io.ReadAll(r.Body)
+	return body
 }
 
 func splitQueuePath(path string) (id, action string, ok bool) {

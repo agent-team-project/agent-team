@@ -58,6 +58,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newDispatchCmd())
 	root.AddCommand(newJobCmd())
 	root.AddCommand(newQueueCmd())
+	root.AddCommand(newIntakeCmd())
 	root.AddCommand(newEventsCmd())
 	root.AddCommand(newRunCmd())
 	root.AddCommand(newDoctorCmd())

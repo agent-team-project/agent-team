@@ -617,6 +617,49 @@ after = ["implement"]
 	}
 }
 
+func TestIntakeLinearRouteNormalizesAndDispatches(t *testing.T) {
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	writeFixtureAgent(t, teamDir, "manager")
+	top, err := topology.Parse([]byte(`
+[instances.manager]
+agent = "manager"
+
+[pipelines.ticket_triage]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_triage.steps]]
+id = "triage"
+target = "manager"
+`))
+	if err != nil {
+		t.Fatalf("parse topology: %v", err)
+	}
+	m := NewInstanceManager(root, nil)
+	resolver := NewEventResolver(m, teamDir, top)
+	srv := httptest.NewServer(Handler(m, nil, resolver, teamDir))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/intake/linear",
+		`{"action":"Issue created","data":{"identifier":"SQU-93","title":"route intake"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("intake: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var got struct {
+		Event    map[string]any `json:"event"`
+		Messaged []string       `json:"messaged"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Event["type"] != "ticket.created" || len(got.Messaged) != 1 || got.Messaged[0] != "manager" {
+		t.Fatalf("response = %+v", got)
+	}
+	if _, err := jobstore.Read(teamDir, "squ-93"); err != nil {
+		t.Fatalf("job not created: %v", err)
+	}
+}
+
 func TestEvent_QueuedSpawnFailureMovesToDeadLetter(t *testing.T) {
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)
