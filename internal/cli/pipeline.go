@@ -1,0 +1,191 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"text/tabwriter"
+
+	"github.com/jamesaud/agent-team/internal/topology"
+	"github.com/spf13/cobra"
+)
+
+func newPipelineCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "pipeline",
+		Short: "Inspect declared pipeline workflows.",
+		Long:  "Inspect pipeline declarations loaded from .agent_team/instances.toml.",
+	}
+	cmd.AddCommand(newPipelineLsCmd())
+	cmd.AddCommand(newPipelineShowCmd())
+	return cmd
+}
+
+func newPipelineLsCmd() *cobra.Command {
+	var (
+		repo    string
+		jsonOut bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "ls",
+		Short: "List declared pipelines.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			pipelines, err := loadPipelineInfos(teamDir)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline ls: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineList(cmd.OutOrStdout(), pipelines, jsonOut)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipelines as JSON.")
+	return cmd
+}
+
+func newPipelineShowCmd() *cobra.Command {
+	var (
+		repo    string
+		jsonOut bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "show <pipeline>",
+		Short: "Show one declared pipeline.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			info, err := loadPipelineInfo(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline show: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineDetail(cmd.OutOrStdout(), info, jsonOut)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the pipeline as JSON.")
+	return cmd
+}
+
+type pipelineInfo struct {
+	Name    string             `json:"name"`
+	Trigger map[string]any     `json:"trigger"`
+	Steps   []pipelineStepInfo `json:"steps"`
+}
+
+type pipelineStepInfo struct {
+	ID     string   `json:"id"`
+	Target string   `json:"target"`
+	After  []string `json:"after,omitempty"`
+}
+
+func loadPipelineInfos(teamDir string) ([]pipelineInfo, error) {
+	top, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	if top == nil {
+		return nil, nil
+	}
+	infos := make([]pipelineInfo, 0, len(top.Pipelines))
+	for _, p := range top.SortedPipelines() {
+		infos = append(infos, pipelineInfoFromTopology(p))
+	}
+	return infos, nil
+}
+
+func loadPipelineInfo(teamDir, name string) (pipelineInfo, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return pipelineInfo{}, fmt.Errorf("pipeline name is required")
+	}
+	top, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil {
+		return pipelineInfo{}, err
+	}
+	if top == nil || top.Pipelines[name] == nil {
+		return pipelineInfo{}, fmt.Errorf("pipeline %q not found", name)
+	}
+	return pipelineInfoFromTopology(top.Pipelines[name]), nil
+}
+
+func pipelineInfoFromTopology(p *topology.Pipeline) pipelineInfo {
+	steps := make([]pipelineStepInfo, 0, len(p.Steps))
+	for _, step := range p.Steps {
+		steps = append(steps, pipelineStepInfo{
+			ID:     step.ID,
+			Target: step.Target,
+			After:  append([]string(nil), step.After...),
+		})
+	}
+	return pipelineInfo{
+		Name:    p.Name,
+		Trigger: triggerAsMap(p.Trigger),
+		Steps:   steps,
+	}
+}
+
+func renderPipelineList(w io.Writer, pipelines []pipelineInfo, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(pipelines)
+	}
+	if len(pipelines) == 0 {
+		fmt.Fprintln(w, "(no pipelines declared)")
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "PIPELINE\tTRIGGER\tSTEPS")
+	for _, info := range pipelines {
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", info.Name, summariseTriggerMap(info.Trigger), summarisePipelineInfoSteps(info.Steps))
+	}
+	_ = tw.Flush()
+	return nil
+}
+
+func renderPipelineDetail(w io.Writer, info pipelineInfo, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(info)
+	}
+	fmt.Fprintf(w, "Pipeline: %s\n", info.Name)
+	fmt.Fprintf(w, "Trigger:  %s\n", summariseTriggerMap(info.Trigger))
+	if len(info.Steps) == 0 {
+		fmt.Fprintln(w, "Steps:    -")
+		return nil
+	}
+	fmt.Fprintln(w, "Steps:")
+	for _, step := range info.Steps {
+		after := "-"
+		if len(step.After) > 0 {
+			after = strings.Join(step.After, ",")
+		}
+		fmt.Fprintf(w, "  %s target=%s after=%s\n", step.ID, step.Target, after)
+	}
+	return nil
+}
+
+func summarisePipelineInfoSteps(steps []pipelineStepInfo) string {
+	if len(steps) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(steps))
+	for _, step := range steps {
+		if len(step.After) > 0 {
+			parts = append(parts, fmt.Sprintf("%s:%s after=%s", step.ID, step.Target, strings.Join(step.After, ",")))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s:%s", step.ID, step.Target))
+		}
+	}
+	return strings.Join(parts, " -> ")
+}
