@@ -114,6 +114,77 @@ func TestScheduleListShowAndDryRun(t *testing.T) {
 	}
 }
 
+func TestScheduleRunDryRunPreviewTriggers(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeScheduleTopology(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	path := filepath.Join(teamDir, "instances.toml")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read instances.toml: %v", err)
+	}
+	body = append(body, []byte(`
+[pipelines.nightly_pipeline]
+trigger.event = "schedule"
+trigger.match.name = "nightly"
+
+[[pipelines.nightly_pipeline.steps]]
+id = "triage"
+target = "manager"
+`)...)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("write instances.toml: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"schedule", "run", "nightly", "--repo", tmp, "--dry-run", "--preview-triggers", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("schedule run dry-run preview: %v\nstderr=%s", err, stderr.String())
+	}
+	var result intakePublishResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode schedule run dry-run preview json: %v\nbody=%s", err, out.String())
+	}
+	if !result.DryRun || result.Preview == nil {
+		t.Fatalf("preview result = %+v", result)
+	}
+	if len(result.Preview.Matched) != 1 || result.Preview.Matched[0] != "manager" {
+		t.Fatalf("matched preview = %+v", result.Preview)
+	}
+	if len(result.Preview.PipelineJobs) != 1 {
+		t.Fatalf("pipeline job preview = %+v", result.Preview)
+	}
+	pipelineJob := result.Preview.PipelineJobs[0]
+	if pipelineJob.Action != "would_create" || pipelineJob.Pipeline != "nightly_pipeline" || pipelineJob.Target != "manager" || !pipelineJob.GeneratedTicket {
+		t.Fatalf("pipeline job preview = %+v", pipelineJob)
+	}
+
+	textCmd := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	textCmd.SetOut(textOut)
+	textCmd.SetErr(textErr)
+	textCmd.SetArgs([]string{"schedule", "run", "nightly", "--repo", tmp, "--dry-run", "--preview-triggers"})
+	if err := textCmd.Execute(); err != nil {
+		t.Fatalf("schedule run dry-run preview text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"Matched: manager", "Pipelines: nightly_pipeline", "Jobs:", "pipeline:nightly_pipeline", "ticket=<generated>"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("schedule preview text missing %q:\n%s", want, textOut.String())
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(teamDir, "jobs"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read jobs dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("dry-run schedule run preview wrote jobs = %+v", entries)
+	}
+}
+
 func TestScheduleDueListsRunOnStartAndInterval(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -301,6 +372,24 @@ func TestScheduleRunRejectsInvalidPayload(t *testing.T) {
 		t.Fatalf("schedule run invalid payload succeeded: stdout=%s", out.String())
 	}
 	if !strings.Contains(stderr.String(), "--payload is not valid JSON") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestScheduleRunPreviewTriggersRequiresDryRun(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeScheduleTopology(t, tmp)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"schedule", "run", "nightly", "--repo", tmp, "--preview-triggers"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("schedule run --preview-triggers without dry-run succeeded: stdout=%s", out.String())
+	}
+	if !strings.Contains(stderr.String(), "--preview-triggers requires --dry-run") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

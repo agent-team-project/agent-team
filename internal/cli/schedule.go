@@ -227,11 +227,12 @@ func newScheduleFireCmd() *cobra.Command {
 
 func newScheduleRunCmd() *cobra.Command {
 	var (
-		repo    string
-		payload string
-		dryRun  bool
-		jsonOut bool
-		format  string
+		repo          string
+		payload       string
+		dryRun        bool
+		previewRoutes bool
+		jsonOut       bool
+		format        string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -241,6 +242,10 @@ func newScheduleRunCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team schedule run: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if previewRoutes && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team schedule run: --preview-triggers requires --dry-run.")
 				return exitErr(2)
 			}
 			tmpl, err := parseIntakeFormat(format)
@@ -264,7 +269,15 @@ func newScheduleRunCmd() *cobra.Command {
 			}
 			ev := &intake.Event{Type: topology.EventSchedule, Payload: eventPayload}
 			if dryRun {
-				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, nil, nil, nil)
+				var triggerPreview *eventPublishPreview
+				if previewRoutes {
+					triggerPreview, err = previewEventPublish(teamDir, ev.Type, ev.Payload)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team schedule run: %v\n", err)
+						return exitErr(1)
+					}
+				}
+				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, nil, nil, triggerPreview)
 			}
 			return publishScheduleEvent(cmd, repo, ev, jsonOut, tmpl)
 		},
@@ -272,6 +285,7 @@ func newScheduleRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().StringVar(&payload, "payload", "", "Additional JSON object merged into the declared schedule payload.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the schedule event without publishing it.")
+	cmd.Flags().BoolVar(&previewRoutes, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the event and outcome as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the event result with a Go template, e.g. '{{.Event.Type}} {{.DryRun}}'.")
 	return cmd
