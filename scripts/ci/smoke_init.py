@@ -103,6 +103,38 @@ def main(argv: list[str]) -> int:
             if sh.exists() and not (sh.stat().st_mode & 0o111):
                 problems.append(f"{sh} is not executable after init")
 
+        # Status skill should default durable work metadata from the
+        # daemon-exported session environment.
+        status_state = target / ".agent_team" / "state" / "worker-squ-99"
+        status_script = target / ".agent_team" / "skills" / "status" / "scripts" / "status.sh"
+        env = os.environ.copy()
+        env.update({
+            "AGENT_TEAM_STATE_DIR": str(status_state),
+            "AGENT_TEAM_JOB_ID": "squ-99",
+            "AGENT_TEAM_TICKET": "SQU-99",
+            "AGENT_TEAM_PR": "https://github.com/acme/repo/pull/99",
+            "AGENT_TEAM_BRANCH": "worker-squ-99",
+        })
+        run([
+            str(status_script), "set", "implementing",
+            "--desc", "checking status context",
+        ], env=env)
+        try:
+            status_doc = tomllib.loads((status_state / "status.toml").read_text())
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"status.toml not valid TOML after status skill run: {e}")
+        else:
+            work = status_doc.get("work", {})
+            expected_work = {
+                "job": "squ-99",
+                "ticket": "SQU-99",
+                "pr": "https://github.com/acme/repo/pull/99",
+                "branch": "worker-squ-99",
+            }
+            for key, expected in expected_work.items():
+                if work.get(key) != expected:
+                    problems.append(f"status skill did not default work.{key}: {status_doc}")
+
         # Re-init without --force should keep the user-edited config.toml.
         cfg_path = target / ".agent_team" / "config.toml"
         cfg_path.write_text("# user-edited\n")
@@ -3337,8 +3369,8 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
     return problems
 
 
-def run(cmd: list[str]) -> None:
-    r = subprocess.run(cmd, capture_output=True, text=True)
+def run(cmd: list[str], env: dict[str, str] | None = None) -> None:
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if r.returncode != 0:
         print(f"command failed: {' '.join(cmd)}", file=sys.stderr)
         print(r.stdout, file=sys.stderr)

@@ -92,15 +92,7 @@ def _apply_set(existing: dict) -> dict:
     if last_action:
         status["last_action"] = last_action
 
-    for envk, tomlk in (
-        ("STATUS_JOB", "job"),
-        ("STATUS_TICKET", "ticket"),
-        ("STATUS_PR", "pr"),
-        ("STATUS_BRANCH", "branch"),
-    ):
-        v = os.environ.get(envk, "")
-        if v:
-            work[tomlk] = v
+    _apply_work_context(work)
 
     out["status"] = status
     if work:
@@ -114,6 +106,7 @@ def _apply_set(existing: dict) -> dict:
 def _apply_block(existing: dict) -> dict:
     out = dict(existing)
     status = dict(out.get("status", {}))
+    work = dict(out.get("work", {}))
 
     prior_phase = status.get("phase")
     if prior_phase != "blocked":
@@ -123,6 +116,9 @@ def _apply_block(existing: dict) -> dict:
     status["phase"] = "blocked"
 
     out["status"] = status
+    _apply_work_context(work)
+    if work:
+        out["work"] = work
     out["blocking"] = {
         "reason": os.environ["STATUS_REASON"],
         "ask_to": os.environ["STATUS_ASK"],
@@ -140,6 +136,27 @@ def _apply_clear_block(existing: dict) -> dict:
     out["status"] = status
     out.pop("blocking", None)
     return out
+
+
+def _apply_work_context(work: dict) -> None:
+    """Merge explicit status flags or agent-team session env into [work]."""
+    for tomlk, envks in (
+        ("job", ("STATUS_JOB", "AGENT_TEAM_JOB_ID", "AGENT_TEAM_JOB")),
+        ("ticket", ("STATUS_TICKET", "AGENT_TEAM_TICKET")),
+        ("pr", ("STATUS_PR", "AGENT_TEAM_PR")),
+        ("branch", ("STATUS_BRANCH", "AGENT_TEAM_BRANCH")),
+    ):
+        value = _first_env(envks)
+        if value:
+            work[tomlk] = value
+
+
+def _first_env(keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _serialize(data: dict) -> str:

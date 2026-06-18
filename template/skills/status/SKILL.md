@@ -43,7 +43,7 @@ status show                                  # debug: print the current file
 
 `<phase>` is one of `planning`, `implementing`, `awaiting_review`, `idle`, `done`. Use `status block` for the `blocked` phase so the reason is recorded.
 
-Anything not passed is preserved from the prior write. The skill auto-manages `since` (reset whenever `phase` changes; untouched on description-only updates) and `[status].last_action`.
+Anything not passed is preserved from the prior write. For `job`, `ticket`, `pr`, and `branch`, the writer also falls back to session context exported by the daemon (`AGENT_TEAM_JOB_ID`, `AGENT_TEAM_TICKET`, `AGENT_TEAM_PR`, `AGENT_TEAM_BRANCH`) so ordinary phase updates stay linked to durable jobs. The skill auto-manages `since` (reset whenever `phase` changes; untouched on description-only updates) and `[status].last_action`.
 
 ## Examples
 
@@ -51,10 +51,7 @@ Anything not passed is preserved from the prior write. The skill auto-manages `s
 
 ```sh
 "$AGENT_TEAM_ROOT"/skills/status/scripts/status.sh set planning \
-  --desc "Reading SQU-25 ticket and supporting docs" \
-  --job squ-25 \
-  --ticket SQU-25 \
-  --branch "$(git branch --show-current)"
+  --desc "Reading SQU-25 ticket and supporting docs"
 ```
 
 **Switching from planning to implementing:**
