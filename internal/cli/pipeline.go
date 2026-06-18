@@ -276,10 +276,6 @@ func newPipelineRunCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline run: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if dryRun && dispatchNow {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline run: --dry-run cannot be combined with --dispatch.")
-				return exitErr(2)
-			}
 			tmpl, err := parseJobFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline run: %v\n", err)
@@ -325,6 +321,14 @@ func newPipelineRunCmd() *cobra.Command {
 				return exitErr(2)
 			}
 			if dryRun {
+				if dispatchNow {
+					preview, err := previewJobAdvanceDispatch(teamDir, j, workspace)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline run: %v\n", err)
+						return exitErr(1)
+					}
+					return renderJobAdvancePreview(cmd.OutOrStdout(), preview, jsonOut, tmpl)
+				}
 				return renderJobCreatePreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
 			data := map[string]string{

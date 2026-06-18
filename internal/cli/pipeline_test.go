@@ -383,16 +383,30 @@ func TestPipelineRunDryRunDoesNotWrite(t *testing.T) {
 		}
 	}
 
-	conflict := NewRootCmd()
-	conflictOut, conflictErr := &bytes.Buffer{}, &bytes.Buffer{}
-	conflict.SetOut(conflictOut)
-	conflict.SetErr(conflictErr)
-	conflict.SetArgs([]string{"pipeline", "run", "ticket_to_pr", "SQU-308", "--repo", root, "--dry-run", "--dispatch"})
-	if err := conflict.Execute(); err == nil {
-		t.Fatalf("pipeline run --dry-run --dispatch succeeded: stdout=%s", conflictOut.String())
+	dispatchCmd := NewRootCmd()
+	dispatchOut, dispatchErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dispatchCmd.SetOut(dispatchOut)
+	dispatchCmd.SetErr(dispatchErr)
+	dispatchCmd.SetArgs([]string{"pipeline", "run", "ticket_to_pr", "SQU-308", "--repo", root, "--dry-run", "--dispatch", "--json"})
+	if err := dispatchCmd.Execute(); err != nil {
+		t.Fatalf("pipeline run --dry-run --dispatch: %v\nstderr=%s", err, dispatchErr.String())
 	}
-	if !strings.Contains(conflictErr.String(), "--dry-run cannot be combined with --dispatch") {
-		t.Fatalf("conflict stderr = %q", conflictErr.String())
+	var advancePreview jobAdvancePreview
+	if err := json.Unmarshal(dispatchOut.Bytes(), &advancePreview); err != nil {
+		t.Fatalf("decode pipeline dispatch dry-run json: %v\nbody=%s", err, dispatchOut.String())
+	}
+	if !advancePreview.DryRun || advancePreview.Job == nil || advancePreview.Job.ID != "squ-308" || advancePreview.Step == nil || advancePreview.Step.ID != "implement" {
+		t.Fatalf("advance preview = %+v", advancePreview)
+	}
+	if advancePreview.Dispatch == nil || advancePreview.Dispatch.RequestedName != "worker-squ-308-implement" {
+		t.Fatalf("dispatch preview = %+v", advancePreview.Dispatch)
+	}
+	payload := advancePreview.Dispatch.Preview.Payload
+	if payload["pipeline"] != "ticket_to_pr" || payload["pipeline_step"] != "implement" || payload["job_id"] != "squ-308" {
+		t.Fatalf("dispatch payload = %+v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".agent_team", "jobs", "squ-308.toml")); !os.IsNotExist(err) {
+		t.Fatalf("dispatch dry-run wrote pipeline job file, err=%v", err)
 	}
 }
 
