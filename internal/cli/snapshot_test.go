@@ -61,6 +61,27 @@ branch = "worker-squ-501"
 	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), queue); err != nil {
 		t.Fatalf("write queue: %v", err)
 	}
+	if err := appendIntakeDelivery(teamDir, intakeDelivery{
+		ID:         "intake-snapshot",
+		Time:       now.Add(-20 * time.Minute),
+		Provider:   "linear",
+		Status:     intakeDeliveryStatusError,
+		HTTPStatus: 503,
+		EventType:  "ticket.created",
+		Payload: map[string]any{
+			"source":       "linear",
+			"ticket":       "SQU-501",
+			"access_token": "intake-secret",
+			"headers": map[string]any{
+				"authorization": "Bearer intake-secret",
+				"safe":          "visible",
+			},
+		},
+		Ticket: "SQU-501",
+		Error:  "daemon is not running",
+	}); err != nil {
+		t.Fatalf("append intake delivery: %v", err)
+	}
 	if err := daemon.AppendLifecycleEvent(daemon.DaemonRoot(teamDir), &daemon.LifecycleEvent{
 		TS:       now,
 		Action:   "dispatch",
@@ -117,6 +138,19 @@ branch = "worker-squ-501"
 	}
 	if len(snapshot.Events) != 1 || snapshot.Events[0].Instance != "worker-squ-501" {
 		t.Fatalf("events = %+v", snapshot.Events)
+	}
+	if len(snapshot.Intake) != 1 || snapshot.Intake[0].ID != "intake-snapshot" || snapshot.IntakeSummary == nil || snapshot.IntakeSummary.Errors != 1 || snapshot.IntakeSummary.Replayable != 1 {
+		t.Fatalf("intake = %+v summary=%+v", snapshot.Intake, snapshot.IntakeSummary)
+	}
+	if snapshot.Intake[0].Payload["ticket"] != "SQU-501" || snapshot.Intake[0].Payload["access_token"] != snapshotRedactedValue {
+		t.Fatalf("redacted intake payload = %+v", snapshot.Intake[0].Payload)
+	}
+	intakeHeaders, ok := snapshot.Intake[0].Payload["headers"].(map[string]any)
+	if !ok || intakeHeaders["authorization"] != snapshotRedactedValue || intakeHeaders["safe"] != "visible" {
+		t.Fatalf("nested redacted intake payload = %+v", snapshot.Intake[0].Payload["headers"])
+	}
+	if len(snapshot.Intake[0].Actions) == 0 || !strings.Contains(snapshot.Intake[0].Actions[0], "agent-team intake replay intake-snapshot") {
+		t.Fatalf("intake actions = %+v", snapshot.Intake[0].Actions)
 	}
 	if snapshot.Runtime == nil || snapshot.Runtime.Runtime == "" {
 		t.Fatalf("runtime = %+v", snapshot.Runtime)
@@ -246,11 +280,16 @@ func TestSnapshotSummaryIncludesJobTriage(t *testing.T) {
 				Message: "pipeline target outside team",
 			}},
 		},
+		IntakeSummary: &overviewIntakeSummary{
+			Deliveries: 1,
+			Errors:     1,
+			Replayable: 1,
+		},
 	}
 
 	var out bytes.Buffer
 	renderSnapshotSummary(&out, snapshot)
-	for _, want := range []string{"jobs: total=1", "job triage: attention=1 ready_steps=0", "job status: previews=1 changes=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1 failed_steps=0", "pipeline advance: ready=1 route_previews=1", "teams doctor: teams=1 problems=1 warnings=1", "team doctor: problems=1 warnings=0"} {
+	for _, want := range []string{"jobs: total=1", "job triage: attention=1 ready_steps=0", "job status: previews=1 changes=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1 failed_steps=0", "pipeline advance: ready=1 route_previews=1", "teams doctor: teams=1 problems=1 warnings=1", "team doctor: problems=1 warnings=0", "intake: deliveries=1 errors=1 replayable=1"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, out.String())
 		}
@@ -366,6 +405,18 @@ func TestSnapshotNoRedactPreservesPayloadSecrets(t *testing.T) {
 	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
 		t.Fatalf("write queue: %v", err)
 	}
+	if err := appendIntakeDelivery(teamDir, intakeDelivery{
+		ID:         "intake-raw",
+		Time:       now,
+		Provider:   "github",
+		Status:     intakeDeliveryStatusError,
+		HTTPStatus: 503,
+		EventType:  "pr.opened",
+		Payload:    map[string]any{"source": "github", "api_key": "raw-intake-key"},
+		Error:      "daemon is not running",
+	}); err != nil {
+		t.Fatalf("append intake delivery: %v", err)
+	}
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -385,6 +436,9 @@ func TestSnapshotNoRedactPreservesPayloadSecrets(t *testing.T) {
 	if len(snapshot.Queue) != 1 || snapshot.Queue[0].Payload["api_key"] != "raw-key" {
 		t.Fatalf("queue payload = %+v", snapshot.Queue)
 	}
+	if len(snapshot.Intake) != 1 || snapshot.Intake[0].Payload["api_key"] != "raw-intake-key" {
+		t.Fatalf("intake payload = %+v", snapshot.Intake)
+	}
 }
 
 func TestSnapshotRejectsJSONAndOutputFile(t *testing.T) {
@@ -397,6 +451,20 @@ func TestSnapshotRejectsJSONAndOutputFile(t *testing.T) {
 		t.Fatalf("snapshot invalid flags succeeded: stdout=%s", out.String())
 	}
 	if !strings.Contains(stderr.String(), "choose one of --json or --output") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestSnapshotRejectsInvalidIntakeLimit(t *testing.T) {
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"snapshot", "--intake-deliveries", "-2"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("snapshot invalid intake limit succeeded: stdout=%s", out.String())
+	}
+	if !strings.Contains(stderr.String(), "--intake-deliveries must be >= -1") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

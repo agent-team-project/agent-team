@@ -24,6 +24,7 @@ func newSnapshotCmd() *cobra.Command {
 		jsonOut       bool
 		noRedact      bool
 		eventLimit    int
+		intakeLimit   int
 		scheduleLimit int
 	)
 	cwd, _ := os.Getwd()
@@ -36,6 +37,10 @@ func newSnapshotCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if eventLimit < -1 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot: --events must be >= -1.")
+				return exitErr(2)
+			}
+			if intakeLimit < -1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot: --intake-deliveries must be >= -1.")
 				return exitErr(2)
 			}
 			if scheduleLimit < 0 {
@@ -56,6 +61,7 @@ func newSnapshotCmd() *cobra.Command {
 			}
 			snapshot := collectSnapshot(teamDir, repoRoot, snapshotOptions{
 				EventLimit:    eventLimit,
+				IntakeLimit:   intakeLimit,
 				ScheduleLimit: scheduleLimit,
 				Redact:        !noRedact,
 				Now:           time.Now().UTC(),
@@ -81,12 +87,14 @@ func newSnapshotCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the full snapshot JSON to stdout.")
 	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "Include raw payload values instead of redacting sensitive keys.")
 	cmd.Flags().IntVar(&eventLimit, "events", 50, "Recent lifecycle events to include. Use -1 for all events or 0 to skip events.")
+	cmd.Flags().IntVar(&intakeLimit, "intake-deliveries", 50, "Recent intake deliveries to include. Use -1 for all deliveries or 0 to skip deliveries.")
 	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 10, "Upcoming schedules to include after ordering; 0 means all.")
 	return cmd
 }
 
 type snapshotOptions struct {
 	EventLimit    int
+	IntakeLimit   int
 	ScheduleLimit int
 	Redact        bool
 	Now           time.Time
@@ -114,6 +122,8 @@ type snapshotResult struct {
 	QueueSummary    *queueSummary              `json:"queue_summary,omitempty"`
 	Schedules       []scheduleInfo             `json:"schedules,omitempty"`
 	ScheduleNext    []scheduleInfo             `json:"schedule_next,omitempty"`
+	Intake          []intakeDelivery           `json:"intake,omitempty"`
+	IntakeSummary   *overviewIntakeSummary     `json:"intake_summary,omitempty"`
 	Events          []daemon.LifecycleEvent    `json:"events,omitempty"`
 	SectionErrors   map[string]string          `json:"section_errors,omitempty"`
 }
@@ -192,6 +202,13 @@ func collectSnapshot(teamDir, repoRoot string, opts snapshotOptions) *snapshotRe
 	} else {
 		out.Schedules = schedules
 		out.ScheduleNext = nextScheduleRows(schedules, now, opts.ScheduleLimit)
+	}
+	if deliveries, err := collectSnapshotIntakeDeliveries(teamDir, opts.IntakeLimit); err != nil {
+		out.addError("intake", err)
+	} else {
+		out.Intake = deliveries
+		summary := overviewIntakeFromDeliveries(deliveries)
+		out.IntakeSummary = &summary
 	}
 	if events, err := collectSnapshotEvents(teamDir, opts.EventLimit); err != nil {
 		out.addError("events", err)
@@ -342,6 +359,18 @@ func collectSnapshotEvents(teamDir string, limit int) ([]daemon.LifecycleEvent, 
 	return out, nil
 }
 
+func collectSnapshotIntakeDeliveries(teamDir string, limit int) ([]intakeDelivery, error) {
+	if limit == 0 {
+		return nil, nil
+	}
+	deliveries, err := listIntakeDeliveries(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	deliveries = tailIntakeDeliveries(deliveries, limit)
+	return withIntakeDeliveryActions(deliveries), nil
+}
+
 func collectTeamSnapshotEvents(teamDir, name string, limit int, now time.Time) ([]daemon.LifecycleEvent, error) {
 	if limit == 0 {
 		return nil, nil
@@ -412,6 +441,9 @@ func redactSnapshotResult(snapshot *snapshotResult) {
 	}
 	for i := range snapshot.ScheduleNext {
 		snapshot.ScheduleNext[i].Payload = redactSnapshotMap(snapshot.ScheduleNext[i].Payload)
+	}
+	for i := range snapshot.Intake {
+		snapshot.Intake[i].Payload = redactSnapshotMap(snapshot.Intake[i].Payload)
 	}
 	for i := range snapshot.PipelineAdvance {
 		redactSnapshotPipelineAdvance(&snapshot.PipelineAdvance[i])
@@ -584,6 +616,12 @@ func renderSnapshotSummary(w io.Writer, snapshot *snapshotResult) {
 			snapshot.QueueSummary.Attempts)
 	}
 	fmt.Fprintf(w, "schedules: declared=%d upcoming=%d\n", len(snapshot.Schedules), len(snapshot.ScheduleNext))
+	if snapshot.IntakeSummary != nil {
+		fmt.Fprintf(w, "intake: deliveries=%d errors=%d replayable=%d\n",
+			snapshot.IntakeSummary.Deliveries,
+			snapshot.IntakeSummary.Errors,
+			snapshot.IntakeSummary.Replayable)
+	}
 	fmt.Fprintf(w, "events: %d\n", len(snapshot.Events))
 	if len(snapshot.SectionErrors) > 0 {
 		fmt.Fprintln(w, "section errors:")
