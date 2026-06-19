@@ -2082,6 +2082,34 @@ instances = ["other"]
 		t.Fatalf("drop dry-run results = %+v", dropResults)
 	}
 
+	filterDropDry := NewRootCmd()
+	filterDropDryOut, filterDropDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	filterDropDry.SetOut(filterDropDryOut)
+	filterDropDry.SetErr(filterDropDryErr)
+	filterDropDry.SetArgs([]string{"team", "queue", "quarantine", "drop", "delivery", "--repo", root, "--all", "--job", "SQU-501", "--state", "dead", "--unrestorable", "--dry-run", "--json"})
+	if err := filterDropDry.Execute(); err != nil {
+		t.Fatalf("team queue quarantine drop filtered --all dry-run: %v\nstderr=%s", err, filterDropDryErr.String())
+	}
+	var filterDropResults []queueQuarantineDropResult
+	if err := json.Unmarshal(filterDropDryOut.Bytes(), &filterDropResults); err != nil {
+		t.Fatalf("decode filtered team queue quarantine drop --all dry-run: %v\nbody=%s", err, filterDropDryOut.String())
+	}
+	if len(filterDropResults) != 1 || filterDropResults[0].ID != "q-team-unrestorable" || filterDropResults[0].Restorable {
+		t.Fatalf("filtered drop --all dry-run results = %+v", filterDropResults)
+	}
+
+	filterPathDrop := NewRootCmd()
+	filterPathDropOut, filterPathDropErr := &bytes.Buffer{}, &bytes.Buffer{}
+	filterPathDrop.SetOut(filterPathDropOut)
+	filterPathDrop.SetErr(filterPathDropErr)
+	filterPathDrop.SetArgs([]string{"team", "queue", "quarantine", "drop", "delivery", teamQuarantinePath, "--repo", root, "--job", "SQU-501", "--dry-run"})
+	if err := filterPathDrop.Execute(); err == nil {
+		t.Fatalf("team queue quarantine drop path with filter succeeded: stdout=%s", filterPathDropOut.String())
+	}
+	if !strings.Contains(filterPathDropErr.String(), "filters require --all") {
+		t.Fatalf("path filter stderr = %q", filterPathDropErr.String())
+	}
+
 	dropAllDry := NewRootCmd()
 	dropAllDryOut, dropAllDryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dropAllDry.SetOut(dropAllDryOut)

@@ -633,6 +633,46 @@ func TestQueueQuarantineDropExplicitAndBatch(t *testing.T) {
 		t.Fatalf("explicit quarantine still exists or stat failed: %v", err)
 	}
 
+	filterDry := NewRootCmd()
+	filterDryOut, filterDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	filterDry.SetOut(filterDryOut)
+	filterDry.SetErr(filterDryErr)
+	filterDry.SetArgs([]string{"queue", "quarantine", "drop", "--target", tmp, "--all", "--job", "SQU-133", "--state", "pending", "--instance", "worker", "--event-type", "agent.dispatch", "--restorable", "--dry-run", "--json"})
+	if err := filterDry.Execute(); err != nil {
+		t.Fatalf("queue quarantine drop filtered batch dry-run: %v\nstderr=%s", err, filterDryErr.String())
+	}
+	var filterDryResults []queueQuarantineDropResult
+	if err := json.Unmarshal(filterDryOut.Bytes(), &filterDryResults); err != nil {
+		t.Fatalf("decode filtered batch drop dry-run: %v\nbody=%s", err, filterDryOut.String())
+	}
+	if len(filterDryResults) != 1 || filterDryResults[0].ID != "q-restorable" || !filterDryResults[0].Restorable || !filterDryResults[0].DryRun {
+		t.Fatalf("filtered batch dry-run results = %+v", filterDryResults)
+	}
+
+	conflict := NewRootCmd()
+	conflictOut, conflictErr := &bytes.Buffer{}, &bytes.Buffer{}
+	conflict.SetOut(conflictOut)
+	conflict.SetErr(conflictErr)
+	conflict.SetArgs([]string{"queue", "quarantine", "drop", "--target", tmp, "--all", "--restorable", "--unrestorable"})
+	if err := conflict.Execute(); err == nil {
+		t.Fatalf("queue quarantine drop conflicting filters succeeded: stdout=%s", conflictOut.String())
+	}
+	if !strings.Contains(conflictErr.String(), "--restorable and --unrestorable cannot be combined") {
+		t.Fatalf("conflict stderr = %q", conflictErr.String())
+	}
+
+	pathWithFilter := NewRootCmd()
+	pathWithFilterOut, pathWithFilterErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pathWithFilter.SetOut(pathWithFilterOut)
+	pathWithFilter.SetErr(pathWithFilterErr)
+	pathWithFilter.SetArgs([]string{"queue", "quarantine", "drop", "--target", tmp, "--job", "SQU-133", explicitPath})
+	if err := pathWithFilter.Execute(); err == nil {
+		t.Fatalf("queue quarantine drop path with filter succeeded: stdout=%s", pathWithFilterOut.String())
+	}
+	if !strings.Contains(pathWithFilterErr.String(), "filters require --all") {
+		t.Fatalf("path filter stderr = %q", pathWithFilterErr.String())
+	}
+
 	batchDry := NewRootCmd()
 	batchDryOut, batchDryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	batchDry.SetOut(batchDryOut)

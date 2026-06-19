@@ -188,6 +188,11 @@ func newQueueQuarantineDropCmd() *cobra.Command {
 		target       string
 		dropAll      bool
 		dryRun       bool
+		stateFilter  string
+		instances    []string
+		eventTypes   []string
+		jobs         []string
+		restorable   bool
 		unrestorable bool
 		olderThan    time.Duration
 		jsonOut      bool
@@ -203,6 +208,15 @@ func newQueueQuarantineDropCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine drop: --older-than must be >= 0.")
 				return exitErr(2)
 			}
+			if restorable && unrestorable {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine drop: --restorable and --unrestorable cannot be combined.")
+				return exitErr(2)
+			}
+			filters, err := parseQueueListFilters(stateFilter, instances, eventTypes, jobs, false, time.Now().UTC())
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine drop: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -212,7 +226,7 @@ func newQueueQuarantineDropCmd() *cobra.Command {
 					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine drop: --all cannot be combined with a path.")
 					return exitErr(2)
 				}
-				results, err := dropQueueQuarantineAll(teamDir, dryRun, olderThan, unrestorable, time.Now().UTC())
+				results, err := dropQueueQuarantineAll(teamDir, dryRun, olderThan, restorable, unrestorable, filters, time.Now().UTC())
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine drop: %v\n", err)
 					return exitErr(1)
@@ -223,8 +237,8 @@ func newQueueQuarantineDropCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine drop: requires one path unless --all is set.")
 				return exitErr(2)
 			}
-			if olderThan > 0 || unrestorable {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine drop: --older-than and --unrestorable require --all.")
+			if olderThan > 0 || restorable || unrestorable || !filters.empty() {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine drop: filters require --all.")
 				return exitErr(2)
 			}
 			result, err := dropQueueQuarantine(teamDir, args[0], dryRun)
@@ -238,6 +252,11 @@ func newQueueQuarantineDropCmd() *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&dropAll, "all", false, "Drop all matching quarantined files instead of one path.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview quarantined files that would be dropped.")
+	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead.")
+	cmd.Flags().StringSliceVar(&instances, "instance", nil, "With --all, filter by target instance name; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
+	cmd.Flags().BoolVar(&restorable, "restorable", false, "With --all, only drop quarantined files that can be restored.")
 	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "With --all, only drop quarantined files that cannot be restored.")
 	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "With --all, only drop files older than this duration based on file mtime.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit drop results as JSON.")
@@ -519,11 +538,13 @@ func dropQueueQuarantine(teamDir, rawPath string, dryRun bool) (queueQuarantineD
 	return dropQueueQuarantineItem(queueRoot, item, dryRun)
 }
 
-func dropQueueQuarantineAll(teamDir string, dryRun bool, olderThan time.Duration, unrestorable bool, now time.Time) ([]queueQuarantineDropResult, error) {
+func dropQueueQuarantineAll(teamDir string, dryRun bool, olderThan time.Duration, restorable, unrestorable bool, filters queueListFilters, now time.Time) ([]queueQuarantineDropResult, error) {
 	items, err := listQueueQuarantine(teamDir)
 	if err != nil {
 		return nil, err
 	}
+	items = filterQueueQuarantineItems(items, filters.withNow(now))
+	items = filterQueueQuarantineRestorable(items, restorable, unrestorable)
 	return dropQueueQuarantineItems(teamDir, items, dryRun, olderThan, unrestorable, now)
 }
 
