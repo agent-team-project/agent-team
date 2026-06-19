@@ -299,6 +299,101 @@ type intakePruneResult struct {
 	Dropped      bool      `json:"dropped"`
 }
 
+type intakeSummaryResult struct {
+	Deliveries    int                     `json:"deliveries"`
+	OK            int                     `json:"ok"`
+	Failed        int                     `json:"failed"`
+	Unresolved    int                     `json:"unresolved"`
+	Recovered     int                     `json:"recovered"`
+	Replayable    int                     `json:"replayable"`
+	ReplayFailed  int                     `json:"replay_failed"`
+	LatestErrorID string                  `json:"latest_error_id,omitempty"`
+	LatestError   string                  `json:"latest_error,omitempty"`
+	Providers     []intakeProviderSummary `json:"providers,omitempty"`
+	Actions       []string                `json:"actions,omitempty"`
+}
+
+type intakeProviderSummary struct {
+	Provider     string `json:"provider,omitempty"`
+	Deliveries   int    `json:"deliveries"`
+	OK           int    `json:"ok"`
+	Failed       int    `json:"failed"`
+	Unresolved   int    `json:"unresolved"`
+	Recovered    int    `json:"recovered"`
+	Replayable   int    `json:"replayable"`
+	ReplayFailed int    `json:"replay_failed"`
+}
+
+func newIntakeSummaryCmd() *cobra.Command {
+	var (
+		target       string
+		provider     string
+		status       string
+		replayStatus string
+		unresolved   bool
+		jsonOut      bool
+		format       string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "summary",
+		Short: "Summarize recorded intake deliveries.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			provider = strings.ToLower(strings.TrimSpace(provider))
+			if provider != "" && provider != "linear" && provider != "github" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake summary: --provider must be linear or github.")
+				return exitErr(2)
+			}
+			status = strings.ToLower(strings.TrimSpace(status))
+			if status != "" && status != intakeDeliveryStatusOK && status != intakeDeliveryStatusError {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake summary: --status must be ok or error.")
+				return exitErr(2)
+			}
+			var err error
+			replayStatus, err = parseIntakeReplayStatusFilter(replayStatus)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake summary: %v\n", err)
+				return exitErr(2)
+			}
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake summary: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseIntakeSummaryFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake summary: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, target)
+			if err != nil {
+				return err
+			}
+			deliveries, err := listIntakeDeliveries(teamDir)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake summary: %v\n", err)
+				return exitErr(1)
+			}
+			deliveries = filterIntakeDeliveries(deliveries, intakeDeliveryFilter{
+				Provider:     provider,
+				Status:       status,
+				ReplayStatus: replayStatus,
+				Unresolved:   unresolved,
+			})
+			summary := summarizeIntakeDeliveries(deliveries)
+			return renderIntakeSummary(cmd.OutOrStdout(), summary, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
+	cmd.Flags().StringVar(&provider, "provider", "", "Only summarize deliveries for a provider: linear or github.")
+	cmd.Flags().StringVar(&status, "status", "", "Only summarize deliveries with a status: ok or error.")
+	cmd.Flags().StringVar(&replayStatus, "replay-status", "", "Only summarize deliveries with replay status: ok, error, none, or any.")
+	cmd.Flags().BoolVar(&unresolved, "unresolved", false, "Only summarize failed deliveries that still need replay.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit summary as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the summary with a Go template, e.g. '{{.Unresolved}} {{.Replayable}}'.")
+	return cmd
+}
+
 func newIntakePruneCmd() *cobra.Command {
 	var (
 		target       string
@@ -845,11 +940,111 @@ func intakeDeliveryNeedsReplay(delivery intakeDelivery) bool {
 	return delivery.Status == intakeDeliveryStatusError && delivery.ReplayStatus != intakeDeliveryReplayStatusOK
 }
 
+func summarizeIntakeDeliveries(deliveries []intakeDelivery) intakeSummaryResult {
+	out := intakeSummaryResult{Deliveries: len(deliveries)}
+	byProvider := map[string]*intakeProviderSummary{}
+	var latest time.Time
+	for _, delivery := range deliveries {
+		provider := strings.TrimSpace(delivery.Provider)
+		providerSummary := byProvider[provider]
+		if providerSummary == nil {
+			providerSummary = &intakeProviderSummary{Provider: provider}
+			byProvider[provider] = providerSummary
+		}
+		out.addDelivery(delivery, &latest)
+		providerSummary.addDelivery(delivery)
+	}
+	providers := make([]intakeProviderSummary, 0, len(byProvider))
+	for _, provider := range byProvider {
+		providers = append(providers, *provider)
+	}
+	sort.Slice(providers, func(i, j int) bool {
+		return providers[i].Provider < providers[j].Provider
+	})
+	out.Providers = providers
+	out.Actions = intakeSummaryActions(out)
+	return out
+}
+
+func (s *intakeSummaryResult) addDelivery(delivery intakeDelivery, latest *time.Time) {
+	switch delivery.Status {
+	case intakeDeliveryStatusOK:
+		s.OK++
+	case intakeDeliveryStatusError:
+		s.Failed++
+		if delivery.ReplayStatus == intakeDeliveryReplayStatusOK {
+			s.Recovered++
+			return
+		}
+		s.Unresolved++
+		if delivery.ReplayStatus == intakeDeliveryReplayStatusError {
+			s.ReplayFailed++
+		}
+		if strings.TrimSpace(delivery.EventType) != "" && len(delivery.Payload) > 0 {
+			s.Replayable++
+		}
+		if latest != nil && (s.LatestErrorID == "" || delivery.Time.After(*latest)) {
+			*latest = delivery.Time
+			s.LatestErrorID = delivery.ID
+			s.LatestError = delivery.Error
+		}
+	}
+}
+
+func (s *intakeProviderSummary) addDelivery(delivery intakeDelivery) {
+	s.Deliveries++
+	switch delivery.Status {
+	case intakeDeliveryStatusOK:
+		s.OK++
+	case intakeDeliveryStatusError:
+		s.Failed++
+		if delivery.ReplayStatus == intakeDeliveryReplayStatusOK {
+			s.Recovered++
+			return
+		}
+		s.Unresolved++
+		if delivery.ReplayStatus == intakeDeliveryReplayStatusError {
+			s.ReplayFailed++
+		}
+		if strings.TrimSpace(delivery.EventType) != "" && len(delivery.Payload) > 0 {
+			s.Replayable++
+		}
+	}
+}
+
+func intakeSummaryActions(summary intakeSummaryResult) []string {
+	var actions []string
+	if summary.Unresolved > 0 {
+		actions = append(actions, "agent-team intake deliveries --unresolved")
+	}
+	if summary.Replayable > 0 {
+		actions = append(actions,
+			"agent-team intake replay --all --dry-run --preview-triggers",
+			"agent-team intake replay --all",
+		)
+	}
+	if summary.Recovered > 0 {
+		actions = append(actions, "agent-team intake prune --replay-status ok --dry-run")
+	}
+	return actions
+}
+
 func parseIntakeDeliveryFormat(format string) (*template.Template, error) {
 	if strings.TrimSpace(format) == "" {
 		return nil, nil
 	}
 	tmpl, err := template.New("intake-delivery-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func parseIntakeSummaryFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("intake-summary-format").Parse(format)
 	if err != nil {
 		return nil, fmt.Errorf("invalid --format template: %w", err)
 	}
@@ -904,6 +1099,55 @@ func renderIntakeDeliveries(w io.Writer, deliveries []intakeDelivery, jsonOut bo
 		)
 	}
 	return tw.Flush()
+}
+
+func renderIntakeSummary(w io.Writer, summary intakeSummaryResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(summary)
+	}
+	if tmpl != nil {
+		if err := tmpl.Execute(w, summary); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(w)
+		return err
+	}
+	fmt.Fprintf(w, "intake: deliveries=%d ok=%d failed=%d unresolved=%d recovered=%d replayable=%d replay_failed=%d latest_error=%s\n",
+		summary.Deliveries,
+		summary.OK,
+		summary.Failed,
+		summary.Unresolved,
+		summary.Recovered,
+		summary.Replayable,
+		summary.ReplayFailed,
+		emptyDash(summary.LatestErrorID))
+	if len(summary.Providers) > 0 {
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "PROVIDER\tDELIVERIES\tOK\tFAILED\tUNRESOLVED\tRECOVERED\tREPLAYABLE\tREPLAY_FAILED")
+		for _, provider := range summary.Providers {
+			fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+				emptyDash(provider.Provider),
+				provider.Deliveries,
+				provider.OK,
+				provider.Failed,
+				provider.Unresolved,
+				provider.Recovered,
+				provider.Replayable,
+				provider.ReplayFailed)
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
+	if len(summary.Actions) == 0 {
+		_, err := fmt.Fprintln(w, "actions: none")
+		return err
+	}
+	fmt.Fprintln(w, "actions:")
+	for _, action := range summary.Actions {
+		fmt.Fprintf(w, "  %s\n", action)
+	}
+	return nil
 }
 
 func renderIntakeReplayBatch(w io.Writer, batch intakeReplayBatchResult, jsonOut bool, tmpl *template.Template) error {

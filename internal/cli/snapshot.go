@@ -203,12 +203,12 @@ func collectSnapshot(teamDir, repoRoot string, opts snapshotOptions) *snapshotRe
 		out.Schedules = schedules
 		out.ScheduleNext = nextScheduleRows(schedules, now, opts.ScheduleLimit)
 	}
-	if deliveries, err := collectSnapshotIntakeDeliveries(teamDir, opts.IntakeLimit); err != nil {
+	if deliveries, err := listIntakeDeliveries(teamDir); err != nil {
 		out.addError("intake", err)
 	} else {
-		out.Intake = deliveries
 		summary := overviewIntakeFromDeliveries(deliveries)
 		out.IntakeSummary = &summary
+		out.Intake = collectSnapshotIntakeDeliveries(deliveries, opts.IntakeLimit)
 	}
 	if events, err := collectSnapshotEvents(teamDir, opts.EventLimit); err != nil {
 		out.addError("events", err)
@@ -359,16 +359,12 @@ func collectSnapshotEvents(teamDir string, limit int) ([]daemon.LifecycleEvent, 
 	return out, nil
 }
 
-func collectSnapshotIntakeDeliveries(teamDir string, limit int) ([]intakeDelivery, error) {
+func collectSnapshotIntakeDeliveries(deliveries []intakeDelivery, limit int) []intakeDelivery {
 	if limit == 0 {
-		return nil, nil
-	}
-	deliveries, err := listIntakeDeliveries(teamDir)
-	if err != nil {
-		return nil, err
+		return nil
 	}
 	deliveries = tailIntakeDeliveries(deliveries, limit)
-	return withIntakeDeliveryActions(deliveries), nil
+	return withIntakeDeliveryActions(deliveries)
 }
 
 func collectTeamSnapshotEvents(teamDir, name string, limit int, now time.Time) ([]daemon.LifecycleEvent, error) {

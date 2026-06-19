@@ -37,6 +37,7 @@ func newIntakeCmd() *cobra.Command {
 	cmd.AddCommand(newIntakeGitHubCmd())
 	cmd.AddCommand(newIntakeScheduleCmd())
 	cmd.AddCommand(newIntakeServeCmd())
+	cmd.AddCommand(newIntakeSummaryCmd())
 	cmd.AddCommand(newIntakeDeliveriesCmd())
 	cmd.AddCommand(newIntakeReplayCmd())
 	cmd.AddCommand(newIntakePruneCmd())

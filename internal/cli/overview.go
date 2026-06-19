@@ -412,27 +412,15 @@ func overviewSchedulesFromRows(schedules []scheduleInfo, now time.Time, limit in
 }
 
 func overviewIntakeFromDeliveries(deliveries []intakeDelivery) overviewIntakeSummary {
-	out := overviewIntakeSummary{Deliveries: len(deliveries)}
-	var latest time.Time
-	for _, delivery := range deliveries {
-		if delivery.Status != intakeDeliveryStatusError {
-			continue
-		}
-		if delivery.ReplayStatus == intakeDeliveryReplayStatusOK {
-			out.Recovered++
-			continue
-		}
-		out.Errors++
-		if strings.TrimSpace(delivery.EventType) != "" && len(delivery.Payload) > 0 {
-			out.Replayable++
-		}
-		if out.LatestErrorID == "" || delivery.Time.After(latest) {
-			latest = delivery.Time
-			out.LatestErrorID = delivery.ID
-			out.LatestError = delivery.Error
-		}
+	summary := summarizeIntakeDeliveries(deliveries)
+	return overviewIntakeSummary{
+		Deliveries:    summary.Deliveries,
+		Errors:        summary.Unresolved,
+		Recovered:     summary.Recovered,
+		Replayable:    summary.Replayable,
+		LatestErrorID: summary.LatestErrorID,
+		LatestError:   summary.LatestError,
 	}
-	return out
 }
 
 func overviewActions(out *overviewResult, health *healthResult) []string {
@@ -516,6 +504,7 @@ func overviewActionsForScope(out *overviewResult, health *healthResult, teamName
 		}
 	}
 	if teamName == "" && out.Intake.Errors > 0 {
+		add("agent-team intake summary")
 		add("agent-team intake deliveries --status error")
 		if out.Intake.Replayable > 0 {
 			add("agent-team intake replay --all --dry-run --preview-triggers")

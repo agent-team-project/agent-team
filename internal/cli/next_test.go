@@ -79,6 +79,7 @@ func TestNextCommandReportsIntakeReplayAction(t *testing.T) {
 		t.Fatalf("decode next intake json: %v\nbody=%s", err, out.String())
 	}
 	for _, want := range []string{
+		"agent-team intake summary",
 		"agent-team intake deliveries --status error",
 		"agent-team intake replay --all --dry-run --preview-triggers",
 	} {

@@ -116,6 +116,7 @@ func TestOverviewReportsIntakeErrors(t *testing.T) {
 		t.Fatalf("intake summary = %+v", overview.Intake)
 	}
 	for _, want := range []string{
+		"agent-team intake summary",
 		"agent-team intake deliveries --status error",
 		"agent-team intake replay --all --dry-run --preview-triggers",
 	} {
@@ -164,6 +165,7 @@ func TestOverviewIgnoresRecoveredIntakeErrors(t *testing.T) {
 		t.Fatalf("intake summary = %+v", overview.Intake)
 	}
 	for _, unwanted := range []string{
+		"agent-team intake summary",
 		"agent-team intake deliveries --status error",
 		"agent-team intake replay --all --dry-run --preview-triggers",
 	} {

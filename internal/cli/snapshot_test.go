@@ -221,6 +221,58 @@ func TestSnapshotIncludesPipelineAdvancePreview(t *testing.T) {
 	}
 }
 
+func TestSnapshotIntakeSummaryUsesFullLedger(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	for _, delivery := range []intakeDelivery{
+		{
+			ID:         "older-error",
+			Time:       now.Add(-time.Hour),
+			Provider:   "linear",
+			Status:     intakeDeliveryStatusError,
+			HTTPStatus: 503,
+			EventType:  "ticket.created",
+			Payload:    map[string]any{"source": "linear", "ticket": "SQU-504"},
+			Ticket:     "SQU-504",
+			Error:      "daemon is not running",
+		},
+		{
+			ID:         "newer-ok",
+			Time:       now,
+			Provider:   "linear",
+			Status:     intakeDeliveryStatusOK,
+			HTTPStatus: 200,
+			EventType:  "ticket.created",
+			Ticket:     "SQU-505",
+		},
+	} {
+		if err := appendIntakeDelivery(teamDir, delivery); err != nil {
+			t.Fatalf("append %s: %v", delivery.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"snapshot", "--target", tmp, "--events", "0", "--intake-deliveries", "1", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("snapshot intake limit: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot snapshotResult
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode snapshot: %v\nbody=%s", err, out.String())
+	}
+	if len(snapshot.Intake) != 1 || snapshot.Intake[0].ID != "newer-ok" {
+		t.Fatalf("limited intake rows = %+v", snapshot.Intake)
+	}
+	if snapshot.IntakeSummary == nil || snapshot.IntakeSummary.Deliveries != 2 || snapshot.IntakeSummary.Errors != 1 || snapshot.IntakeSummary.Replayable != 1 || snapshot.IntakeSummary.LatestErrorID != "older-error" {
+		t.Fatalf("intake summary = %+v", snapshot.IntakeSummary)
+	}
+}
+
 func TestSnapshotSummaryIncludesJobTriage(t *testing.T) {
 	now := time.Now().UTC()
 	snapshot := &snapshotResult{

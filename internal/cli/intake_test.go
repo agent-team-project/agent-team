@@ -536,6 +536,124 @@ func TestIntakeDeliveriesReplayFilters(t *testing.T) {
 	}
 }
 
+func TestIntakeSummaryReportsRecoveryState(t *testing.T) {
+	target := t.TempDir()
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	replayedAt := now.Add(-time.Hour)
+	for _, delivery := range []intakeDelivery{
+		{
+			ID:         "linear-ok",
+			Time:       now.Add(-4 * time.Minute),
+			Provider:   "linear",
+			Status:     intakeDeliveryStatusOK,
+			HTTPStatus: http.StatusOK,
+			EventType:  "ticket.created",
+			Ticket:     "SQU-218",
+		},
+		{
+			ID:           "linear-recovered",
+			Time:         now.Add(-3 * time.Minute),
+			Provider:     "linear",
+			Status:       intakeDeliveryStatusError,
+			ReplayStatus: intakeDeliveryReplayStatusOK,
+			ReplayedAt:   &replayedAt,
+			HTTPStatus:   http.StatusServiceUnavailable,
+			EventType:    "ticket.created",
+			Payload:      map[string]any{"source": "linear", "ticket": "SQU-219"},
+			Ticket:       "SQU-219",
+			Error:        "daemon is not running",
+		},
+		{
+			ID:         "github-unresolved",
+			Time:       now.Add(-2 * time.Minute),
+			Provider:   "github",
+			Status:     intakeDeliveryStatusError,
+			HTTPStatus: http.StatusServiceUnavailable,
+			EventType:  "pr.opened",
+			Payload:    map[string]any{"source": "github", "pr_url": "https://github.com/acme/repo/pull/220"},
+			PR:         "https://github.com/acme/repo/pull/220",
+			Error:      "daemon is not running",
+		},
+		{
+			ID:           "github-replay-failed",
+			Time:         now.Add(-time.Minute),
+			Provider:     "github",
+			Status:       intakeDeliveryStatusError,
+			ReplayStatus: intakeDeliveryReplayStatusError,
+			ReplayedAt:   &replayedAt,
+			ReplayError:  "daemon: refused",
+			HTTPStatus:   http.StatusServiceUnavailable,
+			EventType:    "pr.opened",
+			Payload:      map[string]any{"source": "github", "pr_url": "https://github.com/acme/repo/pull/221"},
+			PR:           "https://github.com/acme/repo/pull/221",
+			Error:        "daemon is not running",
+		},
+	} {
+		if err := appendIntakeDelivery(teamDir, delivery); err != nil {
+			t.Fatalf("append %s: %v", delivery.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "summary", "--target", target, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake summary json: %v\nstderr=%s", err, stderr.String())
+	}
+	var summary intakeSummaryResult
+	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
+		t.Fatalf("decode intake summary: %v\nbody=%s", err, out.String())
+	}
+	if summary.Deliveries != 4 || summary.OK != 1 || summary.Failed != 3 || summary.Unresolved != 2 || summary.Recovered != 1 || summary.Replayable != 2 || summary.ReplayFailed != 1 || summary.LatestErrorID != "github-replay-failed" {
+		t.Fatalf("summary = %+v", summary)
+	}
+	if len(summary.Providers) != 2 || summary.Providers[0].Provider != "github" || summary.Providers[0].Deliveries != 2 || summary.Providers[0].ReplayFailed != 1 || summary.Providers[1].Provider != "linear" || summary.Providers[1].Recovered != 1 {
+		t.Fatalf("provider summaries = %+v", summary.Providers)
+	}
+	for _, want := range []string{
+		"agent-team intake deliveries --unresolved",
+		"agent-team intake replay --all --dry-run --preview-triggers",
+		"agent-team intake replay --all",
+		"agent-team intake prune --replay-status ok --dry-run",
+	} {
+		if !containsString(summary.Actions, want) {
+			t.Fatalf("summary actions missing %q: %+v", want, summary.Actions)
+		}
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"intake", "summary", "--target", target})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("intake summary text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"intake: deliveries=4 ok=1 failed=3 unresolved=2 recovered=1 replayable=2 replay_failed=1 latest_error=github-replay-failed", "github", "linear", "agent-team intake replay --all"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("summary text missing %q:\n%s", want, textOut.String())
+		}
+	}
+
+	filtered := NewRootCmd()
+	filteredOut, filteredErr := &bytes.Buffer{}, &bytes.Buffer{}
+	filtered.SetOut(filteredOut)
+	filtered.SetErr(filteredErr)
+	filtered.SetArgs([]string{"intake", "summary", "--target", target, "--provider", "github", "--replay-status", "error", "--format", "{{.Deliveries}} {{.ReplayFailed}} {{.LatestErrorID}}"})
+	if err := filtered.Execute(); err != nil {
+		t.Fatalf("intake summary format: %v\nstderr=%s", err, filteredErr.String())
+	}
+	if got := strings.TrimSpace(filteredOut.String()); got != "1 1 github-replay-failed" {
+		t.Fatalf("filtered summary = %q", got)
+	}
+}
+
 func TestIntakePruneFiltersAndRewritesLedger(t *testing.T) {
 	target := t.TempDir()
 	teamDir := filepath.Join(target, ".agent_team")
