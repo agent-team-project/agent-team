@@ -97,6 +97,7 @@ type snapshotResult struct {
 	CapturedAt      string                     `json:"captured_at"`
 	Repo            string                     `json:"repo"`
 	TeamDir         string                     `json:"team_dir"`
+	Team            *teamInfo                  `json:"team,omitempty"`
 	Redacted        bool                       `json:"redacted"`
 	Runtime         *runtimeInfo               `json:"runtime,omitempty"`
 	Health          *healthResult              `json:"health,omitempty"`
@@ -196,6 +197,106 @@ func collectSnapshot(teamDir, repoRoot string, opts snapshotOptions) *snapshotRe
 	return out
 }
 
+func collectTeamSnapshot(teamDir, repoRoot, name string, opts snapshotOptions) (*snapshotResult, error) {
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return nil, err
+	}
+	info := teamInfoFromTopology(team)
+	out := &snapshotResult{
+		Version:    Version,
+		CapturedAt: now.Format(time.RFC3339),
+		Repo:       filepath.ToSlash(repoRoot),
+		TeamDir:    filepath.ToSlash(teamDir),
+		Team:       &info,
+	}
+
+	if runtime, err := collectRuntimeInfoForTeam(teamDir); err != nil {
+		out.addError("runtime", err)
+	} else {
+		out.Runtime = &runtime
+	}
+	if health, err := collectTeamHealth(teamDir, name, now, true); err != nil {
+		out.addError("health", err)
+	} else {
+		out.Health = health.Health
+	}
+	if plan, err := collectTeamPlan(teamDir, name, false, nil); err != nil {
+		out.addError("plan", err)
+	} else {
+		out.Plan = plan.Plan
+	}
+	if rows, err := collectTeamPsRows(teamDir, name, now); err != nil {
+		out.addError("instances", err)
+	} else {
+		out.Instances = psJSONRows(rows)
+	}
+
+	var ownedJobs []*job.Job
+	var ownedJobIDs map[string]bool
+	if jobs, err := job.List(teamDir); err != nil {
+		out.addError("jobs", err)
+	} else {
+		ownedJobs = teamJobs(top, team, jobs)
+		ownedJobIDs = jobIDSet(ownedJobs)
+		out.Jobs = ownedJobs
+	}
+	var teamQueue []*daemon.QueueItem
+	if queue, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir)); err != nil {
+		out.addError("queue", err)
+	} else {
+		teamQueue = teamQueueItems(top, team, ownedJobs, queue)
+		out.Queue = teamQueue
+		summary := summarizeQueueItems(teamQueue, now)
+		out.QueueSummary = &summary
+	}
+	if triage, err := collectJobTriage(teamDir, now, defaultJobTriageStaleAfter); err != nil {
+		out.addError("job_triage", err)
+	} else {
+		triage.Summary = summarizeJobs(ownedJobs)
+		triage.Queue = summarizeQueueItems(teamQueue, now)
+		triage.Attention = filterJobTriageItemsByJobIDs(triage.Attention, ownedJobIDs)
+		triage.ReadySteps = filterJobReadyRowsByJobIDs(triage.ReadySteps, ownedJobIDs)
+		triage.StatusPreviews = filterJobStatusPreviewsByJobIDs(triage.StatusPreviews, ownedJobIDs)
+		out.JobTriage = &triage
+	}
+	if status, err := reconcileJobsFromStatus(teamDir, true, now); err != nil {
+		out.addError("job_status_preview", err)
+	} else {
+		out.JobStatus = filterJobStatusPreviewsByJobIDs(status, ownedJobIDs)
+	}
+	if status, err := collectPipelineStatusRows(teamDir, ""); err != nil {
+		out.addError("pipeline_status", err)
+	} else {
+		out.PipelineStatus = teamPipelineStatus(team, status)
+	}
+	if advance, err := advanceReadyPipelineJobs(nil, teamDir, "", "auto", 0, true, true); err != nil {
+		out.addError("pipeline_advance_preview", err)
+	} else {
+		out.PipelineAdvance = filterPipelineAdvanceResultsByJobIDs(advance, ownedJobIDs)
+	}
+	if schedules, err := loadScheduleInfos(teamDir); err != nil {
+		out.addError("schedules", err)
+	} else {
+		out.Schedules = teamSchedules(team, schedules)
+		out.ScheduleNext = nextScheduleRows(out.Schedules, now, opts.ScheduleLimit)
+	}
+	if events, err := collectTeamSnapshotEvents(teamDir, name, opts.EventLimit, now); err != nil {
+		out.addError("events", err)
+	} else {
+		out.Events = events
+	}
+	if opts.Redact {
+		redactSnapshotResult(out)
+	}
+	return out, nil
+}
+
 func (r *snapshotResult) addError(section string, err error) {
 	if err == nil {
 		return
@@ -227,6 +328,43 @@ func collectSnapshotEvents(teamDir string, limit int) ([]daemon.LifecycleEvent, 
 		out = append(out, line.ev)
 	}
 	return out, nil
+}
+
+func collectTeamSnapshotEvents(teamDir, name string, limit int, now time.Time) ([]daemon.LifecycleEvent, error) {
+	if limit == 0 {
+		return nil, nil
+	}
+	filters, err := teamEventFilters(teamDir, name, nil, nil, "", func() time.Time { return now })
+	if err != nil {
+		return nil, err
+	}
+	events, err := collectSnapshotEvents(teamDir, -1)
+	if err != nil {
+		return nil, err
+	}
+	matches := make([]daemon.LifecycleEvent, 0, len(events))
+	for _, ev := range events {
+		if filters.match(ev) {
+			matches = append(matches, ev)
+		}
+	}
+	if limit > 0 && len(matches) > limit {
+		matches = matches[len(matches)-limit:]
+	}
+	return matches, nil
+}
+
+func filterPipelineAdvanceResultsByJobIDs(results []pipelineAdvanceResult, ids map[string]bool) []pipelineAdvanceResult {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]pipelineAdvanceResult, 0, len(results))
+	for _, result := range results {
+		if ids[result.JobID] {
+			out = append(out, result)
+		}
+	}
+	return out
 }
 
 const snapshotRedactedValue = "[redacted]"
@@ -365,6 +503,9 @@ func renderSnapshotSummary(w io.Writer, snapshot *snapshotResult) {
 	}
 	fmt.Fprintf(w, "snapshot: %s\n", snapshot.CapturedAt)
 	fmt.Fprintf(w, "repo: %s\n", snapshot.Repo)
+	if snapshot.Team != nil {
+		fmt.Fprintf(w, "team: %s\n", snapshot.Team.Name)
+	}
 	fmt.Fprintf(w, "redacted: %s\n", yesNo(snapshot.Redacted))
 	if snapshot.Health != nil {
 		fmt.Fprintf(w, "health: %s\n", repairHealthState(snapshot.Health))

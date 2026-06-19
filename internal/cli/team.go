@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -42,6 +43,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamWaitCmd())
 	cmd.AddCommand(newTeamPruneCmd())
 	cmd.AddCommand(newTeamStatsCmd())
+	cmd.AddCommand(newTeamSnapshotCmd())
 	cmd.AddCommand(newTeamTickCmd())
 	cmd.AddCommand(newTeamRepairCmd())
 	cmd.AddCommand(newTeamPipelinesCmd())
@@ -1274,6 +1276,78 @@ func newTeamStatsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show team-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show team-owned instances whose status.toml is stale.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed or stale team-owned instances.")
+	return cmd
+}
+
+func newTeamSnapshotCmd() *cobra.Command {
+	var (
+		repo          string
+		output        string
+		jsonOut       bool
+		noRedact      bool
+		eventLimit    int
+		scheduleLimit int
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "snapshot <team>",
+		Short: "Capture a team-scoped diagnostic report.",
+		Long: "Capture a read-only diagnostic report scoped to one declared team. " +
+			"It includes team health, plan, instances, jobs, job status preview, queue, schedule, runtime, and lifecycle event state.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if eventLimit < -1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team snapshot: --events must be >= -1.")
+				return exitErr(2)
+			}
+			if scheduleLimit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team snapshot: --schedule-limit must be >= 0.")
+				return exitErr(2)
+			}
+			if jsonOut && output != "" && output != "-" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team snapshot: choose one of --json or --output.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			repoRoot, err := filepath.Abs(repo)
+			if err != nil {
+				return err
+			}
+			snapshot, err := collectTeamSnapshot(teamDir, repoRoot, args[0], snapshotOptions{
+				EventLimit:    eventLimit,
+				ScheduleLimit: scheduleLimit,
+				Redact:        !noRedact,
+				Now:           time.Now().UTC(),
+			})
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team snapshot: %v\n", err)
+				return exitErr(1)
+			}
+			switch {
+			case jsonOut || output == "-":
+				return writeSnapshotJSON(cmd.OutOrStdout(), snapshot)
+			case output != "":
+				path, err := writeSnapshotFile(output, snapshot)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Wrote snapshot to %s\n", path)
+				return nil
+			default:
+				renderSnapshotSummary(cmd.OutOrStdout(), snapshot)
+				return nil
+			}
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Write the full JSON snapshot to this file. Use '-' for stdout.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the full snapshot JSON to stdout.")
+	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "Include raw payload values instead of redacting sensitive keys.")
+	cmd.Flags().IntVar(&eventLimit, "events", 50, "Recent matching team lifecycle events to include. Use -1 for all matching events or 0 to skip events.")
+	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 10, "Upcoming team schedules to include after ordering; 0 means all.")
 	return cmd
 }
 

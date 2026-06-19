@@ -838,6 +838,9 @@ func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 		{"team", "stats", "delivery", "--latest", "--last", "1"},
 		{"team", "stats", "delivery", "manager", "--status", "running"},
 		{"team", "stats", "delivery", "--last", "-1"},
+		{"team", "snapshot", "delivery", "--json", "--output", "snapshot.json"},
+		{"team", "snapshot", "delivery", "--events", "-2"},
+		{"team", "snapshot", "delivery", "--schedule-limit", "-1"},
 	} {
 		cmd := NewRootCmd()
 		stderr := &bytes.Buffer{}
@@ -1415,6 +1418,231 @@ instances = ["other"]
 	}
 	if item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-other-target"); err != nil || item.State != daemon.QueueStatePending {
 		t.Fatalf("unrelated drop item changed=%+v err=%v", item, err)
+	}
+}
+
+func TestTeamSnapshotScopesDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.other]
+agent = "other"
+ephemeral = true
+replicas = 1
+
+[[instances.other.triggers]]
+event = "agent.dispatch"
+match.target = "other"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[pipelines.platform_work]
+trigger.event = "ticket.created"
+trigger.match.team = "platform"
+
+[[pipelines.platform_work.steps]]
+id = "implement"
+target = "other"
+
+[schedules.delivery_due]
+every = "24h"
+payload.target = "worker"
+payload.access_token = "delivery-secret"
+
+[schedules.platform_due]
+every = "24h"
+payload.target = "other"
+payload.access_token = "platform-secret"
+
+[teams.delivery]
+description = "Delivery team"
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+schedules = ["delivery_due"]
+
+[teams.platform]
+instances = ["other"]
+pipelines = ["platform_work"]
+schedules = ["platform_due"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-701",
+			Ticket:    "SQU-701",
+			Target:    "worker",
+			Kickoff:   "SQU-701: implement",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusBlocked},
+			},
+		},
+		{
+			ID:        "oth-701",
+			Ticket:    "OTH-701",
+			Target:    "other",
+			Kickoff:   "OTH-701: implement",
+			Pipeline:  "platform_work",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "other", Status: job.StatusBlocked},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "worker-squ-701"), `[status]
+phase = "blocked"
+description = "waiting on review"
+since = "2026-06-18T12:00:00Z"
+
+[work]
+job = "squ-701"
+ticket = "SQU-701"
+branch = "worker-squ-701"
+`, now)
+	writeStatus(t, filepath.Join(teamDir, "state", "other-oth-701"), `[status]
+phase = "blocked"
+description = "unrelated"
+since = "2026-06-18T12:00:00Z"
+
+[work]
+job = "oth-701"
+ticket = "OTH-701"
+branch = "other-oth-701"
+`, now)
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:         "q-delivery-snapshot",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-701",
+			Payload: map[string]any{
+				"job_id":       "squ-701",
+				"target":       "worker",
+				"ticket":       "SQU-701",
+				"access_token": "queue-secret",
+			},
+			QueuedAt:  now.Add(-time.Minute),
+			UpdatedAt: now.Add(-time.Minute),
+		},
+		{
+			ID:         "q-platform-snapshot",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "other",
+			InstanceID: "other-oth-701",
+			Payload:    map[string]any{"job_id": "oth-701", "target": "other", "ticket": "OTH-701"},
+			QueuedAt:   now.Add(-time.Minute),
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+	} {
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+			t.Fatalf("write queue item %s: %v", item.ID, err)
+		}
+	}
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	for _, ev := range []*daemon.LifecycleEvent{
+		{TS: now.Add(-3 * time.Minute), Action: "start", Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, Message: "manager up"},
+		{TS: now.Add(-2 * time.Minute), Action: "dispatch", Instance: "worker-squ-701", Agent: "worker", Status: daemon.StatusRunning, Message: "delivery worker"},
+		{TS: now.Add(-time.Minute), Action: "dispatch", Instance: "other-oth-701", Agent: "other", Status: daemon.StatusRunning, Message: "platform worker"},
+	} {
+		if err := daemon.AppendLifecycleEvent(daemonRoot, ev); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "snapshot", "delivery", "--repo", root, "--events", "-1", "--schedule-limit", "0", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team snapshot json: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot snapshotResult
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode team snapshot: %v\nbody=%s", err, out.String())
+	}
+	if snapshot.Team == nil || snapshot.Team.Name != "delivery" {
+		t.Fatalf("team metadata = %+v", snapshot.Team)
+	}
+	if !snapshot.Redacted {
+		t.Fatalf("snapshot should redact by default")
+	}
+	if len(snapshot.Jobs) != 1 || snapshot.Jobs[0].ID != "squ-701" {
+		t.Fatalf("snapshot jobs = %+v", snapshot.Jobs)
+	}
+	if len(snapshot.Queue) != 1 || snapshot.Queue[0].ID != "q-delivery-snapshot" || snapshot.QueueSummary == nil || snapshot.QueueSummary.Total != 1 {
+		t.Fatalf("snapshot queue = %+v summary=%+v", snapshot.Queue, snapshot.QueueSummary)
+	}
+	if snapshot.Queue[0].Payload["access_token"] != snapshotRedactedValue {
+		t.Fatalf("queue payload not redacted: %+v", snapshot.Queue[0].Payload)
+	}
+	if len(snapshot.Schedules) != 1 || snapshot.Schedules[0].Name != "delivery_due" || snapshot.Schedules[0].Payload["access_token"] != snapshotRedactedValue {
+		t.Fatalf("snapshot schedules = %+v", snapshot.Schedules)
+	}
+	if len(snapshot.ScheduleNext) != 1 || snapshot.ScheduleNext[0].Name != "delivery_due" {
+		t.Fatalf("snapshot schedule next = %+v", snapshot.ScheduleNext)
+	}
+	if len(snapshot.PipelineStatus) != 1 || snapshot.PipelineStatus[0].Pipeline != "ticket_to_pr" || snapshot.PipelineStatus[0].ReadySteps != 1 {
+		t.Fatalf("snapshot pipeline status = %+v", snapshot.PipelineStatus)
+	}
+	if len(snapshot.PipelineAdvance) != 1 || snapshot.PipelineAdvance[0].JobID != "squ-701" || snapshot.PipelineAdvance[0].Pipeline != "ticket_to_pr" {
+		t.Fatalf("snapshot pipeline advance = %+v", snapshot.PipelineAdvance)
+	}
+	if snapshot.JobTriage == nil || snapshot.JobTriage.Summary.Total != 1 || len(snapshot.JobTriage.ReadySteps) != 1 {
+		t.Fatalf("snapshot job triage = %+v", snapshot.JobTriage)
+	}
+	if len(snapshot.JobStatus) != 1 || snapshot.JobStatus[0].JobID != "squ-701" || !snapshot.JobStatus[0].Changed {
+		t.Fatalf("snapshot job status = %+v", snapshot.JobStatus)
+	}
+	if got := lifecycleEventInstances(snapshot.Events); strings.Join(got, ",") != "manager,worker-squ-701" {
+		t.Fatalf("snapshot events = %v\nbody=%s", got, out.String())
+	}
+	body := out.String()
+	for _, leak := range []string{"platform_due", "platform_work", "oth-701", "q-platform-snapshot", "platform worker", "platform-secret"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("team snapshot json leaked %q:\n%s", leak, body)
+		}
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"team", "snapshot", "delivery", "--repo", root, "--events", "0"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("team snapshot text: %v\nstderr=%s", err, textErr.String())
+	}
+	textBody := textOut.String()
+	for _, want := range []string{"team: delivery", "jobs: total=1", "queue: total=1", "pipeline status: pipelines=1", "events: 0"} {
+		if !strings.Contains(textBody, want) {
+			t.Fatalf("team snapshot text missing %q:\n%s", want, textBody)
+		}
+	}
+	for _, leak := range []string{"platform_due", "platform_work", "oth-701", "q-platform-snapshot"} {
+		if strings.Contains(textBody, leak) {
+			t.Fatalf("team snapshot text leaked %q:\n%s", leak, textBody)
+		}
 	}
 }
 
