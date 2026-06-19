@@ -717,6 +717,97 @@ instances = ["other", "build-worker"]
 	}
 }
 
+func TestTeamStatsScopesRows(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.manager]
+agent = "manager"
+
+[instances.ticket-manager]
+agent = "ticket-manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[instances.build-worker]
+agent = "worker"
+ephemeral = true
+
+[instances.other]
+agent = "other"
+
+[teams.delivery]
+instances = ["manager", "ticket-manager", "worker"]
+
+[teams.platform]
+instances = ["other", "build-worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-3 * time.Minute)},
+		{Instance: "worker-squ-101", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-2 * time.Minute)},
+		{Instance: "build-worker-1", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-time.Minute)},
+		{Instance: "other", Agent: "other", Status: daemon.StatusExited, Workspace: root, StartedAt: now.Add(-time.Minute), ExitedAt: now},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	running := NewRootCmd()
+	runningOut, runningErr := &bytes.Buffer{}, &bytes.Buffer{}
+	running.SetOut(runningOut)
+	running.SetErr(runningErr)
+	running.SetArgs([]string{"team", "stats", "delivery", "--repo", root, "--json"})
+	if err := running.Execute(); err != nil {
+		t.Fatalf("team stats running: %v\nstderr=%s", err, runningErr.String())
+	}
+	var rows []statsJSONRow
+	if err := json.Unmarshal(runningOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode team stats running: %v\nbody=%s", err, runningOut.String())
+	}
+	if got := statsJSONRowNames(rows); strings.Join(got, ",") != "manager,worker-squ-101" {
+		t.Fatalf("team stats running names = %v", got)
+	}
+
+	all := NewRootCmd()
+	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
+	all.SetOut(allOut)
+	all.SetErr(allErr)
+	all.SetArgs([]string{"team", "stats", "delivery", "--repo", root, "--all", "--json"})
+	if err := all.Execute(); err != nil {
+		t.Fatalf("team stats all: %v\nstderr=%s", err, allErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(allOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode team stats all: %v\nbody=%s", err, allOut.String())
+	}
+	byInstance := map[string]statsJSONRow{}
+	for _, row := range rows {
+		byInstance[row.Instance] = row
+	}
+	for _, want := range []string{"manager", "ticket-manager", "worker-squ-101"} {
+		if _, ok := byInstance[want]; !ok {
+			t.Fatalf("team stats all rows = %+v, missing %s", rows, want)
+		}
+	}
+	if byInstance["ticket-manager"].Status != "unknown" {
+		t.Fatalf("ticket-manager row = %+v, want unknown", byInstance["ticket-manager"])
+	}
+	for _, unwanted := range []string{"build-worker-1", "other"} {
+		if _, ok := byInstance[unwanted]; ok {
+			t.Fatalf("team stats all rows = %+v, included %s", rows, unwanted)
+		}
+	}
+}
+
 func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 	for _, args := range [][]string{
 		{"team", "up", "delivery", "--quiet", "--json"},
@@ -743,6 +834,10 @@ func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 		{"team", "prune", "delivery", "--quiet", "--summary"},
 		{"team", "prune", "delivery", "--format", "{{.Instance}}", "--json"},
 		{"team", "prune", "delivery", "--older-than=-1s"},
+		{"team", "stats", "delivery", "--format", "{{.Instance}}", "--json"},
+		{"team", "stats", "delivery", "--latest", "--last", "1"},
+		{"team", "stats", "delivery", "manager", "--status", "running"},
+		{"team", "stats", "delivery", "--last", "-1"},
 	} {
 		cmd := NewRootCmd()
 		stderr := &bytes.Buffer{}
@@ -2217,6 +2312,14 @@ func instanceDownResultNames(rows []instanceDownResult) []string {
 }
 
 func instanceRmResultNames(rows []instanceRmResult) []string {
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.Instance)
+	}
+	return out
+}
+
+func statsJSONRowNames(rows []statsJSONRow) []string {
 	out := make([]string, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, row.Instance)

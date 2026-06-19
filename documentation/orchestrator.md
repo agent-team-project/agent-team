@@ -233,6 +233,8 @@ agent-team team wait <team> [<instance>...] [-q] [--latest | --last N] [--status
                                   # scoped wait for declared persistent team members and live team-owned ephemeral children
 agent-team team prune <team> [-q] [--dry-run] [--older-than 24h] [--status exited|crashed] [--phase done] [--stale] [--unhealthy] [--summary] [--format '{{.Instance}} {{.Path}}'] [--json]
                                   # scoped cleanup for finished daemon-known instances owned by one team
+agent-team team stats <team> [<instance>...] [-w] [--no-clear] [-a] [--latest | --last N] [--status running] [--phase idle] [--stale] [--unhealthy] [--summary] [--sort cpu|mem|rss|status|agent|phase|stale|unhealthy|name] [--format '{{.Instance}} {{.CPUPercent}} {{.RSS}}'] [--json] [--interval 2s]
+                                  # scoped CPU, memory, RSS, lifecycle, and phase snapshot for one team
 agent-team inspect [<instance>...] [--all] [--latest | --last N] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--format '{{.Instance}} {{if .Runtime}}{{.Runtime.Lifecycle}}{{end}}'] [--json]
                                   # runtime metadata + state/status/topology detail; reads persisted runtime metadata if the daemon is down
 agent-team wait [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--until terminal|running|stopped|exited|crashed|removed] [--until-phase done] [--timeout 5m] [--interval 500ms] [--dry-run] [--fail-on-crash] [--summary] [--format '{{.Instance}} {{.Status}} {{.Phase}}'] [--json] # wait for lifecycle or work-phase condition; uses persisted metadata if daemon is down

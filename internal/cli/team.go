@@ -41,6 +41,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamSendCmd())
 	cmd.AddCommand(newTeamWaitCmd())
 	cmd.AddCommand(newTeamPruneCmd())
+	cmd.AddCommand(newTeamStatsCmd())
 	cmd.AddCommand(newTeamTickCmd())
 	cmd.AddCommand(newTeamRepairCmd())
 	cmd.AddCommand(newTeamPipelinesCmd())
@@ -1110,6 +1111,169 @@ func newTeamPruneCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate removal counts instead of per-instance rows.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each removal result with a Go template, e.g. '{{.Instance}} {{.Path}}'.")
+	return cmd
+}
+
+func newTeamStatsCmd() *cobra.Command {
+	var (
+		repo          string
+		all           bool
+		latest        bool
+		last          int
+		watch         bool
+		jsonOut       bool
+		summary       bool
+		noClear       bool
+		format        string
+		sortBy        string
+		interval      time.Duration
+		statusFilters []string
+		phaseFilters  []string
+		staleOnly     bool
+		unhealthyOnly bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "stats <team> [<instance>...]",
+		Short: "Show CPU and memory usage for team-owned instances.",
+		Long: "Show a one-shot or watchable resource snapshot for instances owned by one declared team. " +
+			"With no names, only running team-owned instances are shown. Use --all to include stopped, exited, crashed, and missing persistent team members.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			names := append([]string(nil), args[1:]...)
+			if all && len(names) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --all cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if latest && len(names) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --latest cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if last < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --last must be >= 0.")
+				return exitErr(2)
+			}
+			if latest && last > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: choose one of --latest or --last.")
+				return exitErr(2)
+			}
+			if last > 0 && len(names) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --last cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if len(names) > 0 && (len(statusFilters) > 0 || len(phaseFilters) > 0 || staleOnly || unhealthyOnly) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --status, --phase, --stale, and --unhealthy cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if format != "" && (jsonOut || summary) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --format cannot be combined with --json or --summary.")
+				return exitErr(2)
+			}
+			formatTemplate, err := parseStatsFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team stats: %v\n", err)
+				return exitErr(2)
+			}
+			opts, err := newStatsOptionsWithInstancesPhasesAndUnhealthy(all, statusFilters, nil, phaseFilters, nil, unhealthyOnly)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team stats: %v\n", err)
+				return exitErr(2)
+			}
+			sortMode, err := parseStatsSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team stats: %v\n", err)
+				return exitErr(2)
+			}
+			opts.Sort = sortMode
+			opts.SortSet = cmd.Flags().Changed("sort")
+			opts.Latest = latest
+			opts.Limit = last
+			opts.Stale = staleOnly
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			top, team, err := loadTopologyTeam(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team stats: %v\n", err)
+				return exitErr(1)
+			}
+			opts.phaseByInstance = statsPhaseByInstance(teamDir, time.Now())
+			opts.staleByInstance = staleInstanceSet(teamDir, time.Now())
+			var base instanceLister
+			base, err = newDaemonClient(teamDir)
+			if err != nil {
+				if errors.Is(err, errDaemonNotRunning) {
+					base = localInstanceLister{daemonRoot: daemon.DaemonRoot(teamDir)}
+				} else {
+					return err
+				}
+			}
+			lister := teamWaitLister{instanceLister: base, top: top, team: team}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				clear := !noClear && !jsonOut
+				var watchErr error
+				if summary {
+					watchErr = runStatsSummaryWatchWithClear(ctx, cmd.OutOrStdout(), lister, names, opts, interval, time.Now, readProcessStats, jsonOut, clear)
+				} else if formatTemplate != nil {
+					watchErr = runStatsFormatWatch(ctx, cmd.OutOrStdout(), lister, names, opts, interval, time.Now, readProcessStats, formatTemplate)
+				} else {
+					watchErr = runStatsWatchWithClear(ctx, cmd.OutOrStdout(), lister, names, opts, interval, time.Now, readProcessStats, jsonOut, clear)
+				}
+				if watchErr != nil {
+					var unknownErr *statsUnknownError
+					if errors.As(watchErr, &unknownErr) {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team stats: instance %q is not known to team %q.\n", unknownErr.Instance, team.Name)
+						return exitErr(2)
+					}
+				}
+				return watchErr
+			}
+			var renderErr error
+			switch {
+			case summary && jsonOut:
+				renderErr = runStatsSummaryJSON(cmd.OutOrStdout(), lister, names, opts, time.Now(), readProcessStats)
+			case summary:
+				renderErr = runStatsSummary(cmd.OutOrStdout(), lister, names, opts, time.Now(), readProcessStats)
+			case jsonOut:
+				renderErr = runStatsJSON(cmd.OutOrStdout(), lister, names, opts, time.Now(), readProcessStats)
+			case formatTemplate != nil:
+				renderErr = runStatsFormat(cmd.OutOrStdout(), lister, names, opts, time.Now(), readProcessStats, formatTemplate)
+			default:
+				renderErr = runStats(cmd.OutOrStdout(), lister, names, opts, time.Now(), readProcessStats)
+			}
+			if renderErr != nil {
+				var unknownErr *statsUnknownError
+				if errors.As(renderErr, &unknownErr) {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team stats: instance %q is not known to team %q.\n", unknownErr.Instance, team.Name)
+					return exitErr(2)
+				}
+				return renderErr
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "Include stopped, exited, crashed, and missing persistent team-owned instances.")
+	cmd.Flags().BoolVar(&latest, "latest", false, "Show stats for the most recently started team-owned instance after other filters.")
+	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show stats for the N most recently started team-owned instances after other filters (0 = all).")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh team stats until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON. With --watch, writes one JSON array per refresh.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate CPU, memory, and RSS totals instead of team instance rows.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.Instance}} {{.CPUPercent}} {{.RSS}}'.")
+	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort rows by name, cpu, mem, rss, status, agent, phase, stale, or unhealthy.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
+	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show team-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show team-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show team-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed or stale team-owned instances.")
 	return cmd
 }
 
