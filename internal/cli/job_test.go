@@ -796,6 +796,143 @@ func TestJobQueueRetryDropScopesOwnedItems(t *testing.T) {
 	}
 }
 
+func TestJobQueuePruneScopesOwnedItems(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	j, err := job.New("SQU-122", "worker", "prune queued work", time.Now())
+	if err != nil {
+		t.Fatalf("job.New: %v", err)
+	}
+	j.Instance = "worker-squ-122"
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("job.Write: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:         "q-job-old-dead",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-122",
+			Payload: map[string]any{
+				"job_id": "squ-122",
+				"ticket": "SQU-122",
+				"target": "worker",
+			},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-48 * time.Hour),
+			UpdatedAt:      now.Add(-47 * time.Hour),
+			DeadLetteredAt: now.Add(-47 * time.Hour),
+		},
+		{
+			ID:         "q-job-new-dead",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-122",
+			Payload: map[string]any{
+				"job_id": "squ-122",
+				"ticket": "SQU-122",
+				"target": "worker",
+			},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-time.Hour),
+			UpdatedAt:      now.Add(-time.Hour),
+			DeadLetteredAt: now.Add(-time.Hour),
+		},
+		{
+			ID:         "q-job-old-pending",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-122",
+			Payload: map[string]any{
+				"job_id": "squ-122",
+				"target": "worker",
+			},
+			QueuedAt:  now.Add(-48 * time.Hour),
+			UpdatedAt: now.Add(-48 * time.Hour),
+		},
+		{
+			ID:         "q-other-old-dead",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-123",
+			Payload: map[string]any{
+				"job_id": "squ-123",
+				"ticket": "SQU-123",
+				"target": "worker",
+			},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-48 * time.Hour),
+			UpdatedAt:      now.Add(-47 * time.Hour),
+			DeadLetteredAt: now.Add(-47 * time.Hour),
+		},
+	} {
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+			t.Fatalf("WriteQueueItem %s: %v", item.ID, err)
+		}
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"job", "queue", "prune", "SQU-122", "--repo", tmp, "--older-than", "24h", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("job queue prune dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryResults []queuePruneResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryResults); err != nil {
+		t.Fatalf("decode prune dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(dryResults) != 1 || dryResults[0].ID != "q-job-old-dead" || !dryResults[0].DryRun || dryResults[0].Dropped {
+		t.Fatalf("prune dry-run results = %+v", dryResults)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-job-old-dead"); err != nil {
+		t.Fatalf("dry-run removed queue item: %v", err)
+	}
+
+	prune := NewRootCmd()
+	pruneOut, pruneErr := &bytes.Buffer{}, &bytes.Buffer{}
+	prune.SetOut(pruneOut)
+	prune.SetErr(pruneErr)
+	prune.SetArgs([]string{"job", "queue", "prune", "SQU-122", "--repo", tmp, "--older-than", "24h", "--format", "{{.ID}} {{.State}} {{.Dropped}}"})
+	if err := prune.Execute(); err != nil {
+		t.Fatalf("job queue prune: %v\nstderr=%s", err, pruneErr.String())
+	}
+	if got, want := strings.TrimSpace(pruneOut.String()), "q-job-old-dead dead true"; got != want {
+		t.Fatalf("prune output = %q, want %q", got, want)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-job-old-dead"); !os.IsNotExist(err) {
+		t.Fatalf("old dead item err=%v, want not exist", err)
+	}
+	for _, id := range []string{"q-job-new-dead", "q-job-old-pending", "q-other-old-dead"} {
+		if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id); err != nil {
+			t.Fatalf("queue item %s should remain: %v", id, err)
+		}
+	}
+
+	pruneAll := NewRootCmd()
+	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pruneAll.SetOut(allOut)
+	pruneAll.SetErr(allErr)
+	pruneAll.SetArgs([]string{"job", "queue", "prune", "SQU-122", "--repo", tmp, "--state", "all", "--older-than", "24h", "--dry-run", "--format", "{{.ID}} {{.DryRun}}"})
+	if err := pruneAll.Execute(); err != nil {
+		t.Fatalf("job queue prune all dry-run: %v\nstderr=%s", err, allErr.String())
+	}
+	if got, want := strings.TrimSpace(allOut.String()), "q-job-old-pending true"; got != want {
+		t.Fatalf("prune all output = %q, want %q", got, want)
+	}
+}
+
 func TestJobQueueRejectsFormatCombinations(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -836,6 +973,54 @@ func TestJobQueueRejectsFormatCombinations(t *testing.T) {
 			var code ExitCode
 			if !errors.As(err, &code) || int(code) != 2 {
 				t.Fatalf("job queue err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestJobQueuePruneRejectsFormatCombinations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "format with json",
+			args: []string{"job", "queue", "prune", "SQU-122", "--format", "{{.ID}}", "--json"},
+			want: "--format cannot be combined with --json",
+		},
+		{
+			name: "invalid format",
+			args: []string{"job", "queue", "prune", "SQU-122", "--format", "{{"},
+			want: "invalid --format template",
+		},
+		{
+			name: "negative older than",
+			args: []string{"job", "queue", "prune", "SQU-122", "--older-than", "-1s"},
+			want: "--older-than must be >= 0",
+		},
+		{
+			name: "invalid state",
+			args: []string{"job", "queue", "prune", "SQU-122", "--state", "stuck"},
+			want: "--state must be dead, pending, or all",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("job queue prune validation succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("job queue prune err = %v, want exit code 2", err)
 			}
 			if !strings.Contains(stderr.String(), tc.want) {
 				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
