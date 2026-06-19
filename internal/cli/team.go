@@ -3016,6 +3016,7 @@ func newTeamHealthCmd() *cobra.Command {
 		includeJobs bool
 		quiet       bool
 		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -3025,6 +3026,15 @@ func newTeamHealthCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if quiet && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team health: choose one of --quiet or --json.")
+				return exitErr(2)
+			}
+			if format != "" && (quiet || jsonOut) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team health: --format cannot be combined with --quiet or --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseTeamHealthFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team health: %v\n", err)
 				return exitErr(2)
 			}
 			teamDir, err := resolveTeamDir(cmd, repo)
@@ -3037,7 +3047,7 @@ func newTeamHealthCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			if !quiet {
-				if err := renderTeamHealth(cmd.OutOrStdout(), snapshot, jsonOut); err != nil {
+				if err := renderTeamHealth(cmd.OutOrStdout(), snapshot, jsonOut, tmpl); err != nil {
 					return err
 				}
 			}
@@ -3051,6 +3061,7 @@ func newTeamHealthCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&includeJobs, "jobs", false, "Include team-owned job and pipeline health.")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team health as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render team health with a Go template, e.g. '{{.Team.Name}} {{.Health.Healthy}}'.")
 	return cmd
 }
 
@@ -5940,9 +5951,12 @@ func renderTeamStatus(w io.Writer, snapshot *teamStatusSnapshot, jsonOut bool) e
 	return nil
 }
 
-func renderTeamHealth(w io.Writer, snapshot *teamHealthSnapshot, jsonOut bool) error {
+func renderTeamHealth(w io.Writer, snapshot *teamHealthSnapshot, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(snapshot)
+	}
+	if tmpl != nil {
+		return renderTeamHealthFormat(w, snapshot, tmpl)
 	}
 	fmt.Fprintf(w, "Team: %s\n", snapshot.Team.Name)
 	if snapshot.Team.Description != "" {
@@ -5950,6 +5964,25 @@ func renderTeamHealth(w io.Writer, snapshot *teamHealthSnapshot, jsonOut bool) e
 	}
 	renderHealth(w, snapshot.Health)
 	return nil
+}
+
+func parseTeamHealthFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("team-health-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderTeamHealthFormat(w io.Writer, snapshot *teamHealthSnapshot, tmpl *template.Template) error {
+	if err := tmpl.Execute(w, snapshot); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 func renderTeamPlan(w io.Writer, snapshot *teamPlanSnapshot) {

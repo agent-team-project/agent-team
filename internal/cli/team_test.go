@@ -3987,19 +3987,52 @@ pipelines = ["ticket_to_pr"]
 	if defaultSnapshot.Health == nil || defaultSnapshot.Health.Queue.Quarantined != 1 || defaultSnapshot.Health.Queue.QuarantineRestorable != 1 || defaultSnapshot.Health.Queue.QuarantineUnrestorable != 0 || defaultSnapshot.Health.Jobs != nil {
 		t.Fatalf("default team health = %+v", defaultSnapshot.Health)
 	}
+
+	formatted := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatted.SetOut(formatOut)
+	formatted.SetErr(formatErr)
+	formatted.SetArgs([]string{"team", "health", "delivery", "--repo", root, "--jobs", "--format", "{{.Team.Name}} {{.Health.Healthy}} {{.Health.Jobs.Summary.Failed}} {{.Health.Queue.Dead}} {{.Health.Queue.Quarantined}}"})
+	if err := formatted.Execute(); err == nil {
+		t.Fatal("team health format unexpectedly succeeded")
+	} else if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("team health format err = %v, want exit 1\nstderr=%s", err, formatErr.String())
+	}
+	if got, want := formatOut.String(), "delivery false 1 1 1\n"; got != want {
+		t.Fatalf("team health format output = %q, want %q", got, want)
+	}
 }
 
-func TestTeamHealthQuietAndJSONConflict(t *testing.T) {
-	cmd := NewRootCmd()
-	stderr := &bytes.Buffer{}
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"team", "health", "delivery", "--quiet", "--json"})
-	if err := cmd.Execute(); err == nil {
-		t.Fatal("team health --quiet --json succeeded")
+func TestTeamHealthOutputValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"team", "health", "delivery", "--quiet", "--json"}, "choose one of --quiet or --json"},
+		{[]string{"team", "health", "delivery", "--format", "{{.Team.Name}}", "--json"}, "--format cannot be combined"},
+		{[]string{"team", "health", "delivery", "--format", "{{.Team.Name}}", "--quiet"}, "--format cannot be combined"},
+		{[]string{"team", "health", "delivery", "--format", "{{"}, "invalid --format template"},
 	}
-	if !strings.Contains(stderr.String(), "choose one of --quiet or --json") {
-		t.Fatalf("stderr = %q", stderr.String())
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("%v: err = %v, want exit 2", tc.args, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v: validation wrote stdout: %q", tc.args, out.String())
+		}
 	}
 }
 
