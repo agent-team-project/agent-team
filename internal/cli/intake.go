@@ -1,14 +1,19 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"text/template"
 	"time"
@@ -27,6 +32,7 @@ func newIntakeCmd() *cobra.Command {
 	cmd.AddCommand(newIntakeLinearCmd())
 	cmd.AddCommand(newIntakeGitHubCmd())
 	cmd.AddCommand(newIntakeScheduleCmd())
+	cmd.AddCommand(newIntakeServeCmd())
 	return cmd
 }
 
@@ -200,6 +206,189 @@ func newIntakeScheduleCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit normalized event and daemon outcome as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the intake result with a Go template, e.g. '{{.Event.Type}}'.")
 	return cmd
+}
+
+type intakeServeOptions struct {
+	DryRun              bool
+	PreviewTriggers     bool
+	GitHubReconcileJob  bool
+	GitHubCleanupMerged bool
+	MaxBodyBytes        int64
+}
+
+func newIntakeServeCmd() *cobra.Command {
+	var (
+		target string
+		addr   string
+		opts   intakeServeOptions
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Run a local HTTP listener for external webhook intake.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.PreviewTriggers && !opts.DryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake serve: --preview-triggers requires --dry-run.")
+				return exitErr(2)
+			}
+			if opts.GitHubCleanupMerged && !opts.GitHubReconcileJob {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake serve: --github-cleanup-merged requires --github-reconcile-job.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, target)
+			if err != nil {
+				return err
+			}
+			ln, err := net.Listen("tcp", addr)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake serve: listen %s: %v\n", addr, err)
+				return exitErr(1)
+			}
+			srv := &http.Server{
+				Handler:           newIntakeServeHandler(teamDir, opts),
+				ReadHeaderTimeout: 5 * time.Second,
+			}
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			errCh := make(chan error, 1)
+			go func() {
+				errCh <- srv.Serve(ln)
+			}()
+			fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake serve: listening on http://%s (POST /linear, POST /github, GET /healthz)\n", ln.Addr().String())
+			select {
+			case <-ctx.Done():
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := srv.Shutdown(shutdownCtx); err != nil {
+					return err
+				}
+				if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+					return err
+				}
+				return nil
+			case err := <-errCh:
+				if err != nil && !errors.Is(err, http.ErrServerClosed) {
+					return err
+				}
+				return nil
+			}
+		},
+	}
+	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
+	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8787", "Address for the webhook listener.")
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Normalize requests and return previews without publishing to the daemon.")
+	cmd.Flags().BoolVar(&opts.PreviewTriggers, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
+	cmd.Flags().BoolVar(&opts.GitHubReconcileJob, "github-reconcile-job", false, "For GitHub PR events, also reconcile the owning durable job.")
+	cmd.Flags().BoolVar(&opts.GitHubCleanupMerged, "github-cleanup-merged", false, "With --github-reconcile-job, remove the job-owned worktree and branch after a merged PR event.")
+	return cmd
+}
+
+func newIntakeServeHandler(teamDir string, opts intakeServeOptions) http.Handler {
+	if opts.MaxBodyBytes <= 0 {
+		opts.MaxBodyBytes = 1 << 20
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				writeIntakeServeError(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			writeIntakeServeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		case "/linear":
+			handleIntakeServeWebhook(w, r, teamDir, "linear", intake.NormalizeLinear, opts)
+		case "/github":
+			handleIntakeServeWebhook(w, r, teamDir, "github", intake.NormalizeGitHub, opts)
+		default:
+			writeIntakeServeError(w, http.StatusNotFound, "unknown intake endpoint")
+		}
+	})
+}
+
+func handleIntakeServeWebhook(w http.ResponseWriter, r *http.Request, teamDir, provider string, normalize func([]byte) (*intake.Event, error), opts intakeServeOptions) {
+	if r.Method != http.MethodPost {
+		writeIntakeServeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, opts.MaxBodyBytes))
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeIntakeServeError(w, http.StatusRequestEntityTooLarge, "payload too large")
+			return
+		}
+		writeIntakeServeError(w, http.StatusBadRequest, fmt.Sprintf("read request body: %v", err))
+		return
+	}
+	ev, err := normalize(body)
+	if err != nil {
+		writeIntakeServeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, status, err := processIntakeServeEvent(teamDir, provider, ev, opts)
+	if err != nil {
+		writeIntakeServeError(w, status, err.Error())
+		return
+	}
+	writeIntakeServeJSON(w, status, result)
+}
+
+func processIntakeServeEvent(teamDir, provider string, ev *intake.Event, opts intakeServeOptions) (*intakePublishResult, int, error) {
+	if opts.DryRun {
+		result := &intakePublishResult{Event: ev, DryRun: true}
+		if provider == "github" && opts.GitHubReconcileJob {
+			reconcile, cleanupPreview, err := previewGitHubIntakeJob(teamDir, ev, opts.GitHubCleanupMerged)
+			if err != nil {
+				return nil, http.StatusInternalServerError, err
+			}
+			result.Reconcile = reconcile
+			result.CleanupPreview = cleanupPreview
+		}
+		if opts.PreviewTriggers {
+			preview, err := previewEventPublish(teamDir, ev.Type, ev.Payload)
+			if err != nil {
+				return nil, http.StatusInternalServerError, err
+			}
+			result.Preview = preview
+		}
+		return result, http.StatusOK, nil
+	}
+
+	var reconcile *job.ReconcileResult
+	cleanup := ""
+	if provider == "github" && opts.GitHubReconcileJob {
+		if err := preflightIntakeDaemon(teamDir); err != nil {
+			return nil, http.StatusServiceUnavailable, err
+		}
+		var err error
+		reconcile, cleanup, err = reconcileGitHubIntakeJob(teamDir, ev, opts.GitHubCleanupMerged)
+		if err != nil {
+			return nil, http.StatusInternalServerError, err
+		}
+	}
+	dc, err := newDaemonClient(teamDir)
+	if err != nil {
+		if errors.Is(err, errDaemonNotRunning) {
+			return nil, http.StatusServiceUnavailable, errors.New("agent-team intake: daemon is not running — start it first with `agent-team daemon start`")
+		}
+		return nil, http.StatusInternalServerError, err
+	}
+	outcome, err := dc.PublishEvent(ev.Type, ev.Payload)
+	if err != nil {
+		return nil, http.StatusBadGateway, err
+	}
+	return &intakePublishResult{Event: ev, Outcome: outcome, Reconcile: reconcile, Cleanup: cleanup}, http.StatusOK, nil
+}
+
+func writeIntakeServeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeIntakeServeError(w http.ResponseWriter, status int, message string) {
+	writeIntakeServeJSON(w, status, map[string]string{"error": message})
 }
 
 func intakePayload(payload, payloadFile string) ([]byte, error) {

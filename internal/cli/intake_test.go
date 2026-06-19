@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,6 +169,116 @@ target = "manager"
 	}
 	if _, err := job.Read(teamDir, "squ-105"); !os.IsNotExist(err) {
 		t.Fatalf("dry-run preview wrote job, err=%v", err)
+	}
+}
+
+func TestIntakeServeLinearDryRunPreview(t *testing.T) {
+	target := t.TempDir()
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.manager]
+agent = "manager"
+
+[[instances.manager.triggers]]
+event = "ticket.created"
+
+[pipelines.ticket_triage]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_triage.steps]]
+id = "triage"
+target = "manager"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := `{"action":"Issue created","data":{"identifier":"SQU-201","title":"Preview server intake"}}`
+	req := httptest.NewRequest(http.MethodPost, "/linear", strings.NewReader(payload))
+	rec := httptest.NewRecorder()
+	newIntakeServeHandler(teamDir, intakeServeOptions{DryRun: true, PreviewTriggers: true}).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var result intakePublishResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode server dry-run response: %v\nbody=%s", err, rec.Body.String())
+	}
+	if !result.DryRun || result.Event == nil || result.Event.Type != "ticket.created" || result.Event.Payload["ticket"] != "SQU-201" {
+		t.Fatalf("server dry-run result = %+v", result)
+	}
+	if result.Preview == nil || len(result.Preview.Matched) != 1 || result.Preview.Matched[0] != "manager" {
+		t.Fatalf("server trigger preview = %+v", result.Preview)
+	}
+	if len(result.Preview.Pipelines) != 1 || result.Preview.Pipelines[0] != "ticket_triage" {
+		t.Fatalf("server pipeline preview = %+v", result.Preview)
+	}
+	if _, err := job.Read(teamDir, "squ-201"); !os.IsNotExist(err) {
+		t.Fatalf("dry-run server wrote job, err=%v", err)
+	}
+}
+
+func TestIntakeServeLinearPublishes(t *testing.T) {
+	target, _, cleanup := setupIntakePipelineRepo(t)
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+
+	payload := `{"action":"Issue created","data":{"identifier":"SQU-202","url":"https://linear.app/squirtlesquad/issue/SQU-202/server-intake","title":"Server intake"}}`
+	req := httptest.NewRequest(http.MethodPost, "/linear", strings.NewReader(payload))
+	rec := httptest.NewRecorder()
+	newIntakeServeHandler(teamDir, intakeServeOptions{}).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var result intakePublishResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode server publish response: %v\nbody=%s", err, rec.Body.String())
+	}
+	if result.Event == nil || result.Event.Type != "ticket.created" {
+		t.Fatalf("event = %+v", result.Event)
+	}
+	if result.Outcome == nil || len(result.Outcome.Messaged) != 1 || result.Outcome.Messaged[0] != "manager" {
+		t.Fatalf("outcome = %+v", result.Outcome)
+	}
+	j, err := job.Read(teamDir, "squ-202")
+	if err != nil {
+		t.Fatalf("read server-created job: %v", err)
+	}
+	if j.Pipeline != "ticket_triage" || j.TicketURL != "https://linear.app/squirtlesquad/issue/SQU-202/server-intake" {
+		t.Fatalf("server-created job = %+v", j)
+	}
+}
+
+func TestIntakeServeErrors(t *testing.T) {
+	handler := newIntakeServeHandler(t.TempDir(), intakeServeOptions{DryRun: true})
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		status int
+	}{
+		{name: "method", method: http.MethodGet, path: "/linear", status: http.StatusMethodNotAllowed},
+		{name: "unknown", method: http.MethodPost, path: "/unknown", status: http.StatusNotFound},
+		{name: "payload", method: http.MethodPost, path: "/linear", body: `{`, status: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.status {
+				t.Fatalf("status = %d, want %d body=%s", rec.Code, tc.status, rec.Body.String())
+			}
+			var body map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode error response: %v\nbody=%s", err, rec.Body.String())
+			}
+			if body["error"] == "" {
+				t.Fatalf("missing error body: %+v", body)
+			}
+		})
 	}
 }
 
