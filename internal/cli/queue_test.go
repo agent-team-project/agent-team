@@ -401,6 +401,36 @@ func TestQueueQuarantineListAndRestore(t *testing.T) {
 		t.Fatalf("invalid item = %+v", invalid)
 	}
 
+	show := NewRootCmd()
+	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
+	show.SetOut(showOut)
+	show.SetErr(showErr)
+	show.SetArgs([]string{"queue", "quarantine", "show", "--target", tmp, "--json", restorable.Path})
+	if err := show.Execute(); err != nil {
+		t.Fatalf("queue quarantine show json: %v\nstderr=%s", err, showErr.String())
+	}
+	var shown queueQuarantineShowResult
+	if err := json.Unmarshal(showOut.Bytes(), &shown); err != nil {
+		t.Fatalf("decode quarantine show json: %v\nbody=%s", err, showOut.String())
+	}
+	if shown.ID != "stored-id" || shown.QueueItem == nil || shown.QueueItem.Payload["ticket"] != "SQU-132" {
+		t.Fatalf("shown quarantine = %+v", shown)
+	}
+
+	showText := NewRootCmd()
+	showTextOut, showTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showText.SetOut(showTextOut)
+	showText.SetErr(showTextErr)
+	showText.SetArgs([]string{"queue", "quarantine", "show", "--target", tmp, restorable.Path})
+	if err := showText.Execute(); err != nil {
+		t.Fatalf("queue quarantine show text: %v\nstderr=%s", err, showTextErr.String())
+	}
+	for _, want := range []string{"Path:", "stored-id", "Actions:", "agent-team queue quarantine restore", "Payload:", "SQU-132"} {
+		if !strings.Contains(showTextOut.String(), want) {
+			t.Fatalf("queue quarantine show text missing %q:\n%s", want, showTextOut.String())
+		}
+	}
+
 	dry := NewRootCmd()
 	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dry.SetOut(dryOut)

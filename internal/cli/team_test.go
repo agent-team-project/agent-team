@@ -1985,6 +1985,34 @@ instances = ["other"]
 		t.Fatalf("team queue quarantine text =\n%s", quarantineTextOut.String())
 	}
 
+	showQuarantine := NewRootCmd()
+	showQuarantineOut, showQuarantineErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showQuarantine.SetOut(showQuarantineOut)
+	showQuarantine.SetErr(showQuarantineErr)
+	showQuarantine.SetArgs([]string{"team", "queue", "quarantine", "show", "delivery", teamQuarantinePath, "--repo", root, "--json"})
+	if err := showQuarantine.Execute(); err != nil {
+		t.Fatalf("team queue quarantine show: %v\nstderr=%s", err, showQuarantineErr.String())
+	}
+	var shownQuarantine queueQuarantineShowResult
+	if err := json.Unmarshal(showQuarantineOut.Bytes(), &shownQuarantine); err != nil {
+		t.Fatalf("decode team queue quarantine show: %v\nbody=%s", err, showQuarantineOut.String())
+	}
+	if shownQuarantine.Team != "delivery" || shownQuarantine.ID != "q-team-quarantined" || shownQuarantine.QueueItem == nil {
+		t.Fatalf("shown team queue quarantine = %+v", shownQuarantine)
+	}
+
+	showQuarantineText := NewRootCmd()
+	showQuarantineTextOut, showQuarantineTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showQuarantineText.SetOut(showQuarantineTextOut)
+	showQuarantineText.SetErr(showQuarantineTextErr)
+	showQuarantineText.SetArgs([]string{"team", "queue", "quarantine", "show", "delivery", teamQuarantinePath, "--repo", root})
+	if err := showQuarantineText.Execute(); err != nil {
+		t.Fatalf("team queue quarantine show text: %v\nstderr=%s", err, showQuarantineTextErr.String())
+	}
+	if !strings.Contains(showQuarantineTextOut.String(), "agent-team team queue quarantine restore delivery") || strings.Contains(showQuarantineTextOut.String(), "q-other-quarantined") {
+		t.Fatalf("team queue quarantine show text =\n%s", showQuarantineTextOut.String())
+	}
+
 	restoreDry := NewRootCmd()
 	restoreDryOut, restoreDryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restoreDry.SetOut(restoreDryOut)

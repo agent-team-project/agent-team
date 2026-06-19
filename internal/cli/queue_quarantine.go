@@ -53,6 +53,12 @@ type queueQuarantineDropResult struct {
 	Dropped    bool   `json:"dropped,omitempty"`
 }
 
+type queueQuarantineShowResult struct {
+	queueQuarantineItem
+	Team      string            `json:"team,omitempty"`
+	QueueItem *daemon.QueueItem `json:"queue_item,omitempty"`
+}
+
 func newQueueQuarantineCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "quarantine",
@@ -60,6 +66,7 @@ func newQueueQuarantineCmd() *cobra.Command {
 		Long:  "Inspect queue files moved under `.agent_team/daemon/queue/quarantine/`, restore validated entries to the active queue, or explicitly drop preserved files.",
 	}
 	cmd.AddCommand(newQueueQuarantineLsCmd())
+	cmd.AddCommand(newQueueQuarantineShowCmd())
 	cmd.AddCommand(newQueueQuarantineRestoreCmd())
 	cmd.AddCommand(newQueueQuarantineDropCmd())
 	return cmd
@@ -90,6 +97,34 @@ func newQueueQuarantineLsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit quarantined queue files as JSON.")
+	return cmd
+}
+
+func newQueueQuarantineShowCmd() *cobra.Command {
+	var (
+		target  string
+		jsonOut bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "show <quarantine-path>",
+		Short: "Show one quarantined queue file.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			teamDir, err := resolveTeamDir(cmd, target)
+			if err != nil {
+				return err
+			}
+			result, err := showQueueQuarantine(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine show: %v\n", err)
+				return exitErr(1)
+			}
+			return renderQueueQuarantineShow(cmd.OutOrStdout(), result, jsonOut)
+		},
+	}
+	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the quarantined queue file as JSON.")
 	return cmd
 }
 
@@ -348,6 +383,37 @@ func validateQueueQuarantineRestore(item daemon.QueueItem) error {
 	return nil
 }
 
+func showQueueQuarantine(teamDir, rawPath string) (queueQuarantineShowResult, error) {
+	queueRoot := daemon.QueueRoot(daemon.DaemonRoot(teamDir))
+	rel, err := normalizeQueueQuarantinePath(rawPath)
+	if err != nil {
+		return queueQuarantineShowResult{}, err
+	}
+	item, err := inspectQueueQuarantineFile(queueRoot, rel)
+	if err != nil {
+		return queueQuarantineShowResult{}, err
+	}
+	result := queueQuarantineShowResult{queueQuarantineItem: item}
+	source, err := queueDoctorSafeQueuePath(queueRoot, item.Path)
+	if err != nil {
+		return result, nil
+	}
+	body, err := os.ReadFile(source)
+	if err != nil {
+		return result, nil
+	}
+	var raw daemon.QueueItem
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return result, nil
+	}
+	if strings.TrimSpace(raw.ID) == "" {
+		raw.ID = strings.TrimSuffix(filepath.Base(item.Path), ".json")
+	}
+	raw.State = item.State
+	result.QueueItem = &raw
+	return result, nil
+}
+
 func restoreQueueQuarantine(teamDir, rawPath string, dryRun, force bool) (queueQuarantineRestoreResult, error) {
 	queueRoot := daemon.QueueRoot(daemon.DaemonRoot(teamDir))
 	rel, err := normalizeQueueQuarantinePath(rawPath)
@@ -539,6 +605,57 @@ func renderQueueQuarantineRestore(w io.Writer, result queueQuarantineRestoreResu
 		fmt.Fprintf(w, "Restored %s -> %s\n", result.Path, result.Destination)
 	}
 	return nil
+}
+
+func renderQueueQuarantineShow(w io.Writer, result queueQuarantineShowResult, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(result)
+	}
+	fmt.Fprintf(w, "Path:        %s\n", result.Path)
+	fmt.Fprintf(w, "State:       %s\n", emptyDash(result.State))
+	fmt.Fprintf(w, "ID:          %s\n", emptyDash(result.ID))
+	fmt.Fprintf(w, "Event:       %s\n", emptyDash(result.EventType))
+	fmt.Fprintf(w, "Instance:    %s\n", emptyDash(result.Instance))
+	fmt.Fprintf(w, "Instance ID: %s\n", emptyDash(result.InstanceID))
+	fmt.Fprintf(w, "Job:         %s\n", emptyDash(result.Job))
+	fmt.Fprintf(w, "Restore:     %s\n", emptyDash(result.RestorePath))
+	fmt.Fprintf(w, "Restorable:  %s\n", queueQuarantineRestorableText(result.Restorable))
+	fmt.Fprintf(w, "Size:        %d\n", result.Size)
+	if !result.ModTime.IsZero() {
+		fmt.Fprintf(w, "Modified:    %s\n", result.ModTime.Format(time.RFC3339))
+	}
+	if result.Problem != "" {
+		fmt.Fprintf(w, "Problem:     %s\n", result.Problem)
+	}
+	if actions := queueQuarantineShowActions(result); len(actions) > 0 {
+		fmt.Fprintln(w, "Actions:")
+		for _, action := range actions {
+			fmt.Fprintf(w, "  %s\n", action)
+		}
+	}
+	if result.QueueItem != nil && len(result.QueueItem.Payload) > 0 {
+		body, _ := json.MarshalIndent(result.QueueItem.Payload, "", "  ")
+		fmt.Fprintf(w, "Payload:\n%s\n", string(body))
+	}
+	return nil
+}
+
+func queueQuarantineShowActions(result queueQuarantineShowResult) []string {
+	if result.Path == "" {
+		return nil
+	}
+	var prefix string
+	if result.Team != "" {
+		prefix = fmt.Sprintf("agent-team team queue quarantine %%s %s %s", result.Team, result.Path)
+	} else {
+		prefix = fmt.Sprintf("agent-team queue quarantine %%s %s", result.Path)
+	}
+	actions := []string{}
+	if result.Restorable {
+		actions = append(actions, fmt.Sprintf(prefix, "restore"))
+	}
+	actions = append(actions, fmt.Sprintf(prefix, "drop"))
+	return actions
 }
 
 func renderQueueQuarantineDrop(w io.Writer, results []queueQuarantineDropResult, jsonOut bool) error {

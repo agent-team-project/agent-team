@@ -964,8 +964,43 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "Filter by event type; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Filter by job id or ticket; repeat or comma-separate values.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team-owned quarantined queue files as JSON.")
+	cmd.AddCommand(newTeamQueueQuarantineShowCmd())
 	cmd.AddCommand(newTeamQueueQuarantineRestoreCmd())
 	cmd.AddCommand(newTeamQueueQuarantineDropCmd())
+	return cmd
+}
+
+func newTeamQueueQuarantineShowCmd() *cobra.Command {
+	var (
+		repo    string
+		jsonOut bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "show <team> <quarantine-path>",
+		Short: "Show one team-owned quarantined queue file.",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			item, err := readTeamQueueQuarantineItem(teamDir, args[0], args[1])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine show: %v\n", err)
+				return exitErr(1)
+			}
+			result, err := showQueueQuarantine(teamDir, item.Path)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine show: %v\n", err)
+				return exitErr(1)
+			}
+			result.Team = args[0]
+			return renderQueueQuarantineShow(cmd.OutOrStdout(), result, jsonOut)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the team-owned quarantined queue file as JSON.")
 	return cmd
 }
 
