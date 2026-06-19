@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -220,6 +221,52 @@ func TestQueueDoctorReportsPersistedQueueProblems(t *testing.T) {
 	for _, want := range []string{"agent-team queue doctor: problems found", "bad-json.json is not valid JSON", "duplicates queue id"} {
 		if !strings.Contains(textErr.String(), want) {
 			t.Fatalf("queue doctor text missing %q:\nstdout=%s\nstderr=%s", want, textOut.String(), textErr.String())
+		}
+	}
+
+	format := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	format.SetOut(formatOut)
+	format.SetErr(formatErr)
+	format.SetArgs([]string{"queue", "doctor", "--target", tmp, "--format", "{{.OK}} {{.Summary.Files}} {{len .Problems}}"})
+	if err := format.Execute(); err == nil {
+		t.Fatal("queue doctor format succeeded unexpectedly")
+	}
+	if got, want := formatOut.String(), "false 5 5\n"; got != want {
+		t.Fatalf("queue doctor format output = %q, want %q", got, want)
+	}
+	if formatErr.Len() != 0 {
+		t.Fatalf("queue doctor format stderr = %q", formatErr.String())
+	}
+}
+
+func TestQueueDoctorFormatValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"queue", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
+		{[]string{"queue", "doctor", "--format", "{{"}, "invalid --format template"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("%v: err = %v, want exit 2", tc.args, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v: validation wrote stdout: %q", tc.args, out.String())
 		}
 	}
 }

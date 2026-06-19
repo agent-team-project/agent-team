@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
@@ -70,6 +71,7 @@ func newQueueDoctorCmd() *cobra.Command {
 	var (
 		target     string
 		jsonOut    bool
+		format     string
 		quarantine bool
 		dryRun     bool
 	)
@@ -80,8 +82,17 @@ func newQueueDoctorCmd() *cobra.Command {
 		Long:  "Validate persisted daemon queue files without relying on normal queue listing paths.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue doctor: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
 			if dryRun && !quarantine {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue doctor: --dry-run requires --quarantine.")
+				return exitErr(2)
+			}
+			tmpl, err := parseQueueDoctorFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue doctor: %v\n", err)
 				return exitErr(2)
 			}
 			teamDir, err := resolveTeamDir(cmd, target)
@@ -110,7 +121,7 @@ func newQueueDoctorCmd() *cobra.Command {
 					result = refreshed
 				}
 			}
-			if err := renderQueueDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut); err != nil {
+			if err := renderQueueDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, tmpl); err != nil {
 				return err
 			}
 			if !result.OK && !quarantine {
@@ -124,6 +135,7 @@ func newQueueDoctorCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit queue doctor findings as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the queue doctor result with a Go template, e.g. '{{.OK}} {{.Summary.Invalid}}'.")
 	cmd.Flags().BoolVar(&quarantine, "quarantine", false, "Move queue files with doctor problems out of the active queue.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "With --quarantine, preview files that would be moved.")
 	return cmd
@@ -390,11 +402,14 @@ func queueDoctorActions(result queueDoctorResult) []string {
 	return []string{"agent-team queue doctor --quarantine --dry-run", "agent-team queue doctor --json", "agent-team snapshot --json"}
 }
 
-func renderQueueDoctor(stdout, stderr io.Writer, result queueDoctorResult, jsonOut bool) error {
+func renderQueueDoctor(stdout, stderr io.Writer, result queueDoctorResult, jsonOut bool, tmpl *template.Template) error {
 	sortQueueDoctorFindings(result.Problems)
 	sortQueueDoctorFindings(result.Warnings)
 	if jsonOut {
 		return json.NewEncoder(stdout).Encode(result)
+	}
+	if tmpl != nil {
+		return renderQueueDoctorFormat(stdout, result, tmpl)
 	}
 	if result.OK {
 		fmt.Fprintln(stdout, "agent-team queue doctor: OK")
@@ -420,6 +435,25 @@ func renderQueueDoctor(stdout, stderr io.Writer, result queueDoctorResult, jsonO
 	}
 	renderQueueDoctorQuarantine(stdout, result.Quarantine)
 	return nil
+}
+
+func parseQueueDoctorFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("queue-doctor-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderQueueDoctorFormat(w io.Writer, result queueDoctorResult, tmpl *template.Template) error {
+	if err := tmpl.Execute(w, result); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 func renderQueueDoctorSummary(w io.Writer, summary queueDoctorSummary) {
