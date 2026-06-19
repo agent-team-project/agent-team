@@ -401,6 +401,50 @@ func TestQueueQuarantineListAndRestore(t *testing.T) {
 		t.Fatalf("invalid item = %+v", invalid)
 	}
 
+	filtered := NewRootCmd()
+	filteredOut, filteredErr := &bytes.Buffer{}, &bytes.Buffer{}
+	filtered.SetOut(filteredOut)
+	filtered.SetErr(filteredErr)
+	filtered.SetArgs([]string{"queue", "quarantine", "ls", "--target", tmp, "--state", "pending", "--instance", "worker", "--event-type", "agent.dispatch", "--job", "SQU-132", "--restorable", "--json"})
+	if err := filtered.Execute(); err != nil {
+		t.Fatalf("queue quarantine filtered ls: %v\nstderr=%s", err, filteredErr.String())
+	}
+	var filteredItems []queueQuarantineItem
+	if err := json.Unmarshal(filteredOut.Bytes(), &filteredItems); err != nil {
+		t.Fatalf("decode filtered quarantine ls: %v\nbody=%s", err, filteredOut.String())
+	}
+	if len(filteredItems) != 1 || filteredItems[0].ID != "stored-id" || !filteredItems[0].Restorable {
+		t.Fatalf("filtered quarantined items = %+v", filteredItems)
+	}
+
+	unrestorable := NewRootCmd()
+	unrestorableOut, unrestorableErr := &bytes.Buffer{}, &bytes.Buffer{}
+	unrestorable.SetOut(unrestorableOut)
+	unrestorable.SetErr(unrestorableErr)
+	unrestorable.SetArgs([]string{"queue", "quarantine", "ls", "--target", tmp, "--unrestorable", "--json"})
+	if err := unrestorable.Execute(); err != nil {
+		t.Fatalf("queue quarantine unrestorable ls: %v\nstderr=%s", err, unrestorableErr.String())
+	}
+	var unrestorableItems []queueQuarantineItem
+	if err := json.Unmarshal(unrestorableOut.Bytes(), &unrestorableItems); err != nil {
+		t.Fatalf("decode unrestorable quarantine ls: %v\nbody=%s", err, unrestorableOut.String())
+	}
+	if len(unrestorableItems) != 1 || unrestorableItems[0].Restorable || !strings.Contains(unrestorableItems[0].Path, "bad-json.json") {
+		t.Fatalf("unrestorable quarantined items = %+v", unrestorableItems)
+	}
+
+	conflict := NewRootCmd()
+	conflictOut, conflictErr := &bytes.Buffer{}, &bytes.Buffer{}
+	conflict.SetOut(conflictOut)
+	conflict.SetErr(conflictErr)
+	conflict.SetArgs([]string{"queue", "quarantine", "ls", "--target", tmp, "--restorable", "--unrestorable"})
+	if err := conflict.Execute(); err == nil {
+		t.Fatalf("queue quarantine conflicting restorable filters succeeded: stdout=%s", conflictOut.String())
+	}
+	if !strings.Contains(conflictErr.String(), "--restorable and --unrestorable cannot be combined") {
+		t.Fatalf("conflict stderr = %q", conflictErr.String())
+	}
+
 	show := NewRootCmd()
 	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
 	show.SetOut(showOut)

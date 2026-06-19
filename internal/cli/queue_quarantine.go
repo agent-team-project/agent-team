@@ -74,8 +74,14 @@ func newQueueQuarantineCmd() *cobra.Command {
 
 func newQueueQuarantineLsCmd() *cobra.Command {
 	var (
-		target  string
-		jsonOut bool
+		target       string
+		stateFilter  string
+		instances    []string
+		eventTypes   []string
+		jobs         []string
+		restorable   bool
+		unrestorable bool
+		jsonOut      bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -83,6 +89,15 @@ func newQueueQuarantineLsCmd() *cobra.Command {
 		Short: "List quarantined queue files.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if restorable && unrestorable {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine ls: --restorable and --unrestorable cannot be combined.")
+				return exitErr(2)
+			}
+			filters, err := parseQueueListFilters(stateFilter, instances, eventTypes, jobs, false, time.Now().UTC())
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine ls: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -92,10 +107,18 @@ func newQueueQuarantineLsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine ls: %v\n", err)
 				return exitErr(1)
 			}
+			items = filterQueueQuarantineItems(items, filters)
+			items = filterQueueQuarantineRestorable(items, restorable, unrestorable)
 			return renderQueueQuarantineList(cmd.OutOrStdout(), items, jsonOut)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
+	cmd.Flags().StringVar(&stateFilter, "state", "", "Filter by queue state: pending or dead.")
+	cmd.Flags().StringSliceVar(&instances, "instance", nil, "Filter by target instance name; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "Filter by event type; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Filter by job id or ticket; repeat or comma-separate values.")
+	cmd.Flags().BoolVar(&restorable, "restorable", false, "Only show quarantined files that can be restored.")
+	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "Only show quarantined files that cannot be restored.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit quarantined queue files as JSON.")
 	return cmd
 }
@@ -340,6 +363,23 @@ func filterQueueQuarantineItems(items []queueQuarantineItem, filters queueListFi
 			continue
 		}
 		if filters.readyOnly && item.State != daemon.QueueStatePending {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func filterQueueQuarantineRestorable(items []queueQuarantineItem, restorableOnly, unrestorableOnly bool) []queueQuarantineItem {
+	if !restorableOnly && !unrestorableOnly {
+		return items
+	}
+	out := make([]queueQuarantineItem, 0, len(items))
+	for _, item := range items {
+		if restorableOnly && !item.Restorable {
+			continue
+		}
+		if unrestorableOnly && item.Restorable {
 			continue
 		}
 		out = append(out, item)
