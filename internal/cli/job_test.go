@@ -2859,6 +2859,89 @@ func TestJobDispatchRecordsWorktreeAndCleanup(t *testing.T) {
 	}
 }
 
+func TestJobCleanupCanForceDeleteUnmergedBranch(t *testing.T) {
+	target := t.TempDir()
+	initInto(t, target)
+	initGitRepoForJobTest(t, target)
+	teamDir := filepath.Join(target, ".agent_team")
+	branch := "worktree-worker-squ-46-force"
+	runGitForJobTest(t, target, "checkout", "-b", branch)
+	if err := os.WriteFile(filepath.Join(target, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitForJobTest(t, target, "add", "feature.txt")
+	runGitForJobTest(t, target, "commit", "-m", "feature")
+	runGitForJobTest(t, target, "checkout", "main")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-46",
+		Ticket:    "SQU-46",
+		Target:    "worker",
+		Status:    job.StatusDone,
+		Branch:    branch,
+		PR:        "https://github.com/acme/repo/pull/46",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	preview := NewRootCmd()
+	previewOut, previewErr := &bytes.Buffer{}, &bytes.Buffer{}
+	preview.SetOut(previewOut)
+	preview.SetErr(previewErr)
+	preview.SetArgs([]string{"job", "cleanup", "squ-46", "--repo", target, "--dry-run", "--force-branch", "--json"})
+	if err := preview.Execute(); err != nil {
+		t.Fatalf("job cleanup force preview: %v\nstderr=%s", err, previewErr.String())
+	}
+	var previewResult jobCleanupPreview
+	if err := json.Unmarshal(previewOut.Bytes(), &previewResult); err != nil {
+		t.Fatalf("decode cleanup force preview: %v\nbody=%s", err, previewOut.String())
+	}
+	if !previewResult.ForceBranch || previewResult.BranchDeleteMode != "force_delete" || !previewResult.WouldRemoveBranch || previewResult.Summary != "would remove branch (force)" {
+		t.Fatalf("force cleanup preview = %+v", previewResult)
+	}
+
+	safe := NewRootCmd()
+	safeOut, safeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	safe.SetOut(safeOut)
+	safe.SetErr(safeErr)
+	safe.SetArgs([]string{"job", "cleanup", "squ-46", "--repo", target, "--merged", "--json"})
+	if err := safe.Execute(); err == nil {
+		t.Fatalf("safe cleanup unexpectedly deleted unmerged branch: stdout=%s", safeOut.String())
+	}
+	if !branchExists(t, target, branch) {
+		t.Fatalf("safe cleanup removed branch %s", branch)
+	}
+	stillOwned, err := job.Read(teamDir, "squ-46")
+	if err != nil {
+		t.Fatalf("read job after safe cleanup failure: %v", err)
+	}
+	if stillOwned.Branch != branch {
+		t.Fatalf("safe cleanup mutated job = %+v", stillOwned)
+	}
+
+	force := NewRootCmd()
+	forceOut, forceErr := &bytes.Buffer{}, &bytes.Buffer{}
+	force.SetOut(forceOut)
+	force.SetErr(forceErr)
+	force.SetArgs([]string{"job", "cleanup", "squ-46", "--repo", target, "--merged", "--force-branch", "--json"})
+	if err := force.Execute(); err != nil {
+		t.Fatalf("force cleanup: %v\nstderr=%s", err, forceErr.String())
+	}
+	var cleaned job.Job
+	if err := json.Unmarshal(forceOut.Bytes(), &cleaned); err != nil {
+		t.Fatalf("decode force cleanup: %v\nbody=%s", err, forceOut.String())
+	}
+	if cleaned.Branch != "" || !strings.Contains(cleaned.LastStatus, "branch (force)") {
+		t.Fatalf("cleaned job = %+v", cleaned)
+	}
+	if branchExists(t, target, branch) {
+		t.Fatalf("branch %s still exists after force cleanup", branch)
+	}
+}
+
 func TestJobReconcileGitHubMergedCleansOwnedWorktree(t *testing.T) {
 	target, mgr, cleanup := setupDispatchCommandRepo(t)
 	defer cleanup()

@@ -1428,11 +1428,12 @@ func newJobReopenCmd() *cobra.Command {
 
 func newJobCleanupCmd() *cobra.Command {
 	var (
-		repo    string
-		merged  bool
-		dryRun  bool
-		jsonOut bool
-		format  string
+		repo        string
+		merged      bool
+		forceBranch bool
+		dryRun      bool
+		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1463,7 +1464,7 @@ func newJobCleanupCmd() *cobra.Command {
 			}
 			repoRoot := filepath.Dir(teamDir)
 			if dryRun {
-				preview, err := previewJobCleanup(repoRoot, j)
+				preview, err := previewJobCleanup(repoRoot, j, forceBranch)
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job cleanup: %v\n", err)
 					return exitErr(1)
@@ -1474,7 +1475,7 @@ func newJobCleanupCmd() *cobra.Command {
 				renderJobCleanupPreview(cmd.OutOrStdout(), preview)
 				return nil
 			}
-			summary, err := cleanupJobOwnedWorktree(repoRoot, j)
+			summary, err := cleanupJobOwnedWorktree(repoRoot, j, forceBranch)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job cleanup: %v\n", err)
 				return exitErr(1)
@@ -1499,6 +1500,7 @@ func newJobCleanupCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&merged, "merged", false, "Confirm the job's PR has merged before removing its worktree and branch.")
+	cmd.Flags().BoolVar(&forceBranch, "force-branch", false, "With --merged, delete the job branch with git branch -D if it is not locally merged.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the job-owned worktree and branch cleanup without removing anything.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.LastStatus}}'.")
@@ -2039,14 +2041,14 @@ func newJobReconcileGitHubCmd() *cobra.Command {
 			if cleanupMerged && result.Job.Status == job.StatusDone {
 				repoRoot := filepath.Dir(teamDir)
 				if dryRun {
-					preview, err := previewJobCleanup(repoRoot, result.Job)
+					preview, err := previewJobCleanup(repoRoot, result.Job, false)
 					if err != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reconcile github: %v\n", err)
 						return exitErr(1)
 					}
 					cleanupPreview = &preview
 				} else {
-					cleanupSummary, err = cleanupJobOwnedWorktree(repoRoot, result.Job)
+					cleanupSummary, err = cleanupJobOwnedWorktree(repoRoot, result.Job, false)
 					if err != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reconcile github: %v\n", err)
 						return exitErr(1)
@@ -2337,6 +2339,8 @@ type jobCleanupPreview struct {
 	JobID               string `json:"job_id"`
 	Worktree            string `json:"worktree,omitempty"`
 	Branch              string `json:"branch,omitempty"`
+	ForceBranch         bool   `json:"force_branch,omitempty"`
+	BranchDeleteMode    string `json:"branch_delete_mode,omitempty"`
 	WorktreeExists      bool   `json:"worktree_exists"`
 	BranchExists        bool   `json:"branch_exists"`
 	WouldRemoveWorktree bool   `json:"would_remove_worktree"`
@@ -4487,12 +4491,13 @@ func renderJobNextResult(w io.Writer, res jobNextResult, jsonOut bool, tmpl *tem
 	return nil
 }
 
-func previewJobCleanup(repoRoot string, j *job.Job) (jobCleanupPreview, error) {
+func previewJobCleanup(repoRoot string, j *job.Job, forceBranch bool) (jobCleanupPreview, error) {
 	preview := jobCleanupPreview{
-		JobID:    j.ID,
-		Worktree: strings.TrimSpace(j.Worktree),
-		Branch:   strings.TrimSpace(j.Branch),
-		DryRun:   true,
+		JobID:       j.ID,
+		Worktree:    strings.TrimSpace(j.Worktree),
+		Branch:      strings.TrimSpace(j.Branch),
+		ForceBranch: forceBranch,
+		DryRun:      true,
 	}
 	if preview.Worktree != "" {
 		if err := validateJobOwnedWorktree(repoRoot, preview.Worktree); err != nil {
@@ -4506,6 +4511,7 @@ func previewJobCleanup(repoRoot string, j *job.Job) (jobCleanupPreview, error) {
 		preview.WouldRemoveWorktree = exists
 	}
 	if preview.Branch != "" {
+		preview.BranchDeleteMode = jobCleanupBranchDeleteMode(forceBranch)
 		exists, err := gitBranchExists(repoRoot, preview.Branch)
 		if err != nil {
 			return preview, err
@@ -4523,12 +4529,26 @@ func jobCleanupPreviewSummary(preview jobCleanupPreview) string {
 		wouldRemove = append(wouldRemove, "worktree")
 	}
 	if preview.WouldRemoveBranch {
-		wouldRemove = append(wouldRemove, "branch")
+		wouldRemove = append(wouldRemove, jobCleanupRemovedBranchSummary(preview.ForceBranch))
 	}
 	if len(wouldRemove) == 0 {
 		return "nothing to clean"
 	}
 	return "would remove " + strings.Join(wouldRemove, " and ")
+}
+
+func jobCleanupBranchDeleteMode(force bool) string {
+	if force {
+		return "force_delete"
+	}
+	return "safe_delete"
+}
+
+func jobCleanupRemovedBranchSummary(force bool) string {
+	if force {
+		return "branch (force)"
+	}
+	return "branch"
 }
 
 func renderJobCleanupPreview(w io.Writer, preview jobCleanupPreview) {
@@ -4537,11 +4557,12 @@ func renderJobCleanupPreview(w io.Writer, preview jobCleanupPreview) {
 		fmt.Fprintf(w, "Worktree: %s exists=%s remove=%s\n", preview.Worktree, yesNo(preview.WorktreeExists), yesNo(preview.WouldRemoveWorktree))
 	}
 	if preview.Branch != "" {
-		fmt.Fprintf(w, "Branch:   %s exists=%s remove=%s\n", preview.Branch, yesNo(preview.BranchExists), yesNo(preview.WouldRemoveBranch))
+		mode := emptyDash(preview.BranchDeleteMode)
+		fmt.Fprintf(w, "Branch:   %s exists=%s remove=%s mode=%s\n", preview.Branch, yesNo(preview.BranchExists), yesNo(preview.WouldRemoveBranch), mode)
 	}
 }
 
-func cleanupJobOwnedWorktree(repoRoot string, j *job.Job) (string, error) {
+func cleanupJobOwnedWorktree(repoRoot string, j *job.Job, forceBranch bool) (string, error) {
 	if strings.TrimSpace(j.Worktree) == "" && strings.TrimSpace(j.Branch) == "" {
 		return "nothing to clean", nil
 	}
@@ -4565,10 +4586,14 @@ func cleanupJobOwnedWorktree(repoRoot string, j *job.Job) (string, error) {
 			return "", err
 		}
 		if exists {
-			if out, err := exec.Command("git", "-C", repoRoot, "branch", "-d", j.Branch).CombinedOutput(); err != nil {
+			deleteFlag := "-d"
+			if forceBranch {
+				deleteFlag = "-D"
+			}
+			if out, err := exec.Command("git", "-C", repoRoot, "branch", deleteFlag, j.Branch).CombinedOutput(); err != nil {
 				return "", fmt.Errorf("remove branch %s: %w: %s", j.Branch, err, strings.TrimSpace(string(out)))
 			}
-			removed = append(removed, "branch")
+			removed = append(removed, jobCleanupRemovedBranchSummary(forceBranch))
 		}
 	}
 	if len(removed) == 0 {
