@@ -728,6 +728,22 @@ instances = ["other"]
 		t.Fatalf("queue summary = %+v", queueSummary)
 	}
 
+	jobFiltered := NewRootCmd()
+	jobOut, jobErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jobFiltered.SetOut(jobOut)
+	jobFiltered.SetErr(jobErr)
+	jobFiltered.SetArgs([]string{"team", "queue", "delivery", "--repo", root, "--job", "SQU-501", "--json"})
+	if err := jobFiltered.Execute(); err != nil {
+		t.Fatalf("team queue job filter: %v\nstderr=%s", err, jobErr.String())
+	}
+	var jobItems []daemon.QueueItem
+	if err := json.Unmarshal(jobOut.Bytes(), &jobItems); err != nil {
+		t.Fatalf("decode team queue job filter: %v\nbody=%s", err, jobOut.String())
+	}
+	if got := queueItemIDs(jobItems); strings.Join(got, ",") != "q-team-job" {
+		t.Fatalf("team queue job-filtered ids = %v", got)
+	}
+
 	formatted := NewRootCmd()
 	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	formatted.SetOut(formatOut)
@@ -756,6 +772,101 @@ instances = ["other"]
 	}
 	if !strings.Contains(textOut.String(), "q-team-job") || strings.Contains(textOut.String(), "q-other") {
 		t.Fatalf("team queue text =\n%s", textOut.String())
+	}
+
+	retryDry := NewRootCmd()
+	retryDryOut, retryDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	retryDry.SetOut(retryDryOut)
+	retryDry.SetErr(retryDryErr)
+	retryDry.SetArgs([]string{"team", "queue", "retry", "delivery", "--repo", root, "--all", "--job", "SQU-501", "--dry-run", "--json"})
+	if err := retryDry.Execute(); err != nil {
+		t.Fatalf("team queue retry --all dry-run: %v\nstderr=%s", err, retryDryErr.String())
+	}
+	var retryDryResults []queueRetryResult
+	if err := json.Unmarshal(retryDryOut.Bytes(), &retryDryResults); err != nil {
+		t.Fatalf("decode team queue retry dry-run: %v\nbody=%s", err, retryDryOut.String())
+	}
+	if len(retryDryResults) != 1 || retryDryResults[0].ID != "q-team-job" || retryDryResults[0].Action != "would_retry" || !retryDryResults[0].DryRun {
+		t.Fatalf("retry dry-run results = %+v", retryDryResults)
+	}
+	if item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-team-job"); err != nil || item.State != daemon.QueueStateDead {
+		t.Fatalf("retry dry-run changed item=%+v err=%v", item, err)
+	}
+
+	otherRetry := NewRootCmd()
+	otherRetryOut, otherRetryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	otherRetry.SetOut(otherRetryOut)
+	otherRetry.SetErr(otherRetryErr)
+	otherRetry.SetArgs([]string{"team", "queue", "retry", "delivery", "--repo", root, "q-other-job", "--dry-run", "--json"})
+	if err := otherRetry.Execute(); err == nil {
+		t.Fatal("team queue retry unrelated item unexpectedly succeeded")
+	}
+	if !strings.Contains(otherRetryErr.String(), "not owned by team") {
+		t.Fatalf("team queue retry unrelated stderr = %q stdout=%q", otherRetryErr.String(), otherRetryOut.String())
+	}
+
+	retryApply := NewRootCmd()
+	retryApplyOut, retryApplyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	retryApply.SetOut(retryApplyOut)
+	retryApply.SetErr(retryApplyErr)
+	retryApply.SetArgs([]string{"team", "queue", "retry", "delivery", "--repo", root, "q-team-job", "--json"})
+	if err := retryApply.Execute(); err != nil {
+		t.Fatalf("team queue retry single: %v\nstderr=%s", err, retryApplyErr.String())
+	}
+	var retried daemon.QueueItem
+	if err := json.Unmarshal(retryApplyOut.Bytes(), &retried); err != nil {
+		t.Fatalf("decode team queue retry single: %v\nbody=%s", err, retryApplyOut.String())
+	}
+	if retried.ID != "q-team-job" || retried.State != daemon.QueueStatePending || retried.LastError != "" {
+		t.Fatalf("retried item = %+v", retried)
+	}
+	if item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-other-job"); err != nil || item.State != daemon.QueueStateDead {
+		t.Fatalf("unrelated retry item changed=%+v err=%v", item, err)
+	}
+
+	dropReady := NewRootCmd()
+	dropReadyOut, dropReadyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropReady.SetOut(dropReadyOut)
+	dropReady.SetErr(dropReadyErr)
+	dropReady.SetArgs([]string{"team", "queue", "drop", "delivery", "--repo", root, "--all", "--ready", "--dry-run", "--json"})
+	if err := dropReady.Execute(); err != nil {
+		t.Fatalf("team queue drop --all ready dry-run: %v\nstderr=%s", err, dropReadyErr.String())
+	}
+	var dropReadyResults []queueDropResult
+	if err := json.Unmarshal(dropReadyOut.Bytes(), &dropReadyResults); err != nil {
+		t.Fatalf("decode team queue drop ready dry-run: %v\nbody=%s", err, dropReadyOut.String())
+	}
+	dropReadyIDs := map[string]bool{}
+	for _, result := range dropReadyResults {
+		dropReadyIDs[result.ID] = true
+		if result.Action != "would_drop" || !result.DryRun {
+			t.Fatalf("drop ready result = %+v, want dry-run would_drop", result)
+		}
+	}
+	if !dropReadyIDs["q-team-job"] || !dropReadyIDs["q-team-target"] || dropReadyIDs["q-other-target"] {
+		t.Fatalf("drop ready results = %+v", dropReadyResults)
+	}
+
+	dropApply := NewRootCmd()
+	dropApplyOut, dropApplyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropApply.SetOut(dropApplyOut)
+	dropApply.SetErr(dropApplyErr)
+	dropApply.SetArgs([]string{"team", "queue", "drop", "delivery", "--repo", root, "q-team-target", "--json"})
+	if err := dropApply.Execute(); err != nil {
+		t.Fatalf("team queue drop single: %v\nstderr=%s", err, dropApplyErr.String())
+	}
+	var dropped map[string]any
+	if err := json.Unmarshal(dropApplyOut.Bytes(), &dropped); err != nil {
+		t.Fatalf("decode team queue drop single: %v\nbody=%s", err, dropApplyOut.String())
+	}
+	if dropped["dropped"] != true || dropped["id"] != "q-team-target" || dropped["team"] != "delivery" {
+		t.Fatalf("dropped result = %+v", dropped)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-team-target"); !os.IsNotExist(err) {
+		t.Fatalf("team queue target still exists or unexpected err=%v", err)
+	}
+	if item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-other-target"); err != nil || item.State != daemon.QueueStatePending {
+		t.Fatalf("unrelated drop item changed=%+v err=%v", item, err)
 	}
 }
 
@@ -1135,10 +1246,14 @@ pipelines = ["ticket_to_pr"]
 	}
 	codes := map[string]bool{}
 	var sawTeamJob bool
+	var sawScopedQueueAction bool
 	for _, issue := range snapshot.Health.Issues {
 		codes[issue.Code] = true
 		if issue.Code == "job_attention" && issue.Job == "squ-901" {
 			sawTeamJob = true
+		}
+		if issue.Code == "queue_dead_letter" && containsString(issue.Actions, "agent-team team queue retry delivery --all --job squ-901") {
+			sawScopedQueueAction = true
 		}
 	}
 	for _, want := range []string{"daemon_not_running", "queue_dead_letter", "job_attention", "pipeline_failed_step"} {
@@ -1148,6 +1263,9 @@ pipelines = ["ticket_to_pr"]
 	}
 	if !sawTeamJob {
 		t.Fatalf("issues = %+v, missing team job_attention", snapshot.Health.Issues)
+	}
+	if !sawScopedQueueAction {
+		t.Fatalf("issues = %+v, missing scoped team queue retry action", snapshot.Health.Issues)
 	}
 
 	text := NewRootCmd()
