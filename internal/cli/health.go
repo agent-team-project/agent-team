@@ -510,11 +510,11 @@ func addQueueHealth(result *healthResult, teamDir string, now time.Time) error {
 		return err
 	}
 	result.Queue = summarizeQueueItems(items, now.UTC())
-	if quarantine, err := listQueueQuarantine(teamDir); err != nil {
+	quarantine, err := listQueueQuarantine(teamDir)
+	if err != nil {
 		return err
-	} else {
-		applyQueueQuarantineSummary(&result.Queue, quarantine)
 	}
+	applyQueueQuarantineSummary(&result.Queue, quarantine)
 	if result.Queue.Dead > 0 {
 		result.addIssueWithSeverityAndActions(
 			"queue_dead_letter",
@@ -536,7 +536,7 @@ func addQueueHealth(result *healthResult, teamDir string, now time.Time) error {
 			"",
 			"",
 			fmt.Sprintf("queue has %d quarantined file(s) (%d restorable, %d unrestorable)", result.Queue.Quarantined, result.Queue.QuarantineRestorable, result.Queue.QuarantineUnrestorable),
-			queueQuarantineHealthActions(result.Queue, ""),
+			queueQuarantineHealthActions(result.Queue, "", singleQueueQuarantineJobID(teamDir, quarantine)),
 		)
 	}
 	return nil
@@ -596,31 +596,74 @@ func singleDeadQueueJobIDForJobs(items []*daemon.QueueItem, jobs []*job.Job) str
 	return found
 }
 
-func queueQuarantineHealthActions(summary queueSummary, teamName string) []string {
-	var listAction, snapshotAction string
-	if teamName == "" {
-		listAction = "agent-team queue quarantine ls"
-		snapshotAction = "agent-team snapshot --json"
-	} else {
+func singleQueueQuarantineJobID(teamDir string, items []queueQuarantineItem) string {
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return ""
+	}
+	return singleQueueQuarantineJobIDForJobs(items, jobs)
+}
+
+func singleQueueQuarantineJobIDForJobs(items []queueQuarantineItem, jobs []*job.Job) string {
+	var found string
+	if len(items) == 0 {
+		return ""
+	}
+	for _, item := range items {
+		matches := map[string]bool{}
+		for _, j := range jobs {
+			if j == nil || strings.TrimSpace(j.ID) == "" {
+				continue
+			}
+			if queueQuarantineItemMatchesJob(item, j) {
+				matches[j.ID] = true
+			}
+		}
+		if len(matches) != 1 {
+			return ""
+		}
+		var id string
+		for match := range matches {
+			id = match
+		}
+		if found == "" {
+			found = id
+			continue
+		}
+		if found != id {
+			return ""
+		}
+	}
+	return found
+}
+
+func queueQuarantineHealthActions(summary queueSummary, teamName, jobID string) []string {
+	var listAction, detailAction, restorableAction, unrestorableAction string
+	switch {
+	case teamName != "":
 		listAction = fmt.Sprintf("agent-team team queue quarantine %s", teamName)
-		snapshotAction = fmt.Sprintf("agent-team team snapshot %s --json", teamName)
+		detailAction = fmt.Sprintf("agent-team team snapshot %s --json", teamName)
+		restorableAction = fmt.Sprintf("agent-team team queue quarantine %s --restorable", teamName)
+		unrestorableAction = fmt.Sprintf("agent-team team queue quarantine %s --unrestorable", teamName)
+	case jobID != "":
+		listAction = fmt.Sprintf("agent-team job queue quarantine %s", jobID)
+		detailAction = fmt.Sprintf("agent-team job show %s", jobID)
+		restorableAction = fmt.Sprintf("agent-team job queue quarantine %s --restorable", jobID)
+		unrestorableAction = fmt.Sprintf("agent-team job queue quarantine %s --unrestorable", jobID)
+	default:
+		listAction = "agent-team queue quarantine ls"
+		detailAction = "agent-team snapshot --json"
+		restorableAction = "agent-team queue quarantine ls --restorable"
+		unrestorableAction = "agent-team queue quarantine ls --unrestorable"
 	}
 	actions := []string{listAction}
 	if summary.QuarantineUnrestorable > 0 {
-		if teamName == "" {
-			actions = append(actions, "agent-team queue quarantine ls --unrestorable")
-		} else {
-			actions = append(actions, fmt.Sprintf("agent-team team queue quarantine %s --unrestorable", teamName))
-		}
+		actions = append(actions, unrestorableAction)
 	}
 	if summary.QuarantineRestorable > 0 {
-		if teamName == "" {
-			actions = append(actions, "agent-team queue quarantine ls --restorable")
-		} else {
-			actions = append(actions, fmt.Sprintf("agent-team team queue quarantine %s --restorable", teamName))
-		}
+		actions = append(actions, restorableAction)
 	}
-	actions = append(actions, snapshotAction)
+	actions = append(actions, detailAction)
 	return actions
 }
 

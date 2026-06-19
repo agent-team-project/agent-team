@@ -56,12 +56,16 @@ func TestOverviewReportsAttentionAndActions(t *testing.T) {
 		"agent-team repair --dry-run --jobs",
 		"agent-team daemon start",
 		"agent-team job queue retry squ-700 --all --dry-run",
+		"agent-team job queue quarantine squ-700",
 		"agent-team job triage",
 		"agent-team schedule fire --dry-run --preview-triggers",
 	} {
 		if !stringSliceContains(overview.Actions, want) {
 			t.Fatalf("actions missing %q: %+v", want, overview.Actions)
 		}
+	}
+	if stringSliceContains(overview.Actions, "agent-team queue quarantine ls") {
+		t.Fatalf("actions should use job-scoped queue quarantine: %+v", overview.Actions)
 	}
 }
 
@@ -87,6 +91,7 @@ func TestOverviewTextRendersOperatorSummary(t *testing.T) {
 		"schedules: declared=1 due=1 upcoming=1",
 		"actions:",
 		"agent-team repair --dry-run --jobs",
+		"agent-team job queue quarantine squ-700",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("overview text missing %q:\n%s", want, out.String())

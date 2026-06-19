@@ -517,11 +517,7 @@ func overviewActionsForScope(out *overviewResult, health *healthResult, teamName
 		}
 	}
 	if out.Queue.Quarantined > 0 {
-		if teamName != "" {
-			add(fmt.Sprintf("agent-team team queue quarantine %s", teamName))
-		} else {
-			add("agent-team queue quarantine ls")
-		}
+		add(overviewQueueQuarantineAction(health, teamName))
 	}
 	if out.Jobs.Attention > 0 {
 		if teamName != "" {
@@ -594,6 +590,25 @@ func overviewQueueDeadRetryAction(health *healthResult, teamName string) string 
 		}
 	}
 	return "agent-team queue retry --all --dry-run"
+}
+
+func overviewQueueQuarantineAction(health *healthResult, teamName string) string {
+	if teamName != "" {
+		return fmt.Sprintf("agent-team team queue quarantine %s", teamName)
+	}
+	if health != nil {
+		for _, issue := range health.Issues {
+			if issue.Code != "queue_quarantined" {
+				continue
+			}
+			for _, action := range issue.Actions {
+				if strings.HasPrefix(action, "agent-team job queue quarantine ") || action == "agent-team queue quarantine ls" {
+					return action
+				}
+			}
+		}
+	}
+	return "agent-team queue quarantine ls"
 }
 
 func overviewHasQueueSectionError(out *overviewResult) bool {

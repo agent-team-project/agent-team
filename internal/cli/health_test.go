@@ -681,6 +681,64 @@ func TestHealthCommandReportsQueueQuarantine(t *testing.T) {
 	}
 }
 
+func TestHealthCommandSuggestsJobScopedQueueQuarantine(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := mustNewJob(t, "SQU-92", "worker")
+	j.Instance = "worker-squ-92"
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("job.Write: %v", err)
+	}
+	writeQuarantinedQueueItem(t, teamDir, "20260619T010000.000000000Z", daemon.QueueStatePending, &daemon.QueueItem{
+		ID:         "q-health-job-quarantined",
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-92",
+		Payload:    map[string]any{"target": "worker", "ticket": "SQU-92", "job_id": "squ-92"},
+		QueuedAt:   now.Add(-time.Minute),
+		UpdatedAt:  now,
+	})
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"health", "--json", "--target", tmp})
+	err := cmd.Execute()
+	var code ExitCode
+	if !errors.As(err, &code) || code != 1 {
+		t.Fatalf("err = %v, want exit 1\nstderr=%s", err, stderr.String())
+	}
+	var body healthResult
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode health quarantine json: %v\nbody=%s", err, stdout.String())
+	}
+	var queueIssue *healthIssue
+	for i := range body.Issues {
+		if body.Issues[i].Code == "queue_quarantined" {
+			queueIssue = &body.Issues[i]
+			break
+		}
+	}
+	if queueIssue == nil {
+		t.Fatalf("issues = %+v, missing queue_quarantined", body.Issues)
+	}
+	for _, want := range []string{
+		"agent-team job queue quarantine squ-92",
+		"agent-team job queue quarantine squ-92 --restorable",
+		"agent-team job show squ-92",
+	} {
+		if !containsString(queueIssue.Actions, want) {
+			t.Fatalf("queue issue actions missing %q: %+v", want, queueIssue.Actions)
+		}
+	}
+	if containsString(queueIssue.Actions, "agent-team queue quarantine ls") {
+		t.Fatalf("queue issue should use job-scoped quarantine actions: %+v", queueIssue.Actions)
+	}
+}
+
 func TestHealthCommandReportsIntakeFailures(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
