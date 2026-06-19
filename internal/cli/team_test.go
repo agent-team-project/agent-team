@@ -2166,6 +2166,18 @@ instances = ["other"]
 	teamQuarantinePath := quarantineItems[0].Path
 	otherQuarantinePath := filepath.Join("quarantine", "20260619T010000.000000000Z", daemon.QueueStateDead, "q-other-quarantined.json")
 
+	quarantineFormat := NewRootCmd()
+	quarantineFormatOut, quarantineFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	quarantineFormat.SetOut(quarantineFormatOut)
+	quarantineFormat.SetErr(quarantineFormatErr)
+	quarantineFormat.SetArgs([]string{"team", "queue", "quarantine", "delivery", "--repo", root, "--format", "{{.ID}} {{.State}} {{.Restorable}}"})
+	if err := quarantineFormat.Execute(); err != nil {
+		t.Fatalf("team queue quarantine format: %v\nstderr=%s", err, quarantineFormatErr.String())
+	}
+	if !strings.Contains(quarantineFormatOut.String(), "q-team-quarantined dead true") || !strings.Contains(quarantineFormatOut.String(), "q-team-unrestorable dead false") || strings.Contains(quarantineFormatOut.String(), "q-other-quarantined") {
+		t.Fatalf("team queue quarantine format =\n%s", quarantineFormatOut.String())
+	}
+
 	unrestorable := NewRootCmd()
 	unrestorableOut, unrestorableErr := &bytes.Buffer{}, &bytes.Buffer{}
 	unrestorable.SetOut(unrestorableOut)
@@ -2210,6 +2222,18 @@ instances = ["other"]
 		t.Fatalf("shown team queue quarantine = %+v", shownQuarantine)
 	}
 
+	showQuarantineFormat := NewRootCmd()
+	showQuarantineFormatOut, showQuarantineFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showQuarantineFormat.SetOut(showQuarantineFormatOut)
+	showQuarantineFormat.SetErr(showQuarantineFormatErr)
+	showQuarantineFormat.SetArgs([]string{"team", "queue", "quarantine", "show", "delivery", teamQuarantinePath, "--repo", root, "--format", "{{.Team}} {{.ID}} {{.QueueItem.Instance}}"})
+	if err := showQuarantineFormat.Execute(); err != nil {
+		t.Fatalf("team queue quarantine show format: %v\nstderr=%s", err, showQuarantineFormatErr.String())
+	}
+	if showQuarantineFormatOut.String() != "delivery q-team-quarantined worker\n" {
+		t.Fatalf("team queue quarantine show format = %q", showQuarantineFormatOut.String())
+	}
+
 	showQuarantineText := NewRootCmd()
 	showQuarantineTextOut, showQuarantineTextErr := &bytes.Buffer{}, &bytes.Buffer{}
 	showQuarantineText.SetOut(showQuarantineTextOut)
@@ -2236,6 +2260,18 @@ instances = ["other"]
 	}
 	if len(restoreAllResults) != 1 || restoreAllResults[0].ID != "q-team-quarantined" || restoreAllResults[0].Action != "would_restore" || !restoreAllResults[0].DryRun {
 		t.Fatalf("team restore --all dry-run results = %+v", restoreAllResults)
+	}
+
+	restoreAllFormat := NewRootCmd()
+	restoreAllFormatOut, restoreAllFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreAllFormat.SetOut(restoreAllFormatOut)
+	restoreAllFormat.SetErr(restoreAllFormatErr)
+	restoreAllFormat.SetArgs([]string{"team", "queue", "quarantine", "restore", "delivery", "--repo", root, "--all", "--job", "SQU-501", "--dry-run", "--format", "{{.ID}} {{.Action}} {{.DryRun}}"})
+	if err := restoreAllFormat.Execute(); err != nil {
+		t.Fatalf("team queue quarantine restore --all format: %v\nstderr=%s", err, restoreAllFormatErr.String())
+	}
+	if restoreAllFormatOut.String() != "q-team-quarantined would_restore true\n" {
+		t.Fatalf("team queue quarantine restore --all format = %q", restoreAllFormatOut.String())
 	}
 
 	restoreFilterPath := NewRootCmd()
@@ -2292,6 +2328,18 @@ instances = ["other"]
 	}
 	if len(dropResults) != 1 || dropResults[0].ID != "q-team-quarantined" || dropResults[0].Action != "would_drop" || !dropResults[0].DryRun {
 		t.Fatalf("drop dry-run results = %+v", dropResults)
+	}
+
+	dropFormat := NewRootCmd()
+	dropFormatOut, dropFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropFormat.SetOut(dropFormatOut)
+	dropFormat.SetErr(dropFormatErr)
+	dropFormat.SetArgs([]string{"team", "queue", "quarantine", "drop", "delivery", teamQuarantinePath, "--repo", root, "--dry-run", "--format", "{{.ID}} {{.Action}} {{.DryRun}}"})
+	if err := dropFormat.Execute(); err != nil {
+		t.Fatalf("team queue quarantine drop format: %v\nstderr=%s", err, dropFormatErr.String())
+	}
+	if dropFormatOut.String() != "q-team-quarantined would_drop true\n" {
+		t.Fatalf("team queue quarantine drop format = %q", dropFormatOut.String())
 	}
 
 	filterDropDry := NewRootCmd()
@@ -2530,6 +2578,31 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 			name: "drop invalid format",
 			args: []string{"team", "queue", "drop", "delivery", "--format", "{{"},
 			want: "invalid --format template",
+		},
+		{
+			name: "quarantine format with json",
+			args: []string{"team", "queue", "quarantine", "delivery", "--format", "{{.ID}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "quarantine invalid format",
+			args: []string{"team", "queue", "quarantine", "delivery", "--format", "{{"},
+			want: "invalid --format template",
+		},
+		{
+			name: "quarantine show format with json",
+			args: []string{"team", "queue", "quarantine", "show", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--format", "{{.ID}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "quarantine restore invalid format",
+			args: []string{"team", "queue", "quarantine", "restore", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--format", "{{"},
+			want: "invalid --format template",
+		},
+		{
+			name: "quarantine drop format with json",
+			args: []string{"team", "queue", "quarantine", "drop", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--format", "{{.ID}}", "--json"},
+			want: "--format cannot be combined",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1023,6 +1023,7 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 		restorable   bool
 		unrestorable bool
 		jsonOut      bool
+		format       string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1033,6 +1034,10 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 			if restorable && unrestorable {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine: --restorable and --unrestorable cannot be combined.")
 				return exitErr(2)
+			}
+			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team team queue quarantine", format, jsonOut)
+			if err != nil {
+				return err
 			}
 			filters, err := parseQueueListFilters(stateFilter, nil, eventTypes, jobs, false, time.Now().UTC())
 			if err != nil {
@@ -1049,7 +1054,7 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			items = filterQueueQuarantineRestorable(items, restorable, unrestorable)
-			return renderQueueQuarantineList(cmd.OutOrStdout(), items, jsonOut)
+			return renderQueueQuarantineList(cmd.OutOrStdout(), items, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
@@ -1059,6 +1064,7 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&restorable, "restorable", false, "Only show quarantined files that can be restored.")
 	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "Only show quarantined files that cannot be restored.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team-owned quarantined queue files as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each team-owned quarantined queue file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.")
 	cmd.AddCommand(newTeamQueueQuarantineShowCmd())
 	cmd.AddCommand(newTeamQueueQuarantineRestoreCmd())
 	cmd.AddCommand(newTeamQueueQuarantineDropCmd())
@@ -1069,6 +1075,7 @@ func newTeamQueueQuarantineShowCmd() *cobra.Command {
 	var (
 		repo    string
 		jsonOut bool
+		format  string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1076,6 +1083,10 @@ func newTeamQueueQuarantineShowCmd() *cobra.Command {
 		Short: "Show one team-owned quarantined queue file.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team team queue quarantine show", format, jsonOut)
+			if err != nil {
+				return err
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -1091,11 +1102,12 @@ func newTeamQueueQuarantineShowCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			result.Team = args[0]
-			return renderQueueQuarantineShow(cmd.OutOrStdout(), result, jsonOut)
+			return renderQueueQuarantineShow(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the team-owned quarantined queue file as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the team-owned quarantined queue file with a Go template, e.g. '{{.Team}} {{.ID}}'.")
 	return cmd
 }
 
@@ -1109,6 +1121,7 @@ func newTeamQueueQuarantineRestoreCmd() *cobra.Command {
 		eventTypes  []string
 		jobs        []string
 		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1117,6 +1130,10 @@ func newTeamQueueQuarantineRestoreCmd() *cobra.Command {
 		Long:  "Restore one team-owned quarantined queue file by path, or restore a filtered team-owned batch of restorable files with --all.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team team queue quarantine restore", format, jsonOut)
+			if err != nil {
+				return err
+			}
 			filters, err := parseQueueListFilters(stateFilter, nil, eventTypes, jobs, false, time.Now().UTC())
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: %v\n", err)
@@ -1142,7 +1159,7 @@ func newTeamQueueQuarantineRestoreCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: %v\n", err)
 					return exitErr(1)
 				}
-				return renderQueueQuarantineRestoreMany(cmd.OutOrStdout(), results, jsonOut)
+				return renderQueueQuarantineRestoreMany(cmd.OutOrStdout(), results, jsonOut, formatTemplate)
 			}
 			if len(args) != 2 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: requires <team> and one path unless --all is set.")
@@ -1161,7 +1178,7 @@ func newTeamQueueQuarantineRestoreCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: %v\n", err)
 				return exitErr(1)
 			}
-			return renderQueueQuarantineRestore(cmd.OutOrStdout(), result, jsonOut)
+			return renderQueueQuarantineRestore(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
@@ -1172,6 +1189,7 @@ func newTeamQueueQuarantineRestoreCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit restore result as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	return cmd
 }
 
@@ -1187,6 +1205,7 @@ func newTeamQueueQuarantineDropCmd() *cobra.Command {
 		unrestorable bool
 		olderThan    time.Duration
 		jsonOut      bool
+		format       string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1202,6 +1221,10 @@ func newTeamQueueQuarantineDropCmd() *cobra.Command {
 			if restorable && unrestorable {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: --restorable and --unrestorable cannot be combined.")
 				return exitErr(2)
+			}
+			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team team queue quarantine drop", format, jsonOut)
+			if err != nil {
+				return err
 			}
 			filters, err := parseQueueListFilters(stateFilter, nil, eventTypes, jobs, false, time.Now().UTC())
 			if err != nil {
@@ -1228,7 +1251,7 @@ func newTeamQueueQuarantineDropCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: %v\n", err)
 					return exitErr(1)
 				}
-				return renderQueueQuarantineDrop(cmd.OutOrStdout(), results, jsonOut)
+				return renderQueueQuarantineDrop(cmd.OutOrStdout(), results, jsonOut, formatTemplate)
 			}
 			if len(args) != 2 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: requires <team> and one path unless --all is set.")
@@ -1248,7 +1271,7 @@ func newTeamQueueQuarantineDropCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: %v\n", err)
 				return exitErr(1)
 			}
-			return renderQueueQuarantineDrop(cmd.OutOrStdout(), []queueQuarantineDropResult{result}, jsonOut)
+			return renderQueueQuarantineDrop(cmd.OutOrStdout(), []queueQuarantineDropResult{result}, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
@@ -1261,6 +1284,7 @@ func newTeamQueueQuarantineDropCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "With --all, only drop quarantined files that cannot be restored.")
 	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "With --all, only drop files older than this duration based on file mtime.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit drop results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	return cmd
 }
 

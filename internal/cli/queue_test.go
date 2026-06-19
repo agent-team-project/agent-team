@@ -484,6 +484,18 @@ func TestQueueQuarantineListAndRestore(t *testing.T) {
 		t.Fatalf("invalid item = %+v", invalid)
 	}
 
+	lsFormat := NewRootCmd()
+	lsFormatOut, lsFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	lsFormat.SetOut(lsFormatOut)
+	lsFormat.SetErr(lsFormatErr)
+	lsFormat.SetArgs([]string{"queue", "quarantine", "ls", "--target", tmp, "--format", "{{.ID}} {{.State}} {{.Restorable}}"})
+	if err := lsFormat.Execute(); err != nil {
+		t.Fatalf("queue quarantine ls format: %v\nstderr=%s", err, lsFormatErr.String())
+	}
+	if !strings.Contains(lsFormatOut.String(), "stored-id pending true") || !strings.Contains(lsFormatOut.String(), " pending false") {
+		t.Fatalf("queue quarantine ls format =\n%s", lsFormatOut.String())
+	}
+
 	summaryCmd := NewRootCmd()
 	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	summaryCmd.SetOut(summaryOut)
@@ -572,6 +584,18 @@ func TestQueueQuarantineListAndRestore(t *testing.T) {
 		t.Fatalf("restore --all dry-run results = %+v", restoreAllResults)
 	}
 
+	restoreAllFormat := NewRootCmd()
+	restoreAllFormatOut, restoreAllFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreAllFormat.SetOut(restoreAllFormatOut)
+	restoreAllFormat.SetErr(restoreAllFormatErr)
+	restoreAllFormat.SetArgs([]string{"queue", "quarantine", "restore", "--target", tmp, "--all", "--job", "SQU-132", "--dry-run", "--format", "{{.ID}} {{.Action}} {{.DryRun}}"})
+	if err := restoreAllFormat.Execute(); err != nil {
+		t.Fatalf("queue quarantine restore --all format: %v\nstderr=%s", err, restoreAllFormatErr.String())
+	}
+	if restoreAllFormatOut.String() != "stored-id would_restore true\n" {
+		t.Fatalf("queue quarantine restore --all format = %q", restoreAllFormatOut.String())
+	}
+
 	restorePathWithFilter := NewRootCmd()
 	restorePathWithFilterOut, restorePathWithFilterErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restorePathWithFilter.SetOut(restorePathWithFilterOut)
@@ -598,6 +622,18 @@ func TestQueueQuarantineListAndRestore(t *testing.T) {
 	}
 	if shown.ID != "stored-id" || shown.QueueItem == nil || shown.QueueItem.Payload["ticket"] != "SQU-132" {
 		t.Fatalf("shown quarantine = %+v", shown)
+	}
+
+	showFormat := NewRootCmd()
+	showFormatOut, showFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showFormat.SetOut(showFormatOut)
+	showFormat.SetErr(showFormatErr)
+	showFormat.SetArgs([]string{"queue", "quarantine", "show", "--target", tmp, "--format", "{{.ID}} {{.State}} {{.QueueItem.Instance}}", restorable.Path})
+	if err := showFormat.Execute(); err != nil {
+		t.Fatalf("queue quarantine show format: %v\nstderr=%s", err, showFormatErr.String())
+	}
+	if showFormatOut.String() != "stored-id pending worker\n" {
+		t.Fatalf("queue quarantine show format = %q", showFormatOut.String())
 	}
 
 	showText := NewRootCmd()
@@ -725,6 +761,18 @@ func TestQueueQuarantineDropExplicitAndBatch(t *testing.T) {
 		t.Fatalf("dry-run removed explicit quarantine: %v", err)
 	}
 
+	dryFormat := NewRootCmd()
+	dryFormatOut, dryFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryFormat.SetOut(dryFormatOut)
+	dryFormat.SetErr(dryFormatErr)
+	dryFormat.SetArgs([]string{"queue", "quarantine", "drop", "--target", tmp, "--dry-run", "--format", "{{.Path}} {{.Action}} {{.DryRun}}", explicitPath})
+	if err := dryFormat.Execute(); err != nil {
+		t.Fatalf("queue quarantine drop format: %v\nstderr=%s", err, dryFormatErr.String())
+	}
+	if dryFormatOut.String() != fmt.Sprintf("%s would_drop true\n", explicitPath) {
+		t.Fatalf("queue quarantine drop format = %q", dryFormatOut.String())
+	}
+
 	drop := NewRootCmd()
 	dropOut, dropErr := &bytes.Buffer{}, &bytes.Buffer{}
 	drop.SetOut(dropOut)
@@ -821,6 +869,55 @@ func TestQueueQuarantineDropExplicitAndBatch(t *testing.T) {
 	}
 	if len(remaining) != 1 || remaining[0].ID != "q-restorable" || !remaining[0].Restorable {
 		t.Fatalf("remaining quarantine = %+v", remaining)
+	}
+}
+
+func TestQueueQuarantineFormatValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "list json conflict",
+			args: []string{"queue", "quarantine", "ls", "--json", "--format", "{{.ID}}"},
+			want: "--format cannot be combined with --json",
+		},
+		{
+			name: "list invalid template",
+			args: []string{"queue", "quarantine", "ls", "--format", "{{.ID"},
+			want: "invalid --format template",
+		},
+		{
+			name: "show json conflict",
+			args: []string{"queue", "quarantine", "show", "quarantine/20260619T000000.000000000Z/pending/q.json", "--json", "--format", "{{.ID}}"},
+			want: "--format cannot be combined with --json",
+		},
+		{
+			name: "restore invalid template",
+			args: []string{"queue", "quarantine", "restore", "quarantine/20260619T000000.000000000Z/pending/q.json", "--format", "{{.ID"},
+			want: "invalid --format template",
+		},
+		{
+			name: "drop json conflict",
+			args: []string{"queue", "quarantine", "drop", "quarantine/20260619T000000.000000000Z/pending/q.json", "--json", "--format", "{{.ID}}"},
+			want: "--format cannot be combined with --json",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(stdout)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err == nil {
+				t.Fatalf("command succeeded: stdout=%s", stdout.String())
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 

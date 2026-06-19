@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"text/template"
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
@@ -82,6 +83,7 @@ func newQueueQuarantineLsCmd() *cobra.Command {
 		restorable   bool
 		unrestorable bool
 		jsonOut      bool
+		format       string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -92,6 +94,10 @@ func newQueueQuarantineLsCmd() *cobra.Command {
 			if restorable && unrestorable {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine ls: --restorable and --unrestorable cannot be combined.")
 				return exitErr(2)
+			}
+			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team queue quarantine ls", format, jsonOut)
+			if err != nil {
+				return err
 			}
 			filters, err := parseQueueListFilters(stateFilter, instances, eventTypes, jobs, false, time.Now().UTC())
 			if err != nil {
@@ -109,7 +115,7 @@ func newQueueQuarantineLsCmd() *cobra.Command {
 			}
 			items = filterQueueQuarantineItems(items, filters)
 			items = filterQueueQuarantineRestorable(items, restorable, unrestorable)
-			return renderQueueQuarantineList(cmd.OutOrStdout(), items, jsonOut)
+			return renderQueueQuarantineList(cmd.OutOrStdout(), items, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
@@ -120,6 +126,7 @@ func newQueueQuarantineLsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&restorable, "restorable", false, "Only show quarantined files that can be restored.")
 	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "Only show quarantined files that cannot be restored.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit quarantined queue files as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each quarantined queue file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.")
 	return cmd
 }
 
@@ -127,6 +134,7 @@ func newQueueQuarantineShowCmd() *cobra.Command {
 	var (
 		target  string
 		jsonOut bool
+		format  string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -134,6 +142,10 @@ func newQueueQuarantineShowCmd() *cobra.Command {
 		Short: "Show one quarantined queue file.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team queue quarantine show", format, jsonOut)
+			if err != nil {
+				return err
+			}
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -143,11 +155,12 @@ func newQueueQuarantineShowCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine show: %v\n", err)
 				return exitErr(1)
 			}
-			return renderQueueQuarantineShow(cmd.OutOrStdout(), result, jsonOut)
+			return renderQueueQuarantineShow(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the quarantined queue file as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the quarantined queue file with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
 
@@ -162,6 +175,7 @@ func newQueueQuarantineRestoreCmd() *cobra.Command {
 		eventTypes  []string
 		jobs        []string
 		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -170,6 +184,10 @@ func newQueueQuarantineRestoreCmd() *cobra.Command {
 		Long:  "Restore one validated quarantined queue file by path, or restore a filtered batch of restorable files with --all.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team queue quarantine restore", format, jsonOut)
+			if err != nil {
+				return err
+			}
 			filters, err := parseQueueListFilters(stateFilter, instances, eventTypes, jobs, false, time.Now().UTC())
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine restore: %v\n", err)
@@ -189,7 +207,7 @@ func newQueueQuarantineRestoreCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine restore: %v\n", err)
 					return exitErr(1)
 				}
-				return renderQueueQuarantineRestoreMany(cmd.OutOrStdout(), results, jsonOut)
+				return renderQueueQuarantineRestoreMany(cmd.OutOrStdout(), results, jsonOut, formatTemplate)
 			}
 			if len(args) != 1 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine restore: requires one path unless --all is set.")
@@ -204,7 +222,7 @@ func newQueueQuarantineRestoreCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine restore: %v\n", err)
 				return exitErr(1)
 			}
-			return renderQueueQuarantineRestore(cmd.OutOrStdout(), result, jsonOut)
+			return renderQueueQuarantineRestore(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
@@ -216,6 +234,7 @@ func newQueueQuarantineRestoreCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit restore result as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	return cmd
 }
 
@@ -232,6 +251,7 @@ func newQueueQuarantineDropCmd() *cobra.Command {
 		unrestorable bool
 		olderThan    time.Duration
 		jsonOut      bool
+		format       string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -247,6 +267,10 @@ func newQueueQuarantineDropCmd() *cobra.Command {
 			if restorable && unrestorable {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine drop: --restorable and --unrestorable cannot be combined.")
 				return exitErr(2)
+			}
+			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team queue quarantine drop", format, jsonOut)
+			if err != nil {
+				return err
 			}
 			filters, err := parseQueueListFilters(stateFilter, instances, eventTypes, jobs, false, time.Now().UTC())
 			if err != nil {
@@ -267,7 +291,7 @@ func newQueueQuarantineDropCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine drop: %v\n", err)
 					return exitErr(1)
 				}
-				return renderQueueQuarantineDrop(cmd.OutOrStdout(), results, jsonOut)
+				return renderQueueQuarantineDrop(cmd.OutOrStdout(), results, jsonOut, formatTemplate)
 			}
 			if len(args) != 1 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine drop: requires one path unless --all is set.")
@@ -282,7 +306,7 @@ func newQueueQuarantineDropCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine drop: %v\n", err)
 				return exitErr(1)
 			}
-			return renderQueueQuarantineDrop(cmd.OutOrStdout(), []queueQuarantineDropResult{result}, jsonOut)
+			return renderQueueQuarantineDrop(cmd.OutOrStdout(), []queueQuarantineDropResult{result}, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
@@ -296,6 +320,7 @@ func newQueueQuarantineDropCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "With --all, only drop quarantined files that cannot be restored.")
 	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "With --all, only drop files older than this duration based on file mtime.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit drop results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	return cmd
 }
 
@@ -682,9 +707,41 @@ func normalizeQueueQuarantinePath(raw string) (string, error) {
 	return filepath.FromSlash(slash), nil
 }
 
-func renderQueueQuarantineList(w io.Writer, items []queueQuarantineItem, jsonOut bool) error {
+func parseQueueQuarantineCommandFormat(cmd *cobra.Command, command, format string, jsonOut bool) (*template.Template, error) {
+	if format != "" && jsonOut {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --format cannot be combined with --json.\n", command)
+		return nil, exitErr(2)
+	}
+	tmpl, err := parseQueueQuarantineFormat(format)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", command, err)
+		return nil, exitErr(2)
+	}
+	return tmpl, nil
+}
+
+func parseQueueQuarantineFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("queue-quarantine-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderQueueQuarantineList(w io.Writer, items []queueQuarantineItem, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(items)
+	}
+	if tmpl != nil {
+		for _, item := range items {
+			if err := renderQueueQuarantineTemplate(w, item, tmpl); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	if len(items) == 0 {
 		fmt.Fprintln(w, "(no quarantined queue files)")
@@ -713,17 +770,28 @@ func queueQuarantineRestorableText(restorable bool) string {
 	return "no"
 }
 
-func renderQueueQuarantineRestore(w io.Writer, result queueQuarantineRestoreResult, jsonOut bool) error {
+func renderQueueQuarantineRestore(w io.Writer, result queueQuarantineRestoreResult, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(result)
+	}
+	if tmpl != nil {
+		return renderQueueQuarantineTemplate(w, result, tmpl)
 	}
 	renderQueueQuarantineRestoreLine(w, result)
 	return nil
 }
 
-func renderQueueQuarantineRestoreMany(w io.Writer, results []queueQuarantineRestoreResult, jsonOut bool) error {
+func renderQueueQuarantineRestoreMany(w io.Writer, results []queueQuarantineRestoreResult, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := renderQueueQuarantineTemplate(w, result, tmpl); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	if len(results) == 0 {
 		fmt.Fprintln(w, "(no restorable quarantined queue files matched)")
@@ -744,9 +812,12 @@ func renderQueueQuarantineRestoreLine(w io.Writer, result queueQuarantineRestore
 	}
 }
 
-func renderQueueQuarantineShow(w io.Writer, result queueQuarantineShowResult, jsonOut bool) error {
+func renderQueueQuarantineShow(w io.Writer, result queueQuarantineShowResult, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(result)
+	}
+	if tmpl != nil {
+		return renderQueueQuarantineTemplate(w, result, tmpl)
 	}
 	fmt.Fprintf(w, "Path:        %s\n", result.Path)
 	fmt.Fprintf(w, "State:       %s\n", emptyDash(result.State))
@@ -795,9 +866,17 @@ func queueQuarantineShowActions(result queueQuarantineShowResult) []string {
 	return actions
 }
 
-func renderQueueQuarantineDrop(w io.Writer, results []queueQuarantineDropResult, jsonOut bool) error {
+func renderQueueQuarantineDrop(w io.Writer, results []queueQuarantineDropResult, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := renderQueueQuarantineTemplate(w, result, tmpl); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	if len(results) == 0 {
 		fmt.Fprintln(w, "(no quarantined queue files matched)")
@@ -812,4 +891,12 @@ func renderQueueQuarantineDrop(w io.Writer, results []queueQuarantineDropResult,
 		}
 	}
 	return nil
+}
+
+func renderQueueQuarantineTemplate(w io.Writer, value any, tmpl *template.Template) error {
+	if err := tmpl.Execute(w, value); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }
