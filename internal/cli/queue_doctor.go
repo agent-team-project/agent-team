@@ -34,12 +34,31 @@ type queueDoctorSummary struct {
 }
 
 type queueDoctorResult struct {
-	OK       bool                 `json:"ok"`
-	Root     string               `json:"root"`
-	Summary  queueDoctorSummary   `json:"summary"`
-	Problems []queueDoctorFinding `json:"problems,omitempty"`
-	Warnings []queueDoctorFinding `json:"warnings,omitempty"`
-	Actions  []string             `json:"actions,omitempty"`
+	OK         bool                         `json:"ok"`
+	Root       string                       `json:"root"`
+	Summary    queueDoctorSummary           `json:"summary"`
+	Problems   []queueDoctorFinding         `json:"problems,omitempty"`
+	Warnings   []queueDoctorFinding         `json:"warnings,omitempty"`
+	Actions    []string                     `json:"actions,omitempty"`
+	Quarantine *queueDoctorQuarantineResult `json:"quarantine,omitempty"`
+}
+
+type queueDoctorQuarantineResult struct {
+	DryRun     bool                        `json:"dry_run,omitempty"`
+	Directory  string                      `json:"directory,omitempty"`
+	Candidates int                         `json:"candidates"`
+	Moved      int                         `json:"moved"`
+	Items      []queueDoctorQuarantineItem `json:"items,omitempty"`
+}
+
+type queueDoctorQuarantineItem struct {
+	State       string   `json:"state,omitempty"`
+	ID          string   `json:"id,omitempty"`
+	Path        string   `json:"path"`
+	Destination string   `json:"destination,omitempty"`
+	Codes       []string `json:"codes,omitempty"`
+	Action      string   `json:"action"`
+	DryRun      bool     `json:"dry_run,omitempty"`
 }
 
 type queueDoctorSeen struct {
@@ -49,8 +68,10 @@ type queueDoctorSeen struct {
 
 func newQueueDoctorCmd() *cobra.Command {
 	var (
-		target  string
-		jsonOut bool
+		target     string
+		jsonOut    bool
+		quarantine bool
+		dryRun     bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -59,6 +80,10 @@ func newQueueDoctorCmd() *cobra.Command {
 		Long:  "Validate persisted daemon queue files without relying on normal queue listing paths.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if dryRun && !quarantine {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue doctor: --dry-run requires --quarantine.")
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -68,10 +93,30 @@ func newQueueDoctorCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue doctor: %v\n", err)
 				return exitErr(1)
 			}
+			if quarantine {
+				q, err := quarantineQueueDoctorProblems(result.Root, result, dryRun, time.Now())
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue doctor: quarantine: %v\n", err)
+					return exitErr(1)
+				}
+				result.Quarantine = q
+				if !dryRun && q.Moved > 0 {
+					refreshed, err := collectQueueDoctor(teamDir)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue doctor: %v\n", err)
+						return exitErr(1)
+					}
+					refreshed.Quarantine = q
+					result = refreshed
+				}
+			}
 			if err := renderQueueDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut); err != nil {
 				return err
 			}
-			if !result.OK {
+			if !result.OK && !quarantine {
+				return exitErr(1)
+			}
+			if !result.OK && quarantine && !dryRun {
 				return exitErr(1)
 			}
 			return nil
@@ -79,6 +124,8 @@ func newQueueDoctorCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit queue doctor findings as JSON.")
+	cmd.Flags().BoolVar(&quarantine, "quarantine", false, "Move queue files with doctor problems out of the active queue.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "With --quarantine, preview files that would be moved.")
 	return cmd
 }
 
@@ -340,7 +387,7 @@ func queueDoctorActions(result queueDoctorResult) []string {
 	if len(result.Problems) == 0 {
 		return nil
 	}
-	return []string{"agent-team queue doctor --json", "agent-team snapshot --json"}
+	return []string{"agent-team queue doctor --quarantine --dry-run", "agent-team queue doctor --json", "agent-team snapshot --json"}
 }
 
 func renderQueueDoctor(stdout, stderr io.Writer, result queueDoctorResult, jsonOut bool) error {
@@ -352,6 +399,7 @@ func renderQueueDoctor(stdout, stderr io.Writer, result queueDoctorResult, jsonO
 	if result.OK {
 		fmt.Fprintln(stdout, "agent-team queue doctor: OK")
 		renderQueueDoctorSummary(stdout, result.Summary)
+		renderQueueDoctorQuarantine(stdout, result.Quarantine)
 		for _, warning := range result.Warnings {
 			fmt.Fprintf(stderr, "  warning: %s\n", warning.Message)
 		}
@@ -364,6 +412,13 @@ func renderQueueDoctor(stdout, stderr io.Writer, result queueDoctorResult, jsonO
 	for _, warning := range result.Warnings {
 		fmt.Fprintf(stderr, "  warning: %s\n", warning.Message)
 	}
+	if len(result.Actions) > 0 {
+		fmt.Fprintln(stderr, "next actions:")
+		for _, action := range result.Actions {
+			fmt.Fprintf(stderr, "  - %s\n", action)
+		}
+	}
+	renderQueueDoctorQuarantine(stdout, result.Quarantine)
 	return nil
 }
 
@@ -390,4 +445,119 @@ func sortQueueDoctorFindings(findings []queueDoctorFinding) {
 		}
 		return left.Message < right.Message
 	})
+}
+
+func quarantineQueueDoctorProblems(root string, result queueDoctorResult, dryRun bool, now time.Time) (*queueDoctorQuarantineResult, error) {
+	items := queueDoctorQuarantineCandidates(result)
+	out := &queueDoctorQuarantineResult{
+		DryRun:     dryRun,
+		Candidates: len(items),
+		Items:      items,
+	}
+	if len(items) == 0 {
+		return out, nil
+	}
+	out.Directory = filepath.Join("quarantine", now.UTC().Format("20060102T150405.000000000Z"))
+	for i := range out.Items {
+		item := &out.Items[i]
+		item.DryRun = dryRun
+		item.Action = "would_quarantine"
+		item.Destination = filepath.Join(out.Directory, item.State, filepath.Base(item.Path))
+		if dryRun {
+			continue
+		}
+		source, err := queueDoctorSafeQueuePath(root, item.Path)
+		if err != nil {
+			return out, err
+		}
+		destination, err := queueDoctorSafeQueuePath(root, item.Destination)
+		if err != nil {
+			return out, err
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+			return out, err
+		}
+		if err := os.Rename(source, destination); err != nil {
+			return out, err
+		}
+		item.Action = "quarantined"
+		item.DryRun = false
+		out.Moved++
+	}
+	return out, nil
+}
+
+func queueDoctorQuarantineCandidates(result queueDoctorResult) []queueDoctorQuarantineItem {
+	byPath := map[string]*queueDoctorQuarantineItem{}
+	for _, problem := range result.Problems {
+		path := strings.TrimSpace(problem.Path)
+		if path == "" {
+			continue
+		}
+		item := byPath[path]
+		if item == nil {
+			item = &queueDoctorQuarantineItem{
+				State:  problem.State,
+				ID:     problem.ID,
+				Path:   path,
+				Action: "would_quarantine",
+			}
+			byPath[path] = item
+		}
+		if item.ID == "" {
+			item.ID = problem.ID
+		}
+		if item.State == "" {
+			item.State = problem.State
+		}
+		if problem.Code != "" && !stringSliceContains(item.Codes, problem.Code) {
+			item.Codes = append(item.Codes, problem.Code)
+		}
+	}
+	out := make([]queueDoctorQuarantineItem, 0, len(byPath))
+	for _, item := range byPath {
+		sort.Strings(item.Codes)
+		out = append(out, *item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func queueDoctorSafeQueuePath(root, rel string) (string, error) {
+	clean := filepath.Clean(rel)
+	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("unsafe queue path %q", rel)
+	}
+	return filepath.Join(root, clean), nil
+}
+
+func renderQueueDoctorQuarantine(w io.Writer, result *queueDoctorQuarantineResult) {
+	if result == nil {
+		return
+	}
+	action := "quarantine"
+	if result.DryRun {
+		action = "quarantine dry-run"
+	}
+	fmt.Fprintf(w, "queue %s: candidates=%d moved=%d", action, result.Candidates, result.Moved)
+	if result.Directory != "" {
+		fmt.Fprintf(w, " directory=%s", result.Directory)
+	}
+	fmt.Fprintln(w)
+	for _, item := range result.Items {
+		if result.DryRun {
+			fmt.Fprintf(w, "  - would quarantine %s -> %s", item.Path, item.Destination)
+		} else {
+			fmt.Fprintf(w, "  - quarantined %s -> %s", item.Path, item.Destination)
+		}
+		if len(item.Codes) > 0 {
+			fmt.Fprintf(w, " (%s)", strings.Join(item.Codes, ","))
+		}
+		fmt.Fprintln(w)
+	}
 }

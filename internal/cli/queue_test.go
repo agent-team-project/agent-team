@@ -224,6 +224,117 @@ func TestQueueDoctorReportsPersistedQueueProblems(t *testing.T) {
 	}
 }
 
+func TestQueueDoctorQuarantineDryRunAndApply(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	queueRoot := daemon.QueueRoot(daemon.DaemonRoot(teamDir))
+	pendingDir := filepath.Join(queueRoot, daemon.QueueStatePending)
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := os.MkdirAll(pendingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	good := &daemon.QueueItem{
+		ID:         "q-good",
+		State:      daemon.QueueStatePending,
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-130",
+		Payload:    map[string]any{"target": "worker", "ticket": "SQU-130"},
+		QueuedAt:   now,
+		UpdatedAt:  now,
+	}
+	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), good); err != nil {
+		t.Fatalf("WriteQueueItem good: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pendingDir, "bad-json.json"), []byte("{\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pendingDir, "missing-event.json"), []byte(fmt.Sprintf(`{
+  "id": "missing-event",
+  "state": "pending",
+  "instance": "worker",
+  "instance_id": "worker-squ-131",
+  "payload": {},
+  "queued_at": %q,
+  "updated_at": %q
+}`, now.Format(time.RFC3339), now.Format(time.RFC3339))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"queue", "doctor", "--target", tmp, "--quarantine", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("queue doctor quarantine dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryResult queueDoctorResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryResult); err != nil {
+		t.Fatalf("decode quarantine dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if dryResult.OK || dryResult.Quarantine == nil || !dryResult.Quarantine.DryRun || dryResult.Quarantine.Candidates != 2 || dryResult.Quarantine.Moved != 0 {
+		t.Fatalf("dry quarantine result = %+v", dryResult)
+	}
+	for _, path := range []string{
+		filepath.Join(pendingDir, "bad-json.json"),
+		filepath.Join(pendingDir, "missing-event.json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("dry-run moved %s: %v", path, err)
+		}
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"queue", "doctor", "--target", tmp, "--quarantine", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("queue doctor quarantine apply: %v\nstderr=%s\nstdout=%s", err, applyErr.String(), applyOut.String())
+	}
+	var applied queueDoctorResult
+	if err := json.Unmarshal(applyOut.Bytes(), &applied); err != nil {
+		t.Fatalf("decode quarantine apply: %v\nbody=%s", err, applyOut.String())
+	}
+	if !applied.OK || applied.Quarantine == nil || applied.Quarantine.DryRun || applied.Quarantine.Candidates != 2 || applied.Quarantine.Moved != 2 {
+		t.Fatalf("applied quarantine result = %+v", applied)
+	}
+	for _, item := range applied.Quarantine.Items {
+		if item.Action != "quarantined" {
+			t.Fatalf("quarantine item action = %+v", item)
+		}
+		if _, err := os.Stat(filepath.Join(queueRoot, item.Destination)); err != nil {
+			t.Fatalf("quarantined destination %s: %v", item.Destination, err)
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(pendingDir, "bad-json.json"),
+		filepath.Join(pendingDir, "missing-event.json"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("active problem file still exists or stat failed %s: %v", path, err)
+		}
+	}
+
+	ls := NewRootCmd()
+	lsOut, lsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	ls.SetOut(lsOut)
+	ls.SetErr(lsErr)
+	ls.SetArgs([]string{"queue", "ls", "--target", tmp, "--json"})
+	if err := ls.Execute(); err != nil {
+		t.Fatalf("queue ls after quarantine: %v\nstderr=%s", err, lsErr.String())
+	}
+	var items []daemon.QueueItem
+	if err := json.Unmarshal(lsOut.Bytes(), &items); err != nil {
+		t.Fatalf("decode queue ls after quarantine: %v\nbody=%s", err, lsOut.String())
+	}
+	if len(items) != 1 || items[0].ID != "q-good" {
+		t.Fatalf("queue items after quarantine = %+v", items)
+	}
+}
+
 func TestQueueDoctorOKWithWarnings(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
