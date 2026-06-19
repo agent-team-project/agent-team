@@ -164,6 +164,76 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team jobs format = %q", got)
 	}
 
+	pipelines := NewRootCmd()
+	pipelinesOut, pipelinesErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipelines.SetOut(pipelinesOut)
+	pipelines.SetErr(pipelinesErr)
+	pipelines.SetArgs([]string{"team", "pipelines", "delivery", "--repo", root, "--json"})
+	if err := pipelines.Execute(); err != nil {
+		t.Fatalf("team pipelines: %v\nstderr=%s", err, pipelinesErr.String())
+	}
+	var pipelineRows []pipelineStatusRow
+	if err := json.Unmarshal(pipelinesOut.Bytes(), &pipelineRows); err != nil {
+		t.Fatalf("decode team pipelines: %v\nbody=%s", err, pipelinesOut.String())
+	}
+	if len(pipelineRows) != 1 || pipelineRows[0].Pipeline != "ticket_to_pr" || pipelineRows[0].ReadySteps != 1 {
+		t.Fatalf("team pipeline rows = %+v", pipelineRows)
+	}
+
+	pipelinesFormat := NewRootCmd()
+	pipelinesFormatOut, pipelinesFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipelinesFormat.SetOut(pipelinesFormatOut)
+	pipelinesFormat.SetErr(pipelinesFormatErr)
+	pipelinesFormat.SetArgs([]string{"team", "pipelines", "delivery", "--repo", root, "--format", "{{.Pipeline}} {{.ReadySteps}}"})
+	if err := pipelinesFormat.Execute(); err != nil {
+		t.Fatalf("team pipelines format: %v\nstderr=%s", err, pipelinesFormatErr.String())
+	}
+	if got := strings.TrimSpace(pipelinesFormatOut.String()); got != "ticket_to_pr 1" {
+		t.Fatalf("team pipelines format = %q", got)
+	}
+
+	schedules := NewRootCmd()
+	schedulesOut, schedulesErr := &bytes.Buffer{}, &bytes.Buffer{}
+	schedules.SetOut(schedulesOut)
+	schedules.SetErr(schedulesErr)
+	schedules.SetArgs([]string{"team", "schedules", "delivery", "--repo", root, "--json"})
+	if err := schedules.Execute(); err != nil {
+		t.Fatalf("team schedules: %v\nstderr=%s", err, schedulesErr.String())
+	}
+	var scheduleRows []scheduleInfo
+	if err := json.Unmarshal(schedulesOut.Bytes(), &scheduleRows); err != nil {
+		t.Fatalf("decode team schedules: %v\nbody=%s", err, schedulesOut.String())
+	}
+	if len(scheduleRows) != 1 || scheduleRows[0].Name != "nightly" || scheduleRows[0].Every != "24h0m0s" {
+		t.Fatalf("team schedule rows = %+v", scheduleRows)
+	}
+
+	schedulesText := NewRootCmd()
+	schedulesTextOut, schedulesTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	schedulesText.SetOut(schedulesTextOut)
+	schedulesText.SetErr(schedulesTextErr)
+	schedulesText.SetArgs([]string{"team", "schedules", "delivery", "--repo", root})
+	if err := schedulesText.Execute(); err != nil {
+		t.Fatalf("team schedules text: %v\nstderr=%s", err, schedulesTextErr.String())
+	}
+	for _, want := range []string{"SCHEDULE", "nightly", "24h0m0s"} {
+		if !strings.Contains(schedulesTextOut.String(), want) {
+			t.Fatalf("team schedules text missing %q:\n%s", want, schedulesTextOut.String())
+		}
+	}
+
+	schedulesFormat := NewRootCmd()
+	schedulesFormatOut, schedulesFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	schedulesFormat.SetOut(schedulesFormatOut)
+	schedulesFormat.SetErr(schedulesFormatErr)
+	schedulesFormat.SetArgs([]string{"team", "schedules", "delivery", "--repo", root, "--format", "{{.Name}} {{.Every}}"})
+	if err := schedulesFormat.Execute(); err != nil {
+		t.Fatalf("team schedules format: %v\nstderr=%s", err, schedulesFormatErr.String())
+	}
+	if got := strings.TrimSpace(schedulesFormatOut.String()); got != "nightly 24h0m0s" {
+		t.Fatalf("team schedules format = %q", got)
+	}
+
 	status := NewRootCmd()
 	statusOut, statusErr := &bytes.Buffer{}, &bytes.Buffer{}
 	status.SetOut(statusOut)

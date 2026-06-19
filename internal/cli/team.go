@@ -28,6 +28,8 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamShowCmd())
 	cmd.AddCommand(newTeamPsCmd())
 	cmd.AddCommand(newTeamJobsCmd())
+	cmd.AddCommand(newTeamPipelinesCmd())
+	cmd.AddCommand(newTeamSchedulesCmd())
 	cmd.AddCommand(newTeamStatusCmd())
 	return cmd
 }
@@ -186,6 +188,84 @@ func newTeamJobsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "id", "Sort jobs by id, status, target, ticket, created, updated, instance, branch, or pr.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team jobs as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
+	return cmd
+}
+
+func newTeamPipelinesCmd() *cobra.Command {
+	var (
+		repo    string
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "pipelines <team>",
+		Short: "List pipeline status for one team.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team pipelines: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineStatusFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team pipelines: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			rows, err := collectTeamPipelineStatus(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team pipelines: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineStatusRows(cmd.OutOrStdout(), rows, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team pipeline status as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each pipeline with a Go template, e.g. '{{.Pipeline}} {{.ReadySteps}}'.")
+	return cmd
+}
+
+func newTeamSchedulesCmd() *cobra.Command {
+	var (
+		repo    string
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "schedules <team>",
+		Short: "List schedules owned by one team.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team schedules: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseScheduleDueFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team schedules: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			schedules, err := collectTeamSchedules(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team schedules: %v\n", err)
+				return exitErr(1)
+			}
+			return renderTeamSchedules(cmd.OutOrStdout(), schedules, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team schedules as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each schedule with a Go template, e.g. '{{.Name}} {{.Every}}'.")
 	return cmd
 }
 
@@ -374,6 +454,30 @@ func collectTeamJobs(teamDir, name string, status job.Status, sortMode string) (
 	}
 	sortJobs(owned, sortMode)
 	return owned, nil
+}
+
+func collectTeamPipelineStatus(teamDir, name string) ([]pipelineStatusRow, error) {
+	_, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := collectPipelineStatusRows(teamDir, "")
+	if err != nil {
+		return nil, err
+	}
+	return teamPipelineStatus(team, rows), nil
+}
+
+func collectTeamSchedules(teamDir, name string) ([]scheduleInfo, error) {
+	_, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return nil, err
+	}
+	schedules, err := loadScheduleInfos(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	return teamSchedules(team, schedules), nil
 }
 
 func runTeamPsWatch(ctx context.Context, w io.Writer, teamDir, name string, interval time.Duration, jsonOut bool, clear bool) error {
@@ -694,4 +798,22 @@ func renderTeamJobs(w io.Writer, jobs []*job.Job, jsonOut bool, tmpl *template.T
 	}
 	renderJobTable(w, jobs)
 	return nil
+}
+
+func renderTeamSchedules(w io.Writer, schedules []scheduleInfo, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(schedules)
+	}
+	if tmpl != nil {
+		for _, schedule := range schedules {
+			if err := tmpl.Execute(w, schedule); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return renderScheduleList(w, schedules, false)
 }
