@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,22 @@ type upgradeConfig struct {
 	target string
 	toRef  string
 	check  bool
+	strict bool
+	json   bool
+}
+
+type upgradeCheckResult struct {
+	LockedRef        string `json:"locked_ref"`
+	LockedTemplate   string `json:"locked_template,omitempty"`
+	LockedVersion    string `json:"locked_version,omitempty"`
+	LockedHash       string `json:"locked_hash"`
+	TargetRef        string `json:"target_ref"`
+	TargetTemplate   string `json:"target_template,omitempty"`
+	TargetVersion    string `json:"target_version,omitempty"`
+	TargetHash       string `json:"target_hash"`
+	UpToDate         bool   `json:"up_to_date"`
+	Differs          bool   `json:"differs"`
+	ApplyImplemented bool   `json:"apply_implemented"`
 }
 
 func newUpgradeCmd() *cobra.Command {
@@ -37,6 +54,8 @@ func newUpgradeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cfg.target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVar(&cfg.toRef, "to", "", "Template ref to compare against (defaults to the ref in .template.lock).")
 	cmd.Flags().BoolVar(&cfg.check, "check", false, "Compare current template lock against a resolved template ref without writing files.")
+	cmd.Flags().BoolVar(&cfg.strict, "strict", false, "With --check, exit 1 when the target template differs from the lock.")
+	cmd.Flags().BoolVar(&cfg.json, "json", false, "Emit the upgrade check result as JSON.")
 	return cmd
 }
 
@@ -67,22 +86,50 @@ func runUpgradeCheck(cmd *cobra.Command, cfg upgradeConfig) error {
 		return fmt.Errorf("hash template source: %w", err)
 	}
 
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Locked ref: %s\n", lock.Template.Ref)
-	if lock.Template.Name != "" || lock.Template.Version != "" {
-		fmt.Fprintf(out, "Locked template: %s v%s\n", lock.Template.Name, lock.Template.Version)
+	result := upgradeCheckResult{
+		LockedRef:        lock.Template.Ref,
+		LockedTemplate:   lock.Template.Name,
+		LockedVersion:    lock.Template.Version,
+		LockedHash:       lock.Template.ContentHash,
+		TargetRef:        targetRef,
+		TargetHash:       targetHash,
+		UpToDate:         targetHash == lock.Template.ContentHash,
+		ApplyImplemented: false,
 	}
-	fmt.Fprintf(out, "Locked hash: %s\n", lock.Template.ContentHash)
-	fmt.Fprintf(out, "Target ref: %s\n", targetRef)
+	result.Differs = !result.UpToDate
 	if rt.Manifest != nil {
-		fmt.Fprintf(out, "Target template: %s v%s\n", rt.Manifest.Template.Name, rt.Manifest.Template.Version)
+		result.TargetTemplate = rt.Manifest.Template.Name
+		result.TargetVersion = rt.Manifest.Template.Version
 	}
-	fmt.Fprintf(out, "Target hash: %s\n", targetHash)
 
-	if targetHash == lock.Template.ContentHash {
+	out := cmd.OutOrStdout()
+	if cfg.json {
+		if err := json.NewEncoder(out).Encode(result); err != nil {
+			return err
+		}
+	} else {
+		renderUpgradeCheck(out, result)
+	}
+	if cfg.strict && result.Differs {
+		return exitErr(1)
+	}
+	return nil
+}
+
+func renderUpgradeCheck(out fmtWriter, result upgradeCheckResult) {
+	fmt.Fprintf(out, "Locked ref: %s\n", result.LockedRef)
+	if result.LockedTemplate != "" || result.LockedVersion != "" {
+		fmt.Fprintf(out, "Locked template: %s v%s\n", result.LockedTemplate, result.LockedVersion)
+	}
+	fmt.Fprintf(out, "Locked hash: %s\n", result.LockedHash)
+	fmt.Fprintf(out, "Target ref: %s\n", result.TargetRef)
+	if result.TargetTemplate != "" || result.TargetVersion != "" {
+		fmt.Fprintf(out, "Target template: %s v%s\n", result.TargetTemplate, result.TargetVersion)
+	}
+	fmt.Fprintf(out, "Target hash: %s\n", result.TargetHash)
+	if result.UpToDate {
 		fmt.Fprintln(out, "agent-team upgrade: already up to date")
-		return nil
+		return
 	}
 	fmt.Fprintln(out, "agent-team upgrade: template differs; full merge/apply is not implemented yet")
-	return nil
 }

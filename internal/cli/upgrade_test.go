@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -65,6 +66,47 @@ func TestUpgradeCheck_DetectsDifferentTarget(t *testing.T) {
 	}
 	if !strings.Contains(body, "template differs") {
 		t.Errorf("missing differs result: %s", body)
+	}
+}
+
+func TestUpgradeCheckJSONAndStrict(t *testing.T) {
+	tmplDir := t.TempDir()
+	writeTinyTemplate(t, tmplDir, "tiny", "0.0.1", "hello")
+
+	target := t.TempDir()
+	initCmd := NewRootCmd()
+	initCmd.SetOut(&bytes.Buffer{})
+	initCmd.SetErr(&bytes.Buffer{})
+	initCmd.SetArgs([]string{"init", tmplDir, "--target", target})
+	if err := initCmd.Execute(); err != nil {
+		t.Fatalf("init local template: %v", err)
+	}
+
+	nextDir := t.TempDir()
+	writeTinyTemplate(t, nextDir, "tiny", "0.0.2", "hello again")
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"upgrade", "--check", "--json", "--strict", "--target", target, "--to", nextDir})
+	err := cmd.Execute()
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 1 {
+		t.Fatalf("strict drift err = %v, want exit 1\nstderr=%s", err, errOut.String())
+	}
+	var result upgradeCheckResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode upgrade json: %v\nbody=%s", err, out.String())
+	}
+	if !result.Differs || result.UpToDate || result.TargetTemplate != "tiny" || result.TargetVersion != "0.0.2" || result.ApplyImplemented {
+		t.Fatalf("upgrade json result = %+v", result)
+	}
+	if result.LockedHash == "" || result.TargetHash == "" || result.LockedHash == result.TargetHash {
+		t.Fatalf("upgrade hashes = %+v", result)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("strict json stderr = %q", errOut.String())
 	}
 }
 
