@@ -151,6 +151,7 @@ func newQueueDropCmd() *cobra.Command {
 	var (
 		target      string
 		jsonOut     bool
+		format      string
 		dropAll     bool
 		dryRun      bool
 		stateFilter string
@@ -167,6 +168,15 @@ func newQueueDropCmd() *cobra.Command {
 		Long:  "Drop one queue item by id, or drop a filtered batch with --all. Batch drops default to dead-letter items.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue drop: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseQueueFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue drop: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -192,7 +202,7 @@ func newQueueDropCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue drop: %v\n", err)
 					return exitErr(2)
 				}
-				return runQueueDropAll(cmd.OutOrStdout(), teamDir, filters, limit, dryRun, jsonOut)
+				return runQueueDropAll(cmd.OutOrStdout(), teamDir, filters, limit, dryRun, jsonOut, tmpl)
 			}
 			if len(args) != 1 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue drop: requires one id unless --all is set.")
@@ -203,8 +213,9 @@ func newQueueDropCmd() *cobra.Command {
 				return exitErr(2)
 			}
 			id := args[0]
-			if dryRun {
-				item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id)
+			var item *daemon.QueueItem
+			if dryRun || tmpl != nil {
+				item, err = daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id)
 				if err != nil {
 					if errors.Is(err, fs.ErrNotExist) {
 						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue drop: queue item %q not found.\n", id)
@@ -212,6 +223,8 @@ func newQueueDropCmd() *cobra.Command {
 					}
 					return err
 				}
+			}
+			if dryRun {
 				return renderQueueDropResults(cmd.OutOrStdout(), []queueDropResult{{
 					ID:         item.ID,
 					State:      item.State,
@@ -219,7 +232,7 @@ func newQueueDropCmd() *cobra.Command {
 					InstanceID: item.InstanceID,
 					Action:     "would_drop",
 					DryRun:     true,
-				}}, jsonOut)
+				}}, jsonOut, tmpl)
 			}
 			if dc, err := newDaemonClient(teamDir); err == nil {
 				err = dc.QueueDrop(id)
@@ -237,6 +250,15 @@ func newQueueDropCmd() *cobra.Command {
 			} else {
 				return err
 			}
+			if tmpl != nil {
+				return renderQueueDropResults(cmd.OutOrStdout(), []queueDropResult{{
+					ID:         item.ID,
+					State:      item.State,
+					Instance:   item.Instance,
+					InstanceID: item.InstanceID,
+					Action:     "dropped",
+				}}, false, tmpl)
+			}
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"dropped": true, "id": id})
 			}
@@ -246,6 +268,7 @@ func newQueueDropCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	cmd.Flags().BoolVar(&dropAll, "all", false, "Drop all matching queue items instead of one id.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching queue items without dropping them.")
 	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.")
@@ -261,6 +284,7 @@ func newQueueRetryCmd() *cobra.Command {
 	var (
 		target      string
 		jsonOut     bool
+		format      string
 		retryAll    bool
 		dryRun      bool
 		stateFilter string
@@ -277,6 +301,15 @@ func newQueueRetryCmd() *cobra.Command {
 		Long:  "Retry one queue item by id, or retry a filtered batch with --all. Batch retries default to dead-letter items.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue retry: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseQueueFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue retry: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -302,7 +335,7 @@ func newQueueRetryCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue retry: %v\n", err)
 					return exitErr(2)
 				}
-				return runQueueRetryAll(cmd.OutOrStdout(), teamDir, filters, limit, dryRun, jsonOut)
+				return runQueueRetryAll(cmd.OutOrStdout(), teamDir, filters, limit, dryRun, jsonOut, tmpl)
 			}
 			if len(args) != 1 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue retry: requires one id unless --all is set.")
@@ -313,8 +346,9 @@ func newQueueRetryCmd() *cobra.Command {
 				return exitErr(2)
 			}
 			id := args[0]
-			if dryRun {
-				item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id)
+			var item *daemon.QueueItem
+			if dryRun || tmpl != nil {
+				item, err = daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id)
 				if err != nil {
 					if errors.Is(err, fs.ErrNotExist) {
 						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue retry: queue item %q not found.\n", id)
@@ -322,6 +356,8 @@ func newQueueRetryCmd() *cobra.Command {
 					}
 					return err
 				}
+			}
+			if dryRun {
 				return renderQueueRetryResults(cmd.OutOrStdout(), []queueRetryResult{{
 					ID:         item.ID,
 					State:      item.State,
@@ -329,7 +365,7 @@ func newQueueRetryCmd() *cobra.Command {
 					InstanceID: item.InstanceID,
 					Action:     "would_retry",
 					DryRun:     true,
-				}}, jsonOut)
+				}}, jsonOut, tmpl)
 			}
 			if dc, err := newDaemonClient(teamDir); err == nil {
 				outcome, err := dc.QueueRetry(id)
@@ -339,25 +375,47 @@ func newQueueRetryCmd() *cobra.Command {
 				if jsonOut {
 					return json.NewEncoder(cmd.OutOrStdout()).Encode(outcome)
 				}
+				if tmpl != nil {
+					return renderQueueRetryResults(cmd.OutOrStdout(), []queueRetryResult{{
+						ID:         item.ID,
+						State:      item.State,
+						Instance:   outcome.Instance,
+						InstanceID: outcome.InstanceID,
+						Action:     outcome.Action,
+						Reason:     outcome.Reason,
+					}}, false, tmpl)
+				}
 				renderQueueRetryOutcome(cmd.OutOrStdout(), outcome)
 				return nil
 			} else if !errors.Is(err, errDaemonNotRunning) {
 				return err
 			}
 
-			item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id)
-			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue retry: queue item %q not found.\n", id)
-					return exitErr(2)
+			if item == nil {
+				item, err = daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id)
+				if err != nil {
+					if errors.Is(err, fs.ErrNotExist) {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue retry: queue item %q not found.\n", id)
+						return exitErr(2)
+					}
+					return err
 				}
-				return err
 			}
+			originalState := item.State
 			if err := daemon.ResetQueueItemForRetry(daemon.DaemonRoot(teamDir), item); err != nil {
 				return err
 			}
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(item)
+			}
+			if tmpl != nil {
+				return renderQueueRetryResults(cmd.OutOrStdout(), []queueRetryResult{{
+					ID:         item.ID,
+					State:      originalState,
+					Instance:   item.Instance,
+					InstanceID: item.InstanceID,
+					Action:     "reset",
+				}}, false, tmpl)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Queue item %s marked pending; start the daemon to dispatch it.\n", id)
 			return nil
@@ -365,6 +423,7 @@ func newQueueRetryCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	cmd.Flags().BoolVar(&retryAll, "all", false, "Retry all matching queue items instead of one id.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching queue items without retrying them.")
 	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.")
@@ -810,7 +869,7 @@ func pruneQueueItems(teamDir, state string, olderThan time.Duration, now time.Ti
 	return results, nil
 }
 
-func runQueueDropAll(w io.Writer, teamDir string, filters queueListFilters, limit int, dryRun, jsonOut bool) error {
+func runQueueDropAll(w io.Writer, teamDir string, filters queueListFilters, limit int, dryRun, jsonOut bool, tmpl *template.Template) error {
 	items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
 	if err != nil {
 		return err
@@ -851,15 +910,15 @@ func runQueueDropAll(w io.Writer, teamDir string, filters queueListFilters, limi
 		}
 		results = append(results, result)
 	}
-	return renderQueueDropResults(w, results, jsonOut)
+	return renderQueueDropResults(w, results, jsonOut, tmpl)
 }
 
-func runQueueRetryAll(w io.Writer, teamDir string, filters queueListFilters, limit int, dryRun, jsonOut bool) error {
+func runQueueRetryAll(w io.Writer, teamDir string, filters queueListFilters, limit int, dryRun, jsonOut bool, tmpl *template.Template) error {
 	results, err := queueRetryAllResults(teamDir, filters, limit, dryRun)
 	if err != nil {
 		return err
 	}
-	return renderQueueRetryResults(w, results, jsonOut)
+	return renderQueueRetryResults(w, results, jsonOut, tmpl)
 }
 
 func queueRetryAllResults(teamDir string, filters queueListFilters, limit int, dryRun bool) ([]queueRetryResult, error) {
@@ -1083,9 +1142,20 @@ func renderQueuePruneResults(w io.Writer, results []queuePruneResult, jsonOut bo
 	return nil
 }
 
-func renderQueueDropResults(w io.Writer, results []queueDropResult, jsonOut bool) error {
+func renderQueueDropResults(w io.Writer, results []queueDropResult, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := tmpl.Execute(w, result); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	if len(results) == 0 {
 		fmt.Fprintln(w, "(no queue items dropped)")
@@ -1100,9 +1170,20 @@ func renderQueueDropResults(w io.Writer, results []queueDropResult, jsonOut bool
 	return tw.Flush()
 }
 
-func renderQueueRetryResults(w io.Writer, results []queueRetryResult, jsonOut bool) error {
+func renderQueueRetryResults(w io.Writer, results []queueRetryResult, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := tmpl.Execute(w, result); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	if len(results) == 0 {
 		fmt.Fprintln(w, "(no queue items retried)")

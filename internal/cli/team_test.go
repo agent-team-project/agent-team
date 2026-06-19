@@ -2353,6 +2353,18 @@ instances = ["other"]
 		t.Fatalf("retry dry-run changed item=%+v err=%v", item, err)
 	}
 
+	retryDryFormat := NewRootCmd()
+	retryDryFormatOut, retryDryFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	retryDryFormat.SetOut(retryDryFormatOut)
+	retryDryFormat.SetErr(retryDryFormatErr)
+	retryDryFormat.SetArgs([]string{"team", "queue", "retry", "delivery", "--repo", root, "--all", "--job", "SQU-501", "--dry-run", "--format", "{{.ID}} {{.Action}} {{.DryRun}}"})
+	if err := retryDryFormat.Execute(); err != nil {
+		t.Fatalf("team queue retry --all dry-run format: %v\nstderr=%s", err, retryDryFormatErr.String())
+	}
+	if got, want := retryDryFormatOut.String(), "q-team-job would_retry true\n"; got != want {
+		t.Fatalf("team queue retry dry-run format = %q, want %q", got, want)
+	}
+
 	otherRetry := NewRootCmd()
 	otherRetryOut, otherRetryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	otherRetry.SetOut(otherRetryOut)
@@ -2407,6 +2419,19 @@ instances = ["other"]
 		t.Fatalf("drop ready results = %+v", dropReadyResults)
 	}
 
+	dropReadyFormat := NewRootCmd()
+	dropReadyFormatOut, dropReadyFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropReadyFormat.SetOut(dropReadyFormatOut)
+	dropReadyFormat.SetErr(dropReadyFormatErr)
+	dropReadyFormat.SetArgs([]string{"team", "queue", "drop", "delivery", "--repo", root, "--all", "--ready", "--dry-run", "--format", "{{.ID}} {{.Action}} {{.DryRun}}"})
+	if err := dropReadyFormat.Execute(); err != nil {
+		t.Fatalf("team queue drop --all ready dry-run format: %v\nstderr=%s", err, dropReadyFormatErr.String())
+	}
+	dropFormatLines := strings.Split(strings.TrimSpace(dropReadyFormatOut.String()), "\n")
+	if got := strings.Join(dropFormatLines, ","); got != "q-team-job would_drop true,q-team-target would_drop true" {
+		t.Fatalf("team queue drop ready dry-run format = %q", dropReadyFormatOut.String())
+	}
+
 	dropApply := NewRootCmd()
 	dropApplyOut, dropApplyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dropApply.SetOut(dropApplyOut)
@@ -2427,6 +2452,54 @@ instances = ["other"]
 	}
 	if item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-other-target"); err != nil || item.State != daemon.QueueStatePending {
 		t.Fatalf("unrelated drop item changed=%+v err=%v", item, err)
+	}
+}
+
+func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "retry format with json",
+			args: []string{"team", "queue", "retry", "delivery", "--format", "{{.ID}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "retry invalid format",
+			args: []string{"team", "queue", "retry", "delivery", "--format", "{{"},
+			want: "invalid --format template",
+		},
+		{
+			name: "drop format with json",
+			args: []string{"team", "queue", "drop", "delivery", "--format", "{{.ID}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "drop invalid format",
+			args: []string{"team", "queue", "drop", "delivery", "--format", "{{"},
+			want: "invalid --format template",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("team queue format validation succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("team queue err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 

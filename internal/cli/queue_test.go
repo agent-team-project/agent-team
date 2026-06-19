@@ -99,6 +99,38 @@ func TestQueueCommandListShowDropLocal(t *testing.T) {
 		t.Fatalf("drop dry-run removed queue item: %v", err)
 	}
 
+	dryDropFormat := NewRootCmd()
+	dryDropFormatOut, dryDropFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryDropFormat.SetOut(dryDropFormatOut)
+	dryDropFormat.SetErr(dryDropFormatErr)
+	dryDropFormat.SetArgs([]string{"queue", "drop", "q-local", "--target", tmp, "--dry-run", "--format", "{{.ID}} {{.Action}} {{.DryRun}}"})
+	if err := dryDropFormat.Execute(); err != nil {
+		t.Fatalf("queue drop dry-run format: %v\nstderr=%s", err, dryDropFormatErr.String())
+	}
+	if got, want := dryDropFormatOut.String(), "q-local would_drop true\n"; got != want {
+		t.Fatalf("queue drop dry-run format = %q, want %q", got, want)
+	}
+
+	formatItem := *item
+	formatItem.ID = "q-local-format"
+	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), &formatItem); err != nil {
+		t.Fatalf("WriteQueueItem format: %v", err)
+	}
+	dropFormat := NewRootCmd()
+	dropFormatOut, dropFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropFormat.SetOut(dropFormatOut)
+	dropFormat.SetErr(dropFormatErr)
+	dropFormat.SetArgs([]string{"queue", "drop", "q-local-format", "--target", tmp, "--format", "{{.ID}} {{.Action}} {{.State}}"})
+	if err := dropFormat.Execute(); err != nil {
+		t.Fatalf("queue drop format: %v\nstderr=%s", err, dropFormatErr.String())
+	}
+	if got, want := dropFormatOut.String(), "q-local-format dropped dead\n"; got != want {
+		t.Fatalf("queue drop format = %q, want %q", got, want)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-local-format"); !os.IsNotExist(err) {
+		t.Fatalf("formatted drop item still exists or unexpected err=%v", err)
+	}
+
 	drop := NewRootCmd()
 	dropOut, dropErr := &bytes.Buffer{}, &bytes.Buffer{}
 	drop.SetOut(dropOut)
@@ -247,6 +279,10 @@ func TestQueueDoctorFormatValidation(t *testing.T) {
 	}{
 		{[]string{"queue", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
 		{[]string{"queue", "doctor", "--format", "{{"}, "invalid --format template"},
+		{[]string{"queue", "drop", "--format", "{{.ID}}", "--json"}, "--format cannot be combined"},
+		{[]string{"queue", "drop", "--format", "{{"}, "invalid --format template"},
+		{[]string{"queue", "retry", "--format", "{{.ID}}", "--json"}, "--format cannot be combined"},
+		{[]string{"queue", "retry", "--format", "{{"}, "invalid --format template"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
@@ -1097,6 +1133,27 @@ func TestQueueDropAllLocal(t *testing.T) {
 		t.Fatalf("dry-run removed worker item: %v", err)
 	}
 
+	dryFormat := NewRootCmd()
+	dryFormatOut, dryFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryFormat.SetOut(dryFormatOut)
+	dryFormat.SetErr(dryFormatErr)
+	dryFormat.SetArgs([]string{
+		"queue", "drop",
+		"--target", tmp,
+		"--all",
+		"--instance", "worker",
+		"--event-type", "agent.dispatch",
+		"--job", "SQU-104",
+		"--dry-run",
+		"--format", "{{.ID}} {{.Action}} {{.DryRun}}",
+	})
+	if err := dryFormat.Execute(); err != nil {
+		t.Fatalf("queue drop --all dry-run format: %v\nstderr=%s", err, dryFormatErr.String())
+	}
+	if got, want := dryFormatOut.String(), "q-drop-worker would_drop true\n"; got != want {
+		t.Fatalf("queue drop --all dry-run format = %q, want %q", got, want)
+	}
+
 	ready := NewRootCmd()
 	readyOut, readyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	ready.SetOut(readyOut)
@@ -1231,6 +1288,27 @@ func TestQueueRetryAllLocal(t *testing.T) {
 	}
 	if item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-retry-worker"); err != nil || item.State != daemon.QueueStateDead {
 		t.Fatalf("dry-run changed item=%+v err=%v", item, err)
+	}
+
+	dryFormat := NewRootCmd()
+	dryFormatOut, dryFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryFormat.SetOut(dryFormatOut)
+	dryFormat.SetErr(dryFormatErr)
+	dryFormat.SetArgs([]string{
+		"queue", "retry",
+		"--target", tmp,
+		"--all",
+		"--instance", "worker",
+		"--event-type", "agent.dispatch",
+		"--job", "SQU-100",
+		"--dry-run",
+		"--format", "{{.ID}} {{.Action}} {{.DryRun}}",
+	})
+	if err := dryFormat.Execute(); err != nil {
+		t.Fatalf("queue retry --all dry-run format: %v\nstderr=%s", err, dryFormatErr.String())
+	}
+	if got, want := dryFormatOut.String(), "q-retry-worker would_retry true\n"; got != want {
+		t.Fatalf("queue retry --all dry-run format = %q, want %q", got, want)
 	}
 
 	ready := NewRootCmd()
@@ -1470,6 +1548,25 @@ func TestQueueRetryDryRunSingleDoesNotRequireDaemon(t *testing.T) {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("retry dry-run text missing %q:\n%s", want, textOut.String())
 		}
+	}
+
+	formatCmd := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatCmd.SetOut(formatOut)
+	formatCmd.SetErr(formatErr)
+	formatCmd.SetArgs([]string{"queue", "retry", "q-retry-one", "--target", tmp, "--format", "{{.ID}} {{.Action}} {{.State}}"})
+	if err := formatCmd.Execute(); err != nil {
+		t.Fatalf("queue retry format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if got, want := formatOut.String(), "q-retry-one reset dead\n"; got != want {
+		t.Fatalf("queue retry format = %q, want %q", got, want)
+	}
+	retried, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-retry-one")
+	if err != nil {
+		t.Fatalf("read formatted retry item: %v", err)
+	}
+	if retried.State != daemon.QueueStatePending || retried.LastError != "" {
+		t.Fatalf("formatted retry item = %+v", retried)
 	}
 }
 

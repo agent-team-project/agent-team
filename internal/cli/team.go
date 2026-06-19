@@ -1253,6 +1253,7 @@ func newTeamQueueRetryCmd() *cobra.Command {
 	var (
 		repo        string
 		jsonOut     bool
+		format      string
 		retryAll    bool
 		dryRun      bool
 		stateFilter string
@@ -1268,6 +1269,15 @@ func newTeamQueueRetryCmd() *cobra.Command {
 		Long:  "Retry one team-owned queue item by id, or retry a filtered team-owned batch with --all. Batch retries default to dead-letter items.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue retry: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseQueueFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue retry: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -1293,7 +1303,7 @@ func newTeamQueueRetryCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue retry: %v\n", err)
 					return exitErr(2)
 				}
-				return runTeamQueueRetryAll(cmd.OutOrStdout(), teamDir, args[0], filters, limit, dryRun, jsonOut)
+				return runTeamQueueRetryAll(cmd.OutOrStdout(), teamDir, args[0], filters, limit, dryRun, jsonOut, tmpl)
 			}
 			if len(args) != 2 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue retry: requires <team> and one id unless --all is set.")
@@ -1316,7 +1326,7 @@ func newTeamQueueRetryCmd() *cobra.Command {
 					InstanceID: item.InstanceID,
 					Action:     "would_retry",
 					DryRun:     true,
-				}}, jsonOut)
+				}}, jsonOut, tmpl)
 			}
 			if dc, err := newDaemonClient(teamDir); err == nil {
 				outcome, err := dc.QueueRetry(id)
@@ -1326,16 +1336,36 @@ func newTeamQueueRetryCmd() *cobra.Command {
 				if jsonOut {
 					return json.NewEncoder(cmd.OutOrStdout()).Encode(outcome)
 				}
+				if tmpl != nil {
+					return renderQueueRetryResults(cmd.OutOrStdout(), []queueRetryResult{{
+						ID:         item.ID,
+						State:      item.State,
+						Instance:   outcome.Instance,
+						InstanceID: outcome.InstanceID,
+						Action:     outcome.Action,
+						Reason:     outcome.Reason,
+					}}, false, tmpl)
+				}
 				renderQueueRetryOutcome(cmd.OutOrStdout(), outcome)
 				return nil
 			} else if !errors.Is(err, errDaemonNotRunning) {
 				return err
 			}
+			originalState := item.State
 			if err := daemon.ResetQueueItemForRetry(daemon.DaemonRoot(teamDir), item); err != nil {
 				return err
 			}
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(item)
+			}
+			if tmpl != nil {
+				return renderQueueRetryResults(cmd.OutOrStdout(), []queueRetryResult{{
+					ID:         item.ID,
+					State:      originalState,
+					Instance:   item.Instance,
+					InstanceID: item.InstanceID,
+					Action:     "reset",
+				}}, false, tmpl)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Team queue item %s marked pending; start the daemon to dispatch it.\n", id)
 			return nil
@@ -1343,6 +1373,7 @@ func newTeamQueueRetryCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	cmd.Flags().BoolVar(&retryAll, "all", false, "Retry all matching team-owned queue items instead of one id.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching team-owned queue items without retrying them.")
 	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.")
@@ -1357,6 +1388,7 @@ func newTeamQueueDropCmd() *cobra.Command {
 	var (
 		repo        string
 		jsonOut     bool
+		format      string
 		dropAll     bool
 		dryRun      bool
 		stateFilter string
@@ -1372,6 +1404,15 @@ func newTeamQueueDropCmd() *cobra.Command {
 		Long:  "Drop one team-owned queue item by id, or drop a filtered team-owned batch with --all. Batch drops default to dead-letter items.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue drop: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseQueueFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue drop: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -1397,7 +1438,7 @@ func newTeamQueueDropCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue drop: %v\n", err)
 					return exitErr(2)
 				}
-				return runTeamQueueDropAll(cmd.OutOrStdout(), teamDir, args[0], filters, limit, dryRun, jsonOut)
+				return runTeamQueueDropAll(cmd.OutOrStdout(), teamDir, args[0], filters, limit, dryRun, jsonOut, tmpl)
 			}
 			if len(args) != 2 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue drop: requires <team> and one id unless --all is set.")
@@ -1420,7 +1461,7 @@ func newTeamQueueDropCmd() *cobra.Command {
 					InstanceID: item.InstanceID,
 					Action:     "would_drop",
 					DryRun:     true,
-				}}, jsonOut)
+				}}, jsonOut, tmpl)
 			}
 			if dc, err := newDaemonClient(teamDir); err == nil {
 				if err := dc.QueueDrop(id); err != nil {
@@ -1440,12 +1481,22 @@ func newTeamQueueDropCmd() *cobra.Command {
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"dropped": true, "id": id, "team": teamName})
 			}
+			if tmpl != nil {
+				return renderQueueDropResults(cmd.OutOrStdout(), []queueDropResult{{
+					ID:         item.ID,
+					State:      item.State,
+					Instance:   item.Instance,
+					InstanceID: item.InstanceID,
+					Action:     "dropped",
+				}}, false, tmpl)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Dropped team queue item %s\n", id)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	cmd.Flags().BoolVar(&dropAll, "all", false, "Drop all matching team-owned queue items instead of one id.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching team-owned queue items without dropping them.")
 	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.")
@@ -4512,7 +4563,7 @@ func readTeamQueueItem(cmd *cobra.Command, teamDir, name, id, verb string) (*dae
 	return item, nil
 }
 
-func runTeamQueueDropAll(w io.Writer, teamDir, name string, filters queueListFilters, limit int, dryRun, jsonOut bool) error {
+func runTeamQueueDropAll(w io.Writer, teamDir, name string, filters queueListFilters, limit int, dryRun, jsonOut bool, tmpl *template.Template) error {
 	matches, err := collectTeamQueueItems(teamDir, name, filters, time.Now().UTC())
 	if err != nil {
 		return err
@@ -4552,15 +4603,15 @@ func runTeamQueueDropAll(w io.Writer, teamDir, name string, filters queueListFil
 		}
 		results = append(results, result)
 	}
-	return renderQueueDropResults(w, results, jsonOut)
+	return renderQueueDropResults(w, results, jsonOut, tmpl)
 }
 
-func runTeamQueueRetryAll(w io.Writer, teamDir, name string, filters queueListFilters, limit int, dryRun, jsonOut bool) error {
+func runTeamQueueRetryAll(w io.Writer, teamDir, name string, filters queueListFilters, limit int, dryRun, jsonOut bool, tmpl *template.Template) error {
 	results, err := teamQueueRetryResults(teamDir, name, filters, limit, dryRun)
 	if err != nil {
 		return err
 	}
-	return renderQueueRetryResults(w, results, jsonOut)
+	return renderQueueRetryResults(w, results, jsonOut, tmpl)
 }
 
 func teamQueueRetryResults(teamDir, name string, filters queueListFilters, limit int, dryRun bool) ([]queueRetryResult, error) {
