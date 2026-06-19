@@ -1,0 +1,397 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+)
+
+func newOverviewCmd() *cobra.Command {
+	var (
+		target        string
+		jsonOut       bool
+		scheduleLimit int
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "overview",
+		Short: "Show a concise operator overview across health, jobs, queue, pipelines, and schedules.",
+		Long: "Show a read-only operator overview with health, topology, job, queue, pipeline, " +
+			"schedule, and recommended next-action summaries.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if scheduleLimit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team overview: --schedule-limit must be >= 0.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, target)
+			if err != nil {
+				return err
+			}
+			result := collectOverview(teamDir, time.Now().UTC(), scheduleLimit)
+			return renderOverview(cmd.OutOrStdout(), result, jsonOut)
+		},
+	}
+	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit overview as JSON.")
+	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 5, "Upcoming schedules to inspect after ordering; 0 means all.")
+	return cmd
+}
+
+type overviewResult struct {
+	OK            bool                    `json:"ok"`
+	State         string                  `json:"state"`
+	CapturedAt    string                  `json:"captured_at"`
+	Health        overviewHealthSummary   `json:"health"`
+	Topology      *topologySummary        `json:"topology,omitempty"`
+	Jobs          overviewJobSummary      `json:"jobs"`
+	Queue         queueSummary            `json:"queue"`
+	Pipelines     overviewPipelineSummary `json:"pipelines"`
+	Schedules     overviewScheduleSummary `json:"schedules"`
+	Actions       []string                `json:"actions,omitempty"`
+	SectionErrors map[string]string       `json:"section_errors,omitempty"`
+}
+
+type overviewHealthSummary struct {
+	Healthy       bool `json:"healthy"`
+	DaemonRunning bool `json:"daemon_running"`
+	DaemonReady   bool `json:"daemon_ready"`
+	DaemonPID     int  `json:"daemon_pid,omitempty"`
+	Issues        int  `json:"issues"`
+	Errors        int  `json:"errors"`
+	Warnings      int  `json:"warnings"`
+}
+
+type overviewJobSummary struct {
+	Summary               jobSummary `json:"summary"`
+	Attention             int        `json:"attention"`
+	ReadySteps            int        `json:"ready_steps"`
+	StatusPreviews        int        `json:"status_previews"`
+	StatusChanges         int        `json:"status_changes"`
+	BlockedStatusPreviews int        `json:"blocked_status_previews"`
+}
+
+type overviewPipelineSummary struct {
+	Total        int `json:"total"`
+	Jobs         int `json:"jobs"`
+	ReadySteps   int `json:"ready_steps"`
+	QueuedSteps  int `json:"queued_steps"`
+	RunningSteps int `json:"running_steps"`
+	BlockedSteps int `json:"blocked_steps"`
+	FailedSteps  int `json:"failed_steps"`
+	DoneSteps    int `json:"done_steps"`
+}
+
+type overviewScheduleSummary struct {
+	Declared int      `json:"declared"`
+	Due      int      `json:"due"`
+	Upcoming int      `json:"upcoming"`
+	DueNames []string `json:"due_names,omitempty"`
+}
+
+func collectOverview(teamDir string, now time.Time, scheduleLimit int) *overviewResult {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	out := &overviewResult{
+		OK:         true,
+		State:      "ok",
+		CapturedAt: now.Format(time.RFC3339),
+	}
+
+	health, err := collectHealthWithOptions(teamDir, now, healthOptions{includeJobs: true})
+	if err != nil {
+		out.addError("health", err)
+	} else if health != nil {
+		out.Health = overviewHealthFromHealth(health)
+		out.Queue = health.Queue
+		if health.Jobs != nil {
+			out.Jobs = overviewJobsFromTriage(*health.Jobs)
+		}
+		out.Pipelines = overviewPipelinesFromRows(health.PipelineStatus)
+	}
+
+	if topology, err := collectTopologySummary(teamDir); err != nil {
+		out.addError("topology", err)
+	} else {
+		out.Topology = topology
+	}
+
+	if out.Jobs.Summary.Total == 0 && out.Jobs.Attention == 0 && out.Jobs.ReadySteps == 0 {
+		if triage, err := collectJobTriage(teamDir, now, defaultJobTriageStaleAfter); err != nil {
+			out.addError("jobs", err)
+		} else {
+			out.Jobs = overviewJobsFromTriage(triage)
+			if out.Queue.Total == 0 {
+				out.Queue = triage.Queue
+			}
+		}
+	}
+
+	if out.Pipelines.Total == 0 {
+		if rows, err := collectPipelineStatusRows(teamDir, ""); err != nil {
+			out.addError("pipelines", err)
+		} else {
+			out.Pipelines = overviewPipelinesFromRows(rows)
+		}
+	}
+
+	if schedules, err := loadScheduleInfos(teamDir); err != nil {
+		out.addError("schedules", err)
+	} else {
+		out.Schedules = overviewSchedulesFromRows(schedules, now, scheduleLimit)
+	}
+
+	out.Actions = overviewActions(out, health)
+	out.OK = overviewOK(out, health)
+	out.State = overviewState(out)
+	return out
+}
+
+func overviewHealthFromHealth(health *healthResult) overviewHealthSummary {
+	out := overviewHealthSummary{
+		Healthy:       health.Healthy,
+		DaemonRunning: health.Daemon.Running,
+		DaemonReady:   health.Daemon.Ready,
+		DaemonPID:     health.Daemon.PID,
+		Issues:        len(health.Issues),
+	}
+	for _, issue := range health.Issues {
+		switch issue.Severity {
+		case "warning":
+			out.Warnings++
+		default:
+			out.Errors++
+		}
+	}
+	return out
+}
+
+func overviewJobsFromTriage(triage jobTriageSnapshot) overviewJobSummary {
+	return overviewJobSummary{
+		Summary:               triage.Summary,
+		Attention:             len(triage.Attention),
+		ReadySteps:            len(triage.ReadySteps),
+		StatusPreviews:        len(triage.StatusPreviews),
+		StatusChanges:         countChangedJobStatusPreviews(triage.StatusPreviews),
+		BlockedStatusPreviews: countJobStatusPreviewsByAfter(triage.StatusPreviews, "blocked"),
+	}
+}
+
+func overviewPipelinesFromRows(rows []pipelineStatusRow) overviewPipelineSummary {
+	out := overviewPipelineSummary{Total: len(rows)}
+	for _, row := range rows {
+		out.Jobs += row.Jobs
+		out.ReadySteps += row.ReadySteps
+		out.QueuedSteps += row.QueuedSteps
+		out.RunningSteps += row.RunningSteps
+		out.BlockedSteps += row.BlockedSteps
+		out.FailedSteps += row.FailedSteps
+		out.DoneSteps += row.DoneSteps
+	}
+	return out
+}
+
+func overviewSchedulesFromRows(schedules []scheduleInfo, now time.Time, limit int) overviewScheduleSummary {
+	due := dueScheduleRows(schedules, now)
+	next := nextScheduleRows(schedules, now, limit)
+	out := overviewScheduleSummary{
+		Declared: len(schedules),
+		Due:      len(due),
+		Upcoming: len(next),
+	}
+	for _, schedule := range due {
+		out.DueNames = append(out.DueNames, schedule.Name)
+	}
+	sort.Strings(out.DueNames)
+	return out
+}
+
+func overviewActions(out *overviewResult, health *healthResult) []string {
+	seen := map[string]bool{}
+	var actions []string
+	add := func(action string) {
+		action = strings.TrimSpace(action)
+		if action == "" || seen[action] {
+			return
+		}
+		seen[action] = true
+		actions = append(actions, action)
+	}
+
+	if health != nil && !health.Healthy {
+		add("agent-team repair --dry-run --jobs")
+	}
+	if health != nil {
+		for _, issue := range health.Issues {
+			if issue.Code == "daemon_not_running" || issue.Code == "daemon_not_ready" {
+				add("agent-team daemon start")
+			}
+			for _, action := range issue.Actions {
+				add(action)
+			}
+		}
+	}
+	if out.Topology != nil && !out.Topology.OK {
+		add("agent-team topology summary")
+		add("agent-team pipeline doctor --all")
+		add("agent-team team doctor --all")
+	}
+	if out.Queue.Dead > 0 {
+		add("agent-team queue retry --all --dry-run")
+	}
+	if out.Queue.Pending > out.Queue.Delayed {
+		add("agent-team queue drain --dry-run")
+	}
+	if out.Jobs.Attention > 0 {
+		add("agent-team job triage")
+	}
+	if out.Jobs.StatusChanges > 0 {
+		add("agent-team job reconcile status")
+	}
+	if out.Jobs.ReadySteps > 0 || out.Pipelines.ReadySteps > 0 {
+		add("agent-team pipeline advance --all --dry-run --preview-routes")
+	}
+	if out.Schedules.Due > 0 {
+		add("agent-team schedule fire --dry-run --preview-triggers")
+	}
+	if len(out.SectionErrors) > 0 {
+		add("agent-team snapshot --json")
+	}
+	return actions
+}
+
+func overviewOK(out *overviewResult, health *healthResult) bool {
+	if out == nil {
+		return true
+	}
+	if len(out.SectionErrors) > 0 {
+		return false
+	}
+	if health != nil && !health.Healthy {
+		return false
+	}
+	if out.Topology != nil && !out.Topology.OK {
+		return false
+	}
+	return out.Queue.Dead == 0 &&
+		out.Jobs.Attention == 0 &&
+		out.Jobs.StatusChanges == 0 &&
+		out.Pipelines.BlockedSteps == 0 &&
+		out.Pipelines.FailedSteps == 0 &&
+		out.Schedules.Due == 0
+}
+
+func overviewState(out *overviewResult) string {
+	if out == nil || out.OK {
+		return "ok"
+	}
+	if len(out.SectionErrors) > 0 || out.Health.Errors > 0 || out.Queue.Dead > 0 || out.Jobs.Attention > 0 || out.Pipelines.FailedSteps > 0 {
+		return "attention"
+	}
+	return "active"
+}
+
+func (r *overviewResult) addError(section string, err error) {
+	if err == nil {
+		return
+	}
+	if r.SectionErrors == nil {
+		r.SectionErrors = map[string]string{}
+	}
+	r.SectionErrors[section] = err.Error()
+}
+
+func renderOverview(w io.Writer, result *overviewResult, jsonOut bool) error {
+	if result == nil {
+		result = &overviewResult{OK: true, State: "ok"}
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(result)
+	}
+	fmt.Fprintf(w, "overview: %s\n", result.State)
+	if result.CapturedAt != "" {
+		fmt.Fprintf(w, "captured: %s\n", result.CapturedAt)
+	}
+	daemon := "down"
+	if result.Health.DaemonRunning {
+		daemon = "running"
+		if result.Health.DaemonReady {
+			daemon = "ready"
+		}
+	}
+	healthState := "healthy"
+	if !result.Health.Healthy {
+		healthState = "unhealthy"
+	}
+	fmt.Fprintf(w, "health: %s daemon=%s issues=%d errors=%d warnings=%d\n",
+		healthState,
+		daemon,
+		result.Health.Issues,
+		result.Health.Errors,
+		result.Health.Warnings)
+	if result.Topology != nil {
+		fmt.Fprintf(w, "topology: instances=%d persistent=%d ephemeral=%d triggers=%d pipelines=%d teams=%d problems=%d warnings=%d\n",
+			result.Topology.Instances,
+			result.Topology.Persistent,
+			result.Topology.Ephemeral,
+			result.Topology.Triggers,
+			result.Topology.Pipelines,
+			result.Topology.Teams,
+			result.Topology.PipelineProblems+result.Topology.TeamProblems,
+			result.Topology.PipelineWarnings+result.Topology.TeamWarnings)
+	}
+	fmt.Fprintf(w, "jobs: total=%d queued=%d running=%d blocked=%d done=%d failed=%d attention=%d ready_steps=%d status_changes=%d\n",
+		result.Jobs.Summary.Total,
+		result.Jobs.Summary.Queued,
+		result.Jobs.Summary.Running,
+		result.Jobs.Summary.Blocked,
+		result.Jobs.Summary.Done,
+		result.Jobs.Summary.Failed,
+		result.Jobs.Attention,
+		result.Jobs.ReadySteps,
+		result.Jobs.StatusChanges)
+	fmt.Fprintf(w, "queue: total=%d pending=%d dead=%d delayed=%d attempts=%d\n",
+		result.Queue.Total,
+		result.Queue.Pending,
+		result.Queue.Dead,
+		result.Queue.Delayed,
+		result.Queue.Attempts)
+	fmt.Fprintf(w, "pipelines: total=%d jobs=%d ready_steps=%d blocked_steps=%d failed_steps=%d\n",
+		result.Pipelines.Total,
+		result.Pipelines.Jobs,
+		result.Pipelines.ReadySteps,
+		result.Pipelines.BlockedSteps,
+		result.Pipelines.FailedSteps)
+	fmt.Fprintf(w, "schedules: declared=%d due=%d upcoming=%d\n",
+		result.Schedules.Declared,
+		result.Schedules.Due,
+		result.Schedules.Upcoming)
+	if len(result.Actions) == 0 {
+		fmt.Fprintln(w, "actions: none")
+	} else {
+		fmt.Fprintln(w, "actions:")
+		for _, action := range result.Actions {
+			fmt.Fprintf(w, "  %s\n", action)
+		}
+	}
+	if len(result.SectionErrors) > 0 {
+		fmt.Fprintln(w, "section errors:")
+		keys := make([]string, 0, len(result.SectionErrors))
+		for key := range result.SectionErrors {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			fmt.Fprintf(w, "  %s: %s\n", key, result.SectionErrors[key])
+		}
+	}
+	return nil
+}
