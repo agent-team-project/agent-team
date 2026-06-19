@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
 )
 
@@ -44,10 +45,47 @@ func newOverviewCmd() *cobra.Command {
 	return cmd
 }
 
+func newTeamOverviewCmd() *cobra.Command {
+	var (
+		repo          string
+		jsonOut       bool
+		scheduleLimit int
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "overview <team>",
+		Short: "Show a concise operator overview for one declared team.",
+		Long: "Show a read-only operator overview scoped to one declared team with health, topology, job, " +
+			"queue, pipeline, schedule, and recommended next-action summaries.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if scheduleLimit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team overview: --schedule-limit must be >= 0.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			result, err := collectTeamOverview(teamDir, args[0], time.Now().UTC(), scheduleLimit)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team overview: %v\n", err)
+				return exitErr(1)
+			}
+			return renderOverview(cmd.OutOrStdout(), result, jsonOut)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team overview as JSON.")
+	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 5, "Upcoming team schedules to inspect after ordering; 0 means all.")
+	return cmd
+}
+
 type overviewResult struct {
 	OK            bool                    `json:"ok"`
 	State         string                  `json:"state"`
 	CapturedAt    string                  `json:"captured_at"`
+	Team          *teamInfo               `json:"team,omitempty"`
 	Health        overviewHealthSummary   `json:"health"`
 	Topology      *topologySummary        `json:"topology,omitempty"`
 	Jobs          overviewJobSummary      `json:"jobs"`
@@ -155,6 +193,113 @@ func collectOverview(teamDir string, now time.Time, scheduleLimit int) *overview
 	return out
 }
 
+func collectTeamOverview(teamDir, name string, now time.Time, scheduleLimit int) (*overviewResult, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return nil, err
+	}
+	info := teamInfoFromTopology(team)
+	out := &overviewResult{
+		OK:         true,
+		State:      "ok",
+		CapturedAt: now.Format(time.RFC3339),
+		Team:       &info,
+	}
+
+	var health *healthResult
+	if snapshot, err := collectTeamHealth(teamDir, team.Name, now, true); err != nil {
+		out.addError("health", err)
+	} else if snapshot != nil && snapshot.Health != nil {
+		health = snapshot.Health
+		out.Health = overviewHealthFromHealth(snapshot.Health)
+		out.Queue = snapshot.Health.Queue
+		if snapshot.Health.Jobs != nil {
+			out.Jobs = overviewJobsFromTriage(*snapshot.Health.Jobs)
+		}
+		out.Pipelines = overviewPipelinesFromRows(snapshot.Health.PipelineStatus)
+	}
+
+	if doctor, err := collectTeamDoctor(teamDir, team.Name); err != nil {
+		out.addError("topology", err)
+	} else {
+		out.Topology = overviewTopologyFromTeam(top, team, doctor)
+	}
+
+	if out.Jobs.Summary.Total == 0 && out.Jobs.Attention == 0 && out.Jobs.ReadySteps == 0 {
+		if triage, err := collectTeamTriage(teamDir, team.Name, now, defaultJobTriageStaleAfter, jobTriageFilters{}); err != nil {
+			out.addError("jobs", err)
+		} else {
+			out.Jobs = overviewJobsFromTriage(triage)
+			if out.Queue.Total == 0 {
+				out.Queue = triage.Queue
+			}
+		}
+	}
+
+	if out.Pipelines.Total == 0 {
+		if rows, err := collectTeamPipelineStatus(teamDir, team.Name); err != nil {
+			out.addError("pipelines", err)
+		} else {
+			out.Pipelines = overviewPipelinesFromRows(rows)
+		}
+	}
+
+	if schedules, err := collectTeamSchedules(teamDir, team.Name); err != nil {
+		out.addError("schedules", err)
+	} else {
+		out.Schedules = overviewSchedulesFromRows(schedules, now, scheduleLimit)
+	}
+
+	out.Actions = overviewActionsForScope(out, health, team.Name)
+	out.OK = overviewOK(out, health)
+	out.State = overviewState(out)
+	return out, nil
+}
+
+func overviewTopologyFromTeam(top *topology.Topology, team *topology.Team, doctor *teamDoctorResult) *topologySummary {
+	summary := &topologySummary{OK: true}
+	if top == nil || team == nil {
+		return summary
+	}
+	summary.Teams = 1
+	for _, name := range team.Instances {
+		inst := top.Instances[name]
+		if inst == nil {
+			continue
+		}
+		summary.Instances++
+		if inst.Ephemeral {
+			summary.Ephemeral++
+		} else {
+			summary.Persistent++
+		}
+		summary.Triggers += len(inst.Triggers)
+	}
+	for _, name := range team.Pipelines {
+		pipeline := top.Pipelines[name]
+		if pipeline == nil {
+			continue
+		}
+		summary.Pipelines++
+		summary.PipelineSteps += len(pipeline.Steps)
+	}
+	for _, name := range team.Schedules {
+		if top.Schedules[name] != nil {
+			summary.Schedules++
+		}
+	}
+	if doctor != nil {
+		summary.TeamProblems = len(doctor.Problems)
+		summary.TeamWarnings = countSnapshotTeamDoctorWarnings(doctor.Warnings)
+	}
+	summary.OK = summary.TeamProblems == 0
+	return summary
+}
+
 func overviewHealthFromHealth(health *healthResult) overviewHealthSummary {
 	out := overviewHealthSummary{
 		Healthy:       health.Healthy,
@@ -215,6 +360,10 @@ func overviewSchedulesFromRows(schedules []scheduleInfo, now time.Time, limit in
 }
 
 func overviewActions(out *overviewResult, health *healthResult) []string {
+	return overviewActionsForScope(out, health, "")
+}
+
+func overviewActionsForScope(out *overviewResult, health *healthResult, teamName string) []string {
 	seen := map[string]bool{}
 	var actions []string
 	add := func(action string) {
@@ -227,7 +376,11 @@ func overviewActions(out *overviewResult, health *healthResult) []string {
 	}
 
 	if health != nil && !health.Healthy {
-		add("agent-team repair --dry-run --jobs")
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team repair %s --dry-run --jobs", teamName))
+		} else {
+			add("agent-team repair --dry-run --jobs")
+		}
 	}
 	if health != nil {
 		for _, issue := range health.Issues {
@@ -240,30 +393,58 @@ func overviewActions(out *overviewResult, health *healthResult) []string {
 		}
 	}
 	if out.Topology != nil && !out.Topology.OK {
-		add("agent-team topology summary")
-		add("agent-team pipeline doctor --all")
-		add("agent-team team doctor --all")
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team doctor %s", teamName))
+		} else {
+			add("agent-team topology summary")
+			add("agent-team pipeline doctor --all")
+			add("agent-team team doctor --all")
+		}
 	}
 	if out.Queue.Dead > 0 {
-		add("agent-team queue retry --all --dry-run")
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team queue retry %s --all --dry-run", teamName))
+		} else {
+			add("agent-team queue retry --all --dry-run")
+		}
 	}
 	if out.Queue.Pending > out.Queue.Delayed {
-		add("agent-team queue drain --dry-run")
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team tick %s --dry-run --skip-schedules --skip-advance", teamName))
+		} else {
+			add("agent-team queue drain --dry-run")
+		}
 	}
 	if out.Jobs.Attention > 0 {
-		add("agent-team job triage")
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team triage %s", teamName))
+		} else {
+			add("agent-team job triage")
+		}
 	}
 	if out.Jobs.StatusChanges > 0 {
 		add("agent-team job reconcile status")
 	}
 	if out.Jobs.ReadySteps > 0 || out.Pipelines.ReadySteps > 0 {
-		add("agent-team pipeline advance --all --dry-run --preview-routes")
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team advance %s --dry-run --preview-routes", teamName))
+		} else {
+			add("agent-team pipeline advance --all --dry-run --preview-routes")
+		}
 	}
 	if out.Schedules.Due > 0 {
-		add("agent-team schedule fire --dry-run --preview-triggers")
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team tick %s --dry-run --skip-drain --skip-advance", teamName))
+		} else {
+			add("agent-team schedule fire --dry-run --preview-triggers")
+		}
 	}
 	if len(out.SectionErrors) > 0 {
-		add("agent-team snapshot --json")
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team snapshot %s --json", teamName))
+		} else {
+			add("agent-team snapshot --json")
+		}
 	}
 	return actions
 }
@@ -319,6 +500,9 @@ func renderOverview(w io.Writer, result *overviewResult, jsonOut bool) error {
 	fmt.Fprintf(w, "overview: %s\n", result.State)
 	if result.CapturedAt != "" {
 		fmt.Fprintf(w, "captured: %s\n", result.CapturedAt)
+	}
+	if result.Team != nil {
+		fmt.Fprintf(w, "team: %s\n", result.Team.Name)
 	}
 	daemon := "down"
 	if result.Health.DaemonRunning {

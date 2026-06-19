@@ -92,6 +92,74 @@ func TestOverviewTextRendersOperatorSummary(t *testing.T) {
 	}
 }
 
+func TestTeamOverviewScopesCountsAndActions(t *testing.T) {
+	root := writeOverviewAttentionFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "overview", "delivery", "--repo", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team overview json: %v\nstderr=%s", err, stderr.String())
+	}
+
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode team overview: %v\nbody=%s", err, out.String())
+	}
+	if overview.Team == nil || overview.Team.Name != "delivery" {
+		t.Fatalf("team = %+v", overview.Team)
+	}
+	if overview.OK || overview.State != "attention" {
+		t.Fatalf("overview state = ok:%v state:%q", overview.OK, overview.State)
+	}
+	if overview.Topology == nil || overview.Topology.Instances != 2 || overview.Topology.Teams != 1 || overview.Topology.Pipelines != 1 || overview.Topology.Schedules != 1 {
+		t.Fatalf("topology = %+v", overview.Topology)
+	}
+	if overview.Jobs.Summary.Total != 1 || overview.Jobs.Attention != 1 || overview.Queue.Dead != 1 || overview.Pipelines.ReadySteps != 1 || overview.Schedules.Due != 1 {
+		t.Fatalf("overview = %+v", overview)
+	}
+	for _, want := range []string{
+		"agent-team team repair delivery --dry-run --jobs",
+		"agent-team team queue retry delivery --all --dry-run",
+		"agent-team team triage delivery",
+		"agent-team team advance delivery --dry-run --preview-routes",
+		"agent-team team tick delivery --dry-run --skip-drain --skip-advance",
+	} {
+		if !stringSliceContains(overview.Actions, want) {
+			t.Fatalf("actions missing %q: %+v", want, overview.Actions)
+		}
+	}
+}
+
+func TestTeamOverviewTextRendersTeamSummary(t *testing.T) {
+	root := writeOverviewAttentionFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "overview", "delivery", "--repo", root})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team overview text: %v\nstderr=%s", err, stderr.String())
+	}
+
+	for _, want := range []string{
+		"overview: attention",
+		"team: delivery",
+		"topology: instances=2 persistent=1 ephemeral=1",
+		"jobs: total=1 queued=0 running=0 blocked=1 done=0 failed=0 attention=1",
+		"queue: total=1 pending=0 dead=1",
+		"schedules: declared=1 due=1 upcoming=1",
+		"agent-team team repair delivery --dry-run --jobs",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("team overview text missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
 func writeOverviewAttentionFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -122,6 +190,11 @@ target = "worker"
 every = "1h"
 run_on_start = true
 payload.kind = "nightly"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+schedules = ["nightly"]
 `
 	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(instances), 0o644); err != nil {
 		t.Fatal(err)
