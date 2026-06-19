@@ -110,6 +110,27 @@ func TestNextCommandReportsBatchCleanupAction(t *testing.T) {
 	}
 }
 
+func TestNextCommandReportsQueueDoctorAction(t *testing.T) {
+	root := writeOverviewCorruptQueueFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"next", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("next queue doctor json: %v\nstderr=%s", err, stderr.String())
+	}
+
+	var result nextActionResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode next queue doctor json: %v\nbody=%s", err, out.String())
+	}
+	if !stringSliceContains(result.Actions, "agent-team queue doctor") {
+		t.Fatalf("actions missing queue doctor: %+v", result.Actions)
+	}
+}
+
 func TestNextActionResultHandlesNoActions(t *testing.T) {
 	result := nextActionResultFromOverview(&overviewResult{
 		OK:    true,

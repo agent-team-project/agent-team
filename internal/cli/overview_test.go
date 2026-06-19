@@ -202,6 +202,34 @@ func TestOverviewRecommendsIntakeDoctorForLedgerParseErrors(t *testing.T) {
 	}
 }
 
+func TestOverviewRecommendsQueueDoctorForQueueParseErrors(t *testing.T) {
+	root := writeOverviewCorruptQueueFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview corrupt queue json: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview corrupt queue: %v\nbody=%s", err, out.String())
+	}
+	if overview.OK || !overviewHasQueueSectionError(&overview) {
+		t.Fatalf("overview = %+v", overview)
+	}
+	for _, want := range []string{
+		"agent-team queue doctor",
+		"agent-team snapshot --json",
+	} {
+		if !stringSliceContains(overview.Actions, want) {
+			t.Fatalf("actions missing %q: %+v", want, overview.Actions)
+		}
+	}
+}
+
 func TestOverviewIgnoresRecoveredIntakeErrors(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
@@ -523,6 +551,21 @@ instances = ["worker"]
 	}
 	if err := job.Write(teamDir, j); err != nil {
 		t.Fatalf("job.Write: %v", err)
+	}
+	return root
+}
+
+func writeOverviewCorruptQueueFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	initInto(t, root)
+	teamDir := filepath.Join(root, ".agent_team")
+	queueDir := filepath.Join(daemon.QueueRoot(daemon.DaemonRoot(teamDir)), daemon.QueueStatePending)
+	if err := os.MkdirAll(queueDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(queueDir, "bad.json"), []byte("{\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	return root
 }

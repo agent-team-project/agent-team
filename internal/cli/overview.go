@@ -533,6 +533,9 @@ func overviewActionsForScope(out *overviewResult, health *healthResult, teamName
 		if teamName == "" && strings.TrimSpace(out.SectionErrors["intake"]) != "" {
 			add("agent-team intake doctor")
 		}
+		if overviewHasQueueSectionError(out) {
+			add("agent-team queue doctor")
+		}
 		if teamName != "" {
 			add(fmt.Sprintf("agent-team team snapshot %s --json", teamName))
 		} else {
@@ -540,6 +543,20 @@ func overviewActionsForScope(out *overviewResult, health *healthResult, teamName
 		}
 	}
 	return actions
+}
+
+func overviewHasQueueSectionError(out *overviewResult) bool {
+	if out == nil {
+		return false
+	}
+	for section, message := range out.SectionErrors {
+		section = strings.ToLower(strings.TrimSpace(section))
+		message = strings.ToLower(strings.TrimSpace(message))
+		if section == "queue" || strings.Contains(message, "queue:") || strings.Contains(message, "/queue/") {
+			return true
+		}
+	}
+	return false
 }
 
 func overviewOK(out *overviewResult, health *healthResult) bool {
