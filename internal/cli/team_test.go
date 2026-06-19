@@ -620,6 +620,103 @@ since = "2026-06-18T12:00:00Z"
 	}
 }
 
+func TestTeamPruneScopesFinishedInstances(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.manager]
+agent = "manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[instances.build-worker]
+agent = "worker"
+ephemeral = true
+
+[instances.other]
+agent = "other"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+
+[teams.platform]
+instances = ["other", "build-worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, name := range []string{"manager", "worker-squ-101", "build-worker-1", "other"} {
+		if err := os.MkdirAll(filepath.Join(teamDir, "state", name), 0o755); err != nil {
+			t.Fatalf("mkdir state %s: %v", name, err)
+		}
+	}
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Status: daemon.StatusExited, Workspace: root, StartedAt: now.Add(-4 * time.Hour), ExitedAt: now.Add(-3 * time.Hour)},
+		{Instance: "worker-squ-101", Agent: "worker", Status: daemon.StatusCrashed, Workspace: root, StartedAt: now.Add(-3 * time.Hour), ExitedAt: now.Add(-2 * time.Hour)},
+		{Instance: "build-worker-1", Agent: "worker", Status: daemon.StatusCrashed, Workspace: root, StartedAt: now.Add(-3 * time.Hour), ExitedAt: now.Add(-2 * time.Hour)},
+		{Instance: "other", Agent: "other", Status: daemon.StatusExited, Workspace: root, StartedAt: now.Add(-2 * time.Hour), ExitedAt: now.Add(-time.Hour)},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"team", "prune", "delivery", "--repo", root, "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("team prune dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview []instanceRmResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode team prune dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if got := instanceRmResultNames(preview); strings.Join(got, ",") != "manager,worker-squ-101" {
+		t.Fatalf("team prune preview names = %v", got)
+	}
+	for _, row := range preview {
+		if !row.DryRun || !row.StateRemoved || !row.DaemonRemoved {
+			t.Fatalf("team prune preview row = %+v", row)
+		}
+	}
+	if _, err := daemon.ReadMetadata(daemon.DaemonRoot(teamDir), "worker-squ-101"); err != nil {
+		t.Fatalf("dry-run removed worker metadata: %v", err)
+	}
+
+	prune := NewRootCmd()
+	pruneOut, pruneErr := &bytes.Buffer{}, &bytes.Buffer{}
+	prune.SetOut(pruneOut)
+	prune.SetErr(pruneErr)
+	prune.SetArgs([]string{"team", "prune", "delivery", "--repo", root, "--status", "crashed", "--format", "{{.Instance}} {{.Removed}}"})
+	if err := prune.Execute(); err != nil {
+		t.Fatalf("team prune crashed: %v\nstderr=%s", err, pruneErr.String())
+	}
+	if got := strings.TrimSpace(pruneOut.String()); got != "worker-squ-101 true" {
+		t.Fatalf("team prune crashed output = %q", got)
+	}
+	if _, err := daemon.ReadMetadata(daemon.DaemonRoot(teamDir), "worker-squ-101"); err == nil {
+		t.Fatal("worker metadata still exists after team prune")
+	}
+	if _, err := os.Stat(filepath.Join(teamDir, "state", "worker-squ-101")); !os.IsNotExist(err) {
+		t.Fatalf("worker state still exists or unexpected err=%v", err)
+	}
+	for _, name := range []string{"manager", "build-worker-1", "other"} {
+		if _, err := daemon.ReadMetadata(daemon.DaemonRoot(teamDir), name); err != nil {
+			t.Fatalf("metadata %s should remain: %v", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(teamDir, "state", name)); err != nil {
+			t.Fatalf("state %s should remain: %v", name, err)
+		}
+	}
+}
+
 func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 	for _, args := range [][]string{
 		{"team", "up", "delivery", "--quiet", "--json"},
@@ -643,6 +740,9 @@ func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 		{"team", "wait", "delivery", "manager", "--status", "running"},
 		{"team", "wait", "delivery", "--latest", "--last", "1"},
 		{"team", "wait", "delivery", "--last", "-1"},
+		{"team", "prune", "delivery", "--quiet", "--summary"},
+		{"team", "prune", "delivery", "--format", "{{.Instance}}", "--json"},
+		{"team", "prune", "delivery", "--older-than=-1s"},
 	} {
 		cmd := NewRootCmd()
 		stderr := &bytes.Buffer{}
@@ -2109,6 +2209,14 @@ func lifecycleResultInstances(rows []lifecycleActionResult) []string {
 }
 
 func instanceDownResultNames(rows []instanceDownResult) []string {
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.Instance)
+	}
+	return out
+}
+
+func instanceRmResultNames(rows []instanceRmResult) []string {
 	out := make([]string, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, row.Instance)

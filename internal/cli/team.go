@@ -40,6 +40,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamEventsCmd())
 	cmd.AddCommand(newTeamSendCmd())
 	cmd.AddCommand(newTeamWaitCmd())
+	cmd.AddCommand(newTeamPruneCmd())
 	cmd.AddCommand(newTeamTickCmd())
 	cmd.AddCommand(newTeamRepairCmd())
 	cmd.AddCommand(newTeamPipelinesCmd())
@@ -1025,6 +1026,93 @@ func newTeamWaitCmd() *cobra.Command {
 	return cmd
 }
 
+func newTeamPruneCmd() *cobra.Command {
+	var (
+		repo          string
+		statusFilters []string
+		phaseFilters  []string
+		staleOnly     bool
+		unhealthyOnly bool
+		dryRun        bool
+		olderThan     time.Duration
+		quiet         bool
+		jsonOut       bool
+		summary       bool
+		format        string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "prune <team>",
+		Short: "Remove finished team-owned instances.",
+		Long: "Remove daemon-known exited or crashed instances owned by one declared team. " +
+			"Running and stopped instances are intentionally left alone.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if quiet && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: choose one of --quiet or --summary.")
+				return exitErr(2)
+			}
+			if format != "" && (quiet || jsonOut || summary) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --format cannot be combined with --quiet, --json, or --summary.")
+				return exitErr(2)
+			}
+			olderThanSet := cmd.Flags().Changed("older-than")
+			if olderThanSet && olderThan < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --older-than must be >= 0.")
+				return exitErr(2)
+			}
+			if err := validatePruneStatusFilters(statusFilters); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team prune: %v\n", err)
+				return exitErr(2)
+			}
+			formatTemplate, err := parseRmFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team prune: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			names, err := collectTeamPruneTargets(teamDir, args[0], teamPruneTargetOptions{
+				StatusFilters: statusFilters,
+				PhaseFilters:  phaseFilters,
+				Stale:         staleOnly,
+				Unhealthy:     unhealthyOnly,
+				OlderThan:     olderThan,
+				OlderThanSet:  olderThanSet,
+			})
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team prune: %v\n", err)
+				return exitErr(1)
+			}
+			if len(names) == 0 {
+				return renderTeamPruneNoTargets(cmd.OutOrStdout(), dryRun, quiet, jsonOut, summary, formatTemplate)
+			}
+			return runInstanceRmWithOptions(cmd, repo, names, instanceRmOptions{
+				Force:   true,
+				DryRun:  dryRun,
+				Quiet:   quiet,
+				JSON:    jsonOut,
+				Summary: summary,
+				Format:  formatTemplate,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only remove finished team-owned instances in this lifecycle status: exited or crashed. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only remove finished team-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only remove finished team-owned instances whose non-idle work phase has stale status telemetry.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only remove finished team-owned instances that are crashed or stale.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview finished team-owned instances that would be pruned without deleting state or daemon metadata.")
+	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "Only prune finished team-owned instances whose terminal timestamp is older than this duration (for example 24h).")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output and use only the exit code.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate removal counts instead of per-instance rows.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each removal result with a Go template, e.g. '{{.Instance}} {{.Path}}'.")
+	return cmd
+}
+
 func newTeamPipelinesCmd() *cobra.Command {
 	var (
 		repo    string
@@ -1877,6 +1965,15 @@ type teamRepairTickStep struct {
 	Reason    string                   `json:"reason,omitempty"`
 	Result    *teamTickResult          `json:"result,omitempty"`
 	UntilIdle *teamTickUntilIdleResult `json:"until_idle,omitempty"`
+}
+
+type teamPruneTargetOptions struct {
+	StatusFilters []string
+	PhaseFilters  []string
+	Stale         bool
+	Unhealthy     bool
+	OlderThan     time.Duration
+	OlderThanSet  bool
 }
 
 func loadTeamInfos(teamDir string) ([]teamInfo, error) {
@@ -3640,6 +3737,83 @@ func (l teamWaitLister) Instances() ([]*daemon.Metadata, error) {
 	}
 	sort.Slice(scoped, func(i, j int) bool { return scoped[i].Instance < scoped[j].Instance })
 	return scoped, nil
+}
+
+func collectTeamPruneTargets(teamDir, name string, opts teamPruneTargetOptions) ([]string, error) {
+	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return nil, err
+	}
+	statuses, err := lifecycleStatusFilterSet(opts.StatusFilters)
+	if err != nil {
+		return nil, err
+	}
+	phases, err := lifecyclePhaseFilterSet(opts.PhaseFilters)
+	if err != nil {
+		return nil, err
+	}
+	var metas []*daemon.Metadata
+	if dc, err := newDaemonClient(teamDir); err == nil {
+		metas, err = dc.Instances()
+		if err != nil {
+			return nil, err
+		}
+	} else if errors.Is(err, errDaemonNotRunning) {
+		metas, err = daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		return nil, err
+	}
+	teamMetas := teamMetadata(top, team, metas)
+	daemonByName := make(map[string]daemonInstanceInfo, len(teamMetas))
+	for _, meta := range teamMetas {
+		if meta == nil {
+			continue
+		}
+		daemonByName[meta.Instance] = daemonInstanceInfo{
+			status:     string(meta.Status),
+			agent:      meta.Agent,
+			pid:        meta.PID,
+			startedAt:  meta.StartedAt,
+			finishedAt: daemonMetadataFinishedAt(meta),
+		}
+	}
+	var phaseByInstance map[string]string
+	var staleInstances map[string]bool
+	if len(phases) > 0 || opts.Stale || opts.Unhealthy {
+		now := time.Now()
+		if len(phases) > 0 {
+			phaseByInstance = waitPhaseByInstance(teamDir, now)
+		}
+		if opts.Stale || opts.Unhealthy {
+			staleInstances = staleInstanceSet(teamDir, now)
+		}
+	}
+	names := selectRmTargetsWithUnhealthy(daemonByName, nil, statuses, phases, phaseByInstance, true, opts.Stale, opts.Unhealthy, staleInstances)
+	if opts.OlderThanSet {
+		names = filterRmTargetsOlderThan(names, daemonByName, opts.OlderThan, time.Now())
+	}
+	return names, nil
+}
+
+func renderTeamPruneNoTargets(w io.Writer, dryRun, quiet, jsonOut, summary bool, formatTemplate *template.Template) error {
+	if jsonOut {
+		if summary {
+			return json.NewEncoder(w).Encode(lifecycleActionSummaryResult{Summary: summarizeInstanceRmResults(nil, dryRun)})
+		}
+		return json.NewEncoder(w).Encode([]instanceRmResult{})
+	}
+	if quiet || formatTemplate != nil {
+		return nil
+	}
+	if summary {
+		renderLifecycleActionSummary(w, summarizeInstanceRmResults(nil, dryRun))
+		return nil
+	}
+	fmt.Fprintln(w, "(nothing to remove)")
+	return nil
 }
 
 func teamMetadata(top *topology.Topology, team *topology.Team, metas []*daemon.Metadata) []*daemon.Metadata {
