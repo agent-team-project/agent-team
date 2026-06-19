@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	texttemplate "text/template"
 
 	"github.com/jamesaud/agent-team/internal/template"
 	"github.com/spf13/cobra"
@@ -16,6 +18,7 @@ type upgradeConfig struct {
 	check  bool
 	strict bool
 	json   bool
+	format string
 }
 
 type upgradeCheckResult struct {
@@ -56,10 +59,21 @@ func newUpgradeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&cfg.check, "check", false, "Compare current template lock against a resolved template ref without writing files.")
 	cmd.Flags().BoolVar(&cfg.strict, "strict", false, "With --check, exit 1 when the target template differs from the lock.")
 	cmd.Flags().BoolVar(&cfg.json, "json", false, "Emit the upgrade check result as JSON.")
+	cmd.Flags().StringVar(&cfg.format, "format", "", "Render the upgrade check result with a Go template, e.g. '{{.Differs}} {{.TargetVersion}}'.")
 	return cmd
 }
 
 func runUpgradeCheck(cmd *cobra.Command, cfg upgradeConfig) error {
+	if cfg.format != "" && cfg.json {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team upgrade: --format cannot be combined with --json.")
+		return exitErr(2)
+	}
+	tmpl, err := parseUpgradeCheckFormat(cfg.format)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team upgrade: %v\n", err)
+		return exitErr(2)
+	}
+
 	teamDir, err := resolveTeamDir(cmd, cfg.target)
 	if err != nil {
 		return err
@@ -107,6 +121,10 @@ func runUpgradeCheck(cmd *cobra.Command, cfg upgradeConfig) error {
 		if err := json.NewEncoder(out).Encode(result); err != nil {
 			return err
 		}
+	} else if tmpl != nil {
+		if err := renderUpgradeCheckFormat(out, result, tmpl); err != nil {
+			return err
+		}
 	} else {
 		renderUpgradeCheck(out, result)
 	}
@@ -132,4 +150,23 @@ func renderUpgradeCheck(out fmtWriter, result upgradeCheckResult) {
 		return
 	}
 	fmt.Fprintln(out, "agent-team upgrade: template differs; full merge/apply is not implemented yet")
+}
+
+func parseUpgradeCheckFormat(format string) (*texttemplate.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := texttemplate.New("upgrade-check-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderUpgradeCheckFormat(out fmtWriter, result upgradeCheckResult, tmpl *texttemplate.Template) error {
+	if err := tmpl.Execute(out, result); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(out)
+	return err
 }

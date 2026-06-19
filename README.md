@@ -222,7 +222,7 @@ agent-team rm [<instance>...] [-q] [--all] [--finished] [--latest | --last N] [-
 agent-team prune [-q] [--dry-run] [--older-than 24h] [--agent manager] [--status exited] [--phase done] [--stale] [--unhealthy] [--summary] [--format '{{.Instance}} {{.Path}}'] [--json] # remove finished persisted daemon metadata and state
 agent-team run <agent> [-n <instance>] [-d | --attach --tail N|all] [--ready-timeout 3s] [--set k=v]... [-p "..."] [--format '{{.Instance}} {{.PID}}'] [--json]
                                                 # launch the selected LLM runtime as <agent>; --detach dispatches via daemon
-agent-team upgrade --check [--to <ref>] [--strict] [--json]
+agent-team upgrade --check [--to <ref>] [--strict] [--format '{{.Differs}}'] [--json]
                                                 # compare .template.lock with a template ref; --strict exits 1 on drift
 agent-team doctor [--strict-daemon] [--strict-runtime] [--json]
                                                 # validate layout, config, provenance, skill wiring, pipeline workflows, selected runtime, and daemon binary availability

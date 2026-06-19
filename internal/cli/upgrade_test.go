@@ -110,6 +110,82 @@ func TestUpgradeCheckJSONAndStrict(t *testing.T) {
 	}
 }
 
+func TestUpgradeCheckFormatAndStrict(t *testing.T) {
+	tmplDir := t.TempDir()
+	writeTinyTemplate(t, tmplDir, "tiny", "0.0.1", "hello")
+
+	target := t.TempDir()
+	initCmd := NewRootCmd()
+	initCmd.SetOut(&bytes.Buffer{})
+	initCmd.SetErr(&bytes.Buffer{})
+	initCmd.SetArgs([]string{"init", tmplDir, "--target", target})
+	if err := initCmd.Execute(); err != nil {
+		t.Fatalf("init local template: %v", err)
+	}
+
+	nextDir := t.TempDir()
+	writeTinyTemplate(t, nextDir, "tiny", "0.0.2", "hello again")
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{
+		"upgrade", "--check", "--strict",
+		"--format", "{{.Differs}} {{.TargetVersion}} {{.ApplyImplemented}}",
+		"--target", target,
+		"--to", nextDir,
+	})
+	err := cmd.Execute()
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 1 {
+		t.Fatalf("strict format err = %v, want exit 1\nstderr=%s", err, errOut.String())
+	}
+	if got, want := out.String(), "true 0.0.2 false\n"; got != want {
+		t.Fatalf("upgrade --format output = %q, want %q", got, want)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("strict format stderr = %q", errOut.String())
+	}
+}
+
+func TestUpgradeCheckFormatValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{
+			args: []string{"upgrade", "--check", "--format", "{{.Differs}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			args: []string{"upgrade", "--check", "--format", "{{"},
+			want: "invalid --format template",
+		},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		var ec ExitCode
+		if !errors.As(err, &ec) || int(ec) != 2 {
+			t.Fatalf("%v: err = %v, want exit 2", tc.args, err)
+		}
+		if !strings.Contains(errOut.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, errOut.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v: validation should not write stdout: %q", tc.args, out.String())
+		}
+	}
+}
+
 func TestUpgradeRequiresCheckForNow(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
