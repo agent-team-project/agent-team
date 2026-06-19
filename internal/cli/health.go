@@ -199,6 +199,7 @@ type healthResult struct {
 	Jobs           *jobTriageSnapshot         `json:"jobs,omitempty"`
 	JobStatus      []jobStatusReconcileResult `json:"job_status_preview,omitempty"`
 	PipelineStatus []pipelineStatusRow        `json:"pipeline_status,omitempty"`
+	PipelineDoctor *pipelineDoctorResult      `json:"pipeline_doctor,omitempty"`
 	Declared       healthDeclared             `json:"declared"`
 	Issues         []healthIssue              `json:"issues"`
 	CheckedAt      string                     `json:"checked_at"`
@@ -378,6 +379,9 @@ func collectHealthWithOptions(teamDir string, now time.Time, opts healthOptions)
 		return nil, err
 	}
 	result := buildHealthWithDaemonStatus(daemonStatus, rows, topo, now, opts)
+	if err := addPipelineWorkflowHealth(result, teamDir); err != nil {
+		return nil, err
+	}
 	if err := addQueueHealth(result, teamDir, now); err != nil {
 		return nil, err
 	}
@@ -515,6 +519,74 @@ func addQueueHealth(result *healthResult, teamDir string, now time.Time) error {
 		)
 	}
 	return nil
+}
+
+func addPipelineWorkflowHealth(result *healthResult, teamDir string) error {
+	if result == nil {
+		return nil
+	}
+	doctor, err := collectPipelineDoctor(teamDir, "")
+	if err != nil {
+		return err
+	}
+	if !pipelineDoctorHasHealthContent(doctor) {
+		return nil
+	}
+	result.PipelineDoctor = doctor
+	for _, problem := range doctor.Problems {
+		code := "pipeline_workflow_problem"
+		if strings.TrimSpace(problem.Code) != "" {
+			code = "pipeline_" + problem.Code
+		}
+		result.addIssueWithSeverityAndActions(
+			code,
+			"error",
+			"",
+			"",
+			"",
+			"",
+			problem.Message,
+			pipelineDoctorActions(problem),
+		)
+	}
+	return nil
+}
+
+func pipelineDoctorHasHealthContent(result *pipelineDoctorResult) bool {
+	if result == nil {
+		return false
+	}
+	if len(result.Pipelines) > 0 || len(result.Problems) > 0 {
+		return true
+	}
+	for _, warning := range result.Warnings {
+		if warning.Code != "no_pipelines" {
+			return true
+		}
+	}
+	return false
+}
+
+func countPipelineDoctorWarnings(result *pipelineDoctorResult) int {
+	if result == nil {
+		return 0
+	}
+	count := 0
+	for _, warning := range result.Warnings {
+		if warning.Code == "no_pipelines" {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+func pipelineDoctorActions(finding pipelineDoctorFinding) []string {
+	pipeline := strings.TrimSpace(finding.Pipeline)
+	if pipeline == "" {
+		return []string{"agent-team pipeline doctor --all"}
+	}
+	return []string{fmt.Sprintf("agent-team pipeline doctor %s", pipeline)}
 }
 
 func addJobHealth(result *healthResult, teamDir string, now time.Time) error {
@@ -745,6 +817,13 @@ func renderHealth(w io.Writer, result *healthResult) {
 			countPipelineStatusJobs(result.PipelineStatus),
 			countPipelineStatusReadySteps(result.PipelineStatus),
 			countPipelineStatusFailedSteps(result.PipelineStatus),
+		)
+	}
+	if result.PipelineDoctor != nil {
+		fmt.Fprintf(w, "pipeline doctor: pipelines=%d problems=%d warnings=%d\n",
+			len(result.PipelineDoctor.Pipelines),
+			len(result.PipelineDoctor.Problems),
+			countPipelineDoctorWarnings(result.PipelineDoctor),
 		)
 	}
 	fmt.Fprint(w, "phases:")

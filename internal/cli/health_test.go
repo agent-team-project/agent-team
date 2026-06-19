@@ -716,6 +716,82 @@ after = ["implement"]
 	}
 }
 
+func TestHealthCommandIncludesPipelineDoctorProblems(t *testing.T) {
+	tmp := t.TempDir()
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+after = ["review"]
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "worker"
+after = ["implement"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"health", "--json", "--target", tmp})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("health succeeded unexpectedly")
+	}
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 1 {
+		t.Fatalf("expected exit 1, got %v", err)
+	}
+	var body healthResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode health pipeline doctor json: %v\nbody=%s stderr=%s", err, out.String(), stderr.String())
+	}
+	if body.PipelineDoctor == nil || len(body.PipelineDoctor.Problems) != 1 || body.PipelineDoctor.Problems[0].Code != "dependency_cycle" {
+		t.Fatalf("pipeline doctor = %+v", body.PipelineDoctor)
+	}
+	var sawPipelineIssue bool
+	for _, issue := range body.Issues {
+		if issue.Code == "pipeline_dependency_cycle" && containsString(issue.Actions, "agent-team pipeline doctor ticket_to_pr") {
+			sawPipelineIssue = true
+		}
+	}
+	if !sawPipelineIssue {
+		t.Fatalf("issues = %+v, missing pipeline_dependency_cycle", body.Issues)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"health", "--target", tmp})
+	if err := text.Execute(); err == nil {
+		t.Fatal("health text succeeded unexpectedly")
+	}
+	for _, want := range []string{"pipeline doctor: pipelines=1 problems=1 warnings=1", "pipeline_dependency_cycle", "agent-team pipeline doctor ticket_to_pr"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("health text missing %q:\n%s", want, textOut.String())
+		}
+	}
+}
+
 func TestHealthCommandJobsReportsBlockedStatusPreview(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
