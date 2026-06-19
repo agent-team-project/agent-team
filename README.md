@@ -159,7 +159,7 @@ agent-team health [-q] [-w] [--no-clear] [--wait --timeout 30s] [--latest | --la
                                                 # check daemon, declarations, crashes, stale status, queue dead letters, job health, and optional topology drift
 agent-team monitor [-w] [--no-clear] [-a] [--summary [--resources]] [--plan [--stop-extras] [--action start]] [--jobs] [--schedules] [--latest | --last N] [--events N [--event-action stop] [--since 10m]] [--sort status|agent|phase|stale|unhealthy|started|stopped|exited|name] [--stats-sort cpu|mem|rss|status|agent|phase|stale|unhealthy|name] [--format '{{.Health.Healthy}} {{len .Instances}}'] [--json] [--interval 2s] [--strict-topology] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy]
                                                 # combined health, instance, resource, event-history, and job-status snapshot; uses local metadata if the daemon is down
-agent-team runtime [--json]
+agent-team runtime [--format '{{.Runtime}} {{.Available}}'] [--json]
                                                 # inspect selected LLM runtime profile, binary path, and supported capabilities
 agent-team snapshot [--events N|-1] [--schedule-limit N] [--no-redact] [--json | --output snapshot.json]
                                                 # capture a redacted read-only diagnostic report with health, plan, jobs, job-status previews, queue, schedules, runtime, and recent events

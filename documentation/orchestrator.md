@@ -176,7 +176,7 @@ The `child.log` file is the canonical per-instance log (stdout+stderr from the c
 Existing today (no daemon required):
 
 ```
-agent-team init / doctor / run / agent / skill / instance
+agent-team init / doctor / runtime / run / agent / skill / instance
 ```
 
 New, daemon-aware:
@@ -190,6 +190,9 @@ agent-team daemon reconcile [--format '{{.Changed}} {{len .Instances}}'] [--json
 agent-team daemon status [-q] [--wait [--down] --timeout 30s --interval 200ms] [--format '{{.Ready}} {{.PID}}'] [--json]
                                   # process and API-readiness check for agent-teamd
 agent-team daemon logs [-f] [--tail N|all] [--since 10m] [--grep 'error|panic']
+
+agent-team runtime [--format '{{.Runtime}} {{.Available}}'] [--json]
+                                  # selected LLM runtime profile, binary path, and capability flags
 
 agent-team status [-w] [--no-clear] [--summary [--resources] [--plan [--stop-extras] [--action start]] [--events N [--event-action stop] [--since 10m]] [--strict-topology]] [--latest | --last N] [--format '{{.Instance}} {{.Status}}'] [--json] [--interval 2s] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy]
                                   # daemon health + instance snapshot; JSON watch emits one object per refresh

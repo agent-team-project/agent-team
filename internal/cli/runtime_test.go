@@ -84,6 +84,48 @@ func TestRuntimeCommand_CodexJSON(t *testing.T) {
 	}
 }
 
+func TestRuntimeCommand_Format(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "codex")
+	t.Setenv(runtimebin.EnvBinary, "")
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "codex" {
+			t.Fatalf("look path bin = %q, want codex", bin)
+		}
+		return "/opt/homebrew/bin/codex", nil
+	})
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "--target", t.TempDir(), "--format", "{{.Runtime}} {{.Binary}} {{.Available}} {{.Resume}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime --format failed: %v\nstderr: %s", err, errOut.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "codex codex true false" {
+		t.Fatalf("runtime format = %q", got)
+	}
+}
+
+func TestRuntimeCommand_FormatRejectsJSON(t *testing.T) {
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "--target", t.TempDir(), "--json", "--format", "{{.Runtime}}"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("runtime --json --format succeeded")
+	}
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 2 {
+		t.Fatalf("error = %v, want exit 2", err)
+	}
+	if !strings.Contains(errOut.String(), "--format cannot be combined with --json") {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+}
+
 func TestRuntimeCommand_RepoConfigCodexJSON(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "")
 	t.Setenv(runtimebin.EnvBinary, "")

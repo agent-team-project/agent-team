@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	texttemplate "text/template"
 
 	"github.com/jamesaud/agent-team/internal/loader"
 	"github.com/jamesaud/agent-team/internal/runtimebin"
@@ -19,6 +21,7 @@ func newRuntimeCmd() *cobra.Command {
 	var (
 		target  string
 		jsonOut bool
+		format  string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -28,6 +31,15 @@ func newRuntimeCmd() *cobra.Command {
 			"the runtime supports direct runs, daemon dispatch, resume, and native subagents.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseRuntimeFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime: %v\n", err)
+				return exitErr(2)
+			}
 			info, err := collectRuntimeInfoForTarget(target)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime: %v\n", err)
@@ -35,6 +47,10 @@ func newRuntimeCmd() *cobra.Command {
 			}
 			if jsonOut {
 				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(info); err != nil {
+					return err
+				}
+			} else if tmpl != nil {
+				if err := renderRuntimeFormat(cmd.OutOrStdout(), info, tmpl); err != nil {
 					return err
 				}
 			} else {
@@ -48,6 +64,7 @@ func newRuntimeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root or any path under a repo.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render runtime info with a Go template, e.g. '{{.Runtime}} {{.Available}}'.")
 	return cmd
 }
 
@@ -165,6 +182,25 @@ func renderRuntimeInfo(w fmtWriter, info runtimeInfo) {
 	for _, note := range info.Notes {
 		fmt.Fprintf(w, "note:             %s\n", note)
 	}
+}
+
+func parseRuntimeFormat(format string) (*texttemplate.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := texttemplate.New("runtime-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderRuntimeFormat(w fmtWriter, info runtimeInfo, tmpl *texttemplate.Template) error {
+	if err := tmpl.Execute(w, info); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 func runtimeYesNo(value bool) string {
