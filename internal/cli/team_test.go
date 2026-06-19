@@ -2193,6 +2193,24 @@ branch = "other-oth-701"
 			t.Fatalf("write queue item %s: %v", item.ID, err)
 		}
 	}
+	writeQuarantinedQueueItem(t, teamDir, "20260619T000000.000000000Z", daemon.QueueStatePending, &daemon.QueueItem{
+		ID:         "q-delivery-quarantined",
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-701",
+		Payload:    map[string]any{"job_id": "squ-701", "target": "worker", "ticket": "SQU-701"},
+		QueuedAt:   now.Add(-2 * time.Minute),
+		UpdatedAt:  now.Add(-2 * time.Minute),
+	})
+	writeQuarantinedQueueItem(t, teamDir, "20260619T000000.000000000Z", daemon.QueueStatePending, &daemon.QueueItem{
+		ID:         "q-platform-quarantined",
+		EventType:  "agent.dispatch",
+		Instance:   "other",
+		InstanceID: "other-oth-701",
+		Payload:    map[string]any{"job_id": "oth-701", "target": "other", "ticket": "OTH-701"},
+		QueuedAt:   now.Add(-2 * time.Minute),
+		UpdatedAt:  now.Add(-2 * time.Minute),
+	})
 	daemonRoot := daemon.DaemonRoot(teamDir)
 	for _, ev := range []*daemon.LifecycleEvent{
 		{TS: now.Add(-3 * time.Minute), Action: "start", Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, Message: "manager up"},
@@ -2225,8 +2243,11 @@ branch = "other-oth-701"
 	if len(snapshot.Jobs) != 1 || snapshot.Jobs[0].ID != "squ-701" {
 		t.Fatalf("snapshot jobs = %+v", snapshot.Jobs)
 	}
-	if len(snapshot.Queue) != 1 || snapshot.Queue[0].ID != "q-delivery-snapshot" || snapshot.QueueSummary == nil || snapshot.QueueSummary.Total != 1 {
+	if len(snapshot.Queue) != 1 || snapshot.Queue[0].ID != "q-delivery-snapshot" || snapshot.QueueSummary == nil || snapshot.QueueSummary.Total != 1 || snapshot.QueueSummary.Quarantined != 1 {
 		t.Fatalf("snapshot queue = %+v summary=%+v", snapshot.Queue, snapshot.QueueSummary)
+	}
+	if len(snapshot.QueueQuarantine) != 1 || snapshot.QueueQuarantine[0].ID != "q-delivery-quarantined" || snapshot.QueueQuarantine[0].Job != "squ-701" {
+		t.Fatalf("snapshot queue quarantine = %+v", snapshot.QueueQuarantine)
 	}
 	if snapshot.Queue[0].Payload["access_token"] != snapshotRedactedValue {
 		t.Fatalf("queue payload not redacted: %+v", snapshot.Queue[0].Payload)
@@ -2256,7 +2277,7 @@ branch = "other-oth-701"
 		t.Fatalf("snapshot events = %v\nbody=%s", got, out.String())
 	}
 	body := out.String()
-	for _, leak := range []string{"platform_due", "platform_work", "oth-701", "q-platform-snapshot", "platform worker", "platform-secret"} {
+	for _, leak := range []string{"platform_due", "platform_work", "oth-701", "q-platform-snapshot", "q-platform-quarantined", "platform worker", "platform-secret"} {
 		if strings.Contains(body, leak) {
 			t.Fatalf("team snapshot json leaked %q:\n%s", leak, body)
 		}
@@ -2271,12 +2292,12 @@ branch = "other-oth-701"
 		t.Fatalf("team snapshot text: %v\nstderr=%s", err, textErr.String())
 	}
 	textBody := textOut.String()
-	for _, want := range []string{"team: delivery", "jobs: total=1", "queue: total=1", "pipeline status: pipelines=1", "team doctor: problems=0 warnings=1", "events: 0"} {
+	for _, want := range []string{"team: delivery", "jobs: total=1", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1", "pipeline status: pipelines=1", "team doctor: problems=0 warnings=1", "events: 0"} {
 		if !strings.Contains(textBody, want) {
 			t.Fatalf("team snapshot text missing %q:\n%s", want, textBody)
 		}
 	}
-	for _, leak := range []string{"platform_due", "platform_work", "oth-701", "q-platform-snapshot"} {
+	for _, leak := range []string{"platform_due", "platform_work", "oth-701", "q-platform-snapshot", "q-platform-quarantined"} {
 		if strings.Contains(textBody, leak) {
 			t.Fatalf("team snapshot text leaked %q:\n%s", leak, textBody)
 		}

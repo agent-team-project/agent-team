@@ -14,6 +14,7 @@ import (
 
 	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/jamesaud/agent-team/internal/job"
+	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
 )
 
@@ -120,6 +121,7 @@ type snapshotResult struct {
 	TeamDoctor      *teamDoctorResult          `json:"team_doctor,omitempty"`
 	Queue           []*daemon.QueueItem        `json:"queue,omitempty"`
 	QueueSummary    *queueSummary              `json:"queue_summary,omitempty"`
+	QueueQuarantine []queueQuarantineItem      `json:"queue_quarantine,omitempty"`
 	Schedules       []scheduleInfo             `json:"schedules,omitempty"`
 	ScheduleNext    []scheduleInfo             `json:"schedule_next,omitempty"`
 	Intake          []intakeDelivery           `json:"intake,omitempty"`
@@ -196,6 +198,12 @@ func collectSnapshot(teamDir, repoRoot string, opts snapshotOptions) *snapshotRe
 		out.Queue = queue
 		summary := summarizeQueueItems(queue, now)
 		out.QueueSummary = &summary
+	}
+	if quarantine, err := listQueueQuarantine(teamDir); err != nil {
+		out.addError("queue_quarantine", err)
+	} else {
+		out.QueueQuarantine = quarantine
+		ensureSnapshotQueueSummary(out, now).Quarantined = len(quarantine)
 	}
 	if schedules, err := loadScheduleInfos(teamDir); err != nil {
 		out.addError("schedules", err)
@@ -279,6 +287,13 @@ func collectTeamSnapshot(teamDir, repoRoot, name string, opts snapshotOptions) (
 		summary := summarizeQueueItems(teamQueue, now)
 		out.QueueSummary = &summary
 	}
+	if quarantine, err := listQueueQuarantine(teamDir); err != nil {
+		out.addError("queue_quarantine", err)
+	} else {
+		teamQuarantine := teamQueueQuarantineItems(top, team, ownedJobs, quarantine)
+		out.QueueQuarantine = teamQuarantine
+		ensureSnapshotQueueSummary(out, now).Quarantined = len(teamQuarantine)
+	}
 	if triage, err := collectJobTriage(teamDir, now, defaultJobTriageStaleAfter); err != nil {
 		out.addError("job_triage", err)
 	} else {
@@ -324,6 +339,54 @@ func collectTeamSnapshot(teamDir, repoRoot, name string, opts snapshotOptions) (
 		redactSnapshotResult(out)
 	}
 	return out, nil
+}
+
+func ensureSnapshotQueueSummary(snapshot *snapshotResult, now time.Time) *queueSummary {
+	if snapshot.QueueSummary == nil {
+		summary := summarizeQueueItems(snapshot.Queue, now)
+		snapshot.QueueSummary = &summary
+	}
+	return snapshot.QueueSummary
+}
+
+func teamQueueQuarantineItems(top *topology.Topology, team *topology.Team, jobs []*job.Job, items []queueQuarantineItem) []queueQuarantineItem {
+	if team == nil {
+		return nil
+	}
+	instanceNames := stringSliceSet(team.Instances)
+	agents := teamAgentSet(top, team)
+	out := make([]queueQuarantineItem, 0, len(items))
+	for _, item := range items {
+		if queueQuarantineMatchesAnyJob(item, jobs) || queueQuarantineMatchesTeamTarget(item, instanceNames, agents) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func queueQuarantineMatchesAnyJob(item queueQuarantineItem, jobs []*job.Job) bool {
+	for _, j := range jobs {
+		if j == nil {
+			continue
+		}
+		if item.Job != "" && item.Job == j.ID {
+			return true
+		}
+		if strings.TrimSpace(j.Instance) != "" && item.InstanceID == j.Instance {
+			return true
+		}
+	}
+	return false
+}
+
+func queueQuarantineMatchesTeamTarget(item queueQuarantineItem, instances, agents map[string]bool) bool {
+	for _, value := range []string{item.Instance, item.InstanceID} {
+		value = strings.TrimSpace(value)
+		if value != "" && (instances[value] || agents[value]) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *snapshotResult) addError(section string, err error) {
@@ -604,12 +667,13 @@ func renderSnapshotSummary(w io.Writer, snapshot *snapshotResult) {
 			countSnapshotTeamDoctorWarnings(snapshot.TeamDoctor.Warnings))
 	}
 	if snapshot.QueueSummary != nil {
-		fmt.Fprintf(w, "queue: total=%d pending=%d dead=%d delayed=%d attempts=%d\n",
+		fmt.Fprintf(w, "queue: total=%d pending=%d dead=%d delayed=%d attempts=%d quarantined=%d\n",
 			snapshot.QueueSummary.Total,
 			snapshot.QueueSummary.Pending,
 			snapshot.QueueSummary.Dead,
 			snapshot.QueueSummary.Delayed,
-			snapshot.QueueSummary.Attempts)
+			snapshot.QueueSummary.Attempts,
+			snapshot.QueueSummary.Quarantined)
 	}
 	fmt.Fprintf(w, "schedules: declared=%d upcoming=%d\n", len(snapshot.Schedules), len(snapshot.ScheduleNext))
 	if snapshot.IntakeSummary != nil {
