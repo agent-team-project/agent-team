@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,89 @@ func TestTeamNextCommandReportsScopedActions(t *testing.T) {
 	}
 }
 
+func TestNextCommandFormat(t *testing.T) {
+	root := writeOverviewAttentionFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"next", "--target", root, "--limit", "1", "--format", "{{.State}}|{{.HiddenActions}}|{{index .Actions 0}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("next format: %v\nstderr=%s", err, stderr.String())
+	}
+	body := out.String()
+	if !strings.HasPrefix(body, "attention|") || !strings.Contains(body, "agent-team repair --dry-run --jobs") {
+		t.Fatalf("next format output = %q", body)
+	}
+}
+
+func TestTeamNextCommandFormat(t *testing.T) {
+	root := writeOverviewAttentionFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "next", "delivery", "--repo", root, "--limit", "2", "--format", "{{.Team.Name}} {{.State}} {{len .Actions}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team next format: %v\nstderr=%s", err, stderr.String())
+	}
+	if got, want := out.String(), "delivery attention 2\n"; got != want {
+		t.Fatalf("team next format output = %q, want %q", got, want)
+	}
+}
+
+func TestNextCommandFormatValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "next-json-conflict",
+			args: []string{"next", "--format", "{{.State}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "next-invalid-template",
+			args: []string{"next", "--format", "{{"},
+			want: "invalid --format template",
+		},
+		{
+			name: "team-next-json-conflict",
+			args: []string{"team", "next", "delivery", "--format", "{{.State}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "team-next-invalid-template",
+			args: []string{"team", "next", "delivery", "--format", "{{"},
+			want: "invalid --format template",
+		},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%s: expected validation error", tc.name)
+		}
+		var ec ExitCode
+		if !errors.As(err, &ec) || int(ec) != 2 {
+			t.Fatalf("%s: err=%v, want exit 2", tc.name, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%s: stderr=%q, want %q", tc.name, stderr.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%s: validation should not write stdout: %q", tc.name, out.String())
+		}
+	}
+}
+
 func TestNextCommandReportsIntakeReplayAction(t *testing.T) {
 	root := writeIntakeErrorFixture(t)
 
@@ -208,7 +292,7 @@ func TestNextActionResultHandlesNoActions(t *testing.T) {
 	}
 
 	out := &bytes.Buffer{}
-	if err := renderNextActionResult(out, result, false); err != nil {
+	if err := renderNextActionResult(out, result, false, nil); err != nil {
 		t.Fatalf("render next: %v", err)
 	}
 	if !strings.Contains(out.String(), "actions: none") {
@@ -231,7 +315,7 @@ func TestNextWatchRendersUntilContextDone(t *testing.T) {
 			CapturedAt: now.UTC().Format(time.RFC3339),
 			Actions:    []string{"agent-team queue drain --dry-run"},
 		}, nil
-	}, 0, false, time.Millisecond, false)
+	}, 0, false, nil, time.Millisecond, false)
 	if err != nil {
 		t.Fatalf("runNextWatch: %v", err)
 	}

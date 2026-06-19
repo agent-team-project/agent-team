@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -23,6 +24,7 @@ func newNextCmd() *cobra.Command {
 		noClear       bool
 		interval      time.Duration
 		jsonOut       bool
+		format        string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -44,6 +46,15 @@ func newNextCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team next: --schedule-limit must be >= 0.")
 				return exitErr(2)
 			}
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team next: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseNextFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team next: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -57,7 +68,7 @@ func newNextCmd() *cobra.Command {
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
-				if err := runNextWatch(ctx, cmd.OutOrStdout(), collect, limit, jsonOut, interval, !noClear && !jsonOut); err != nil {
+				if err := runNextWatch(ctx, cmd.OutOrStdout(), collect, limit, jsonOut, tmpl, interval, !noClear && !jsonOut); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team next: %v\n", err)
 					return exitErr(1)
 				}
@@ -68,7 +79,7 @@ func newNextCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team next: %v\n", err)
 				return exitErr(1)
 			}
-			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverview(overview, limit), jsonOut)
+			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverview(overview, limit), jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
@@ -79,6 +90,7 @@ func newNextCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit recommended actions as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the next-action result with a Go template, e.g. '{{.State}} {{len .Actions}}'.")
 	return cmd
 }
 
@@ -91,6 +103,7 @@ func newTeamNextCmd() *cobra.Command {
 		noClear       bool
 		interval      time.Duration
 		jsonOut       bool
+		format        string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -111,6 +124,15 @@ func newTeamNextCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team next: --schedule-limit must be >= 0.")
 				return exitErr(2)
 			}
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team next: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseNextFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team next: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -122,7 +144,7 @@ func newTeamNextCmd() *cobra.Command {
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
-				if err := runNextWatch(ctx, cmd.OutOrStdout(), collect, limit, jsonOut, interval, !noClear && !jsonOut); err != nil {
+				if err := runNextWatch(ctx, cmd.OutOrStdout(), collect, limit, jsonOut, tmpl, interval, !noClear && !jsonOut); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team next: %v\n", err)
 					return exitErr(1)
 				}
@@ -133,7 +155,7 @@ func newTeamNextCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team next: %v\n", err)
 				return exitErr(1)
 			}
-			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverview(overview, limit), jsonOut)
+			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverview(overview, limit), jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
@@ -143,6 +165,7 @@ func newTeamNextCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit recommended actions as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the next-action result with a Go template, e.g. '{{.Team.Name}} {{len .Actions}}'.")
 	return cmd
 }
 
@@ -178,9 +201,12 @@ func nextActionResultFromOverview(overview *overviewResult, limit int) nextActio
 	}
 }
 
-func renderNextActionResult(w io.Writer, result nextActionResult, jsonOut bool) error {
+func renderNextActionResult(w io.Writer, result nextActionResult, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(result)
+	}
+	if tmpl != nil {
+		return renderNextActionFormat(w, result, tmpl)
 	}
 	fmt.Fprintf(w, "next: %s\n", result.State)
 	if result.Team != nil {
@@ -200,7 +226,26 @@ func renderNextActionResult(w io.Writer, result nextActionResult, jsonOut bool) 
 	return nil
 }
 
-func runNextWatch(ctx context.Context, w io.Writer, collect func(time.Time) (*overviewResult, error), limit int, jsonOut bool, interval time.Duration, clear bool) error {
+func parseNextFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("next-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderNextActionFormat(w io.Writer, result nextActionResult, tmpl *template.Template) error {
+	if err := tmpl.Execute(w, result); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+func runNextWatch(ctx context.Context, w io.Writer, collect func(time.Time) (*overviewResult, error), limit int, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
@@ -216,7 +261,7 @@ func runNextWatch(ctx context.Context, w io.Writer, collect func(time.Time) (*ov
 		if err != nil {
 			return err
 		}
-		if err := renderNextActionResult(w, nextActionResultFromOverview(overview, limit), jsonOut); err != nil {
+		if err := renderNextActionResult(w, nextActionResultFromOverview(overview, limit), jsonOut, tmpl); err != nil {
 			return err
 		}
 		select {
