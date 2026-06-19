@@ -481,6 +481,7 @@ func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 		{"team", "up", "delivery", "--tail", "10", "--dry-run"},
 		{"team", "down", "delivery", "--quiet", "--json"},
 		{"team", "restart", "delivery", "--quiet", "--json"},
+		{"team", "plan", "delivery", "--format", "{{.Instance}}", "--json"},
 	} {
 		cmd := NewRootCmd()
 		stderr := &bytes.Buffer{}
@@ -492,6 +493,140 @@ func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 		}
 		if strings.TrimSpace(stderr.String()) == "" {
 			t.Fatalf("%v produced empty stderr", args)
+		}
+	}
+}
+
+func TestTeamPlanScopesRowsAndStopExtras(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.ticket-manager]
+agent = "ticket-manager"
+
+[instances.build-worker]
+agent = "worker"
+ephemeral = true
+
+[instances.other]
+agent = "other"
+
+[teams.delivery]
+description = "Delivery team"
+instances = ["manager", "ticket-manager", "worker"]
+
+[teams.platform]
+instances = ["other", "build-worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "worker-squ-101", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "build-worker-1", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "adhoc-worker", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "other", Agent: "other", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "plan", "delivery", "--repo", root, "--stop-extras", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team plan: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot teamPlanSnapshot
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode team plan: %v\nbody=%s", err, out.String())
+	}
+	if snapshot.Team.Name != "delivery" || snapshot.Plan == nil {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	rows := planRowsByInstance(snapshot.Plan.Instances)
+	for _, want := range []string{"manager", "ticket-manager", "worker", "worker-squ-101", "adhoc-worker"} {
+		if _, ok := rows[want]; !ok {
+			t.Fatalf("team plan rows = %+v, missing %s", snapshot.Plan.Instances, want)
+		}
+	}
+	for _, unwanted := range []string{"build-worker", "build-worker-1", "other"} {
+		if _, ok := rows[unwanted]; ok {
+			t.Fatalf("team plan rows = %+v, included %s", snapshot.Plan.Instances, unwanted)
+		}
+	}
+	if rows["adhoc-worker"].Action != "stop" || rows["adhoc-worker"].Kind != "extra" {
+		t.Fatalf("adhoc-worker row = %+v, want stop extra", rows["adhoc-worker"])
+	}
+
+	noExtras := NewRootCmd()
+	noExtrasOut, noExtrasErr := &bytes.Buffer{}, &bytes.Buffer{}
+	noExtras.SetOut(noExtrasOut)
+	noExtras.SetErr(noExtrasErr)
+	noExtras.SetArgs([]string{"team", "plan", "delivery", "--repo", root, "--json"})
+	if err := noExtras.Execute(); err != nil {
+		t.Fatalf("team plan without extras: %v\nstderr=%s", err, noExtrasErr.String())
+	}
+	var noExtrasSnapshot teamPlanSnapshot
+	if err := json.Unmarshal(noExtrasOut.Bytes(), &noExtrasSnapshot); err != nil {
+		t.Fatalf("decode team plan without extras: %v\nbody=%s", err, noExtrasOut.String())
+	}
+	if _, ok := planRowsByInstance(noExtrasSnapshot.Plan.Instances)["adhoc-worker"]; ok {
+		t.Fatalf("team plan without --stop-extras included adhoc-worker: %+v", noExtrasSnapshot.Plan.Instances)
+	}
+
+	startOnly := NewRootCmd()
+	startOut, startErr := &bytes.Buffer{}, &bytes.Buffer{}
+	startOnly.SetOut(startOut)
+	startOnly.SetErr(startErr)
+	startOnly.SetArgs([]string{"team", "plan", "delivery", "--repo", root, "--action", "start", "--json"})
+	if err := startOnly.Execute(); err != nil {
+		t.Fatalf("team plan action start: %v\nstderr=%s", err, startErr.String())
+	}
+	var startSnapshot teamPlanSnapshot
+	if err := json.Unmarshal(startOut.Bytes(), &startSnapshot); err != nil {
+		t.Fatalf("decode team plan action start: %v\nbody=%s", err, startOut.String())
+	}
+	if startSnapshot.Plan.Summary.Total != 1 || startSnapshot.Plan.Summary.Start != 1 || startSnapshot.Plan.Instances[0].Instance != "ticket-manager" {
+		t.Fatalf("start-filtered plan = %+v", startSnapshot.Plan)
+	}
+
+	formatted := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatted.SetOut(formatOut)
+	formatted.SetErr(formatErr)
+	formatted.SetArgs([]string{"team", "plan", "delivery", "--repo", root, "--format", "{{.Instance}} {{.Action}}"})
+	if err := formatted.Execute(); err != nil {
+		t.Fatalf("team plan format: %v\nstderr=%s", err, formatErr.String())
+	}
+	formatBody := formatOut.String()
+	for _, want := range []string{"manager keep", "ticket-manager start", "worker on-demand", "worker-squ-101 keep"} {
+		if !strings.Contains(formatBody, want) {
+			t.Fatalf("formatted team plan missing %q:\n%s", want, formatBody)
+		}
+	}
+	if strings.Contains(formatBody, "adhoc-worker") || strings.Contains(formatBody, "build-worker") {
+		t.Fatalf("formatted team plan included unrelated/extra rows:\n%s", formatBody)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"team", "plan", "delivery", "--repo", root})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("team plan text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"Team: delivery", "daemon:", "INSTANCE", "summary:"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("team plan text missing %q:\n%s", want, textOut.String())
 		}
 	}
 }
@@ -508,6 +643,14 @@ func instanceDownResultNames(rows []instanceDownResult) []string {
 	out := make([]string, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, row.Instance)
+	}
+	return out
+}
+
+func planRowsByInstance(rows []planRow) map[string]planRow {
+	out := map[string]planRow{}
+	for _, row := range rows {
+		out[row.Instance] = row
 	}
 	return out
 }

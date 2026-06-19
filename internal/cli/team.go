@@ -31,6 +31,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamUpCmd())
 	cmd.AddCommand(newTeamDownCmd())
 	cmd.AddCommand(newTeamRestartCmd())
+	cmd.AddCommand(newTeamPlanCmd())
 	cmd.AddCommand(newTeamPsCmd())
 	cmd.AddCommand(newTeamJobsCmd())
 	cmd.AddCommand(newTeamPipelinesCmd())
@@ -510,6 +511,72 @@ func newTeamRestartCmd() *cobra.Command {
 	return cmd
 }
 
+func newTeamPlanCmd() *cobra.Command {
+	var (
+		repo          string
+		jsonOut       bool
+		summary       bool
+		stopExtras    bool
+		actionFilters []string
+		format        string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "plan <team>",
+		Short: "Preview desired lifecycle state for one team.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && (jsonOut || summary) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team plan: --format cannot be combined with --json or --summary.")
+				return exitErr(2)
+			}
+			formatTemplate, err := parsePlanFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team plan: %v\n", err)
+				return exitErr(2)
+			}
+			actions, err := planActionFilterSet(actionFilters)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team plan: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			snapshot, err := collectTeamPlan(teamDir, args[0], stopExtras, actions)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team plan: %v\n", err)
+				return exitErr(1)
+			}
+			if jsonOut {
+				if summary {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(lifecycleActionSummaryResult{
+						Summary: summarizeLifecycleActions(planRowsToLifecycleActionResults(snapshot.Plan.Instances, true), true),
+					})
+				}
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(snapshot)
+			}
+			if formatTemplate != nil {
+				return renderPlanFormat(cmd.OutOrStdout(), snapshot.Plan.Instances, formatTemplate)
+			}
+			if summary {
+				renderLifecycleActionSummary(cmd.OutOrStdout(), summarizeLifecycleActions(planRowsToLifecycleActionResults(snapshot.Plan.Instances, true), true))
+				return nil
+			}
+			renderTeamPlan(cmd.OutOrStdout(), snapshot)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team plan as JSON.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate action counts instead of per-instance rows.")
+	cmd.Flags().BoolVar(&stopExtras, "stop-extras", false, "Preview running team-agent topology extras as stop actions.")
+	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only show plan rows with this action: start, resume, keep, on-demand, stop, or extra. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each plan row with a Go template, e.g. '{{.Instance}} {{.Action}}'.")
+	return cmd
+}
+
 func newTeamHealthCmd() *cobra.Command {
 	var (
 		repo        string
@@ -617,6 +684,11 @@ type teamStatusSnapshot struct {
 	Actions         []string            `json:"actions,omitempty"`
 }
 
+type teamPlanSnapshot struct {
+	Team teamInfo    `json:"team"`
+	Plan *planResult `json:"plan"`
+}
+
 type teamHealthSnapshot struct {
 	Team   teamInfo      `json:"team"`
 	Health *healthResult `json:"health"`
@@ -709,6 +781,27 @@ func collectTeamStatus(teamDir, name string, now time.Time) (*teamStatusSnapshot
 	}
 	snapshot.Actions = teamStatusActions(top, team, snapshot)
 	return snapshot, nil
+}
+
+func collectTeamPlan(teamDir, name string, stopExtras bool, actions map[string]bool) (*teamPlanSnapshot, error) {
+	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return nil, err
+	}
+	result, err := collectPlan(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	if stopExtras {
+		markPlanStopExtras(result)
+	}
+	result.Instances = teamPlanRows(top, team, result.Instances, stopExtras)
+	result.Instances = filterPlanRowsWithActions(result.Instances, psOptions{}, actions)
+	result.Summary = summarizePlanRows(result.Instances)
+	return &teamPlanSnapshot{
+		Team: teamInfoFromTopology(team),
+		Plan: result,
+	}, nil
 }
 
 func collectTeamHealth(teamDir, name string, now time.Time, includeJobs bool) (*teamHealthSnapshot, error) {
@@ -1319,6 +1412,49 @@ func teamRuntimeRows(top *topology.Topology, team *topology.Team, rows []instanc
 	return out
 }
 
+func teamPlanRows(top *topology.Topology, team *topology.Team, rows []planRow, includeExtras bool) []planRow {
+	if top == nil || team == nil {
+		return nil
+	}
+	instances := stringSliceSet(team.Instances)
+	agents := map[string]bool{}
+	ephemeralOwners := map[string]bool{}
+	for _, name := range team.Instances {
+		inst := top.Instances[name]
+		if inst == nil {
+			continue
+		}
+		if strings.TrimSpace(inst.Agent) != "" {
+			agents[inst.Agent] = true
+		}
+		if inst.Ephemeral {
+			ephemeralOwners[inst.Name] = true
+		}
+	}
+	out := make([]planRow, 0, len(rows))
+	seen := map[string]bool{}
+	for _, row := range rows {
+		if seen[row.Instance] {
+			continue
+		}
+		if instances[row.Instance] {
+			out = append(out, row)
+			seen[row.Instance] = true
+			continue
+		}
+		if owner, ok := declaredEphemeralOwner(top, row.Instance, row.Agent); ok && ephemeralOwners[owner.Name] {
+			out = append(out, row)
+			seen[row.Instance] = true
+			continue
+		}
+		if includeExtras && row.Kind == "extra" && agents[row.Agent] {
+			out = append(out, row)
+			seen[row.Instance] = true
+		}
+	}
+	return out
+}
+
 func teamScopedTopology(top *topology.Topology, team *topology.Team) *topology.Topology {
 	scoped := &topology.Topology{
 		Instances: map[string]*topology.Instance{},
@@ -1630,6 +1766,18 @@ func renderTeamHealth(w io.Writer, snapshot *teamHealthSnapshot, jsonOut bool) e
 	}
 	renderHealth(w, snapshot.Health)
 	return nil
+}
+
+func renderTeamPlan(w io.Writer, snapshot *teamPlanSnapshot) {
+	if snapshot == nil || snapshot.Plan == nil {
+		fmt.Fprintln(w, "(no plan)")
+		return
+	}
+	fmt.Fprintf(w, "Team: %s\n", snapshot.Team.Name)
+	if snapshot.Team.Description != "" {
+		fmt.Fprintf(w, "Description: %s\n", snapshot.Team.Description)
+	}
+	renderPlan(w, snapshot.Plan)
 }
 
 func renderTeamPs(w io.Writer, rows []instanceRow, jsonOut bool) error {
