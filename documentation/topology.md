@@ -144,7 +144,7 @@ Schedules live under `[schedules.<name>]`. They publish a `schedule` event with 
 
 ### Team field reference
 
-Teams live under `[teams.<name>]`. They group declared instances, pipelines, and schedules into an operator-facing ownership unit for commands such as `agent-team team status <name>`.
+Teams live under `[teams.<name>]`. They group declared instances, pipelines, and schedules into an operator-facing ownership unit for commands such as `agent-team team status <name>` and `agent-team team tick <name> --dry-run`.
 
 | Field | Required | Default | Meaning |
 |---|---|---|---|

@@ -653,10 +653,19 @@ func previewQueueDrainLocal(teamDir string) (*daemon.QueueDrainResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
+	return previewQueueDrainItems(top, items, time.Now().UTC()), nil
+}
+
+func previewQueueDrainItems(top *topology.Topology, items []*daemon.QueueItem, now time.Time) *daemon.QueueDrainResult {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
 	result := &daemon.QueueDrainResult{DryRun: true, Outcomes: []daemon.EventOutcome{}}
 	capacityByInstance := map[string]int{}
 	for _, item := range items {
+		if item == nil {
+			continue
+		}
 		switch item.State {
 		case daemon.QueueStatePending:
 			result.Pending++
@@ -692,7 +701,7 @@ func previewQueueDrainLocal(teamDir string) (*daemon.QueueDrainResult, error) {
 		})
 		capacityByInstance[item.Instance] = capacity - 1
 	}
-	return result, nil
+	return result
 }
 
 const queuePruneStateAll = "all"

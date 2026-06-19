@@ -1093,6 +1093,196 @@ instances = ["other"]
 	}
 }
 
+func TestTeamTickDryRunScopesMaintenance(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.other]
+agent = "other"
+ephemeral = true
+replicas = 1
+
+[[instances.other.triggers]]
+event = "agent.dispatch"
+match.target = "other"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[pipelines.platform_work]
+trigger.event = "ticket.created"
+trigger.match.team = "platform"
+
+[[pipelines.platform_work.steps]]
+id = "implement"
+target = "other"
+
+[schedules.delivery_due]
+every = "24h"
+run_on_start = true
+payload.target = "worker"
+
+[schedules.platform_due]
+every = "24h"
+run_on_start = true
+payload.target = "other"
+
+[teams.delivery]
+description = "Delivery team"
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+schedules = ["delivery_due"]
+
+[teams.platform]
+instances = ["other"]
+pipelines = ["platform_work"]
+schedules = ["platform_due"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-100",
+			Ticket:    "SQU-100",
+			Target:    "worker",
+			Kickoff:   "SQU-100: implement",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusBlocked},
+			},
+		},
+		{
+			ID:        "oth-100",
+			Ticket:    "OTH-100",
+			Target:    "other",
+			Kickoff:   "OTH-100: implement",
+			Pipeline:  "platform_work",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "other", Status: job.StatusBlocked},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:         "q-delivery-ready",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-100",
+			Payload:    map[string]any{"job_id": "squ-100", "target": "worker", "ticket": "SQU-100"},
+			QueuedAt:   now.Add(-time.Minute),
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+		{
+			ID:         "q-platform-ready",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "other",
+			InstanceID: "other-oth-100",
+			Payload:    map[string]any{"job_id": "oth-100", "target": "other", "ticket": "OTH-100"},
+			QueuedAt:   now.Add(-time.Minute),
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+	} {
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+			t.Fatalf("write queue item %s: %v", item.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "tick", "delivery", "--repo", root, "--workspace", "repo", "--dry-run", "--preview-routes", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team tick dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var result teamTickResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode team tick: %v\nbody=%s", err, out.String())
+	}
+	if result.Team.Name != "delivery" || !result.Tick.DryRun {
+		t.Fatalf("team tick result = %+v", result)
+	}
+	if result.Tick.Schedule == nil || result.Tick.Schedule.WouldFire != 1 || len(result.Tick.Schedule.Schedules) != 1 || result.Tick.Schedule.Schedules[0].Name != "delivery_due" {
+		t.Fatalf("team tick schedules = %+v", result.Tick.Schedule)
+	}
+	if result.Tick.Queue == nil || result.Tick.Queue.WouldDispatch != 1 || result.Tick.Queue.Pending != 1 || len(result.Tick.Queue.Outcomes) != 1 || result.Tick.Queue.Outcomes[0].Instance != "worker" {
+		t.Fatalf("team tick queue = %+v", result.Tick.Queue)
+	}
+	if len(result.Tick.Advance) != 1 || result.Tick.Advance[0].JobID != "squ-100" || result.Tick.Advance[0].Pipeline != "ticket_to_pr" || result.Tick.Advance[0].Preview == nil {
+		t.Fatalf("team tick advance = %+v", result.Tick.Advance)
+	}
+	body := out.String()
+	for _, leak := range []string{"platform_due", "platform_work", "oth-100", "q-platform-ready"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("team tick json leaked %q:\n%s", leak, body)
+		}
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"team", "tick", "delivery", "--repo", root, "--workspace", "repo", "--dry-run", "--preview-routes"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("team tick text: %v\nstderr=%s", err, textErr.String())
+	}
+	textBody := textOut.String()
+	for _, want := range []string{"Team: delivery", "Schedules:", "delivery_due", "Queue:", "would_dispatch", "Pipeline advance:", "squ-100", "Matched: worker"} {
+		if !strings.Contains(textBody, want) {
+			t.Fatalf("team tick text missing %q:\n%s", want, textBody)
+		}
+	}
+	for _, leak := range []string{"platform_due", "platform_work", "oth-100", "q-platform-ready"} {
+		if strings.Contains(textBody, leak) {
+			t.Fatalf("team tick text leaked %q:\n%s", leak, textBody)
+		}
+	}
+
+	formatted := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatted.SetOut(formatOut)
+	formatted.SetErr(formatErr)
+	formatted.SetArgs([]string{"team", "tick", "delivery", "--repo", root, "--dry-run", "--format", "{{.Team.Name}} {{.Tick.Queue.WouldDispatch}} {{len .Tick.Advance}}"})
+	if err := formatted.Execute(); err != nil {
+		t.Fatalf("team tick format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if strings.TrimSpace(formatOut.String()) != "delivery 1 1" {
+		t.Fatalf("team tick format = %q", formatOut.String())
+	}
+
+	invalid := NewRootCmd()
+	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalid.SetOut(invalidOut)
+	invalid.SetErr(invalidErr)
+	invalid.SetArgs([]string{"team", "tick", "delivery", "--repo", root})
+	if err := invalid.Execute(); err == nil {
+		t.Fatal("team tick without --dry-run succeeded")
+	}
+	if !strings.Contains(invalidErr.String(), "scoped mutation is not available yet") {
+		t.Fatalf("team tick invalid stderr = %q stdout=%q", invalidErr.String(), invalidOut.String())
+	}
+}
+
 func setupTeamScopedPlanFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
