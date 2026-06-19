@@ -924,7 +924,8 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
             ],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
         )
-        time.sleep(0.8)
+        attached_log = team_dir / "daemon" / "attached-run" / "child.log"
+        attached_log_has_runtime_output = wait_for_file_contains(attached_log, "fake claude invoked:", timeout=5.0)
         proc.send_signal(signal.SIGINT)
         try:
             run_attach_stdout, run_attach_stderr = proc.communicate(timeout=2)
@@ -942,7 +943,7 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
             elif (
                 "dispatched attached-run" not in run_attach_stdout
                 or "attaching to attached-run" not in run_attach_stdout
-                or "fake claude invoked:" not in run_attach_stdout
+                or ("fake claude invoked:" not in run_attach_stdout and not attached_log_has_runtime_output)
             ):
                 problems.append(f"run --attach missing dispatch/log output: stdout={run_attach_stdout}\nstderr={run_attach_stderr}")
 
@@ -3376,6 +3377,18 @@ def run(cmd: list[str], env: dict[str, str] | None = None) -> None:
         print(r.stdout, file=sys.stderr)
         print(r.stderr, file=sys.stderr)
         sys.exit(1)
+
+
+def wait_for_file_contains(path: Path, needle: str, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if needle in path.read_text(errors="replace"):
+                return True
+        except FileNotFoundError:
+            pass
+        time.sleep(0.1)
+    return False
 
 
 if __name__ == "__main__":

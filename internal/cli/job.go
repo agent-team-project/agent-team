@@ -1833,6 +1833,7 @@ func newJobStepCmd() *cobra.Command {
 		workspace string
 		dryRun    bool
 		jsonOut   bool
+		format    string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1840,6 +1841,15 @@ func newJobStepCmd() *cobra.Command {
 		Short: "Update a pipeline job step status.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job step: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobStepFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job step: %v\n", err)
+				return exitErr(2)
+			}
 			stepStatus, err := job.ParseStatus(status)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job step: %v\n", err)
@@ -1866,9 +1876,9 @@ func newJobStepCmd() *cobra.Command {
 						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job step: %v\n", err)
 						return exitErr(1)
 					}
-					return renderJobAdvancePreview(cmd.OutOrStdout(), preview, jsonOut, nil)
+					return renderJobAdvancePreview(cmd.OutOrStdout(), preview, jsonOut, tmpl)
 				}
-				return renderJobStepPreview(cmd.OutOrStdout(), j, jsonOut)
+				return renderJobStepPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
 			if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"step": args[1]}); err != nil {
 				return err
@@ -1881,10 +1891,16 @@ func newJobStepCmd() *cobra.Command {
 				if jsonOut {
 					return json.NewEncoder(cmd.OutOrStdout()).Encode(res)
 				}
+				if tmpl != nil {
+					return renderJobAdvanceResultFormat(cmd.OutOrStdout(), res, tmpl)
+				}
 				return renderJobAdvanceResult(cmd.OutOrStdout(), res)
 			}
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(j)
+			}
+			if tmpl != nil {
+				return renderJobTemplate(cmd.OutOrStdout(), j, tmpl)
 			}
 			renderJobDetail(cmd.OutOrStdout(), j)
 			return nil
@@ -1901,6 +1917,7 @@ func newJobStepCmd() *cobra.Command {
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for an advanced step: auto, worktree, or repo.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the step update and optional advance dispatch without writing job or daemon state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job or advance result as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or advance result with a Go template, e.g. '{{.ID}} {{.Status}}' or '{{.Job.ID}} {{.Step.ID}}'.")
 	return cmd
 }
 
@@ -1910,6 +1927,7 @@ func newJobAdvanceCmd() *cobra.Command {
 		workspace string
 		dryRun    bool
 		jsonOut   bool
+		format    string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1917,6 +1935,15 @@ func newJobAdvanceCmd() *cobra.Command {
 		Short: "Dispatch the next ready step in a pipeline job.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job advance: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobAdvanceFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job advance: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
 			if err != nil {
 				return err
@@ -1927,7 +1954,7 @@ func newJobAdvanceCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job advance: %v\n", err)
 					return exitErr(1)
 				}
-				return renderJobAdvancePreview(cmd.OutOrStdout(), preview, jsonOut, nil)
+				return renderJobAdvancePreview(cmd.OutOrStdout(), preview, jsonOut, tmpl)
 			}
 			res, err := advanceJob(cmd, teamDir, j, workspace)
 			if err != nil {
@@ -1936,6 +1963,9 @@ func newJobAdvanceCmd() *cobra.Command {
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(res)
 			}
+			if tmpl != nil {
+				return renderJobAdvanceResultFormat(cmd.OutOrStdout(), res, tmpl)
+			}
 			return renderJobAdvanceResult(cmd.OutOrStdout(), res)
 		},
 	}
@@ -1943,6 +1973,7 @@ func newJobAdvanceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for the advanced step: auto, worktree, or repo.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the next ready step dispatch without changing daemon or job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job and daemon event outcome as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the advance preview or result with a Go template, e.g. '{{.Job.ID}} {{.Step.ID}}'.")
 	return cmd
 }
 
@@ -4582,6 +4613,14 @@ func renderJobAdvanceResult(w io.Writer, res *jobAdvanceResult) error {
 	return nil
 }
 
+func renderJobAdvanceResultFormat(w io.Writer, res *jobAdvanceResult, tmpl *template.Template) error {
+	if err := tmpl.Execute(w, res); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
 func renderJobNextResult(w io.Writer, res jobNextResult, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(res)
@@ -4949,6 +4988,28 @@ func parseJobReadyFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
+func parseJobAdvanceFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("job-advance-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func parseJobStepFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("job-step-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
 func parseJobRemoveFormat(format string) (*template.Template, error) {
 	if strings.TrimSpace(format) == "" {
 		return nil, nil
@@ -5136,9 +5197,12 @@ type jobStepPreview struct {
 	DryRun bool     `json:"dry_run"`
 }
 
-func renderJobStepPreview(w io.Writer, j *job.Job, jsonOut bool) error {
+func renderJobStepPreview(w io.Writer, j *job.Job, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(jobStepPreview{Job: j, DryRun: true})
+	}
+	if tmpl != nil {
+		return renderJobTemplate(w, j, tmpl)
 	}
 	fmt.Fprintln(w, "Dry run: true")
 	renderJobDetail(w, j)

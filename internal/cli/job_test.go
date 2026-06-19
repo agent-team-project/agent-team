@@ -3737,6 +3737,54 @@ func TestJobReadyListsAdvanceablePipelineJobs(t *testing.T) {
 	}
 }
 
+func TestJobPipelineControlRejectsFormatCombinations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "advance format with json",
+			args: []string{"job", "advance", "squ-1", "--format", "{{.Job.ID}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "advance invalid format",
+			args: []string{"job", "advance", "squ-1", "--format", "{{"},
+			want: "invalid --format template",
+		},
+		{
+			name: "step format with json",
+			args: []string{"job", "step", "squ-1", "implement", "--format", "{{.ID}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "step invalid format",
+			args: []string{"job", "step", "squ-1", "implement", "--format", "{{"},
+			want: "invalid --format template",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("job pipeline control validation succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("err = %v, want exit 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestJobAdvanceDispatchesNextReadyStep(t *testing.T) {
 	target, _, cleanup := setupIntakePipelineRepo(t)
 	defer cleanup()
@@ -3797,6 +3845,18 @@ func TestJobAdvanceDispatchesNextReadyStep(t *testing.T) {
 		t.Fatalf("dry-run sent messages = %+v", dryMessages)
 	}
 
+	dryFormat := NewRootCmd()
+	dryFormatOut, dryFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryFormat.SetOut(dryFormatOut)
+	dryFormat.SetErr(dryFormatErr)
+	dryFormat.SetArgs([]string{"job", "advance", "squ-201", "--repo", target, "--dry-run", "--format", "{{.Job.ID}} {{.Step.ID}} {{.Dispatch.RequestedName}} {{.DryRun}}"})
+	if err := dryFormat.Execute(); err != nil {
+		t.Fatalf("job advance dry-run format: %v\nstderr=%s", err, dryFormatErr.String())
+	}
+	if got := dryFormatOut.String(); got != "squ-201 review manager-squ-201-review true\n" {
+		t.Fatalf("job advance dry-run format = %q", got)
+	}
+
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
@@ -3825,6 +3885,42 @@ func TestJobAdvanceDispatchesNextReadyStep(t *testing.T) {
 	}
 	if len(messages) != 1 || !strings.Contains(messages[0].Body, `"pipeline_step":"review"`) {
 		t.Fatalf("messages = %+v", messages)
+	}
+
+	formattedJob := &job.Job{
+		ID:        "squ-201-format",
+		Ticket:    "SQU-201-FORMAT",
+		Target:    "manager",
+		Kickoff:   "SQU-201-FORMAT: review implementation",
+		Pipeline:  "ticket_triage",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "triage", Target: "manager", Status: job.StatusDone, Instance: "manager", StartedAt: now, FinishedAt: now},
+			{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"triage"}},
+		},
+	}
+	if err := job.Write(teamDir, formattedJob); err != nil {
+		t.Fatalf("write formatted job: %v", err)
+	}
+	formatCmd := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatCmd.SetOut(formatOut)
+	formatCmd.SetErr(formatErr)
+	formatCmd.SetArgs([]string{"job", "advance", "squ-201-format", "--repo", target, "--format", "{{.Job.ID}} {{.Step.ID}} {{.Step.Status}} {{.Step.Instance}}"})
+	if err := formatCmd.Execute(); err != nil {
+		t.Fatalf("job advance format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if got := formatOut.String(); got != "squ-201-format review running manager\n" {
+		t.Fatalf("job advance format = %q", got)
+	}
+	formattedUpdated, err := job.Read(teamDir, "squ-201-format")
+	if err != nil {
+		t.Fatalf("read formatted job: %v", err)
+	}
+	if formattedUpdated.Steps[1].Status != job.StatusRunning || formattedUpdated.LastEvent != "advance_messaged" {
+		t.Fatalf("formatted updated job = %+v", formattedUpdated)
 	}
 }
 
@@ -3874,6 +3970,18 @@ func TestJobStepDoneAdvanceDispatchesNextStep(t *testing.T) {
 		t.Fatalf("step dry-run mutated job = %+v", unchanged)
 	}
 
+	stepDryFormat := NewRootCmd()
+	stepDryFormatOut, stepDryFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	stepDryFormat.SetOut(stepDryFormatOut)
+	stepDryFormat.SetErr(stepDryFormatErr)
+	stepDryFormat.SetArgs([]string{"job", "step", "squ-202", "triage", "--status", "blocked", "--message", "needs review notes", "--repo", target, "--dry-run", "--format", "{{.ID}} {{.Status}} {{.LastStatus}}"})
+	if err := stepDryFormat.Execute(); err != nil {
+		t.Fatalf("job step dry-run format: %v\nstderr=%s", err, stepDryFormatErr.String())
+	}
+	if got := stepDryFormatOut.String(); got != "squ-202 blocked needs review notes\n" {
+		t.Fatalf("job step dry-run format = %q", got)
+	}
+
 	advanceDry := NewRootCmd()
 	advanceDryOut, advanceDryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	advanceDry.SetOut(advanceDryOut)
@@ -3911,6 +4019,18 @@ func TestJobStepDoneAdvanceDispatchesNextStep(t *testing.T) {
 		t.Fatalf("dry-run sent messages = %+v", dryMessages)
 	}
 
+	advanceDryFormat := NewRootCmd()
+	advanceDryFormatOut, advanceDryFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	advanceDryFormat.SetOut(advanceDryFormatOut)
+	advanceDryFormat.SetErr(advanceDryFormatErr)
+	advanceDryFormat.SetArgs([]string{"job", "step", "squ-202", "triage", "--status", "done", "--advance", "--repo", target, "--dry-run", "--format", "{{.Job.ID}} {{.Step.ID}} {{.Dispatch.RequestedName}} {{.DryRun}}"})
+	if err := advanceDryFormat.Execute(); err != nil {
+		t.Fatalf("job step --advance dry-run format: %v\nstderr=%s", err, advanceDryFormatErr.String())
+	}
+	if got := advanceDryFormatOut.String(); got != "squ-202 review manager-squ-202-review true\n" {
+		t.Fatalf("job step --advance dry-run format = %q", got)
+	}
+
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
@@ -3932,6 +4052,42 @@ func TestJobStepDoneAdvanceDispatchesNextStep(t *testing.T) {
 	}
 	if updated.Steps[0].Status != job.StatusDone || updated.Steps[1].Status != job.StatusRunning {
 		t.Fatalf("updated steps = %+v", updated.Steps)
+	}
+
+	stepOnly := &job.Job{
+		ID:        "squ-202-step",
+		Ticket:    "SQU-202-STEP",
+		Target:    "manager",
+		Kickoff:   "SQU-202-STEP: triage",
+		Pipeline:  "ticket_triage",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "triage", Target: "manager", Status: job.StatusRunning, Instance: "manager", StartedAt: now},
+			{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"triage"}},
+		},
+	}
+	if err := job.Write(teamDir, stepOnly); err != nil {
+		t.Fatalf("write step-only job: %v", err)
+	}
+	stepFormat := NewRootCmd()
+	stepFormatOut, stepFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	stepFormat.SetOut(stepFormatOut)
+	stepFormat.SetErr(stepFormatErr)
+	stepFormat.SetArgs([]string{"job", "step", "squ-202-step", "triage", "--status", "blocked", "--message", "waiting", "--repo", target, "--format", "{{.ID}} {{.Status}} {{.LastEvent}} {{.LastStatus}}"})
+	if err := stepFormat.Execute(); err != nil {
+		t.Fatalf("job step format: %v\nstderr=%s", err, stepFormatErr.String())
+	}
+	if got := stepFormatOut.String(); got != "squ-202-step blocked step_blocked waiting\n" {
+		t.Fatalf("job step format = %q", got)
+	}
+	stepUpdated, err := job.Read(teamDir, "squ-202-step")
+	if err != nil {
+		t.Fatalf("read step-only job: %v", err)
+	}
+	if stepUpdated.Status != job.StatusBlocked || stepUpdated.Steps[0].Status != job.StatusBlocked {
+		t.Fatalf("step-only updated = %+v", stepUpdated)
 	}
 }
 
