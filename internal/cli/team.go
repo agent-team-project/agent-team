@@ -39,6 +39,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamLogsCmd())
 	cmd.AddCommand(newTeamEventsCmd())
 	cmd.AddCommand(newTeamSendCmd())
+	cmd.AddCommand(newTeamWaitCmd())
 	cmd.AddCommand(newTeamTickCmd())
 	cmd.AddCommand(newTeamRepairCmd())
 	cmd.AddCommand(newTeamPipelinesCmd())
@@ -773,6 +774,254 @@ func newTeamSendCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching recipients without appending mailbox messages.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each send result with a Go template, e.g. '{{.To}} {{.ID}}'.")
+	return cmd
+}
+
+func newTeamWaitCmd() *cobra.Command {
+	var (
+		repo          string
+		latest        bool
+		last          int
+		statusFilters []string
+		phaseFilters  []string
+		staleOnly     bool
+		unhealthyOnly bool
+		untilPhases   []string
+		untilRaw      string
+		timeout       time.Duration
+		interval      time.Duration
+		dryRun        bool
+		failOnCrash   bool
+		jsonOut       bool
+		quiet         bool
+		summary       bool
+		format        string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "wait <team> [<instance>...]",
+		Short: "Wait for team-owned instances to reach a lifecycle condition.",
+		Long: "Wait until each selected team-owned instance reaches a lifecycle condition. " +
+			"With no instance names or selectors, this waits for declared persistent team members and live team-owned ephemeral children to be running. " +
+			"Use --until to wait for terminal, stopped, exited, crashed, removed, or running. " +
+			"Use --until-phase to wait for a reported work phase such as idle, blocked, or done; when combined with --until, both conditions must match.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			names := append([]string(nil), args[1:]...)
+			if latest && len(names) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --latest cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if last < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --last must be >= 0.")
+				return exitErr(2)
+			}
+			if latest && last > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: choose one of --latest or --last.")
+				return exitErr(2)
+			}
+			if last > 0 && len(names) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --last cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if len(statusFilters) > 0 && len(names) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --status cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if len(phaseFilters) > 0 && len(names) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --phase cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if staleOnly && len(names) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --stale cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if unhealthyOnly && len(names) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --unhealthy cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if timeout < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --timeout must be >= 0.")
+				return exitErr(2)
+			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if quiet && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: choose one of --quiet or --json.")
+				return exitErr(2)
+			}
+			if quiet && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: choose one of --quiet or --summary.")
+				return exitErr(2)
+			}
+			if format != "" && (quiet || jsonOut || summary) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --format cannot be combined with --quiet, --json, or --summary.")
+				return exitErr(2)
+			}
+			formatTemplate, err := parseWaitFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team wait: %v\n", err)
+				return exitErr(2)
+			}
+			until, err := parseWaitUntil(untilRaw)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team wait: %v\n", err)
+				return exitErr(2)
+			}
+			if _, err := lifecycleStatusFilterSet(statusFilters); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team wait: %v\n", err)
+				return exitErr(2)
+			}
+			if _, err := lifecyclePhaseFilterSet(phaseFilters); len(phaseFilters) > 0 && err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team wait: %v\n", err)
+				return exitErr(2)
+			}
+			untilPhaseSet := map[string]bool(nil)
+			if len(untilPhases) > 0 {
+				untilPhaseSet, err = lifecyclePhaseFilterSetForFlag("--until-phase", untilPhases)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team wait: %v\n", err)
+					return exitErr(2)
+				}
+				if !cmd.Flags().Changed("until") {
+					until = waitUntilAny
+				}
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			top, team, err := loadTopologyTeam(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team wait: %v\n", err)
+				return exitErr(1)
+			}
+			var base instanceLister
+			base, err = newDaemonClient(teamDir)
+			if err != nil {
+				if errors.Is(err, errDaemonNotRunning) {
+					base = localInstanceLister{daemonRoot: daemon.DaemonRoot(teamDir)}
+					err = nil
+				} else {
+					return err
+				}
+			}
+			lister := teamWaitLister{instanceLister: base, top: top, team: team}
+			var phaseByInstance map[string]string
+			var staleInstances map[string]bool
+			if len(phaseFilters) > 0 || staleOnly || unhealthyOnly {
+				now := time.Now()
+				if len(phaseFilters) > 0 {
+					phaseByInstance = waitPhaseByInstance(teamDir, now)
+				}
+				if staleOnly || unhealthyOnly {
+					staleInstances = staleInstanceSet(teamDir, now)
+				}
+			}
+			if latest {
+				names, err = waitLatestInstanceNamesWithPhasesStaleAndUnhealthy(lister, nil, statusFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, unhealthyOnly)
+			} else if last > 0 {
+				names, err = waitLatestInstanceNamesLimitWithPhasesStaleAndUnhealthy(lister, nil, statusFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, unhealthyOnly, last)
+			} else if len(statusFilters) > 0 || len(phaseFilters) > 0 || staleOnly || unhealthyOnly {
+				names, err = waitFilteredInstanceNamesWithPhasesStaleAndUnhealthy(lister, nil, statusFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, unhealthyOnly)
+			} else if len(names) == 0 {
+				names, err = waitAllInstanceNames(lister)
+			}
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team wait: %v\n", err)
+				return exitErr(2)
+			}
+			if len(names) == 0 {
+				if summary {
+					body := waitSummaryResult{Summary: summarizeWaitResults(nil, waitConditionString(until, untilPhaseSet))}
+					if jsonOut {
+						return json.NewEncoder(cmd.OutOrStdout()).Encode(body)
+					}
+					renderWaitSummary(cmd.OutOrStdout(), body.Summary)
+					return nil
+				}
+				if jsonOut {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode([]waitResult{})
+				}
+				if !quiet && formatTemplate == nil {
+					fmt.Fprintln(cmd.OutOrStdout(), "(no instances)")
+				}
+				return nil
+			}
+			var phaseSource waitPhaseSource
+			if len(untilPhaseSet) > 0 || len(phaseFilters) > 0 || staleOnly || unhealthyOnly || summary || dryRun {
+				phaseSource = func() map[string]string {
+					return waitPhaseByInstance(teamDir, time.Now())
+				}
+			}
+			if dryRun {
+				results, err := waitSnapshotForInstances(lister, phaseSource, names)
+				if err != nil {
+					var unknownErr *waitUnknownError
+					if errors.As(err, &unknownErr) {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team wait: instance %q is not known to team %q.\n", unknownErr.Instance, team.Name)
+						return exitErr(2)
+					}
+					return err
+				}
+				if err := renderWaitCommandResults(cmd, results, summary, jsonOut, quiet, formatTemplate, waitConditionString(until, untilPhaseSet), len(untilPhaseSet) > 0); err != nil {
+					return err
+				}
+				if failOnCrash && waitResultsHaveStatus(results, string(daemon.StatusCrashed)) {
+					return exitErr(1)
+				}
+				return nil
+			}
+			ctx := cmd.Context()
+			cancel := func() {}
+			if timeout > 0 {
+				ctx, cancel = context.WithTimeout(ctx, timeout)
+			}
+			defer cancel()
+			results, err := waitForInstancesUntilWithPhases(ctx, lister, phaseSource, names, interval, until, untilPhaseSet)
+			if err != nil {
+				var timeoutErr *waitTimeoutError
+				if errors.As(err, &timeoutErr) {
+					if !quiet {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team wait: timed out waiting for %s: %s\n", waitConditionString(until, untilPhaseSet), strings.Join(timeoutErr.PendingNames(), ", "))
+					}
+					return exitErr(1)
+				}
+				var unknownErr *waitUnknownError
+				if errors.As(err, &unknownErr) {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team wait: instance %q is not known to team %q.\n", unknownErr.Instance, team.Name)
+					return exitErr(2)
+				}
+				return err
+			}
+			if err := renderWaitCommandResults(cmd, results, summary, jsonOut, quiet, formatTemplate, waitConditionString(until, untilPhaseSet), len(untilPhaseSet) > 0); err != nil {
+				return err
+			}
+			if failOnCrash && waitResultsHaveStatus(results, string(daemon.StatusCrashed)) {
+				return exitErr(1)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&latest, "latest", false, "Wait for the most recently started team-owned instance after other filters.")
+	cmd.Flags().IntVarP(&last, "last", "n", 0, "Wait for the N most recently started team-owned instances after other filters (0 = all).")
+	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Wait for team-owned instances currently in this lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Wait for team-owned instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Wait for team-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Wait for team-owned instances that are crashed or stale.")
+	cmd.Flags().StringVar(&untilRaw, "until", string(waitUntilRunning), "Lifecycle condition to wait for: running, terminal, stopped, exited, crashed, or removed.")
+	cmd.Flags().StringSliceVar(&untilPhases, "until-phase", nil, "Work phase condition to wait for: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait (0 = no timeout).")
+	cmd.Flags().DurationVar(&interval, "interval", 500*time.Millisecond, "Polling interval.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview selected team instances and current state without waiting.")
+	cmd.Flags().BoolVar(&failOnCrash, "fail-on-crash", false, "Exit 1 if any selected instance resolves to crashed.")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate final status and phase counts instead of per-instance rows.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each wait result with a Go template, e.g. '{{.Instance}} {{.Status}} {{.Phase}}'.")
 	return cmd
 }
 
@@ -3354,6 +3603,43 @@ func (c teamSendClient) Instances() ([]*daemon.Metadata, error) {
 		return nil, err
 	}
 	return teamMetadata(c.top, c.team, metas), nil
+}
+
+type teamWaitLister struct {
+	instanceLister
+	top  *topology.Topology
+	team *topology.Team
+}
+
+func (l teamWaitLister) Instances() ([]*daemon.Metadata, error) {
+	metas, err := l.instanceLister.Instances()
+	if err != nil {
+		return nil, err
+	}
+	scoped := teamMetadata(l.top, l.team, metas)
+	if l.top == nil || l.team == nil {
+		return scoped, nil
+	}
+	seen := map[string]bool{}
+	for _, meta := range scoped {
+		if meta != nil {
+			seen[meta.Instance] = true
+		}
+	}
+	for _, name := range l.team.Instances {
+		inst := l.top.Instances[name]
+		if inst == nil || inst.Ephemeral || seen[name] {
+			continue
+		}
+		scoped = append(scoped, &daemon.Metadata{
+			Instance: name,
+			Agent:    inst.Agent,
+			Status:   "",
+		})
+		seen[name] = true
+	}
+	sort.Slice(scoped, func(i, j int) bool { return scoped[i].Instance < scoped[j].Instance })
+	return scoped, nil
 }
 
 func teamMetadata(top *topology.Topology, team *topology.Team, metas []*daemon.Metadata) []*daemon.Metadata {

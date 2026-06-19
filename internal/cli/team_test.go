@@ -496,6 +496,130 @@ instances = ["other", "build-worker"]
 	}
 }
 
+func TestTeamWaitScopesSelection(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.manager]
+agent = "manager"
+
+[instances.ticket-manager]
+agent = "ticket-manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[instances.build-worker]
+agent = "worker"
+ephemeral = true
+
+[instances.other]
+agent = "other"
+
+[teams.delivery]
+instances = ["manager", "ticket-manager", "worker"]
+
+[teams.platform]
+instances = ["other", "build-worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	writeStatus(t, filepath.Join(teamDir, "state", "manager"), `[status]
+phase = "idle"
+description = "ready"
+since = "2026-06-18T12:00:00Z"
+`, now)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-3 * time.Minute)},
+		{Instance: "worker-squ-101", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-2 * time.Minute)},
+		{Instance: "build-worker-1", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-time.Minute)},
+		{Instance: "other", Agent: "other", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"team", "wait", "delivery", "--repo", root, "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("team wait dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var rows []waitResult
+	if err := json.Unmarshal(dryOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode team wait: %v\nbody=%s", err, dryOut.String())
+	}
+	byInstance := map[string]waitResult{}
+	for _, row := range rows {
+		byInstance[row.Instance] = row
+	}
+	for _, want := range []string{"manager", "ticket-manager", "worker-squ-101"} {
+		if _, ok := byInstance[want]; !ok {
+			t.Fatalf("team wait rows = %+v, missing %s", rows, want)
+		}
+	}
+	for _, unwanted := range []string{"build-worker-1", "other", "worker"} {
+		if _, ok := byInstance[unwanted]; ok {
+			t.Fatalf("team wait rows = %+v, included %s", rows, unwanted)
+		}
+	}
+	if byInstance["ticket-manager"].Status != "unknown" || byInstance["manager"].Status != "running" {
+		t.Fatalf("team wait statuses = %+v", byInstance)
+	}
+
+	unknown := NewRootCmd()
+	unknownOut, unknownErr := &bytes.Buffer{}, &bytes.Buffer{}
+	unknown.SetOut(unknownOut)
+	unknown.SetErr(unknownErr)
+	unknown.SetArgs([]string{"team", "wait", "delivery", "--repo", root, "--status", "unknown", "--dry-run", "--json"})
+	if err := unknown.Execute(); err != nil {
+		t.Fatalf("team wait unknown: %v\nstderr=%s", err, unknownErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(unknownOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode team wait unknown: %v\nbody=%s", err, unknownOut.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "ticket-manager" || rows[0].Status != "unknown" {
+		t.Fatalf("team wait unknown rows = %+v", rows)
+	}
+
+	running := NewRootCmd()
+	runningOut, runningErr := &bytes.Buffer{}, &bytes.Buffer{}
+	running.SetOut(runningOut)
+	running.SetErr(runningErr)
+	running.SetArgs([]string{"team", "wait", "delivery", "manager", "--repo", root, "--json"})
+	if err := running.Execute(); err != nil {
+		t.Fatalf("team wait running: %v\nstderr=%s", err, runningErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(runningOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode team wait running: %v\nbody=%s", err, runningOut.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "manager" || rows[0].Status != "running" {
+		t.Fatalf("team wait running rows = %+v", rows)
+	}
+
+	foreign := NewRootCmd()
+	foreign.SetOut(&bytes.Buffer{})
+	foreignErr := &bytes.Buffer{}
+	foreign.SetErr(foreignErr)
+	foreign.SetArgs([]string{"team", "wait", "delivery", "other", "--repo", root, "--dry-run"})
+	if err := foreign.Execute(); err == nil {
+		t.Fatal("team wait accepted non-team instance")
+	}
+	if !strings.Contains(foreignErr.String(), `instance "other" is not known to team "delivery"`) {
+		t.Fatalf("foreign stderr = %q", foreignErr.String())
+	}
+}
+
 func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 	for _, args := range [][]string{
 		{"team", "up", "delivery", "--quiet", "--json"},
@@ -513,6 +637,12 @@ func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 		{"team", "send", "delivery", "hello", "--format", "{{.To}}", "--json"},
 		{"team", "send", "delivery", "hello", "--latest", "--last", "1"},
 		{"team", "send", "delivery", "hello", "--last", "-1"},
+		{"team", "wait", "delivery", "--quiet", "--json"},
+		{"team", "wait", "delivery", "--summary", "--quiet"},
+		{"team", "wait", "delivery", "--format", "{{.Instance}}", "--json"},
+		{"team", "wait", "delivery", "manager", "--status", "running"},
+		{"team", "wait", "delivery", "--latest", "--last", "1"},
+		{"team", "wait", "delivery", "--last", "-1"},
 	} {
 		cmd := NewRootCmd()
 		stderr := &bytes.Buffer{}
