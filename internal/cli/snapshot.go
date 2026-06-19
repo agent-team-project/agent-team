@@ -617,9 +617,10 @@ func renderSnapshotSummary(w io.Writer, snapshot *snapshotResult) {
 	}
 	fmt.Fprintf(w, "schedules: declared=%d upcoming=%d\n", len(snapshot.Schedules), len(snapshot.ScheduleNext))
 	if snapshot.IntakeSummary != nil {
-		fmt.Fprintf(w, "intake: deliveries=%d errors=%d replayable=%d\n",
+		fmt.Fprintf(w, "intake: deliveries=%d errors=%d recovered=%d replayable=%d\n",
 			snapshot.IntakeSummary.Deliveries,
 			snapshot.IntakeSummary.Errors,
+			snapshot.IntakeSummary.Recovered,
 			snapshot.IntakeSummary.Replayable)
 	}
 	fmt.Fprintf(w, "events: %d\n", len(snapshot.Events))

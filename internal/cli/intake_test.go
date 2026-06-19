@@ -574,6 +574,13 @@ func TestIntakeReplayPublishesDelivery(t *testing.T) {
 	if j.Pipeline != "ticket_triage" || j.TicketURL != "https://linear.app/squirtlesquad/issue/SQU-207/replay" {
 		t.Fatalf("replay job = %+v", j)
 	}
+	deliveries, err := listIntakeDeliveries(teamDir)
+	if err != nil {
+		t.Fatalf("list replay deliveries: %v", err)
+	}
+	if len(deliveries) != 1 || deliveries[0].ReplayStatus != intakeDeliveryReplayStatusOK || deliveries[0].ReplayedAt == nil || deliveries[0].ReplayError != "" {
+		t.Fatalf("replay delivery marker = %+v", deliveries)
+	}
 }
 
 func TestIntakeReplayAllDryRunPreviewFilters(t *testing.T) {
@@ -723,6 +730,34 @@ func TestIntakeReplayAllPublishesDeliveries(t *testing.T) {
 		if j.Pipeline != "ticket_triage" {
 			t.Fatalf("job %s = %+v", id, j)
 		}
+	}
+	deliveries, err := listIntakeDeliveries(teamDir)
+	if err != nil {
+		t.Fatalf("list replay all deliveries: %v", err)
+	}
+	if len(deliveries) != 2 {
+		t.Fatalf("replay all deliveries = %+v", deliveries)
+	}
+	for _, delivery := range deliveries {
+		if delivery.ReplayStatus != intakeDeliveryReplayStatusOK || delivery.ReplayedAt == nil || delivery.ReplayError != "" {
+			t.Fatalf("delivery replay marker = %+v", delivery)
+		}
+	}
+
+	replayAgain := NewRootCmd()
+	againOut, againErr := &bytes.Buffer{}, &bytes.Buffer{}
+	replayAgain.SetOut(againOut)
+	replayAgain.SetErr(againErr)
+	replayAgain.SetArgs([]string{"intake", "replay", "--all", "--target", target, "--dry-run", "--json"})
+	if err := replayAgain.Execute(); err != nil {
+		t.Fatalf("intake replay all after recovery: %v\nstderr=%s", err, againErr.String())
+	}
+	var again intakeReplayBatchResult
+	if err := json.Unmarshal(againOut.Bytes(), &again); err != nil {
+		t.Fatalf("decode replay all after recovery: %v\nbody=%s", err, againOut.String())
+	}
+	if again.Total != 0 || again.Succeeded != 0 || again.Failed != 0 || len(again.Results) != 0 {
+		t.Fatalf("replay all after recovery = %+v", again)
 	}
 }
 

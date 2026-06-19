@@ -283,13 +283,14 @@ func TestSnapshotSummaryIncludesJobTriage(t *testing.T) {
 		IntakeSummary: &overviewIntakeSummary{
 			Deliveries: 1,
 			Errors:     1,
+			Recovered:  0,
 			Replayable: 1,
 		},
 	}
 
 	var out bytes.Buffer
 	renderSnapshotSummary(&out, snapshot)
-	for _, want := range []string{"jobs: total=1", "job triage: attention=1 ready_steps=0", "job status: previews=1 changes=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1 failed_steps=0", "pipeline advance: ready=1 route_previews=1", "teams doctor: teams=1 problems=1 warnings=1", "team doctor: problems=1 warnings=0", "intake: deliveries=1 errors=1 replayable=1"} {
+	for _, want := range []string{"jobs: total=1", "job triage: attention=1 ready_steps=0", "job status: previews=1 changes=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1 failed_steps=0", "pipeline advance: ready=1 route_previews=1", "teams doctor: teams=1 problems=1 warnings=1", "team doctor: problems=1 warnings=0", "intake: deliveries=1 errors=1 recovered=0 replayable=1"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, out.String())
 		}

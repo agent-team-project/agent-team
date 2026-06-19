@@ -125,6 +125,54 @@ func TestOverviewReportsIntakeErrors(t *testing.T) {
 	}
 }
 
+func TestOverviewIgnoresRecoveredIntakeErrors(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	replayedAt := time.Date(2026, 6, 19, 12, 5, 0, 0, time.UTC)
+	if err := appendIntakeDelivery(teamDir, intakeDelivery{
+		ID:           "intake-recovered",
+		Time:         time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC),
+		Provider:     "linear",
+		Status:       intakeDeliveryStatusError,
+		HTTPStatus:   503,
+		EventType:    "ticket.created",
+		Payload:      map[string]any{"source": "linear", "ticket": "SQU-801", "title": "Recovered intake"},
+		Ticket:       "SQU-801",
+		Error:        "daemon is not running",
+		ReplayStatus: intakeDeliveryReplayStatusOK,
+		ReplayedAt:   &replayedAt,
+	}); err != nil {
+		t.Fatalf("append recovered intake delivery: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview recovered intake json: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview recovered intake: %v\nbody=%s", err, out.String())
+	}
+	if overview.Intake.Deliveries != 1 || overview.Intake.Errors != 0 || overview.Intake.Recovered != 1 || overview.Intake.Replayable != 0 || overview.Intake.LatestErrorID != "" {
+		t.Fatalf("intake summary = %+v", overview.Intake)
+	}
+	for _, unwanted := range []string{
+		"agent-team intake deliveries --status error",
+		"agent-team intake replay --all --dry-run --preview-triggers",
+	} {
+		if stringSliceContains(overview.Actions, unwanted) {
+			t.Fatalf("actions should not contain %q: %+v", unwanted, overview.Actions)
+		}
+	}
+}
+
 func TestTeamOverviewScopesCountsAndActions(t *testing.T) {
 	root := writeOverviewAttentionFixture(t)
 

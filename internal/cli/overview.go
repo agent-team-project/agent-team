@@ -173,6 +173,7 @@ type overviewScheduleSummary struct {
 type overviewIntakeSummary struct {
 	Deliveries    int    `json:"deliveries"`
 	Errors        int    `json:"errors"`
+	Recovered     int    `json:"recovered"`
 	Replayable    int    `json:"replayable"`
 	LatestErrorID string `json:"latest_error_id,omitempty"`
 	LatestError   string `json:"latest_error,omitempty"`
@@ -415,6 +416,10 @@ func overviewIntakeFromDeliveries(deliveries []intakeDelivery) overviewIntakeSum
 	var latest time.Time
 	for _, delivery := range deliveries {
 		if delivery.Status != intakeDeliveryStatusError {
+			continue
+		}
+		if delivery.ReplayStatus == intakeDeliveryReplayStatusOK {
+			out.Recovered++
 			continue
 		}
 		out.Errors++
@@ -677,9 +682,10 @@ func renderOverview(w io.Writer, result *overviewResult, jsonOut bool) error {
 		result.Schedules.Declared,
 		result.Schedules.Due,
 		result.Schedules.Upcoming)
-	fmt.Fprintf(w, "intake: deliveries=%d errors=%d replayable=%d latest_error=%s\n",
+	fmt.Fprintf(w, "intake: deliveries=%d errors=%d recovered=%d replayable=%d latest_error=%s\n",
 		result.Intake.Deliveries,
 		result.Intake.Errors,
+		result.Intake.Recovered,
 		result.Intake.Replayable,
 		emptyDash(result.Intake.LatestErrorID))
 	if len(result.Actions) == 0 {

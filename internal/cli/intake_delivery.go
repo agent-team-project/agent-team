@@ -24,6 +24,9 @@ import (
 const (
 	intakeDeliveryStatusOK    = "ok"
 	intakeDeliveryStatusError = "error"
+
+	intakeDeliveryReplayStatusOK    = "ok"
+	intakeDeliveryReplayStatusError = "error"
 )
 
 var (
@@ -32,24 +35,27 @@ var (
 )
 
 type intakeDelivery struct {
-	ID         string         `json:"id"`
-	Time       time.Time      `json:"time"`
-	Provider   string         `json:"provider,omitempty"`
-	Method     string         `json:"method,omitempty"`
-	Path       string         `json:"path,omitempty"`
-	RemoteAddr string         `json:"remote_addr,omitempty"`
-	EventType  string         `json:"event_type,omitempty"`
-	Payload    map[string]any `json:"payload,omitempty"`
-	Ticket     string         `json:"ticket,omitempty"`
-	PR         string         `json:"pr,omitempty"`
-	JobID      string         `json:"job_id,omitempty"`
-	Status     string         `json:"status"`
-	HTTPStatus int            `json:"http_status"`
-	Error      string         `json:"error,omitempty"`
-	DryRun     bool           `json:"dry_run,omitempty"`
-	Matched    []string       `json:"matched,omitempty"`
-	Pipelines  []string       `json:"pipelines,omitempty"`
-	Actions    []string       `json:"actions,omitempty"`
+	ID           string         `json:"id"`
+	Time         time.Time      `json:"time"`
+	Provider     string         `json:"provider,omitempty"`
+	Method       string         `json:"method,omitempty"`
+	Path         string         `json:"path,omitempty"`
+	RemoteAddr   string         `json:"remote_addr,omitempty"`
+	EventType    string         `json:"event_type,omitempty"`
+	Payload      map[string]any `json:"payload,omitempty"`
+	Ticket       string         `json:"ticket,omitempty"`
+	PR           string         `json:"pr,omitempty"`
+	JobID        string         `json:"job_id,omitempty"`
+	Status       string         `json:"status"`
+	HTTPStatus   int            `json:"http_status"`
+	Error        string         `json:"error,omitempty"`
+	ReplayStatus string         `json:"replay_status,omitempty"`
+	ReplayedAt   *time.Time     `json:"replayed_at,omitempty"`
+	ReplayError  string         `json:"replay_error,omitempty"`
+	DryRun       bool           `json:"dry_run,omitempty"`
+	Matched      []string       `json:"matched,omitempty"`
+	Pipelines    []string       `json:"pipelines,omitempty"`
+	Actions      []string       `json:"actions,omitempty"`
 }
 
 func newIntakeDeliveriesCmd() *cobra.Command {
@@ -215,13 +221,26 @@ func newIntakeReplayCmd() *cobra.Command {
 				}
 				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, nil, nil, triggerPreview)
 			}
-			return publishIntakeEvent(cmd, target, ev, jsonOut, tmpl)
+			err = publishIntakeEvent(cmd, target, ev, jsonOut, tmpl)
+			replayErr := ""
+			if err != nil {
+				replayErr = err.Error()
+			}
+			if markErr := markIntakeDeliveryReplays(teamDir, []intakeReplayResult{{
+				DeliveryID: delivery.ID,
+				OK:         err == nil,
+				Error:      replayErr,
+			}}, time.Now().UTC()); markErr != nil && err == nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake replay: record replay: %v\n", markErr)
+				return exitErr(1)
+			}
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&all, "all", false, "Replay all matching recorded deliveries.")
 	cmd.Flags().StringVar(&provider, "provider", "", "With --all, only replay deliveries for a provider: linear or github.")
-	cmd.Flags().StringVar(&status, "status", intakeDeliveryStatusError, "With --all, delivery status to replay: ok, error, or all.")
+	cmd.Flags().StringVar(&status, "status", intakeDeliveryStatusError, "With --all, delivery status to replay: ok, error, or all. error skips recovered replays.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, replay at most this many matching deliveries (0 = all).")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the normalized delivery without publishing it.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
@@ -545,6 +564,11 @@ func replayAllIntakeDeliveries(teamDir, provider, status string, limit int, dryR
 		}
 		batch.Results = append(batch.Results, result)
 	}
+	if !dryRun && len(batch.Results) > 0 {
+		if err := markIntakeDeliveryReplays(teamDir, batch.Results, time.Now().UTC()); err != nil {
+			return batch, err
+		}
+	}
 	return batch, nil
 }
 
@@ -554,8 +578,15 @@ func selectIntakeReplayDeliveries(deliveries []intakeDelivery, provider, status 
 		if provider != "" && delivery.Provider != provider {
 			continue
 		}
-		if status != "all" && delivery.Status != status {
-			continue
+		switch status {
+		case intakeDeliveryStatusError:
+			if !intakeDeliveryNeedsReplay(delivery) {
+				continue
+			}
+		case intakeDeliveryStatusOK:
+			if delivery.Status != intakeDeliveryStatusOK {
+				continue
+			}
 		}
 		out = append(out, delivery)
 		if limit > 0 && len(out) >= limit {
@@ -599,6 +630,51 @@ func replayOneIntakeDelivery(teamDir string, dc *daemonClient, delivery intakeDe
 	result.Outcome = outcome
 	result.OK = true
 	return result
+}
+
+func markIntakeDeliveryReplays(teamDir string, results []intakeReplayResult, now time.Time) error {
+	if len(results) == 0 {
+		return nil
+	}
+	byID := make(map[string]intakeReplayResult, len(results))
+	for _, result := range results {
+		if strings.TrimSpace(result.DeliveryID) == "" {
+			continue
+		}
+		byID[result.DeliveryID] = result
+	}
+	if len(byID) == 0 {
+		return nil
+	}
+	now = now.UTC()
+	intakeDeliveryLogMu.Lock()
+	defer intakeDeliveryLogMu.Unlock()
+	deliveries, err := listIntakeDeliveries(teamDir)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i := range deliveries {
+		result, ok := byID[deliveries[i].ID]
+		if !ok {
+			continue
+		}
+		deliveries[i].ReplayStatus = intakeDeliveryReplayStatusError
+		deliveries[i].ReplayError = strings.TrimSpace(result.Error)
+		if result.OK {
+			deliveries[i].ReplayStatus = intakeDeliveryReplayStatusOK
+			deliveries[i].ReplayError = ""
+		} else if deliveries[i].ReplayError == "" {
+			deliveries[i].ReplayError = "replay failed"
+		}
+		replayedAt := now
+		deliveries[i].ReplayedAt = &replayedAt
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return writeIntakeDeliveries(teamDir, deliveries)
 }
 
 func pruneIntakeDeliveries(teamDir, status string, olderThan time.Duration, now time.Time, dryRun bool) ([]intakePruneResult, error) {
@@ -663,7 +739,7 @@ func withIntakeDeliveryActions(deliveries []intakeDelivery) []intakeDelivery {
 }
 
 func intakeDeliveryActions(delivery intakeDelivery) []string {
-	if delivery.Status != intakeDeliveryStatusError {
+	if !intakeDeliveryNeedsReplay(delivery) {
 		return nil
 	}
 	if strings.TrimSpace(delivery.EventType) != "" && len(delivery.Payload) > 0 {
@@ -673,6 +749,10 @@ func intakeDeliveryActions(delivery intakeDelivery) []string {
 		}
 	}
 	return []string{"inspect webhook source; no normalized event payload was recorded"}
+}
+
+func intakeDeliveryNeedsReplay(delivery intakeDelivery) bool {
+	return delivery.Status == intakeDeliveryStatusError && delivery.ReplayStatus != intakeDeliveryReplayStatusOK
 }
 
 func parseIntakeDeliveryFormat(format string) (*template.Template, error) {
@@ -717,13 +797,14 @@ func renderIntakeDeliveries(w io.Writer, deliveries []intakeDelivery, jsonOut bo
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TIME\tID\tPROVIDER\tSTATUS\tHTTP\tEVENT\tTICKET\tPR\tACTIONS\tERROR")
+	fmt.Fprintln(tw, "TIME\tID\tPROVIDER\tSTATUS\tREPLAY\tHTTP\tEVENT\tTICKET\tPR\tACTIONS\tERROR")
 	for _, delivery := range deliveries {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
 			delivery.Time.Format(time.RFC3339),
 			delivery.ID,
 			emptyDash(delivery.Provider),
 			delivery.Status,
+			emptyDash(delivery.ReplayStatus),
 			delivery.HTTPStatus,
 			emptyDash(delivery.EventType),
 			emptyDash(delivery.Ticket),
