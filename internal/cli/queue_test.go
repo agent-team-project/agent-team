@@ -335,6 +335,126 @@ func TestQueueDoctorQuarantineDryRunAndApply(t *testing.T) {
 	}
 }
 
+func TestQueueQuarantineListAndRestore(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	queueRoot := daemon.QueueRoot(daemon.DaemonRoot(teamDir))
+	pendingDir := filepath.Join(queueRoot, daemon.QueueStatePending)
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := os.MkdirAll(pendingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pendingDir, "mismatch.json"), []byte(fmt.Sprintf(`{
+  "id": "stored-id",
+  "state": "pending",
+  "event_type": "agent.dispatch",
+  "instance": "worker",
+  "instance_id": "worker-squ-132",
+  "payload": {"ticket": "SQU-132"},
+  "queued_at": %q,
+  "updated_at": %q
+}`, now.Format(time.RFC3339), now.Format(time.RFC3339))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pendingDir, "bad-json.json"), []byte("{\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	doctor := NewRootCmd()
+	doctorOut, doctorErr := &bytes.Buffer{}, &bytes.Buffer{}
+	doctor.SetOut(doctorOut)
+	doctor.SetErr(doctorErr)
+	doctor.SetArgs([]string{"queue", "doctor", "--target", tmp, "--quarantine", "--json"})
+	if err := doctor.Execute(); err != nil {
+		t.Fatalf("queue doctor quarantine: %v\nstderr=%s\nstdout=%s", err, doctorErr.String(), doctorOut.String())
+	}
+
+	ls := NewRootCmd()
+	lsOut, lsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	ls.SetOut(lsOut)
+	ls.SetErr(lsErr)
+	ls.SetArgs([]string{"queue", "quarantine", "ls", "--target", tmp, "--json"})
+	if err := ls.Execute(); err != nil {
+		t.Fatalf("queue quarantine ls: %v\nstderr=%s", err, lsErr.String())
+	}
+	var quarantined []queueQuarantineItem
+	if err := json.Unmarshal(lsOut.Bytes(), &quarantined); err != nil {
+		t.Fatalf("decode quarantine ls: %v\nbody=%s", err, lsOut.String())
+	}
+	if len(quarantined) != 2 {
+		t.Fatalf("quarantined items = %+v", quarantined)
+	}
+	var restorable, invalid queueQuarantineItem
+	for _, item := range quarantined {
+		switch {
+		case item.ID == "stored-id":
+			restorable = item
+		case strings.Contains(item.Path, "bad-json.json"):
+			invalid = item
+		}
+	}
+	if !restorable.Restorable || restorable.RestorePath != filepath.Join(daemon.QueueStatePending, "mismatch.json") || restorable.Job != "squ-132" {
+		t.Fatalf("restorable item = %+v", restorable)
+	}
+	if invalid.Restorable || !strings.Contains(invalid.Problem, "invalid JSON") {
+		t.Fatalf("invalid item = %+v", invalid)
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"queue", "quarantine", "restore", "--target", tmp, "--dry-run", "--json", restorable.Path})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("queue quarantine restore dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryResult queueQuarantineRestoreResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryResult); err != nil {
+		t.Fatalf("decode restore dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if dryResult.Action != "would_restore" || !dryResult.DryRun || dryResult.Destination != restorable.RestorePath {
+		t.Fatalf("restore dry-run result = %+v", dryResult)
+	}
+	if _, err := os.Stat(filepath.Join(pendingDir, "mismatch.json")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run restored active file unexpectedly: %v", err)
+	}
+
+	restore := NewRootCmd()
+	restoreOut, restoreErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restore.SetOut(restoreOut)
+	restore.SetErr(restoreErr)
+	restore.SetArgs([]string{"queue", "quarantine", "restore", "--target", tmp, "--json", restorable.Path})
+	if err := restore.Execute(); err != nil {
+		t.Fatalf("queue quarantine restore: %v\nstderr=%s", err, restoreErr.String())
+	}
+	var restored queueQuarantineRestoreResult
+	if err := json.Unmarshal(restoreOut.Bytes(), &restored); err != nil {
+		t.Fatalf("decode restore: %v\nbody=%s", err, restoreOut.String())
+	}
+	if restored.Action != "restored" || restored.DryRun || restored.Destination != restorable.RestorePath {
+		t.Fatalf("restore result = %+v", restored)
+	}
+	if _, err := os.Stat(filepath.Join(pendingDir, "mismatch.json")); err != nil {
+		t.Fatalf("active restored file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(queueRoot, restorable.Path)); !os.IsNotExist(err) {
+		t.Fatalf("quarantine source still exists: %v", err)
+	}
+
+	restoreBad := NewRootCmd()
+	restoreBadOut, restoreBadErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreBad.SetOut(restoreBadOut)
+	restoreBad.SetErr(restoreBadErr)
+	restoreBad.SetArgs([]string{"queue", "quarantine", "restore", "--target", tmp, "--json", invalid.Path})
+	if err := restoreBad.Execute(); err == nil {
+		t.Fatalf("restored invalid quarantine unexpectedly: stdout=%s", restoreBadOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(queueRoot, invalid.Path)); err != nil {
+		t.Fatalf("invalid quarantine source moved: %v", err)
+	}
+}
+
 func TestQueueDoctorOKWithWarnings(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
