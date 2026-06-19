@@ -435,6 +435,18 @@ since = "2026-06-18T12:00:00Z"
 	if strings.Contains(textOut.String(), "q-status-other-quarantined") {
 		t.Fatalf("team status text leaked unrelated quarantine:\n%s", textOut.String())
 	}
+
+	statusFormat := NewRootCmd()
+	statusFormatOut, statusFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	statusFormat.SetOut(statusFormatOut)
+	statusFormat.SetErr(statusFormatErr)
+	statusFormat.SetArgs([]string{"team", "status", "delivery", "--repo", root, "--format", "{{.Team.Name}} {{.InstanceSummary.Total}} {{.Queue.Dead}}"})
+	if err := statusFormat.Execute(); err != nil {
+		t.Fatalf("team status format: %v\nstderr=%s", err, statusFormatErr.String())
+	}
+	if got, want := statusFormatOut.String(), "delivery 3 1\n"; got != want {
+		t.Fatalf("team status format = %q, want %q", got, want)
+	}
 }
 
 func TestTeamCleanupScopesDoneJobOwnership(t *testing.T) {
@@ -4196,6 +4208,49 @@ func TestTeamStatusRejectsNegativeInterval(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--interval must be >= 0") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestTeamStatusRejectsFormatCombinations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "format with json",
+			args: []string{"team", "status", "delivery", "--format", "{{.Team.Name}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "format with watch",
+			args: []string{"team", "status", "delivery", "--format", "{{.Team.Name}}", "--watch"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "invalid format",
+			args: []string{"team", "status", "delivery", "--format", "{{"},
+			want: "invalid --format template",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("team status invalid format succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("team status err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 

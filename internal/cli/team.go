@@ -3139,6 +3139,7 @@ func newTeamStatusCmd() *cobra.Command {
 		noClear  bool
 		interval time.Duration
 		jsonOut  bool
+		format   string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -3148,6 +3149,15 @@ func newTeamStatusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team status: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if format != "" && (watch || jsonOut) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team status: --format cannot be combined with --watch or --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseTeamStatusFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team status: %v\n", err)
 				return exitErr(2)
 			}
 			teamDir, err := resolveTeamDir(cmd, repo)
@@ -3165,7 +3175,7 @@ func newTeamStatusCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team status: %v\n", err)
 				return exitErr(1)
 			}
-			return renderTeamStatus(cmd.OutOrStdout(), snapshot, jsonOut)
+			return renderTeamStatus(cmd.OutOrStdout(), snapshot, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
@@ -3173,6 +3183,7 @@ func newTeamStatusCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team status as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render team status with a Go template, e.g. '{{.Team.Name}} {{.InstanceSummary.Total}}'.")
 	return cmd
 }
 
@@ -5366,7 +5377,7 @@ func runTeamStatusWatch(ctx context.Context, w io.Writer, teamDir, name string, 
 			if err := writeWatchClear(w, clear); err != nil {
 				return err
 			}
-			if err := renderTeamStatus(w, snapshot, false); err != nil {
+			if err := renderTeamStatus(w, snapshot, false, nil); err != nil {
 				return err
 			}
 		}
@@ -6000,9 +6011,23 @@ func renderTeamDetail(w io.Writer, team teamInfo, jsonOut bool) error {
 	return nil
 }
 
-func renderTeamStatus(w io.Writer, snapshot *teamStatusSnapshot, jsonOut bool) error {
+func parseTeamStatusFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("team-status-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderTeamStatus(w io.Writer, snapshot *teamStatusSnapshot, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(snapshot)
+	}
+	if tmpl != nil {
+		return renderTeamStatusFormat(w, snapshot, tmpl)
 	}
 	fmt.Fprintf(w, "Team: %s\n", snapshot.Team.Name)
 	if snapshot.Team.Description != "" {
@@ -6038,6 +6063,14 @@ func renderTeamStatus(w io.Writer, snapshot *teamStatusSnapshot, jsonOut bool) e
 		fmt.Fprintf(w, "  %s\n", action)
 	}
 	return nil
+}
+
+func renderTeamStatusFormat(w io.Writer, snapshot *teamStatusSnapshot, tmpl *template.Template) error {
+	if err := tmpl.Execute(w, snapshot); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 func renderTeamHealth(w io.Writer, snapshot *teamHealthSnapshot, jsonOut bool, tmpl *template.Template) error {
