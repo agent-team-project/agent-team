@@ -556,6 +556,94 @@ schedules = ["nightly"]
 	}
 }
 
+func TestTeamDoctorAllValidatesEveryTeam(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.worker]
+agent = "worker"
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[instances.other]
+agent = "other"
+
+[[instances.other.triggers]]
+event = "agent.dispatch"
+match.target = "other"
+
+[pipelines.delivery]
+trigger.event = "ticket.created"
+
+[[pipelines.delivery.steps]]
+id = "implement"
+target = "worker"
+
+[pipelines.platform]
+trigger.event = "ticket.created"
+
+[[pipelines.platform.steps]]
+id = "implement"
+target = "other"
+
+[teams.delivery]
+instances = ["worker"]
+pipelines = ["delivery"]
+
+[teams.platform]
+instances = ["worker"]
+pipelines = ["platform"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "doctor", "--all", "--repo", root, "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("team doctor --all unexpectedly succeeded")
+	}
+	var result allTeamDoctorResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode team doctor all: %v\nbody=%s stderr=%s", err, out.String(), stderr.String())
+	}
+	if result.OK || len(result.Teams) != 2 || !hasTeamDoctorFindingForTeam(result.Problems, "platform", "pipeline_target_outside_team") {
+		t.Fatalf("team doctor all result = %+v", result)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"team", "doctor", "--all", "--repo", root})
+	if err := text.Execute(); err == nil {
+		t.Fatal("team doctor --all text unexpectedly succeeded")
+	}
+	if textOut.Len() != 0 || !strings.Contains(textErr.String(), `team "platform"`) || !strings.Contains(textErr.String(), `targets "other"`) {
+		t.Fatalf("team doctor all text stdout=%q stderr=%q", textOut.String(), textErr.String())
+	}
+
+	invalid := NewRootCmd()
+	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalid.SetOut(invalidOut)
+	invalid.SetErr(invalidErr)
+	invalid.SetArgs([]string{"team", "doctor", "delivery", "--all", "--repo", root})
+	if err := invalid.Execute(); err == nil {
+		t.Fatal("team doctor <team> --all succeeded")
+	}
+	if !strings.Contains(invalidErr.String(), "--all cannot be combined") {
+		t.Fatalf("invalid stderr = %q", invalidErr.String())
+	}
+}
+
 func TestTeamDoctorIncludesPipelineWorkflowFindings(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
@@ -3516,6 +3604,15 @@ func TestTeamPsRejectsNegativeInterval(t *testing.T) {
 func hasTeamDoctorFinding(findings []teamDoctorFinding, code string) bool {
 	for _, finding := range findings {
 		if finding.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTeamDoctorFindingForTeam(findings []teamDoctorFinding, teamName, code string) bool {
+	for _, finding := range findings {
+		if finding.Team == teamName && finding.Code == code {
 			return true
 		}
 	}

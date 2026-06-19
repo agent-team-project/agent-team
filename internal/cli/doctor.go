@@ -154,8 +154,39 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, j
 			warnings = append(warnings, "pipeline workflow: "+warning.Message)
 		}
 	}
+	if teamDoctor, err := collectAllTeamDoctor(teamDir); err != nil {
+		problems = append(problems, fmt.Sprintf("team topology validation failed: %v", err))
+	} else if teamDoctor != nil {
+		for _, problem := range teamDoctor.Problems {
+			if isPipelineWorkflowFindingCode(problem.Code) {
+				continue
+			}
+			problems = append(problems, "team topology: "+problem.Message)
+		}
+		for _, warning := range teamDoctor.Warnings {
+			if warning.Code == "no_teams" || isPipelineWorkflowFindingCode(warning.Code) {
+				continue
+			}
+			warnings = append(warnings, "team topology: "+warning.Message)
+		}
+	}
 
 	return reportDoctor(cmd, problems, warnings, jsonOut)
+}
+
+func isPipelineWorkflowFindingCode(code string) bool {
+	switch code {
+	case "pipeline_nil",
+		"pipeline_no_steps",
+		"dependency_cycle",
+		"target_has_no_dispatch_route",
+		"target_matches_multiple_routes",
+		"schedule_trigger_has_no_source",
+		"first_step_has_dependencies":
+		return true
+	default:
+		return false
+	}
 }
 
 type doctorResult struct {

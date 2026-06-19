@@ -119,19 +119,36 @@ func newTeamShowCmd() *cobra.Command {
 func newTeamDoctorCmd() *cobra.Command {
 	var (
 		repo    string
+		all     bool
 		jsonOut bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "doctor <team>",
+		Use:   "doctor <team>|--all",
 		Short: "Validate one team's topology wiring.",
 		Long: "Validate a declared team's topology wiring: team-owned pipeline workflows must be runnable, " +
 			"pipeline step targets must be owned by the team, and team schedules should route back to team-owned instances or pipelines.",
-		Args: cobra.ExactArgs(1),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team doctor: --all cannot be combined with a team argument.")
+				return exitErr(2)
+			}
+			if !all && len(args) != 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team doctor: pass a team name or --all.")
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
+			}
+			if all {
+				result, err := collectAllTeamDoctor(teamDir)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team doctor: %v\n", err)
+					return exitErr(1)
+				}
+				return renderAllTeamDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut)
 			}
 			result, err := collectTeamDoctor(teamDir, args[0])
 			if err != nil {
@@ -142,6 +159,7 @@ func newTeamDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&all, "all", false, "Validate all declared teams.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team doctor findings as JSON.")
 	return cmd
 }
@@ -153,9 +171,17 @@ type teamDoctorResult struct {
 	Warnings []teamDoctorFinding `json:"warnings,omitempty"`
 }
 
+type allTeamDoctorResult struct {
+	OK       bool                `json:"ok"`
+	Teams    []teamDoctorResult  `json:"teams"`
+	Problems []teamDoctorFinding `json:"problems,omitempty"`
+	Warnings []teamDoctorFinding `json:"warnings,omitempty"`
+}
+
 type teamDoctorFinding struct {
 	Code         string   `json:"code"`
 	Message      string   `json:"message"`
+	Team         string   `json:"team,omitempty"`
 	Pipeline     string   `json:"pipeline,omitempty"`
 	Step         string   `json:"step,omitempty"`
 	Target       string   `json:"target,omitempty"`
@@ -170,17 +196,58 @@ func collectTeamDoctor(teamDir, name string) (*teamDoctorResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	return doctorTeam(top, team), nil
+}
+
+func collectAllTeamDoctor(teamDir string) (*allTeamDoctorResult, error) {
+	top, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	result := &allTeamDoctorResult{OK: true}
+	if top == nil || len(top.Teams) == 0 {
+		result.Warnings = append(result.Warnings, teamDoctorFinding{
+			Code:    "no_teams",
+			Message: "no teams are declared",
+		})
+		return result, nil
+	}
+	for _, team := range top.SortedTeams() {
+		if team == nil {
+			continue
+		}
+		teamResult := doctorTeam(top, team)
+		result.Teams = append(result.Teams, *teamResult)
+		result.Problems = append(result.Problems, teamResult.Problems...)
+		result.Warnings = append(result.Warnings, teamResult.Warnings...)
+	}
+	result.OK = len(result.Problems) == 0
+	return result, nil
+}
+
+func doctorTeam(top *topology.Topology, team *topology.Team) *teamDoctorResult {
 	result := &teamDoctorResult{Team: teamInfoFromTopology(team)}
+	if top == nil || team == nil {
+		result.OK = false
+		result.Problems = append(result.Problems, teamDoctorFinding{
+			Code:    "team_missing",
+			Message: "team declaration is missing",
+		})
+		return result
+	}
+	teamName := team.Name
 	targets := teamTargetSet(top, team)
 	if len(team.Instances) == 0 {
 		result.Warnings = append(result.Warnings, teamDoctorFinding{
 			Code:    "no_instances",
+			Team:    teamName,
 			Message: fmt.Sprintf("team %q declares no instances", team.Name),
 		})
 	}
 	if len(team.Pipelines) == 0 {
 		result.Warnings = append(result.Warnings, teamDoctorFinding{
 			Code:    "no_pipelines",
+			Team:    teamName,
 			Message: fmt.Sprintf("team %q declares no pipelines; team run is unavailable", team.Name),
 		})
 	}
@@ -191,10 +258,10 @@ func collectTeamDoctor(teamDir, name string) (*teamDoctorResult, error) {
 		}
 		pipelineReport := doctorPipeline(top, pipeline)
 		for _, problem := range pipelineReport.Problems {
-			result.Problems = append(result.Problems, teamDoctorFindingFromPipeline(problem))
+			result.Problems = append(result.Problems, teamDoctorFindingFromPipeline(teamName, problem))
 		}
 		for _, warning := range pipelineReport.Warnings {
-			result.Warnings = append(result.Warnings, teamDoctorFindingFromPipeline(warning))
+			result.Warnings = append(result.Warnings, teamDoctorFindingFromPipeline(teamName, warning))
 		}
 		if len(pipeline.Steps) == 0 {
 			continue
@@ -209,6 +276,7 @@ func collectTeamDoctor(teamDir, name string) (*teamDoctorResult, error) {
 			}
 			result.Problems = append(result.Problems, teamDoctorFinding{
 				Code:     "pipeline_target_outside_team",
+				Team:     teamName,
 				Message:  fmt.Sprintf("pipeline %q step %q targets %q, which is not owned by team %q", pipeline.Name, step.ID, target, team.Name),
 				Pipeline: pipeline.Name,
 				Step:     step.ID,
@@ -225,24 +293,27 @@ func collectTeamDoctor(teamDir, name string) (*teamDoctorResult, error) {
 		if outsideRoutes > 0 {
 			result.Warnings = append(result.Warnings, teamDoctorFinding{
 				Code:     "schedule_routes_outside_team",
+				Team:     teamName,
 				Message:  fmt.Sprintf("schedule %q also matches %d pipeline or instance route(s) outside team %q", schedule.Name, outsideRoutes, team.Name),
 				Schedule: schedule.Name,
 			})
 		} else if teamRoutes == 0 {
 			result.Warnings = append(result.Warnings, teamDoctorFinding{
 				Code:     "schedule_no_team_route",
+				Team:     teamName,
 				Message:  fmt.Sprintf("schedule %q does not currently match any team-owned pipeline or instance", schedule.Name),
 				Schedule: schedule.Name,
 			})
 		}
 	}
 	result.OK = len(result.Problems) == 0
-	return result, nil
+	return result
 }
 
-func teamDoctorFindingFromPipeline(finding pipelineDoctorFinding) teamDoctorFinding {
-	return teamDoctorFinding{
+func teamDoctorFindingFromPipeline(teamName string, finding pipelineDoctorFinding) teamDoctorFinding {
+	out := teamDoctorFinding{
 		Code:         finding.Code,
+		Team:         teamName,
 		Message:      finding.Message,
 		Pipeline:     finding.Pipeline,
 		Step:         finding.Step,
@@ -251,6 +322,7 @@ func teamDoctorFindingFromPipeline(finding pipelineDoctorFinding) teamDoctorFind
 		Dependencies: append([]string(nil), finding.Dependencies...),
 		Cycle:        append([]string(nil), finding.Cycle...),
 	}
+	return out
 }
 
 func teamTargetSet(top *topology.Topology, team *topology.Team) map[string]bool {
@@ -325,6 +397,43 @@ func renderTeamDoctor(stdout, stderr io.Writer, result *teamDoctorResult, jsonOu
 		fmt.Fprintf(stderr, "  warning: %s\n", warning.Message)
 	}
 	return exitErr(1)
+}
+
+func renderAllTeamDoctor(stdout, stderr io.Writer, result *allTeamDoctorResult, jsonOut bool) error {
+	if result == nil {
+		result = &allTeamDoctorResult{OK: true}
+	}
+	if jsonOut {
+		if err := json.NewEncoder(stdout).Encode(result); err != nil {
+			return err
+		}
+		if !result.OK {
+			return exitErr(1)
+		}
+		return nil
+	}
+	if result.OK {
+		fmt.Fprintf(stdout, "agent-team team doctor: OK (%d teams)\n", len(result.Teams))
+		for _, warning := range result.Warnings {
+			fmt.Fprintf(stderr, "  warning: %s%s\n", teamDoctorFindingPrefix(warning), warning.Message)
+		}
+		return nil
+	}
+	fmt.Fprintln(stderr, "agent-team team doctor: problems found:")
+	for _, problem := range result.Problems {
+		fmt.Fprintf(stderr, "  - %s%s\n", teamDoctorFindingPrefix(problem), problem.Message)
+	}
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(stderr, "  warning: %s%s\n", teamDoctorFindingPrefix(warning), warning.Message)
+	}
+	return exitErr(1)
+}
+
+func teamDoctorFindingPrefix(finding teamDoctorFinding) string {
+	if strings.TrimSpace(finding.Team) == "" {
+		return ""
+	}
+	return fmt.Sprintf("team %q: ", finding.Team)
 }
 
 func newTeamRunCmd() *cobra.Command {
