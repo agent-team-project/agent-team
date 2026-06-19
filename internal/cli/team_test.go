@@ -510,6 +510,9 @@ func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 		{"team", "logs", "delivery", "--json"},
 		{"team", "events", "delivery", "--format", "{{.Instance}}", "--json"},
 		{"team", "events", "delivery", "--summary", "--follow"},
+		{"team", "send", "delivery", "hello", "--format", "{{.To}}", "--json"},
+		{"team", "send", "delivery", "hello", "--latest", "--last", "1"},
+		{"team", "send", "delivery", "hello", "--last", "-1"},
 	} {
 		cmd := NewRootCmd()
 		stderr := &bytes.Buffer{}
@@ -521,6 +524,113 @@ func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 		}
 		if strings.TrimSpace(stderr.String()) == "" {
 			t.Fatalf("%v produced empty stderr", args)
+		}
+	}
+}
+
+func TestTeamSendScopesRecipients(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.build-worker]
+agent = "worker"
+ephemeral = true
+
+[instances.other]
+agent = "other"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+
+[teams.platform]
+instances = ["other", "build-worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(time.Minute), Workspace: root},
+		{Instance: "worker-squ-101", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(2 * time.Minute), Workspace: root},
+		{Instance: "worker-squ-100", Agent: "worker", Status: daemon.StatusStopped, PID: os.Getpid(), StartedAt: now.Add(3 * time.Minute), Workspace: root},
+		{Instance: "build-worker-1", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(4 * time.Minute), Workspace: root},
+		{Instance: "other", Agent: "other", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(5 * time.Minute), Workspace: root},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"team", "send", "delivery", "--repo", root, "--dry-run", "--json", "hello", "team"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("team send dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryRows []sendJSON
+	if err := json.Unmarshal(dryOut.Bytes(), &dryRows); err != nil {
+		t.Fatalf("decode team send dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if got := sendTargets(dryRows); strings.Join(got, ",") != "manager,worker-squ-101" {
+		t.Fatalf("team send dry-run targets = %v", got)
+	}
+
+	allStatuses := NewRootCmd()
+	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allStatuses.SetOut(allOut)
+	allStatuses.SetErr(allErr)
+	allStatuses.SetArgs([]string{"team", "send", "delivery", "--repo", root, "--all", "--dry-run", "--json", "hello"})
+	if err := allStatuses.Execute(); err != nil {
+		t.Fatalf("team send --all dry-run: %v\nstderr=%s", err, allErr.String())
+	}
+	var allRows []sendJSON
+	if err := json.Unmarshal(allOut.Bytes(), &allRows); err != nil {
+		t.Fatalf("decode team send --all: %v\nbody=%s", err, allOut.String())
+	}
+	if got := sendTargets(allRows); strings.Join(got, ",") != "manager,worker-squ-100,worker-squ-101" {
+		t.Fatalf("team send --all targets = %v", got)
+	}
+
+	latest := NewRootCmd()
+	latestOut, latestErr := &bytes.Buffer{}, &bytes.Buffer{}
+	latest.SetOut(latestOut)
+	latest.SetErr(latestErr)
+	latest.SetArgs([]string{"team", "send", "delivery", "--repo", root, "--latest", "--dry-run", "--format", "{{.To}}", "ping"})
+	if err := latest.Execute(); err != nil {
+		t.Fatalf("team send latest: %v\nstderr=%s", err, latestErr.String())
+	}
+	if got := strings.TrimSpace(latestOut.String()); got != "worker-squ-101" {
+		t.Fatalf("team send latest = %q", got)
+	}
+
+	send := NewRootCmd()
+	sendOut, sendErr := &bytes.Buffer{}, &bytes.Buffer{}
+	send.SetOut(sendOut)
+	send.SetErr(sendErr)
+	send.SetArgs([]string{"team", "send", "delivery", "--repo", root, "--from", "operator", "please", "sync"})
+	if err := send.Execute(); err != nil {
+		t.Fatalf("team send: %v\nstderr=%s", err, sendErr.String())
+	}
+	for _, instance := range []string{"manager", "worker-squ-101"} {
+		messages, err := daemon.ReadMessages(daemon.DaemonRoot(teamDir), instance)
+		if err != nil {
+			t.Fatalf("read messages %s: %v", instance, err)
+		}
+		if len(messages) != 1 || messages[0].From != "operator" || messages[0].Body != "please sync" {
+			t.Fatalf("messages %s = %+v", instance, messages)
+		}
+	}
+	for _, instance := range []string{"worker-squ-100", "build-worker-1", "other"} {
+		messages, err := daemon.ReadMessages(daemon.DaemonRoot(teamDir), instance)
+		if err != nil {
+			t.Fatalf("read messages %s: %v", instance, err)
+		}
+		if len(messages) != 0 {
+			t.Fatalf("unexpected messages %s = %+v", instance, messages)
 		}
 	}
 }
@@ -1252,6 +1362,14 @@ func lifecycleEventInstances(events []daemon.LifecycleEvent) []string {
 	out := make([]string, 0, len(events))
 	for _, ev := range events {
 		out = append(out, ev.Instance)
+	}
+	return out
+}
+
+func sendTargets(rows []sendJSON) []string {
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.To)
 	}
 	return out
 }

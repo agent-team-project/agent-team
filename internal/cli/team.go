@@ -38,6 +38,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamQueueCmd())
 	cmd.AddCommand(newTeamLogsCmd())
 	cmd.AddCommand(newTeamEventsCmd())
+	cmd.AddCommand(newTeamSendCmd())
 	cmd.AddCommand(newTeamPipelinesCmd())
 	cmd.AddCommand(newTeamSchedulesCmd())
 	cmd.AddCommand(newTeamHealthCmd())
@@ -676,6 +677,100 @@ func newTeamEventsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only show events with this action. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show events with this lifecycle status. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&sinceRaw, "since", "", "Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
+	return cmd
+}
+
+func newTeamSendCmd() *cobra.Command {
+	var (
+		repo          string
+		from          string
+		allStatuses   bool
+		latest        bool
+		last          int
+		statusFilters []string
+		phaseFilters  []string
+		staleOnly     bool
+		unhealthyOnly bool
+		dryRun        bool
+		jsonOut       bool
+		format        string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "send <team> <message...>",
+		Short: "Send a mailbox message to team-owned instances.",
+		Long: "Send a mailbox message to running daemon-known instances owned by one declared team. " +
+			"Use --all to include every lifecycle status, or combine selectors such as --status, --phase, --latest, --last, --stale, and --unhealthy.",
+		Args: cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team send: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if last < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team send: --last must be >= 0.")
+				return exitErr(2)
+			}
+			if latest && last > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team send: choose one of --latest or --last.")
+				return exitErr(2)
+			}
+			formatTemplate, err := parseSendFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team send: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			top, team, err := loadTopologyTeam(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team send: %v\n", err)
+				return exitErr(1)
+			}
+			baseClient, err := sendClientForTeamDir(teamDir)
+			if err != nil {
+				return err
+			}
+			effectiveStatuses := append([]string(nil), statusFilters...)
+			if !allStatuses && len(effectiveStatuses) == 0 && !staleOnly && !unhealthyOnly {
+				effectiveStatuses = []string{string(daemon.StatusRunning)}
+			}
+			opts := sendOptions{
+				From:            from,
+				All:             true,
+				Latest:          latest,
+				Limit:           last,
+				StatusFilters:   effectiveStatuses,
+				PhaseFilters:    phaseFilters,
+				Stale:           staleOnly,
+				Unhealthy:       unhealthyOnly,
+				StaleByInstance: staleInstanceSet(teamDir, time.Now()),
+				DryRun:          dryRun,
+				JSON:            jsonOut,
+				Format:          formatTemplate,
+			}
+			if len(phaseFilters) > 0 {
+				opts.PhaseByInstance = sendPhaseByInstance(teamDir, time.Now())
+			}
+			body := strings.Join(args[1:], " ")
+			client := teamSendClient{sendClient: baseClient, top: top, team: team}
+			return runSendSelectionWithClient(cmd.OutOrStdout(), cmd.ErrOrStderr(), client, body, opts)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&from, "from", "(cli)", "Sender label recorded with the message.")
+	cmd.Flags().BoolVar(&allStatuses, "all", false, "Send to every daemon-known team instance regardless of lifecycle status.")
+	cmd.Flags().BoolVar(&latest, "latest", false, "Send to the most recently started team-owned daemon-known instance after other filters.")
+	cmd.Flags().IntVarP(&last, "last", "n", 0, "Send to the N most recently started team-owned daemon-known instances after other filters (0 = all).")
+	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Send to team-owned instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Send to team-owned instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Send to team-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Send to team-owned instances that are crashed or stale.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching recipients without appending mailbox messages.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each send result with a Go template, e.g. '{{.To}} {{.ID}}'.")
 	return cmd
 }
 
@@ -2469,6 +2564,47 @@ func runTeamStatusWatch(ctx context.Context, w io.Writer, teamDir, name string, 
 			}
 		}
 	}
+}
+
+type teamSendClient struct {
+	sendClient
+	top  *topology.Topology
+	team *topology.Team
+}
+
+func (c teamSendClient) Instances() ([]*daemon.Metadata, error) {
+	metas, err := c.sendClient.Instances()
+	if err != nil {
+		return nil, err
+	}
+	return teamMetadata(c.top, c.team, metas), nil
+}
+
+func teamMetadata(top *topology.Topology, team *topology.Team, metas []*daemon.Metadata) []*daemon.Metadata {
+	if top == nil || team == nil {
+		return nil
+	}
+	instanceNames := stringSliceSet(team.Instances)
+	ephemeralOwners := map[string]bool{}
+	for _, name := range team.Instances {
+		if inst := top.Instances[name]; inst != nil && inst.Ephemeral {
+			ephemeralOwners[inst.Name] = true
+		}
+	}
+	out := make([]*daemon.Metadata, 0, len(metas))
+	for _, meta := range metas {
+		if meta == nil {
+			continue
+		}
+		if instanceNames[meta.Instance] {
+			out = append(out, meta)
+			continue
+		}
+		if owner, ok := declaredEphemeralOwner(top, meta.Instance, meta.Agent); ok && ephemeralOwners[owner.Name] {
+			out = append(out, meta)
+		}
+	}
+	return out
 }
 
 func teamInstanceRows(top *topology.Topology, team *topology.Team, rows []instanceRow) []instanceRow {
