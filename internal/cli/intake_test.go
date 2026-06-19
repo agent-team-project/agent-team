@@ -371,6 +371,96 @@ func TestIntakeDeliveriesFiltersAndFormat(t *testing.T) {
 	}
 }
 
+func TestIntakeDeliveriesReplayFilters(t *testing.T) {
+	target := t.TempDir()
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	replayedAt := now.Add(5 * time.Minute)
+	for _, delivery := range []intakeDelivery{
+		{
+			ID:           "recovered",
+			Time:         now,
+			Provider:     "linear",
+			Status:       intakeDeliveryStatusError,
+			ReplayStatus: intakeDeliveryReplayStatusOK,
+			ReplayedAt:   &replayedAt,
+			HTTPStatus:   http.StatusServiceUnavailable,
+			EventType:    "ticket.created",
+			Payload:      map[string]any{"source": "linear", "ticket": "SQU-212"},
+			Ticket:       "SQU-212",
+			Error:        "daemon is not running",
+		},
+		{
+			ID:         "unresolved",
+			Time:       now.Add(time.Second),
+			Provider:   "linear",
+			Status:     intakeDeliveryStatusError,
+			HTTPStatus: http.StatusServiceUnavailable,
+			EventType:  "ticket.created",
+			Payload:    map[string]any{"source": "linear", "ticket": "SQU-213"},
+			Ticket:     "SQU-213",
+			Error:      "daemon is not running",
+		},
+		{
+			ID:           "replay-failed",
+			Time:         now.Add(2 * time.Second),
+			Provider:     "github",
+			Status:       intakeDeliveryStatusError,
+			ReplayStatus: intakeDeliveryReplayStatusError,
+			ReplayedAt:   &replayedAt,
+			ReplayError:  "daemon: event: refused",
+			HTTPStatus:   http.StatusServiceUnavailable,
+			EventType:    "pr.opened",
+			Payload:      map[string]any{"source": "github", "pr_url": "https://github.com/acme/repo/pull/213"},
+			Error:        "daemon is not running",
+		},
+	} {
+		if err := appendIntakeDelivery(teamDir, delivery); err != nil {
+			t.Fatalf("append %s: %v", delivery.ID, err)
+		}
+	}
+
+	recovered := NewRootCmd()
+	recoveredOut, recoveredErr := &bytes.Buffer{}, &bytes.Buffer{}
+	recovered.SetOut(recoveredOut)
+	recovered.SetErr(recoveredErr)
+	recovered.SetArgs([]string{"intake", "deliveries", "--target", target, "--replay-status", "ok", "--json"})
+	if err := recovered.Execute(); err != nil {
+		t.Fatalf("intake deliveries replay-status ok: %v\nstderr=%s", err, recoveredErr.String())
+	}
+	var recoveredRows []intakeDelivery
+	if err := json.Unmarshal(recoveredOut.Bytes(), &recoveredRows); err != nil {
+		t.Fatalf("decode recovered deliveries: %v\nbody=%s", err, recoveredOut.String())
+	}
+	if deliveryIDs(recoveredRows) != "recovered" || len(recoveredRows[0].Actions) != 0 {
+		t.Fatalf("recovered rows = %+v", recoveredRows)
+	}
+
+	unresolved := NewRootCmd()
+	unresolvedOut, unresolvedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	unresolved.SetOut(unresolvedOut)
+	unresolved.SetErr(unresolvedErr)
+	unresolved.SetArgs([]string{"intake", "deliveries", "--target", target, "--unresolved", "--json"})
+	if err := unresolved.Execute(); err != nil {
+		t.Fatalf("intake deliveries unresolved: %v\nstderr=%s", err, unresolvedErr.String())
+	}
+	var unresolvedRows []intakeDelivery
+	if err := json.Unmarshal(unresolvedOut.Bytes(), &unresolvedRows); err != nil {
+		t.Fatalf("decode unresolved deliveries: %v\nbody=%s", err, unresolvedOut.String())
+	}
+	if deliveryIDs(unresolvedRows) != "unresolved,replay-failed" {
+		t.Fatalf("unresolved rows = %+v", unresolvedRows)
+	}
+	for _, row := range unresolvedRows {
+		if len(row.Actions) == 0 {
+			t.Fatalf("unresolved row missing actions = %+v", row)
+		}
+	}
+}
+
 func TestIntakePruneFiltersAndRewritesLedger(t *testing.T) {
 	target := t.TempDir()
 	teamDir := filepath.Join(target, ".agent_team")
@@ -475,6 +565,74 @@ func TestIntakePruneFiltersAndRewritesLedger(t *testing.T) {
 	}
 	if deliveryIDs(deliveries) != "ok-new" {
 		t.Fatalf("deliveries after error prune = %+v", deliveries)
+	}
+}
+
+func TestIntakePruneReplayStatus(t *testing.T) {
+	target := t.TempDir()
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	replayedAt := now.Add(-time.Hour)
+	for _, delivery := range []intakeDelivery{
+		{
+			ID:           "recovered-error",
+			Time:         now.Add(-2 * time.Hour),
+			Provider:     "linear",
+			Status:       intakeDeliveryStatusError,
+			ReplayStatus: intakeDeliveryReplayStatusOK,
+			ReplayedAt:   &replayedAt,
+			HTTPStatus:   http.StatusServiceUnavailable,
+			EventType:    "ticket.created",
+			Ticket:       "SQU-303",
+		},
+		{
+			ID:         "unresolved-error",
+			Time:       now.Add(-2 * time.Hour),
+			Provider:   "linear",
+			Status:     intakeDeliveryStatusError,
+			HTTPStatus: http.StatusServiceUnavailable,
+			EventType:  "ticket.created",
+			Ticket:     "SQU-304",
+		},
+		{
+			ID:         "ok-delivery",
+			Time:       now.Add(-2 * time.Hour),
+			Provider:   "linear",
+			Status:     intakeDeliveryStatusOK,
+			HTTPStatus: http.StatusOK,
+			EventType:  "ticket.created",
+			Ticket:     "SQU-305",
+		},
+	} {
+		if err := appendIntakeDelivery(teamDir, delivery); err != nil {
+			t.Fatalf("append %s: %v", delivery.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "prune", "--target", target, "--replay-status", "ok", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake prune replay-status: %v\nstderr=%s", err, stderr.String())
+	}
+	var results []intakePruneResult
+	if err := json.Unmarshal(out.Bytes(), &results); err != nil {
+		t.Fatalf("decode prune replay-status: %v\nbody=%s", err, out.String())
+	}
+	if len(results) != 1 || results[0].ID != "recovered-error" || results[0].ReplayStatus != intakeDeliveryReplayStatusOK || !results[0].Dropped {
+		t.Fatalf("prune replay-status results = %+v", results)
+	}
+	deliveries, err := listIntakeDeliveries(teamDir)
+	if err != nil {
+		t.Fatalf("list after replay-status prune: %v", err)
+	}
+	if deliveryIDs(deliveries) != "unresolved-error,ok-delivery" {
+		t.Fatalf("deliveries after replay-status prune = %+v", deliveries)
 	}
 }
 

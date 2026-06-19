@@ -60,12 +60,14 @@ type intakeDelivery struct {
 
 func newIntakeDeliveriesCmd() *cobra.Command {
 	var (
-		target   string
-		provider string
-		status   string
-		tail     string
-		jsonOut  bool
-		format   string
+		target       string
+		provider     string
+		status       string
+		replayStatus string
+		unresolved   bool
+		tail         string
+		jsonOut      bool
+		format       string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -88,6 +90,11 @@ func newIntakeDeliveriesCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake deliveries: --status must be ok or error.")
 				return exitErr(2)
 			}
+			replayStatus, err = parseIntakeReplayStatusFilter(replayStatus)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake deliveries: %v\n", err)
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake deliveries: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -106,7 +113,12 @@ func newIntakeDeliveriesCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake deliveries: %v\n", err)
 				return exitErr(1)
 			}
-			deliveries = filterIntakeDeliveries(deliveries, provider, status)
+			deliveries = filterIntakeDeliveries(deliveries, intakeDeliveryFilter{
+				Provider:     provider,
+				Status:       status,
+				ReplayStatus: replayStatus,
+				Unresolved:   unresolved,
+			})
 			deliveries = tailIntakeDeliveries(deliveries, tailLines)
 			deliveries = withIntakeDeliveryActions(deliveries)
 			return renderIntakeDeliveries(cmd.OutOrStdout(), deliveries, jsonOut, tmpl)
@@ -115,6 +127,8 @@ func newIntakeDeliveriesCmd() *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVar(&provider, "provider", "", "Only show deliveries for a provider: linear or github.")
 	cmd.Flags().StringVar(&status, "status", "", "Only show deliveries with a status: ok or error.")
+	cmd.Flags().StringVar(&replayStatus, "replay-status", "", "Only show deliveries with replay status: ok, error, none, or any.")
+	cmd.Flags().BoolVar(&unresolved, "unresolved", false, "Only show failed deliveries that still need replay.")
 	cmd.Flags().StringVar(&tail, "tail", "20", "Show only the last N deliveries (0 or all = all).")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit deliveries as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each delivery with a Go template, e.g. '{{.Provider}} {{.Status}} {{.EventType}}'.")
@@ -271,26 +285,28 @@ type intakeReplayBatchResult struct {
 }
 
 type intakePruneResult struct {
-	ID         string    `json:"id"`
-	Time       time.Time `json:"time"`
-	Provider   string    `json:"provider,omitempty"`
-	Status     string    `json:"status"`
-	HTTPStatus int       `json:"http_status"`
-	EventType  string    `json:"event_type,omitempty"`
-	Ticket     string    `json:"ticket,omitempty"`
-	PR         string    `json:"pr,omitempty"`
-	DryRun     bool      `json:"dry_run,omitempty"`
-	Dropped    bool      `json:"dropped"`
+	ID           string    `json:"id"`
+	Time         time.Time `json:"time"`
+	Provider     string    `json:"provider,omitempty"`
+	Status       string    `json:"status"`
+	ReplayStatus string    `json:"replay_status,omitempty"`
+	HTTPStatus   int       `json:"http_status"`
+	EventType    string    `json:"event_type,omitempty"`
+	Ticket       string    `json:"ticket,omitempty"`
+	PR           string    `json:"pr,omitempty"`
+	DryRun       bool      `json:"dry_run,omitempty"`
+	Dropped      bool      `json:"dropped"`
 }
 
 func newIntakePruneCmd() *cobra.Command {
 	var (
-		target    string
-		status    string
-		olderThan time.Duration
-		dryRun    bool
-		jsonOut   bool
-		format    string
+		target       string
+		status       string
+		replayStatus string
+		olderThan    time.Duration
+		dryRun       bool
+		jsonOut      bool
+		format       string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -312,6 +328,14 @@ func newIntakePruneCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake prune: %v\n", err)
 				return exitErr(2)
 			}
+			replayStatus, err = parseIntakeReplayStatusFilter(replayStatus)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake prune: %v\n", err)
+				return exitErr(2)
+			}
+			if replayStatus != "any" && !cmd.Flags().Changed("status") {
+				status = "all"
+			}
 			tmpl, err := parseIntakePruneFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake prune: %v\n", err)
@@ -321,7 +345,10 @@ func newIntakePruneCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			results, err := pruneIntakeDeliveries(teamDir, status, olderThan, time.Now().UTC(), dryRun)
+			results, err := pruneIntakeDeliveries(teamDir, intakeDeliveryFilter{
+				Status:       status,
+				ReplayStatus: replayStatus,
+			}, olderThan, time.Now().UTC(), dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake prune: %v\n", err)
 				return exitErr(1)
@@ -331,6 +358,7 @@ func newIntakePruneCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVar(&status, "status", intakeDeliveryStatusOK, "Delivery status to prune: ok, error, or all.")
+	cmd.Flags().StringVar(&replayStatus, "replay-status", "", "Only prune deliveries with replay status: ok, error, none, or any. Defaults --status to all when set.")
 	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "Only prune deliveries older than this duration.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview deliveries that would be pruned without rewriting the ledger.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit prune results as JSON.")
@@ -489,16 +517,20 @@ func eventFromIntakeDelivery(delivery intakeDelivery) (*intake.Event, error) {
 	}, nil
 }
 
-func filterIntakeDeliveries(deliveries []intakeDelivery, provider, status string) []intakeDelivery {
-	if provider == "" && status == "" {
+type intakeDeliveryFilter struct {
+	Provider     string
+	Status       string
+	ReplayStatus string
+	Unresolved   bool
+}
+
+func filterIntakeDeliveries(deliveries []intakeDelivery, filter intakeDeliveryFilter) []intakeDelivery {
+	if filter.Provider == "" && filter.Status == "" && filter.ReplayStatus == "any" && !filter.Unresolved {
 		return deliveries
 	}
 	out := deliveries[:0]
 	for _, delivery := range deliveries {
-		if provider != "" && delivery.Provider != provider {
-			continue
-		}
-		if status != "" && delivery.Status != status {
+		if !intakeDeliveryMatchesFilter(delivery, filter) {
 			continue
 		}
 		out = append(out, delivery)
@@ -506,11 +538,47 @@ func filterIntakeDeliveries(deliveries []intakeDelivery, provider, status string
 	return out
 }
 
+func intakeDeliveryMatchesFilter(delivery intakeDelivery, filter intakeDeliveryFilter) bool {
+	if filter.Provider != "" && delivery.Provider != filter.Provider {
+		return false
+	}
+	if filter.Status != "" && filter.Status != "all" && delivery.Status != filter.Status {
+		return false
+	}
+	if filter.Unresolved && !intakeDeliveryNeedsReplay(delivery) {
+		return false
+	}
+	return intakeDeliveryReplayStatusMatches(delivery, filter.ReplayStatus)
+}
+
+func intakeDeliveryReplayStatusMatches(delivery intakeDelivery, replayStatus string) bool {
+	switch replayStatus {
+	case "", "any":
+		return true
+	case "none":
+		return strings.TrimSpace(delivery.ReplayStatus) == ""
+	default:
+		return delivery.ReplayStatus == replayStatus
+	}
+}
+
 func tailIntakeDeliveries(deliveries []intakeDelivery, tail int) []intakeDelivery {
 	if tail <= 0 || tail >= len(deliveries) {
 		return deliveries
 	}
 	return deliveries[len(deliveries)-tail:]
+}
+
+func parseIntakeReplayStatusFilter(raw string) (string, error) {
+	status := strings.ToLower(strings.TrimSpace(raw))
+	switch status {
+	case "", "any":
+		return "any", nil
+	case intakeDeliveryReplayStatusOK, intakeDeliveryReplayStatusError, "none":
+		return status, nil
+	default:
+		return "", fmt.Errorf("--replay-status must be ok, error, none, or any")
+	}
 }
 
 func parseIntakeReplayStatus(raw string) (string, error) {
@@ -677,7 +745,7 @@ func markIntakeDeliveryReplays(teamDir string, results []intakeReplayResult, now
 	return writeIntakeDeliveries(teamDir, deliveries)
 }
 
-func pruneIntakeDeliveries(teamDir, status string, olderThan time.Duration, now time.Time, dryRun bool) ([]intakePruneResult, error) {
+func pruneIntakeDeliveries(teamDir string, filter intakeDeliveryFilter, olderThan time.Duration, now time.Time, dryRun bool) ([]intakePruneResult, error) {
 	deliveries, err := listIntakeDeliveries(teamDir)
 	if err != nil {
 		return nil, err
@@ -685,21 +753,22 @@ func pruneIntakeDeliveries(teamDir, status string, olderThan time.Duration, now 
 	retained := make([]intakeDelivery, 0, len(deliveries))
 	results := []intakePruneResult{}
 	for _, delivery := range deliveries {
-		if !intakeDeliveryPruneMatch(delivery, status, olderThan, now) {
+		if !intakeDeliveryPruneMatch(delivery, filter, olderThan, now) {
 			retained = append(retained, delivery)
 			continue
 		}
 		results = append(results, intakePruneResult{
-			ID:         delivery.ID,
-			Time:       delivery.Time,
-			Provider:   delivery.Provider,
-			Status:     delivery.Status,
-			HTTPStatus: delivery.HTTPStatus,
-			EventType:  delivery.EventType,
-			Ticket:     delivery.Ticket,
-			PR:         delivery.PR,
-			DryRun:     dryRun,
-			Dropped:    !dryRun,
+			ID:           delivery.ID,
+			Time:         delivery.Time,
+			Provider:     delivery.Provider,
+			Status:       delivery.Status,
+			ReplayStatus: delivery.ReplayStatus,
+			HTTPStatus:   delivery.HTTPStatus,
+			EventType:    delivery.EventType,
+			Ticket:       delivery.Ticket,
+			PR:           delivery.PR,
+			DryRun:       dryRun,
+			Dropped:      !dryRun,
 		})
 		if dryRun {
 			retained = append(retained, delivery)
@@ -716,8 +785,8 @@ func pruneIntakeDeliveries(teamDir, status string, olderThan time.Duration, now 
 	return results, nil
 }
 
-func intakeDeliveryPruneMatch(delivery intakeDelivery, status string, olderThan time.Duration, now time.Time) bool {
-	if status != "all" && delivery.Status != status {
+func intakeDeliveryPruneMatch(delivery intakeDelivery, filter intakeDeliveryFilter, olderThan time.Duration, now time.Time) bool {
+	if !intakeDeliveryMatchesFilter(delivery, filter) {
 		return false
 	}
 	if olderThan <= 0 {
@@ -891,12 +960,13 @@ func renderIntakePruneResults(w io.Writer, results []intakePruneResult, jsonOut 
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tPROVIDER\tSTATUS\tHTTP\tEVENT\tTICKET\tDROPPED")
+	fmt.Fprintln(tw, "ID\tPROVIDER\tSTATUS\tREPLAY\tHTTP\tEVENT\tTICKET\tDROPPED")
 	for _, result := range results {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
 			result.ID,
 			emptyDash(result.Provider),
 			result.Status,
+			emptyDash(result.ReplayStatus),
 			result.HTTPStatus,
 			emptyDash(result.EventType),
 			emptyDash(result.Ticket),
