@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -75,6 +76,42 @@ func TestSendKnownInstance(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "sent") || !strings.Contains(stdout.String(), "msg-1") {
 		t.Fatalf("stdout = %q, want sent confirmation", stdout.String())
+	}
+}
+
+func TestSendCommandReadsMessageFile(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance: "manager",
+		Agent:    "manager",
+		Status:   daemon.StatusStopped,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	messageFile := filepath.Join(tmp, "message.txt")
+	if err := os.WriteFile(messageFile, []byte("line one\nline two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"send", "manager", "--target", tmp, "--message-file", messageFile, "--format", "{{.To}} {{.Delivered}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("send --message-file: %v\nstderr=%s", err, stderr.String())
+	}
+	if got, want := out.String(), "manager true\n"; got != want {
+		t.Fatalf("send --message-file output = %q, want %q", got, want)
+	}
+	messages, err := daemon.ReadMessages(daemon.DaemonRoot(teamDir), "manager")
+	if err != nil {
+		t.Fatalf("read messages: %v", err)
+	}
+	if len(messages) != 1 || messages[0].Body != "line one\nline two" {
+		t.Fatalf("messages = %+v", messages)
 	}
 }
 
@@ -759,6 +796,8 @@ func TestSendFormatRejectsConflictingModes(t *testing.T) {
 	}{
 		{[]string{"send", "manager", "hello", "--format", "{{.To}}", "--json"}, "--format cannot be combined with --json"},
 		{[]string{"send", "manager", "hello", "--format", "{{"}, "invalid --format template"},
+		{[]string{"send", "manager", "hello", "--message", "also"}, "provide message text using only one"},
+		{[]string{"send", "manager", "--message-file", filepath.Join(t.TempDir(), "missing.txt")}, "--message-file:"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

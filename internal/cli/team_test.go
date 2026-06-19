@@ -1691,6 +1691,31 @@ instances = ["other", "build-worker"]
 			t.Fatalf("unexpected messages %s = %+v", instance, messages)
 		}
 	}
+
+	messageFile := filepath.Join(root, "team-message.txt")
+	if err := os.WriteFile(messageFile, []byte("file\nsync\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sendFile := NewRootCmd()
+	sendFileOut, sendFileErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sendFile.SetOut(sendFileOut)
+	sendFile.SetErr(sendFileErr)
+	sendFile.SetArgs([]string{"team", "send", "delivery", "--repo", root, "--message-file", messageFile, "--format", "{{.To}}"})
+	if err := sendFile.Execute(); err != nil {
+		t.Fatalf("team send --message-file: %v\nstderr=%s", err, sendFileErr.String())
+	}
+	if got := strings.Split(strings.TrimSpace(sendFileOut.String()), "\n"); strings.Join(got, ",") != "manager,worker-squ-101" {
+		t.Fatalf("team send --message-file targets = %q", sendFileOut.String())
+	}
+	for _, instance := range []string{"manager", "worker-squ-101"} {
+		messages, err := daemon.ReadMessages(daemon.DaemonRoot(teamDir), instance)
+		if err != nil {
+			t.Fatalf("read messages %s: %v", instance, err)
+		}
+		if len(messages) != 2 || messages[1].Body != "file\nsync" {
+			t.Fatalf("messages after file send %s = %+v", instance, messages)
+		}
+	}
 }
 
 func TestTeamEventsScopesLifecycleEvents(t *testing.T) {

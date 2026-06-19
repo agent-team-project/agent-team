@@ -1632,6 +1632,8 @@ func newTeamSendCmd() *cobra.Command {
 	var (
 		repo          string
 		from          string
+		message       string
+		messageFile   string
 		allStatuses   bool
 		latest        bool
 		last          int
@@ -1645,11 +1647,11 @@ func newTeamSendCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "send <team> <message...>",
+		Use:   "send <team> [message...]",
 		Short: "Send a mailbox message to team-owned instances.",
 		Long: "Send a mailbox message to running daemon-known instances owned by one declared team. " +
 			"Use --all to include every lifecycle status, or combine selectors such as --status, --phase, --latest, --last, --stale, and --unhealthy.",
-		Args: cobra.MinimumNArgs(2),
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team send: --format cannot be combined with --json.")
@@ -1664,6 +1666,11 @@ func newTeamSendCmd() *cobra.Command {
 				return exitErr(2)
 			}
 			formatTemplate, err := parseSendFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team send: %v\n", err)
+				return exitErr(2)
+			}
+			body, err := sendMessageBody(message, messageFile, args[1:])
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team send: %v\n", err)
 				return exitErr(2)
@@ -1702,13 +1709,14 @@ func newTeamSendCmd() *cobra.Command {
 			if len(phaseFilters) > 0 {
 				opts.PhaseByInstance = sendPhaseByInstance(teamDir, time.Now())
 			}
-			body := strings.Join(args[1:], " ")
 			client := teamSendClient{sendClient: baseClient, top: top, team: team}
 			return runSendSelectionWithClient(cmd.OutOrStdout(), cmd.ErrOrStderr(), client, body, opts)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().StringVar(&from, "from", "(cli)", "Sender label recorded with the message.")
+	cmd.Flags().StringVar(&message, "message", "", "Message text to send.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read message text from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&allStatuses, "all", false, "Send to every daemon-known team instance regardless of lifecycle status.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Send to the most recently started team-owned daemon-known instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Send to the N most recently started team-owned daemon-known instances after other filters (0 = all).")

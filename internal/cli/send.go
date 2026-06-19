@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/template"
@@ -15,10 +16,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var sendMessageInput io.Reader = os.Stdin
+
 func newSendCmd() *cobra.Command {
 	var (
 		target        string
 		from          string
+		message       string
+		messageFile   string
 		all           bool
 		latest        bool
 		last          int
@@ -58,14 +63,6 @@ func newSendCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team send: %v\n", err)
 				return exitErr(2)
 			}
-			teamDir, err := resolveTeamDir(cmd, target)
-			if err != nil {
-				return err
-			}
-			client, err := sendClientForTeamDir(teamDir)
-			if err != nil {
-				return err
-			}
 			opts := sendOptions{
 				From:          from,
 				All:           all,
@@ -81,6 +78,36 @@ func newSendCmd() *cobra.Command {
 				JSON:          jsonOut,
 				Format:        formatTemplate,
 			}
+			var (
+				to   string
+				body string
+			)
+			if opts.selectingSet() {
+				body, err = sendMessageBody(message, messageFile, args)
+			} else {
+				if len(args) < 2 && strings.TrimSpace(message) == "" && strings.TrimSpace(messageFile) == "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team send: instance and message body are required unless --all, --latest, --last, --agent, --status, --phase, --stale, or --unhealthy is set.")
+					return exitErr(2)
+				}
+				if len(args) < 1 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team send: instance and message body are required unless --all, --latest, --last, --agent, --status, --phase, --stale, or --unhealthy is set.")
+					return exitErr(2)
+				}
+				to = args[0]
+				body, err = sendMessageBody(message, messageFile, args[1:])
+			}
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team send: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, target)
+			if err != nil {
+				return err
+			}
+			client, err := sendClientForTeamDir(teamDir)
+			if err != nil {
+				return err
+			}
 			if len(phaseFilters) > 0 {
 				opts.PhaseByInstance = sendPhaseByInstance(teamDir, time.Now())
 			}
@@ -88,19 +115,15 @@ func newSendCmd() *cobra.Command {
 				opts.StaleByInstance = staleInstanceSet(teamDir, time.Now())
 			}
 			if opts.selectingSet() {
-				body := strings.Join(args, " ")
 				return runSendSelectionWithClient(cmd.OutOrStdout(), cmd.ErrOrStderr(), client, body, opts)
 			}
-			if len(args) < 2 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team send: instance and message body are required unless --all, --latest, --last, --agent, --status, --phase, --stale, or --unhealthy is set.")
-				return exitErr(2)
-			}
-			body := strings.Join(args[1:], " ")
-			return runSendWithClient(cmd.OutOrStdout(), cmd.ErrOrStderr(), client, args[0], body, opts)
+			return runSendWithClient(cmd.OutOrStdout(), cmd.ErrOrStderr(), client, to, body, opts)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVar(&from, "from", "(cli)", "Sender label recorded with the message.")
+	cmd.Flags().StringVar(&message, "message", "", "Message text to send.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read message text from a file, or '-' for stdin.")
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "Send to every daemon-known instance.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Send to the most recently started daemon-known instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Send to the N most recently started daemon-known instances after other filters (0 = all).")
@@ -114,6 +137,58 @@ func newSendCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each send result with a Go template, e.g. '{{.To}} {{.ID}}'.")
 	return cmd
+}
+
+func sendMessageBody(flagValue, fileValue string, positional []string) (string, error) {
+	sources := 0
+	if strings.TrimSpace(flagValue) != "" {
+		sources++
+	}
+	if strings.TrimSpace(fileValue) != "" {
+		sources++
+	}
+	if len(positional) > 0 {
+		sources++
+	}
+	if sources == 0 {
+		return "", fmt.Errorf("message body is required")
+	}
+	if sources > 1 {
+		return "", fmt.Errorf("provide message text using only one of positional args, --message, or --message-file")
+	}
+	var body string
+	switch {
+	case strings.TrimSpace(fileValue) != "":
+		data, err := readSendMessageFile(fileValue)
+		if err != nil {
+			return "", err
+		}
+		body = string(data)
+	case strings.TrimSpace(flagValue) != "":
+		body = flagValue
+	default:
+		body = strings.Join(positional, " ")
+	}
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return "", fmt.Errorf("message body is required")
+	}
+	return body, nil
+}
+
+func readSendMessageFile(fileValue string) ([]byte, error) {
+	if strings.TrimSpace(fileValue) == "-" {
+		body, err := io.ReadAll(sendMessageInput)
+		if err != nil {
+			return nil, fmt.Errorf("--message-file -: %w", err)
+		}
+		return body, nil
+	}
+	body, err := os.ReadFile(filepath.Clean(fileValue))
+	if err != nil {
+		return nil, fmt.Errorf("--message-file: %w", err)
+	}
+	return body, nil
 }
 
 type sendOptions struct {

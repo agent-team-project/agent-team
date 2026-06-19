@@ -2569,9 +2569,9 @@ func TestJobDispatchAndSend(t *testing.T) {
 		t.Fatalf("messages after file send = %+v", messages)
 	}
 
-	prevInput := jobSendInput
-	jobSendInput = strings.NewReader("stdin handoff\n")
-	defer func() { jobSendInput = prevInput }()
+	prevInput := sendMessageInput
+	sendMessageInput = strings.NewReader("stdin handoff\n")
+	defer func() { sendMessageInput = prevInput }()
 	sendStdin := NewRootCmd()
 	sendStdinOut, sendStdinErr := &bytes.Buffer{}, &bytes.Buffer{}
 	sendStdin.SetOut(sendStdinOut)
@@ -2610,7 +2610,7 @@ func TestJobSendMessageSourceValidation(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"job", "send", "SQU-43", "--repo", t.TempDir()}, "message text is required"},
+		{[]string{"job", "send", "SQU-43", "--repo", t.TempDir()}, "message body is required"},
 		{[]string{"job", "send", "SQU-43", "hello", "--message", "also"}, "provide message text using only one"},
 		{[]string{"job", "send", "SQU-43", "--message-file", filepath.Join(t.TempDir(), "missing.txt")}, "--message-file:"},
 		{[]string{"job", "send", "SQU-43", "--message", "hello", "--json", "--format", "{{.ID}}"}, "--format cannot be combined"},
