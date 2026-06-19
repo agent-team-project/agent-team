@@ -512,8 +512,8 @@ func overviewActionsForScope(out *overviewResult, health *healthResult, teamName
 	}
 	if teamName == "" && out.Intake.Errors > 0 {
 		add("agent-team intake deliveries --status error")
-		if out.Intake.Replayable > 0 && out.Intake.LatestErrorID != "" {
-			add(fmt.Sprintf("agent-team intake replay %s --dry-run --preview-triggers", out.Intake.LatestErrorID))
+		if out.Intake.Replayable > 0 {
+			add("agent-team intake replay --all --dry-run --preview-triggers")
 		}
 	}
 	if len(out.SectionErrors) > 0 {

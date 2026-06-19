@@ -576,6 +576,156 @@ func TestIntakeReplayPublishesDelivery(t *testing.T) {
 	}
 }
 
+func TestIntakeReplayAllDryRunPreviewFilters(t *testing.T) {
+	target := t.TempDir()
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.manager]
+agent = "manager"
+
+[[instances.manager.triggers]]
+event = "ticket.created"
+
+[pipelines.ticket_triage]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_triage.steps]]
+id = "triage"
+target = "manager"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deliveries := []intakeDelivery{
+		{
+			ID:         "linear-first",
+			Time:       time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC),
+			Provider:   "linear",
+			Status:     intakeDeliveryStatusError,
+			HTTPStatus: http.StatusServiceUnavailable,
+			EventType:  "ticket.created",
+			Payload:    map[string]any{"source": "linear", "ticket": "SQU-208", "title": "Replay first"},
+			Ticket:     "SQU-208",
+			Error:      "daemon is not running",
+		},
+		{
+			ID:         "github-skipped",
+			Time:       time.Date(2026, 6, 19, 12, 1, 0, 0, time.UTC),
+			Provider:   "github",
+			Status:     intakeDeliveryStatusError,
+			HTTPStatus: http.StatusServiceUnavailable,
+			EventType:  "pr.opened",
+			Payload:    map[string]any{"source": "github", "pr_url": "https://github.com/acme/repo/pull/208"},
+			PR:         "https://github.com/acme/repo/pull/208",
+			Error:      "daemon is not running",
+		},
+		{
+			ID:         "linear-ok-skipped",
+			Time:       time.Date(2026, 6, 19, 12, 2, 0, 0, time.UTC),
+			Provider:   "linear",
+			Status:     intakeDeliveryStatusOK,
+			HTTPStatus: http.StatusOK,
+			EventType:  "ticket.created",
+			Payload:    map[string]any{"source": "linear", "ticket": "SQU-209", "title": "Already ok"},
+			Ticket:     "SQU-209",
+		},
+	}
+	for _, delivery := range deliveries {
+		if err := appendIntakeDelivery(teamDir, delivery); err != nil {
+			t.Fatalf("append %s: %v", delivery.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "replay", "--all", "--target", target, "--provider", "linear", "--limit", "1", "--dry-run", "--preview-triggers", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake replay all dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var batch intakeReplayBatchResult
+	if err := json.Unmarshal(out.Bytes(), &batch); err != nil {
+		t.Fatalf("decode replay all dry-run: %v\nbody=%s", err, out.String())
+	}
+	if !batch.DryRun || batch.Total != 1 || batch.Succeeded != 1 || batch.Failed != 0 || len(batch.Results) != 1 {
+		t.Fatalf("batch = %+v", batch)
+	}
+	result := batch.Results[0]
+	if result.DeliveryID != "linear-first" || !result.OK || result.Event == nil || result.Event.Payload["ticket"] != "SQU-208" {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.Preview == nil || len(result.Preview.Matched) != 1 || result.Preview.Matched[0] != "manager" || len(result.Preview.Pipelines) != 1 || result.Preview.Pipelines[0] != "ticket_triage" {
+		t.Fatalf("preview = %+v", result.Preview)
+	}
+}
+
+func TestIntakeReplayAllPublishesDeliveries(t *testing.T) {
+	target, _, cleanup := setupIntakePipelineRepo(t)
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+	for _, delivery := range []intakeDelivery{
+		{
+			ID:         "replay-all-one",
+			Time:       time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC),
+			Provider:   "linear",
+			Status:     intakeDeliveryStatusError,
+			HTTPStatus: http.StatusServiceUnavailable,
+			EventType:  "ticket.created",
+			Payload:    map[string]any{"source": "linear", "ticket": "SQU-210", "ticket_url": "https://linear.app/squirtlesquad/issue/SQU-210/replay-all-one", "title": "Replay all one"},
+			Ticket:     "SQU-210",
+			Error:      "daemon is not running",
+		},
+		{
+			ID:         "replay-all-two",
+			Time:       time.Date(2026, 6, 19, 12, 1, 0, 0, time.UTC),
+			Provider:   "linear",
+			Status:     intakeDeliveryStatusError,
+			HTTPStatus: http.StatusServiceUnavailable,
+			EventType:  "ticket.created",
+			Payload:    map[string]any{"source": "linear", "ticket": "SQU-211", "ticket_url": "https://linear.app/squirtlesquad/issue/SQU-211/replay-all-two", "title": "Replay all two"},
+			Ticket:     "SQU-211",
+			Error:      "daemon is not running",
+		},
+	} {
+		if err := appendIntakeDelivery(teamDir, delivery); err != nil {
+			t.Fatalf("append %s: %v", delivery.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "replay", "--all", "--target", target, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake replay all publish: %v\nstderr=%s", err, stderr.String())
+	}
+	var batch intakeReplayBatchResult
+	if err := json.Unmarshal(out.Bytes(), &batch); err != nil {
+		t.Fatalf("decode replay all publish: %v\nbody=%s", err, out.String())
+	}
+	if batch.DryRun || batch.Total != 2 || batch.Succeeded != 2 || batch.Failed != 0 || len(batch.Results) != 2 {
+		t.Fatalf("batch = %+v", batch)
+	}
+	for _, result := range batch.Results {
+		if !result.OK || result.Outcome == nil || len(result.Outcome.Messaged) != 1 || result.Outcome.Messaged[0] != "manager" {
+			t.Fatalf("result = %+v", result)
+		}
+	}
+	for _, id := range []string{"squ-210", "squ-211"} {
+		j, err := job.Read(teamDir, id)
+		if err != nil {
+			t.Fatalf("read replay all job %s: %v", id, err)
+		}
+		if j.Pipeline != "ticket_triage" {
+			t.Fatalf("job %s = %+v", id, j)
+		}
+	}
+}
+
 func TestIntakeServeLinearSignatureAndTimestamp(t *testing.T) {
 	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
 	secret := "linear-secret"

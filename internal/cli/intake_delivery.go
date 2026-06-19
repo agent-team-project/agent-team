@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -117,6 +118,10 @@ func newIntakeDeliveriesCmd() *cobra.Command {
 func newIntakeReplayCmd() *cobra.Command {
 	var (
 		target        string
+		all           bool
+		provider      string
+		status        string
+		limit         int
 		dryRun        bool
 		previewRoutes bool
 		jsonOut       bool
@@ -124,9 +129,9 @@ func newIntakeReplayCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "replay <delivery-id>",
+		Use:   "replay [delivery-id]",
 		Short: "Replay a recorded normalized intake delivery.",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake replay: --format cannot be combined with --json.")
@@ -141,9 +146,49 @@ func newIntakeReplayCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake replay: %v\n", err)
 				return exitErr(2)
 			}
+			provider = strings.ToLower(strings.TrimSpace(provider))
+			if provider != "" && provider != "linear" && provider != "github" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake replay: --provider must be linear or github.")
+				return exitErr(2)
+			}
+			status, err := parseIntakeReplayStatus(status)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake replay: %v\n", err)
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake replay: --limit must be >= 0.")
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
+			}
+			if all {
+				if len(args) != 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake replay: --all does not accept a delivery id.")
+					return exitErr(2)
+				}
+				batch, err := replayAllIntakeDeliveries(teamDir, provider, status, limit, dryRun, previewRoutes)
+				if err != nil {
+					if errors.Is(err, errDaemonNotRunning) {
+						fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake replay: daemon is not running; start it first with `agent-team daemon start`.")
+						return exitErr(2)
+					}
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake replay: %v\n", err)
+					return exitErr(1)
+				}
+				if err := renderIntakeReplayBatch(cmd.OutOrStdout(), batch, jsonOut, tmpl); err != nil {
+					return err
+				}
+				if batch.Failed > 0 {
+					return exitErr(1)
+				}
+				return nil
+			}
+			if len(args) != 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake replay: expected one delivery id, or use --all.")
+				return exitErr(2)
 			}
 			delivery, ok, err := findIntakeDelivery(teamDir, args[0])
 			if err != nil {
@@ -174,11 +219,36 @@ func newIntakeReplayCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&all, "all", false, "Replay all matching recorded deliveries.")
+	cmd.Flags().StringVar(&provider, "provider", "", "With --all, only replay deliveries for a provider: linear or github.")
+	cmd.Flags().StringVar(&status, "status", intakeDeliveryStatusError, "With --all, delivery status to replay: ok, error, or all.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, replay at most this many matching deliveries (0 = all).")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the normalized delivery without publishing it.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit replay result as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the replay result with a Go template, e.g. '{{.Event.Type}}'.")
 	return cmd
+}
+
+type intakeReplayResult struct {
+	DeliveryID string               `json:"delivery_id"`
+	Provider   string               `json:"provider,omitempty"`
+	Status     string               `json:"status,omitempty"`
+	HTTPStatus int                  `json:"http_status,omitempty"`
+	Event      *intake.Event        `json:"event,omitempty"`
+	Outcome    *eventResponse       `json:"outcome,omitempty"`
+	Preview    *eventPublishPreview `json:"preview,omitempty"`
+	DryRun     bool                 `json:"dry_run,omitempty"`
+	OK         bool                 `json:"ok"`
+	Error      string               `json:"error,omitempty"`
+}
+
+type intakeReplayBatchResult struct {
+	DryRun    bool                 `json:"dry_run,omitempty"`
+	Total     int                  `json:"total"`
+	Succeeded int                  `json:"succeeded"`
+	Failed    int                  `json:"failed"`
+	Results   []intakeReplayResult `json:"results"`
 }
 
 type intakePruneResult struct {
@@ -424,6 +494,18 @@ func tailIntakeDeliveries(deliveries []intakeDelivery, tail int) []intakeDeliver
 	return deliveries[len(deliveries)-tail:]
 }
 
+func parseIntakeReplayStatus(raw string) (string, error) {
+	status := strings.ToLower(strings.TrimSpace(raw))
+	switch status {
+	case "", intakeDeliveryStatusError:
+		return intakeDeliveryStatusError, nil
+	case intakeDeliveryStatusOK, "all":
+		return status, nil
+	default:
+		return "", fmt.Errorf("--status must be ok, error, or all")
+	}
+}
+
 func parseIntakePruneStatus(raw string) (string, error) {
 	status := strings.ToLower(strings.TrimSpace(raw))
 	switch status {
@@ -434,6 +516,89 @@ func parseIntakePruneStatus(raw string) (string, error) {
 	default:
 		return "", fmt.Errorf("--status must be ok, error, or all")
 	}
+}
+
+func replayAllIntakeDeliveries(teamDir, provider, status string, limit int, dryRun, previewRoutes bool) (intakeReplayBatchResult, error) {
+	deliveries, err := listIntakeDeliveries(teamDir)
+	if err != nil {
+		return intakeReplayBatchResult{}, err
+	}
+	deliveries = selectIntakeReplayDeliveries(deliveries, provider, status, limit)
+	batch := intakeReplayBatchResult{
+		DryRun:  dryRun,
+		Total:   len(deliveries),
+		Results: make([]intakeReplayResult, 0, len(deliveries)),
+	}
+	var dc *daemonClient
+	if !dryRun && len(deliveries) > 0 {
+		dc, err = newDaemonClient(teamDir)
+		if err != nil {
+			return batch, err
+		}
+	}
+	for _, delivery := range deliveries {
+		result := replayOneIntakeDelivery(teamDir, dc, delivery, dryRun, previewRoutes)
+		if result.OK {
+			batch.Succeeded++
+		} else {
+			batch.Failed++
+		}
+		batch.Results = append(batch.Results, result)
+	}
+	return batch, nil
+}
+
+func selectIntakeReplayDeliveries(deliveries []intakeDelivery, provider, status string, limit int) []intakeDelivery {
+	out := make([]intakeDelivery, 0, len(deliveries))
+	for _, delivery := range deliveries {
+		if provider != "" && delivery.Provider != provider {
+			continue
+		}
+		if status != "all" && delivery.Status != status {
+			continue
+		}
+		out = append(out, delivery)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func replayOneIntakeDelivery(teamDir string, dc *daemonClient, delivery intakeDelivery, dryRun, previewRoutes bool) intakeReplayResult {
+	result := intakeReplayResult{
+		DeliveryID: delivery.ID,
+		Provider:   delivery.Provider,
+		Status:     delivery.Status,
+		HTTPStatus: delivery.HTTPStatus,
+		DryRun:     dryRun,
+	}
+	ev, err := eventFromIntakeDelivery(delivery)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	result.Event = ev
+	if dryRun {
+		if previewRoutes {
+			preview, err := previewEventPublish(teamDir, ev.Type, ev.Payload)
+			if err != nil {
+				result.Error = err.Error()
+				return result
+			}
+			result.Preview = preview
+		}
+		result.OK = true
+		return result
+	}
+	outcome, err := dc.PublishEvent(ev.Type, ev.Payload)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	result.Outcome = outcome
+	result.OK = true
+	return result
 }
 
 func pruneIntakeDeliveries(teamDir, status string, olderThan time.Duration, now time.Time, dryRun bool) ([]intakePruneResult, error) {
@@ -568,6 +733,61 @@ func renderIntakeDeliveries(w io.Writer, deliveries []intakeDelivery, jsonOut bo
 		)
 	}
 	return tw.Flush()
+}
+
+func renderIntakeReplayBatch(w io.Writer, batch intakeReplayBatchResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(batch)
+	}
+	if tmpl != nil {
+		for _, result := range batch.Results {
+			if err := tmpl.Execute(w, result); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if len(batch.Results) == 0 {
+		_, err := fmt.Fprintln(w, "(no intake deliveries matched)")
+		return err
+	}
+	fmt.Fprintf(w, "replay: total=%d succeeded=%d failed=%d\n", batch.Total, batch.Succeeded, batch.Failed)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tPROVIDER\tSTATUS\tHTTP\tEVENT\tDRY_RUN\tOK\tMATCHED\tERROR")
+	for _, result := range batch.Results {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
+			result.DeliveryID,
+			emptyDash(result.Provider),
+			emptyDash(result.Status),
+			result.HTTPStatus,
+			intakeReplayResultEventType(result),
+			yesNo(result.DryRun),
+			yesNo(result.OK),
+			emptyDash(strings.Join(intakeReplayResultMatched(result), ", ")),
+			emptyDash(result.Error),
+		)
+	}
+	return tw.Flush()
+}
+
+func intakeReplayResultEventType(result intakeReplayResult) string {
+	if result.Event == nil {
+		return "-"
+	}
+	return emptyDash(result.Event.Type)
+}
+
+func intakeReplayResultMatched(result intakeReplayResult) []string {
+	if result.Outcome != nil {
+		return result.Outcome.Matched
+	}
+	if result.Preview != nil {
+		return result.Preview.Matched
+	}
+	return nil
 }
 
 func renderIntakePruneResults(w io.Writer, results []intakePruneResult, jsonOut bool, tmpl *template.Template) error {
