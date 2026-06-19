@@ -197,6 +197,7 @@ agent-team job retry <job-id> [--dispatch] [--workspace auto|worktree|repo] [--d
 agent-team job dispatch <job-id> [--source <instance>] [--workspace auto|worktree|repo] [--dry-run] [--format <template>] [--json]
 agent-team job advance <job-id> [--workspace auto|worktree|repo] [--dry-run] [--json]
 agent-team job step <job-id> <step-id> [--status done|failed|blocked|running|queued] [--advance] [--workspace auto|worktree|repo] [--dry-run] [--json]
+agent-team job send <job-id> [message...] [--message "..."] [--message-file <path|->] [--from cli] [--allow-missing] [--format '{{.ID}}'] [--json]
 agent-team job cleanup <job-id>|--all [--dry-run|--merged] [--force-branch] [--json]
 agent-team job start|stop|kill|wait|logs|attach|send|unblock|update|close|reopen|rm|prune|reconcile ...
                                                 # create, monitor, dispatch, control, and clean up durable work units

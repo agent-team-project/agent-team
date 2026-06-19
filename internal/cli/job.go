@@ -22,6 +22,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var jobSendInput io.Reader = os.Stdin
+
 func newJobCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "job",
@@ -686,21 +688,28 @@ func newJobSendCmd() *cobra.Command {
 	var (
 		repo         string
 		from         string
+		message      string
+		messageFile  string
 		allowMissing bool
 		jsonOut      bool
 		format       string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "send <job-id> <message...>",
+		Use:   "send <job-id> [message...]",
 		Short: "Send a mailbox message to a job's owning instance.",
-		Args:  cobra.MinimumNArgs(2),
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job send: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
 			tmpl, err := parseJobFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job send: %v\n", err)
+				return exitErr(2)
+			}
+			body, err := jobSendBody(message, messageFile, args[1:])
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job send: %v\n", err)
 				return exitErr(2)
@@ -717,7 +726,6 @@ func newJobSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			body := strings.Join(args[1:], " ")
 			if err := runSendWithClient(io.Discard, cmd.ErrOrStderr(), client, j.Instance, body, sendOptions{
 				From:         from,
 				AllowMissing: allowMissing,
@@ -742,10 +750,64 @@ func newJobSendCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().StringVar(&from, "from", "(cli)", "Sender label recorded with the message.")
+	cmd.Flags().StringVar(&message, "message", "", "Message text to send.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read message text from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing a message for an instance the daemon does not know yet.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.LastEvent}}'.")
 	return cmd
+}
+
+func jobSendBody(flagValue, fileValue string, positional []string) (string, error) {
+	sources := 0
+	if strings.TrimSpace(flagValue) != "" {
+		sources++
+	}
+	if strings.TrimSpace(fileValue) != "" {
+		sources++
+	}
+	if len(positional) > 0 {
+		sources++
+	}
+	if sources == 0 {
+		return "", fmt.Errorf("message text is required")
+	}
+	if sources > 1 {
+		return "", fmt.Errorf("provide message text using only one of positional args, --message, or --message-file")
+	}
+	var body string
+	switch {
+	case strings.TrimSpace(fileValue) != "":
+		data, err := readJobSendMessageFile(fileValue)
+		if err != nil {
+			return "", err
+		}
+		body = string(data)
+	case strings.TrimSpace(flagValue) != "":
+		body = flagValue
+	default:
+		body = strings.Join(positional, " ")
+	}
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return "", fmt.Errorf("message text is empty")
+	}
+	return body, nil
+}
+
+func readJobSendMessageFile(fileValue string) ([]byte, error) {
+	if strings.TrimSpace(fileValue) == "-" {
+		body, err := io.ReadAll(jobSendInput)
+		if err != nil {
+			return nil, fmt.Errorf("--message-file -: %w", err)
+		}
+		return body, nil
+	}
+	body, err := os.ReadFile(filepath.Clean(fileValue))
+	if err != nil {
+		return nil, fmt.Errorf("--message-file: %w", err)
+	}
+	return body, nil
 }
 
 func newJobUnblockCmd() *cobra.Command {

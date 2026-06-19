@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2545,14 +2546,96 @@ func TestJobDispatchAndSend(t *testing.T) {
 		t.Fatalf("messages = %+v", messages)
 	}
 
+	messageFile := filepath.Join(target, "handoff.txt")
+	if err := os.WriteFile(messageFile, []byte("first line\nsecond line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sendFile := NewRootCmd()
+	sendFileOut, sendFileErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sendFile.SetOut(sendFileOut)
+	sendFile.SetErr(sendFileErr)
+	sendFile.SetArgs([]string{"job", "send", "SQU-43", "--message-file", messageFile, "--repo", target, "--format", "{{.ID}} {{.LastEvent}}"})
+	if err := sendFile.Execute(); err != nil {
+		t.Fatalf("job send file: %v\nstderr=%s", err, sendFileErr.String())
+	}
+	if got, want := sendFileOut.String(), "squ-43 message_sent\n"; got != want {
+		t.Fatalf("send file output = %q, want %q", got, want)
+	}
+	messages, err = daemon.ReadMessages(daemon.DaemonRoot(filepath.Join(target, ".agent_team")), "worker-squ-43")
+	if err != nil {
+		t.Fatalf("read messages: %v", err)
+	}
+	if len(messages) != 2 || messages[1].Body != "first line\nsecond line" {
+		t.Fatalf("messages after file send = %+v", messages)
+	}
+
+	prevInput := jobSendInput
+	jobSendInput = strings.NewReader("stdin handoff\n")
+	defer func() { jobSendInput = prevInput }()
+	sendStdin := NewRootCmd()
+	sendStdinOut, sendStdinErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sendStdin.SetOut(sendStdinOut)
+	sendStdin.SetErr(sendStdinErr)
+	sendStdin.SetArgs([]string{"job", "send", "SQU-43", "--message-file", "-", "--repo", target, "--json"})
+	if err := sendStdin.Execute(); err != nil {
+		t.Fatalf("job send stdin: %v\nstderr=%s", err, sendStdinErr.String())
+	}
+	var sentJob job.Job
+	if err := json.Unmarshal(sendStdinOut.Bytes(), &sentJob); err != nil {
+		t.Fatalf("decode send stdin: %v\nbody=%s", err, sendStdinOut.String())
+	}
+	if sentJob.ID != "squ-43" || sentJob.LastStatus != "stdin handoff" {
+		t.Fatalf("send stdin job = %+v", sentJob)
+	}
+	messages, err = daemon.ReadMessages(daemon.DaemonRoot(filepath.Join(target, ".agent_team")), "worker-squ-43")
+	if err != nil {
+		t.Fatalf("read messages: %v", err)
+	}
+	if len(messages) != 3 || messages[2].Body != "stdin handoff" {
+		t.Fatalf("messages after stdin send = %+v", messages)
+	}
+
 	updated, err := job.Read(filepath.Join(target, ".agent_team"), "squ-43")
 	if err != nil {
 		t.Fatalf("read job: %v", err)
 	}
-	if updated.LastEvent != "message_sent" || updated.LastStatus != "please post a status update" {
+	if updated.LastEvent != "message_sent" || updated.LastStatus != "stdin handoff" {
 		t.Fatalf("updated job = %+v", updated)
 	}
 	stopAndWaitForTest(t, mgr, "worker-squ-43")
+}
+
+func TestJobSendMessageSourceValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"job", "send", "SQU-43", "--repo", t.TempDir()}, "message text is required"},
+		{[]string{"job", "send", "SQU-43", "hello", "--message", "also"}, "provide message text using only one"},
+		{[]string{"job", "send", "SQU-43", "--message-file", filepath.Join(t.TempDir(), "missing.txt")}, "--message-file:"},
+		{[]string{"job", "send", "SQU-43", "--message", "hello", "--json", "--format", "{{.ID}}"}, "--format cannot be combined"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("%v: err = %v, want exit 2", tc.args, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v: validation wrote stdout: %q", tc.args, out.String())
+		}
+	}
 }
 
 func TestJobUnblockSendsMessageAndMarksRunning(t *testing.T) {
