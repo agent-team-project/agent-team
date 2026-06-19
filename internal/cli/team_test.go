@@ -225,6 +225,46 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team ready format = %q", got)
 	}
 
+	advance := NewRootCmd()
+	advanceOut, advanceErr := &bytes.Buffer{}, &bytes.Buffer{}
+	advance.SetOut(advanceOut)
+	advance.SetErr(advanceErr)
+	advance.SetArgs([]string{"team", "advance", "delivery", "--repo", root, "--dry-run", "--json"})
+	if err := advance.Execute(); err != nil {
+		t.Fatalf("team advance dry-run: %v\nstderr=%s", err, advanceErr.String())
+	}
+	var advanceRows []pipelineAdvanceResult
+	if err := json.Unmarshal(advanceOut.Bytes(), &advanceRows); err != nil {
+		t.Fatalf("decode team advance: %v\nbody=%s", err, advanceOut.String())
+	}
+	if len(advanceRows) != 1 || advanceRows[0].JobID != "squ-801" || advanceRows[0].Action != "would_advance" || !advanceRows[0].DryRun || advanceRows[0].StepID != "review" {
+		t.Fatalf("team advance rows = %+v", advanceRows)
+	}
+
+	advanceFormat := NewRootCmd()
+	advanceFormatOut, advanceFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	advanceFormat.SetOut(advanceFormatOut)
+	advanceFormat.SetErr(advanceFormatErr)
+	advanceFormat.SetArgs([]string{"team", "advance", "delivery", "--repo", root, "--dry-run", "--format", "{{.JobID}} {{.Action}} {{.StepID}}"})
+	if err := advanceFormat.Execute(); err != nil {
+		t.Fatalf("team advance format: %v\nstderr=%s", err, advanceFormatErr.String())
+	}
+	if got := strings.TrimSpace(advanceFormatOut.String()); got != "squ-801 would_advance review" {
+		t.Fatalf("team advance format = %q", got)
+	}
+
+	invalidAdvance := NewRootCmd()
+	invalidAdvanceOut, invalidAdvanceErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidAdvance.SetOut(invalidAdvanceOut)
+	invalidAdvance.SetErr(invalidAdvanceErr)
+	invalidAdvance.SetArgs([]string{"team", "advance", "delivery", "--repo", root, "--preview-routes"})
+	if err := invalidAdvance.Execute(); err == nil {
+		t.Fatal("team advance --preview-routes without --dry-run succeeded")
+	}
+	if !strings.Contains(invalidAdvanceErr.String(), "--preview-routes requires --dry-run") {
+		t.Fatalf("team advance invalid stderr = %q", invalidAdvanceErr.String())
+	}
+
 	pipelines := NewRootCmd()
 	pipelinesOut, pipelinesErr := &bytes.Buffer{}, &bytes.Buffer{}
 	pipelines.SetOut(pipelinesOut)

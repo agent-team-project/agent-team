@@ -39,6 +39,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamPsCmd())
 	cmd.AddCommand(newTeamJobsCmd())
 	cmd.AddCommand(newTeamReadyCmd())
+	cmd.AddCommand(newTeamAdvanceCmd())
 	cmd.AddCommand(newTeamQueueCmd())
 	cmd.AddCommand(newTeamLogsCmd())
 	cmd.AddCommand(newTeamEventsCmd())
@@ -535,6 +536,71 @@ func newTeamReadyCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&states, "state", nil, "Next-step state to include: ready, queued, running, blocked, failed, done, none, or all. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team ready rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.")
+	return cmd
+}
+
+func newTeamAdvanceCmd() *cobra.Command {
+	var (
+		repo          string
+		workspace     string
+		limit         int
+		dryRun        bool
+		previewRoutes bool
+		jsonOut       bool
+		format        string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "advance <team>",
+		Short: "Dispatch ready pipeline steps owned by one team.",
+		Long:  "Dispatch or preview ready next steps for jobs in one team's declared pipelines.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team advance: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team advance: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			if previewRoutes && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team advance: --preview-routes requires --dry-run.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineAdvanceFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team advance: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			_, team, err := loadTopologyTeam(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team advance: %v\n", err)
+				return exitErr(1)
+			}
+			results, err := advanceTeamReadyPipelineJobs(cmd, teamDir, team, workspace, limit, dryRun, previewRoutes)
+			if err != nil {
+				if errors.Is(err, errDaemonNotRunning) {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team advance: daemon is not running — start it with `agent-team start`, or use --dry-run.")
+					return exitErr(2)
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team advance: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineAdvanceResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for advanced steps: auto, worktree, or repo.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Advance at most this many ready team jobs; 0 means no limit.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview ready steps without dispatching them.")
+	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include local topology route and dispatch payload previews.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit advance results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd
 }
 
