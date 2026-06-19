@@ -108,6 +108,8 @@ type snapshotResult struct {
 	JobStatus       []jobStatusReconcileResult `json:"job_status_preview,omitempty"`
 	PipelineStatus  []pipelineStatusRow        `json:"pipeline_status,omitempty"`
 	PipelineAdvance []pipelineAdvanceResult    `json:"pipeline_advance_preview,omitempty"`
+	TeamsDoctor     *allTeamDoctorResult       `json:"teams_doctor,omitempty"`
+	TeamDoctor      *teamDoctorResult          `json:"team_doctor,omitempty"`
 	Queue           []*daemon.QueueItem        `json:"queue,omitempty"`
 	QueueSummary    *queueSummary              `json:"queue_summary,omitempty"`
 	Schedules       []scheduleInfo             `json:"schedules,omitempty"`
@@ -172,6 +174,11 @@ func collectSnapshot(teamDir, repoRoot string, opts snapshotOptions) *snapshotRe
 		out.addError("pipeline_advance_preview", err)
 	} else {
 		out.PipelineAdvance = advance
+	}
+	if teamsDoctor, err := collectAllTeamDoctor(teamDir); err != nil {
+		out.addError("teams_doctor", err)
+	} else if allTeamDoctorHasSnapshotContent(teamsDoctor) {
+		out.TeamsDoctor = teamsDoctor
 	}
 	if queue, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir)); err != nil {
 		out.addError("queue", err)
@@ -280,6 +287,11 @@ func collectTeamSnapshot(teamDir, repoRoot, name string, opts snapshotOptions) (
 	} else {
 		out.PipelineAdvance = filterPipelineAdvanceResultsByJobIDs(advance, ownedJobIDs)
 	}
+	if teamDoctor, err := collectTeamDoctor(teamDir, name); err != nil {
+		out.addError("team_doctor", err)
+	} else {
+		out.TeamDoctor = teamDoctor
+	}
 	if schedules, err := loadScheduleInfos(teamDir); err != nil {
 		out.addError("schedules", err)
 	} else {
@@ -365,6 +377,21 @@ func filterPipelineAdvanceResultsByJobIDs(results []pipelineAdvanceResult, ids m
 		}
 	}
 	return out
+}
+
+func allTeamDoctorHasSnapshotContent(result *allTeamDoctorResult) bool {
+	if result == nil {
+		return false
+	}
+	if len(result.Teams) > 0 || len(result.Problems) > 0 {
+		return true
+	}
+	for _, warning := range result.Warnings {
+		if warning.Code != "no_teams" {
+			return true
+		}
+	}
+	return false
 }
 
 const snapshotRedactedValue = "[redacted]"
@@ -537,6 +564,17 @@ func renderSnapshotSummary(w io.Writer, snapshot *snapshotResult) {
 	if snapshot.PipelineAdvance != nil {
 		fmt.Fprintf(w, "pipeline advance: ready=%d route_previews=%d\n", len(snapshot.PipelineAdvance), countPipelineAdvanceRoutePreviews(snapshot.PipelineAdvance))
 	}
+	if snapshot.TeamsDoctor != nil {
+		fmt.Fprintf(w, "teams doctor: teams=%d problems=%d warnings=%d\n",
+			len(snapshot.TeamsDoctor.Teams),
+			len(snapshot.TeamsDoctor.Problems),
+			countSnapshotTeamDoctorWarnings(snapshot.TeamsDoctor.Warnings))
+	}
+	if snapshot.TeamDoctor != nil {
+		fmt.Fprintf(w, "team doctor: problems=%d warnings=%d\n",
+			len(snapshot.TeamDoctor.Problems),
+			countSnapshotTeamDoctorWarnings(snapshot.TeamDoctor.Warnings))
+	}
 	if snapshot.QueueSummary != nil {
 		fmt.Fprintf(w, "queue: total=%d pending=%d dead=%d delayed=%d attempts=%d\n",
 			snapshot.QueueSummary.Total,
@@ -590,6 +628,17 @@ func countPipelineAdvanceRoutePreviews(results []pipelineAdvanceResult) int {
 		if result.Preview != nil && result.Preview.Dispatch != nil && result.Preview.Dispatch.Preview != nil {
 			count++
 		}
+	}
+	return count
+}
+
+func countSnapshotTeamDoctorWarnings(warnings []teamDoctorFinding) int {
+	count := 0
+	for _, warning := range warnings {
+		if warning.Code == "no_teams" {
+			continue
+		}
+		count++
 	}
 	return count
 }

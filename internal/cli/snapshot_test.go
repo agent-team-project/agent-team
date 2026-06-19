@@ -121,6 +121,9 @@ branch = "worker-squ-501"
 	if snapshot.Runtime == nil || snapshot.Runtime.Runtime == "" {
 		t.Fatalf("runtime = %+v", snapshot.Runtime)
 	}
+	if snapshot.TeamsDoctor == nil || !snapshot.TeamsDoctor.OK || len(snapshot.TeamsDoctor.Teams) != 1 {
+		t.Fatalf("teams doctor = %+v", snapshot.TeamsDoctor)
+	}
 }
 
 func TestSnapshotIncludesPipelineAdvancePreview(t *testing.T) {
@@ -221,14 +224,98 @@ func TestSnapshotSummaryIncludesJobTriage(t *testing.T) {
 				},
 			},
 		}},
+		TeamsDoctor: &allTeamDoctorResult{
+			OK:    false,
+			Teams: []teamDoctorResult{{Team: teamInfo{Name: "delivery"}, OK: false}},
+			Problems: []teamDoctorFinding{{
+				Code:    "pipeline_target_outside_team",
+				Team:    "delivery",
+				Message: "pipeline target outside team",
+			}},
+			Warnings: []teamDoctorFinding{{
+				Code:    "schedule_routes_outside_team",
+				Team:    "delivery",
+				Message: "schedule routes outside team",
+			}},
+		},
+		TeamDoctor: &teamDoctorResult{
+			Team: teamInfo{Name: "delivery"},
+			OK:   false,
+			Problems: []teamDoctorFinding{{
+				Code:    "pipeline_target_outside_team",
+				Message: "pipeline target outside team",
+			}},
+		},
 	}
 
 	var out bytes.Buffer
 	renderSnapshotSummary(&out, snapshot)
-	for _, want := range []string{"jobs: total=1", "job triage: attention=1 ready_steps=0", "job status: previews=1 changes=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1 failed_steps=0", "pipeline advance: ready=1 route_previews=1"} {
+	for _, want := range []string{"jobs: total=1", "job triage: attention=1 ready_steps=0", "job status: previews=1 changes=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1 failed_steps=0", "pipeline advance: ready=1 route_previews=1", "teams doctor: teams=1 problems=1 warnings=1", "team doctor: problems=1 warnings=0"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestSnapshotIncludesTeamDoctorFindings(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.worker]
+agent = "worker"
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[instances.other]
+agent = "other"
+
+[[instances.other.triggers]]
+event = "agent.dispatch"
+match.target = "other"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "other"
+
+[teams.delivery]
+instances = ["worker"]
+pipelines = ["ticket_to_pr"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"snapshot", "--target", tmp, "--events", "0", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("snapshot team doctor: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot snapshotResult
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode snapshot: %v\nbody=%s", err, out.String())
+	}
+	if snapshot.TeamsDoctor == nil || snapshot.TeamsDoctor.OK || !hasTeamDoctorFindingForTeam(snapshot.TeamsDoctor.Problems, "delivery", "pipeline_target_outside_team") {
+		t.Fatalf("teams doctor = %+v", snapshot.TeamsDoctor)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"snapshot", "--target", tmp, "--events", "0"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("snapshot team doctor text: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "teams doctor: teams=1 problems=1 warnings=0") {
+		t.Fatalf("snapshot text missing teams doctor summary:\n%s", textOut.String())
 	}
 }
 

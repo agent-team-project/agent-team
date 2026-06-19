@@ -2128,6 +2128,9 @@ branch = "other-oth-701"
 	if len(snapshot.PipelineAdvance) != 1 || snapshot.PipelineAdvance[0].JobID != "squ-701" || snapshot.PipelineAdvance[0].Pipeline != "ticket_to_pr" {
 		t.Fatalf("snapshot pipeline advance = %+v", snapshot.PipelineAdvance)
 	}
+	if snapshot.TeamDoctor == nil || !snapshot.TeamDoctor.OK || snapshot.TeamDoctor.Team.Name != "delivery" {
+		t.Fatalf("snapshot team doctor = %+v", snapshot.TeamDoctor)
+	}
 	if snapshot.JobTriage == nil || snapshot.JobTriage.Summary.Total != 1 || len(snapshot.JobTriage.ReadySteps) != 1 {
 		t.Fatalf("snapshot job triage = %+v", snapshot.JobTriage)
 	}
@@ -2153,7 +2156,7 @@ branch = "other-oth-701"
 		t.Fatalf("team snapshot text: %v\nstderr=%s", err, textErr.String())
 	}
 	textBody := textOut.String()
-	for _, want := range []string{"team: delivery", "jobs: total=1", "queue: total=1", "pipeline status: pipelines=1", "events: 0"} {
+	for _, want := range []string{"team: delivery", "jobs: total=1", "queue: total=1", "pipeline status: pipelines=1", "team doctor: problems=0 warnings=1", "events: 0"} {
 		if !strings.Contains(textBody, want) {
 			t.Fatalf("team snapshot text missing %q:\n%s", want, textBody)
 		}
