@@ -482,6 +482,7 @@ func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 		{"team", "down", "delivery", "--quiet", "--json"},
 		{"team", "restart", "delivery", "--quiet", "--json"},
 		{"team", "plan", "delivery", "--format", "{{.Instance}}", "--json"},
+		{"team", "queue", "delivery", "--format", "{{.ID}}", "--json"},
 	} {
 		cmd := NewRootCmd()
 		stderr := &bytes.Buffer{}
@@ -494,6 +495,159 @@ func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 		if strings.TrimSpace(stderr.String()) == "" {
 			t.Fatalf("%v produced empty stderr", args)
 		}
+	}
+}
+
+func TestTeamQueueScopesItems(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.other]
+agent = "other"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+
+[teams.platform]
+instances = ["other"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	teamJob := &job.Job{
+		ID:        "squ-501",
+		Ticket:    "SQU-501",
+		Target:    "worker",
+		Status:    job.StatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, teamJob); err != nil {
+		t.Fatalf("write team job: %v", err)
+	}
+	otherJob := &job.Job{
+		ID:        "oth-1",
+		Ticket:    "OTH-1",
+		Target:    "other",
+		Status:    job.StatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, otherJob); err != nil {
+		t.Fatalf("write other job: %v", err)
+	}
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:         "q-team-job",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-501",
+			Payload:    map[string]any{"job_id": "squ-501", "target": "worker"},
+			Attempts:   daemon.MaxQueueAttempts,
+			LastError:  "spawn failed",
+			QueuedAt:   now.Add(-time.Hour),
+			UpdatedAt:  now,
+		},
+		{
+			ID:         "q-team-target",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-direct",
+			Payload:    map[string]any{"target": "worker"},
+			QueuedAt:   now,
+			UpdatedAt:  now,
+		},
+		{
+			ID:         "q-other-job",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "other",
+			InstanceID: "other-oth-1",
+			Payload:    map[string]any{"job_id": "oth-1", "target": "other"},
+			QueuedAt:   now,
+			UpdatedAt:  now,
+		},
+		{
+			ID:         "q-other-target",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "other",
+			InstanceID: "other-direct",
+			Payload:    map[string]any{"target": "other"},
+			QueuedAt:   now,
+			UpdatedAt:  now,
+		},
+	} {
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+			t.Fatalf("write queue item %s: %v", item.ID, err)
+		}
+	}
+
+	list := NewRootCmd()
+	listOut, listErr := &bytes.Buffer{}, &bytes.Buffer{}
+	list.SetOut(listOut)
+	list.SetErr(listErr)
+	list.SetArgs([]string{"team", "queue", "delivery", "--repo", root, "--json"})
+	if err := list.Execute(); err != nil {
+		t.Fatalf("team queue: %v\nstderr=%s", err, listErr.String())
+	}
+	var items []daemon.QueueItem
+	if err := json.Unmarshal(listOut.Bytes(), &items); err != nil {
+		t.Fatalf("decode team queue: %v\nbody=%s", err, listOut.String())
+	}
+	if got := queueItemIDs(items); strings.Join(got, ",") != "q-team-job,q-team-target" {
+		t.Fatalf("team queue ids = %v", got)
+	}
+
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"team", "queue", "delivery", "--repo", root, "--state", "dead", "--summary", "--json"})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("team queue summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var queueSummary queueSummary
+	if err := json.Unmarshal(summaryOut.Bytes(), &queueSummary); err != nil {
+		t.Fatalf("decode queue summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if queueSummary.Total != 1 || queueSummary.Dead != 1 || queueSummary.Instances["worker"] != 1 {
+		t.Fatalf("queue summary = %+v", queueSummary)
+	}
+
+	formatted := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatted.SetOut(formatOut)
+	formatted.SetErr(formatErr)
+	formatted.SetArgs([]string{"team", "queue", "delivery", "--repo", root, "--format", "{{.ID}} {{.State}}"})
+	if err := formatted.Execute(); err != nil {
+		t.Fatalf("team queue format: %v\nstderr=%s", err, formatErr.String())
+	}
+	formatBody := formatOut.String()
+	for _, want := range []string{"q-team-job dead", "q-team-target pending"} {
+		if !strings.Contains(formatBody, want) {
+			t.Fatalf("team queue format missing %q:\n%s", want, formatBody)
+		}
+	}
+	if strings.Contains(formatBody, "q-other") {
+		t.Fatalf("team queue format leaked unrelated item:\n%s", formatBody)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"team", "queue", "delivery", "--repo", root})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("team queue text: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "q-team-job") || strings.Contains(textOut.String(), "q-other") {
+		t.Fatalf("team queue text =\n%s", textOut.String())
 	}
 }
 
@@ -651,6 +805,14 @@ func planRowsByInstance(rows []planRow) map[string]planRow {
 	out := map[string]planRow{}
 	for _, row := range rows {
 		out[row.Instance] = row
+	}
+	return out
+}
+
+func queueItemIDs(items []daemon.QueueItem) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.ID)
 	}
 	return out
 }

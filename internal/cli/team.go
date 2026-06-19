@@ -34,6 +34,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamPlanCmd())
 	cmd.AddCommand(newTeamPsCmd())
 	cmd.AddCommand(newTeamJobsCmd())
+	cmd.AddCommand(newTeamQueueCmd())
 	cmd.AddCommand(newTeamPipelinesCmd())
 	cmd.AddCommand(newTeamSchedulesCmd())
 	cmd.AddCommand(newTeamHealthCmd())
@@ -195,6 +196,78 @@ func newTeamJobsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "id", "Sort jobs by id, status, target, ticket, created, updated, instance, branch, or pr.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team jobs as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
+	return cmd
+}
+
+func newTeamQueueCmd() *cobra.Command {
+	var (
+		repo        string
+		stateFilter string
+		eventTypes  []string
+		readyOnly   bool
+		watch       bool
+		noClear     bool
+		summary     bool
+		jsonOut     bool
+		format      string
+		interval    time.Duration
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "queue <team>",
+		Short: "List queue items scoped to one team.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if format != "" && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			tmpl, err := parseQueueFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue: %v\n", err)
+				return exitErr(2)
+			}
+			filters, err := parseQueueListFilters(stateFilter, nil, eventTypes, nil, readyOnly, time.Now().UTC())
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				if summary {
+					return runTeamQueueSummaryWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], filters, jsonOut, interval, !noClear && !jsonOut)
+				}
+				return runTeamQueueListWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], filters, jsonOut, tmpl, interval, !noClear && !jsonOut)
+			}
+			if summary {
+				return runTeamQueueSummary(cmd.OutOrStdout(), teamDir, args[0], filters, jsonOut)
+			}
+			return runTeamQueueList(cmd.OutOrStdout(), teamDir, args[0], filters, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&stateFilter, "state", "", "Filter by queue state: pending or dead.")
+	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "Filter by event type; repeat or comma-separate values.")
+	cmd.Flags().BoolVar(&readyOnly, "ready", false, "Only show pending queue items whose next retry is due now.")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the team queue table until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate queue counts instead of queue rows.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team queue rows as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	return cmd
 }
 
@@ -1167,7 +1240,7 @@ func addTeamJobHealth(result *healthResult, teamDir string, top *topology.Topolo
 	if err != nil {
 		return err
 	}
-	teamQueue := queueItemsForJobs(queueItems, ownedJobs)
+	teamQueue := teamQueueItems(top, team, ownedJobs, queueItems)
 	result.Queue = summarizeQueueItems(teamQueue, now.UTC())
 	if result.Queue.Dead > 0 {
 		result.addIssueWithSeverityAndActions(
@@ -1262,6 +1335,104 @@ func collectTeamJobs(teamDir, name string, status job.Status, sortMode string) (
 	}
 	sortJobs(owned, sortMode)
 	return owned, nil
+}
+
+func collectTeamQueueItems(teamDir, name string, filters queueListFilters, now time.Time) ([]*daemon.QueueItem, error) {
+	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return nil, err
+	}
+	owned := teamQueueItems(top, team, teamJobs(top, team, jobs), items)
+	return filterQueueItems(owned, filters.withNow(now)), nil
+}
+
+func runTeamQueueList(w io.Writer, teamDir, name string, filters queueListFilters, jsonOut bool, tmpl *template.Template) error {
+	items, err := collectTeamQueueItems(teamDir, name, filters, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(items)
+	}
+	if tmpl != nil {
+		return renderQueueItemsFormat(w, items, tmpl)
+	}
+	renderQueueTable(w, items)
+	return nil
+}
+
+func runTeamQueueSummary(w io.Writer, teamDir, name string, filters queueListFilters, jsonOut bool) error {
+	now := time.Now().UTC()
+	items, err := collectTeamQueueItems(teamDir, name, filters, now)
+	if err != nil {
+		return err
+	}
+	summary := summarizeQueueItems(items, now)
+	if jsonOut {
+		return json.NewEncoder(w).Encode(summary)
+	}
+	renderQueueSummary(w, summary)
+	return nil
+}
+
+func runTeamQueueListWatch(ctx context.Context, w io.Writer, teamDir, name string, filters queueListFilters, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if !jsonOut {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+		}
+		if err := runTeamQueueList(w, teamDir, name, filters, jsonOut, tmpl); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
+}
+
+func runTeamQueueSummaryWatch(ctx context.Context, w io.Writer, teamDir, name string, filters queueListFilters, jsonOut bool, interval time.Duration, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if !jsonOut {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+		}
+		if err := runTeamQueueSummary(w, teamDir, name, filters, jsonOut); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
 }
 
 func collectTeamPipelineStatus(teamDir, name string) ([]pipelineStatusRow, error) {
@@ -1514,6 +1685,56 @@ func teamJobs(top *topology.Topology, team *topology.Team, jobs []*job.Job) []*j
 		}
 	}
 	return out
+}
+
+func teamQueueItems(top *topology.Topology, team *topology.Team, jobs []*job.Job, items []*daemon.QueueItem) []*daemon.QueueItem {
+	if team == nil {
+		return nil
+	}
+	instanceNames := stringSliceSet(team.Instances)
+	agents := map[string]bool{}
+	for _, name := range team.Instances {
+		if inst := top.Instances[name]; inst != nil && strings.TrimSpace(inst.Agent) != "" {
+			agents[inst.Agent] = true
+		}
+	}
+	out := make([]*daemon.QueueItem, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if queueItemMatchesAnyJob(item, jobs) || queueItemMatchesTeamTarget(item, instanceNames, agents) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func queueItemMatchesAnyJob(item *daemon.QueueItem, jobs []*job.Job) bool {
+	for _, j := range jobs {
+		if queueItemMatchesJob(item, j) {
+			return true
+		}
+	}
+	return false
+}
+
+func queueItemMatchesTeamTarget(item *daemon.QueueItem, instances, agents map[string]bool) bool {
+	if item == nil {
+		return false
+	}
+	for _, value := range []string{
+		item.Instance,
+		queuePayloadString(item.Payload, "target"),
+		queuePayloadString(item.Payload, "instance"),
+		queuePayloadString(item.Payload, "agent"),
+	} {
+		value = strings.TrimSpace(value)
+		if value != "" && (instances[value] || agents[value]) {
+			return true
+		}
+	}
+	return false
 }
 
 func jobIDSet(jobs []*job.Job) map[string]bool {
