@@ -808,6 +808,7 @@ func newTeamCleanupCmd() *cobra.Command {
 		forceBranch bool
 		dryRun      bool
 		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -816,6 +817,15 @@ func newTeamCleanupCmd() *cobra.Command {
 		Long:  "Preview or remove job-owned worktrees and branches for done jobs owned by one declared team.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cleanup: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobCleanupFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team cleanup: %v\n", err)
+				return exitErr(2)
+			}
 			if !merged && !dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cleanup: pass --merged after confirming the team's PRs have merged.")
 				return exitErr(2)
@@ -840,6 +850,10 @@ func newTeamCleanupCmd() *cobra.Command {
 				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(result); err != nil {
 					return err
 				}
+			} else if tmpl != nil {
+				if err := renderJobCleanupFormat(cmd.OutOrStdout(), result, tmpl); err != nil {
+					return err
+				}
 			} else {
 				renderJobCleanupBatch(cmd.OutOrStdout(), result)
 			}
@@ -854,6 +868,7 @@ func newTeamCleanupCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&forceBranch, "force-branch", false, "With --merged, delete job branches with git branch -D if they are not locally merged.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview team-owned job cleanup without removing anything.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the cleanup batch as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the cleanup batch with a Go template, e.g. '{{.Team}} {{.Cleaned}} {{.Failed}}'.")
 	return cmd
 }
 

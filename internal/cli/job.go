@@ -1466,19 +1466,11 @@ func newJobCleanupCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if dryRun && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: --format cannot be combined with --dry-run.")
-				return exitErr(2)
-			}
-			if all && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: --format cannot be combined with --all.")
-				return exitErr(2)
-			}
 			if !merged && !dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: pass --merged after confirming the job's PR has merged.")
 				return exitErr(2)
 			}
-			tmpl, err := parseJobFormat(format)
+			tmpl, err := parseJobCleanupFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job cleanup: %v\n", err)
 				return exitErr(2)
@@ -1495,6 +1487,10 @@ func newJobCleanupCmd() *cobra.Command {
 				}
 				if jsonOut {
 					if err := json.NewEncoder(cmd.OutOrStdout()).Encode(result); err != nil {
+						return err
+					}
+				} else if tmpl != nil {
+					if err := renderJobCleanupFormat(cmd.OutOrStdout(), result, tmpl); err != nil {
 						return err
 					}
 				} else {
@@ -1519,6 +1515,9 @@ func newJobCleanupCmd() *cobra.Command {
 				if jsonOut {
 					return json.NewEncoder(cmd.OutOrStdout()).Encode(preview)
 				}
+				if tmpl != nil {
+					return renderJobCleanupFormat(cmd.OutOrStdout(), preview, tmpl)
+				}
 				renderJobCleanupPreview(cmd.OutOrStdout(), preview)
 				return nil
 			}
@@ -1539,7 +1538,7 @@ func newJobCleanupCmd() *cobra.Command {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(j)
 			}
 			if tmpl != nil {
-				return renderJobTemplate(cmd.OutOrStdout(), j, tmpl)
+				return renderJobCleanupFormat(cmd.OutOrStdout(), j, tmpl)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Job: %s cleanup complete (%s)\n", j.ID, summary)
 			return nil
@@ -1551,7 +1550,7 @@ func newJobCleanupCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&forceBranch, "force-branch", false, "With --merged, delete the job branch with git branch -D if it is not locally merged.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the job-owned worktree and branch cleanup without removing anything.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
-	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.LastStatus}}'.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the cleanup result with a Go template, e.g. '{{.ID}} {{.LastStatus}}' or '{{.Total}} {{.Cleaned}}'.")
 	return cmd
 }
 
@@ -4680,6 +4679,25 @@ func renderJobCleanupPreview(w io.Writer, preview jobCleanupPreview) {
 		mode := emptyDash(preview.BranchDeleteMode)
 		fmt.Fprintf(w, "Branch:   %s exists=%s remove=%s mode=%s\n", preview.Branch, yesNo(preview.BranchExists), yesNo(preview.WouldRemoveBranch), mode)
 	}
+}
+
+func parseJobCleanupFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("job-cleanup-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderJobCleanupFormat(w io.Writer, value any, tmpl *template.Template) error {
+	if err := tmpl.Execute(w, value); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 func runJobCleanupAll(teamDir, repoRoot string, dryRun, merged, forceBranch bool) (jobCleanupBatchResult, error) {

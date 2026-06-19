@@ -3069,6 +3069,19 @@ func TestJobDispatchRecordsWorktreeAndCleanup(t *testing.T) {
 	if !preview.DryRun || !preview.WouldRemoveWorktree || !preview.WouldRemoveBranch || preview.Summary != "would remove worktree and branch" {
 		t.Fatalf("cleanup preview = %+v", preview)
 	}
+
+	previewFormat := NewRootCmd()
+	previewFormatOut, previewFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	previewFormat.SetOut(previewFormatOut)
+	previewFormat.SetErr(previewFormatErr)
+	previewFormat.SetArgs([]string{"job", "cleanup", "squ-44", "--dry-run", "--repo", target, "--format", "{{.JobID}} {{.DryRun}} {{.Summary}}"})
+	if err := previewFormat.Execute(); err != nil {
+		t.Fatalf("job cleanup dry-run format: %v\nstderr=%s", err, previewFormatErr.String())
+	}
+	if got, want := previewFormatOut.String(), "squ-44 true would remove worktree and branch\n"; got != want {
+		t.Fatalf("job cleanup dry-run format = %q, want %q", got, want)
+	}
+
 	stillOwned, err := job.Read(teamDir, "squ-44")
 	if err != nil {
 		t.Fatalf("read dry-run job: %v", err)
@@ -3277,6 +3290,18 @@ func TestJobCleanupAllPreviewsAndAppliesDoneOwnership(t *testing.T) {
 		t.Fatalf("dry-run removed a branch")
 	}
 
+	previewFormat := NewRootCmd()
+	previewFormatOut, previewFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	previewFormat.SetOut(previewFormatOut)
+	previewFormat.SetErr(previewFormatErr)
+	previewFormat.SetArgs([]string{"job", "cleanup", "--all", "--repo", target, "--dry-run", "--format", "{{.Total}} {{.Previewed}} {{.Failed}} {{len .Items}}"})
+	if err := previewFormat.Execute(); err != nil {
+		t.Fatalf("job cleanup --all dry-run format: %v\nstderr=%s", err, previewFormatErr.String())
+	}
+	if got, want := previewFormatOut.String(), "2 2 0 2\n"; got != want {
+		t.Fatalf("job cleanup --all dry-run format = %q, want %q", got, want)
+	}
+
 	apply := NewRootCmd()
 	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	apply.SetOut(applyOut)
@@ -3334,6 +3359,44 @@ func TestJobCleanupAllPreviewsAndAppliesDoneOwnership(t *testing.T) {
 	}
 	if !strings.Contains(emptyOut.String(), "No cleanup-ready jobs.") {
 		t.Fatalf("empty cleanup output = %q", emptyOut.String())
+	}
+}
+
+func TestJobCleanupRejectsFormatCombinations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "format with json",
+			args: []string{"job", "cleanup", "squ-1", "--dry-run", "--format", "{{.JobID}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "invalid format",
+			args: []string{"job", "cleanup", "squ-1", "--dry-run", "--format", "{{"},
+			want: "invalid --format template",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("job cleanup validation succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("job cleanup err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 

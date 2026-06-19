@@ -553,6 +553,18 @@ instances = ["platform"]
 		t.Fatalf("dry-run removed a branch")
 	}
 
+	previewFormat := NewRootCmd()
+	previewFormatOut, previewFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	previewFormat.SetOut(previewFormatOut)
+	previewFormat.SetErr(previewFormatErr)
+	previewFormat.SetArgs([]string{"team", "cleanup", "delivery", "--repo", root, "--dry-run", "--format", "{{.Team}} {{.Total}} {{.Previewed}} {{len .Items}}"})
+	if err := previewFormat.Execute(); err != nil {
+		t.Fatalf("team cleanup dry-run format: %v\nstderr=%s", err, previewFormatErr.String())
+	}
+	if got, want := previewFormatOut.String(), "delivery 1 1 1\n"; got != want {
+		t.Fatalf("team cleanup dry-run format = %q, want %q", got, want)
+	}
+
 	apply := NewRootCmd()
 	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	apply.SetOut(applyOut)
@@ -587,6 +599,44 @@ instances = ["platform"]
 	}
 	if !branchExists(t, root, platformBranch) {
 		t.Fatalf("platform branch was removed")
+	}
+}
+
+func TestTeamCleanupRejectsFormatCombinations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "format with json",
+			args: []string{"team", "cleanup", "delivery", "--dry-run", "--format", "{{.Team}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "invalid format",
+			args: []string{"team", "cleanup", "delivery", "--dry-run", "--format", "{{"},
+			want: "invalid --format template",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("team cleanup validation succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("team cleanup err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 
