@@ -1759,6 +1759,7 @@ func newJobTriageCmd() *cobra.Command {
 		noClear     bool
 		interval    time.Duration
 		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1774,6 +1775,15 @@ func newJobTriageCmd() *cobra.Command {
 			}
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job triage: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if format != "" && (watch || jsonOut) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job triage: --format cannot be combined with --watch or --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobTriageFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job triage: %v\n", err)
 				return exitErr(2)
 			}
 			filters, err := parseJobTriageFilters(minSeverity, reasons)
@@ -1796,7 +1806,7 @@ func newJobTriageCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			snapshot = filterJobTriageSnapshot(snapshot, filters)
-			return renderJobTriage(cmd.OutOrStdout(), snapshot, jsonOut)
+			return renderJobTriage(cmd.OutOrStdout(), snapshot, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
@@ -1807,6 +1817,7 @@ func newJobTriageCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit triage snapshot as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the triage snapshot with a Go template, e.g. '{{.Summary.Total}} {{len .Attention}}'.")
 	return cmd
 }
 
@@ -2776,7 +2787,9 @@ func runJobTriageWatch(ctx context.Context, w io.Writer, teamDir string, staleAf
 			if err := writeWatchClear(w, clear); err != nil {
 				return err
 			}
-			renderJobTriage(w, snapshot, false)
+			if err := renderJobTriage(w, snapshot, false, nil); err != nil {
+				return err
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -2923,9 +2936,23 @@ func sortJobTriageItems(items []jobTriageItem) {
 	})
 }
 
-func renderJobTriage(w io.Writer, snapshot jobTriageSnapshot, jsonOut bool) error {
+func parseJobTriageFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("job-triage-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderJobTriage(w io.Writer, snapshot jobTriageSnapshot, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(snapshot)
+	}
+	if tmpl != nil {
+		return renderJobTriageFormat(w, snapshot, tmpl)
 	}
 	renderJobSummary(w, snapshot.Summary)
 	renderQueueSummary(w, snapshot.Queue)
@@ -2944,6 +2971,14 @@ func renderJobTriage(w io.Writer, snapshot jobTriageSnapshot, jsonOut bool) erro
 		renderJobReadyTable(w, snapshot.ReadySteps)
 	}
 	return nil
+}
+
+func renderJobTriageFormat(w io.Writer, snapshot jobTriageSnapshot, tmpl *template.Template) error {
+	if err := tmpl.Execute(w, snapshot); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 func renderJobTriageAttention(w io.Writer, items []jobTriageItem) {

@@ -740,6 +740,7 @@ func newTeamTriageCmd() *cobra.Command {
 		noClear     bool
 		interval    time.Duration
 		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -755,6 +756,15 @@ func newTeamTriageCmd() *cobra.Command {
 			}
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if format != "" && (watch || jsonOut) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --format cannot be combined with --watch or --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobTriageFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team triage: %v\n", err)
 				return exitErr(2)
 			}
 			filters, err := parseJobTriageFilters(minSeverity, reasons)
@@ -776,7 +786,7 @@ func newTeamTriageCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team triage: %v\n", err)
 				return exitErr(1)
 			}
-			return renderJobTriage(cmd.OutOrStdout(), snapshot, jsonOut)
+			return renderJobTriage(cmd.OutOrStdout(), snapshot, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
@@ -787,6 +797,7 @@ func newTeamTriageCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team triage snapshot as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the team triage snapshot with a Go template, e.g. '{{.Summary.Total}} {{len .Attention}}'.")
 	return cmd
 }
 
@@ -4395,7 +4406,9 @@ func runTeamTriageWatch(ctx context.Context, w io.Writer, teamDir, name string, 
 			if err := writeWatchClear(w, clear); err != nil {
 				return err
 			}
-			renderJobTriage(w, snapshot, false)
+			if err := renderJobTriage(w, snapshot, false, nil); err != nil {
+				return err
+			}
 		}
 		select {
 		case <-ctx.Done():

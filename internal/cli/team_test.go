@@ -329,6 +329,18 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team triage text = %q", triageTextOut.String())
 	}
 
+	triageFormat := NewRootCmd()
+	triageFormatOut, triageFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	triageFormat.SetOut(triageFormatOut)
+	triageFormat.SetErr(triageFormatErr)
+	triageFormat.SetArgs([]string{"team", "triage", "delivery", "--repo", root, "--format", "{{.Summary.Total}} {{.Queue.Dead}} {{len .Attention}} {{len .ReadySteps}}"})
+	if err := triageFormat.Execute(); err != nil {
+		t.Fatalf("team triage format: %v\nstderr=%s", err, triageFormatErr.String())
+	}
+	if got, want := triageFormatOut.String(), "1 1 1 1\n"; got != want {
+		t.Fatalf("team triage format = %q, want %q", got, want)
+	}
+
 	pipelines := NewRootCmd()
 	pipelinesOut, pipelinesErr := &bytes.Buffer{}, &bytes.Buffer{}
 	pipelines.SetOut(pipelinesOut)
@@ -4222,6 +4234,49 @@ func TestTeamStatusRejectsNegativeInterval(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--interval must be >= 0") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestTeamTriageRejectsFormatCombinations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "format with json",
+			args: []string{"team", "triage", "delivery", "--format", "{{.Summary.Total}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "format with watch",
+			args: []string{"team", "triage", "delivery", "--format", "{{.Summary.Total}}", "--watch"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "invalid format",
+			args: []string{"team", "triage", "delivery", "--format", "{{"},
+			want: "invalid --format template",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("team triage invalid format succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("team triage err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 

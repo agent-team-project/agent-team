@@ -688,6 +688,18 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		t.Fatalf("ready step actions = %+v", snapshot.ReadySteps[0].Actions)
 	}
 
+	formatCmd := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatCmd.SetOut(formatOut)
+	formatCmd.SetErr(formatErr)
+	formatCmd.SetArgs([]string{"job", "triage", "--repo", tmp, "--stale-after", "24h", "--format", "{{.Summary.Total}} {{.Queue.Dead}} {{len .Attention}} {{len .ReadySteps}}"})
+	if err := formatCmd.Execute(); err != nil {
+		t.Fatalf("job triage format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if got, want := formatOut.String(), "6 1 5 1\n"; got != want {
+		t.Fatalf("job triage format = %q, want %q", got, want)
+	}
+
 	criticalCmd := NewRootCmd()
 	criticalOut, criticalErr := &bytes.Buffer{}, &bytes.Buffer{}
 	criticalCmd.SetOut(criticalOut)
@@ -859,6 +871,47 @@ func TestJobTriageRejectsNegativeInterval(t *testing.T) {
 	}
 	if !strings.Contains(badErr.String(), "--min-severity must be critical, warning, or info") {
 		t.Fatalf("bad severity stderr = %q", badErr.String())
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "format with json",
+			args: []string{"job", "triage", "--repo", tmp, "--format", "{{.Summary.Total}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "format with watch",
+			args: []string{"job", "triage", "--repo", tmp, "--format", "{{.Summary.Total}}", "--watch"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "invalid format",
+			args: []string{"job", "triage", "--repo", tmp, "--format", "{{"},
+			want: "invalid --format template",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("job triage invalid format succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("job triage err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 
