@@ -43,14 +43,25 @@ type queueQuarantineRestoreResult struct {
 	Overwrite   bool   `json:"overwrite,omitempty"`
 }
 
+type queueQuarantineDropResult struct {
+	Path       string `json:"path"`
+	State      string `json:"state,omitempty"`
+	ID         string `json:"id,omitempty"`
+	Restorable bool   `json:"restorable"`
+	Action     string `json:"action"`
+	DryRun     bool   `json:"dry_run,omitempty"`
+	Dropped    bool   `json:"dropped,omitempty"`
+}
+
 func newQueueQuarantineCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "quarantine",
-		Short: "Inspect and restore quarantined queue files.",
-		Long:  "Inspect queue files moved under `.agent_team/daemon/queue/quarantine/` and restore validated entries to the active queue.",
+		Short: "Inspect, restore, and drop quarantined queue files.",
+		Long:  "Inspect queue files moved under `.agent_team/daemon/queue/quarantine/`, restore validated entries to the active queue, or explicitly drop preserved files.",
 	}
 	cmd.AddCommand(newQueueQuarantineLsCmd())
 	cmd.AddCommand(newQueueQuarantineRestoreCmd())
+	cmd.AddCommand(newQueueQuarantineDropCmd())
 	return cmd
 }
 
@@ -111,6 +122,67 @@ func newQueueQuarantineRestoreCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the restore without moving files.")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing active queue file with the same restore path.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit restore result as JSON.")
+	return cmd
+}
+
+func newQueueQuarantineDropCmd() *cobra.Command {
+	var (
+		target       string
+		dropAll      bool
+		dryRun       bool
+		unrestorable bool
+		olderThan    time.Duration
+		jsonOut      bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "drop <quarantine-path>",
+		Short: "Drop quarantined queue files after inspection.",
+		Long:  "Drop one quarantined queue file by path, or drop a filtered batch with --all.",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if olderThan < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine drop: --older-than must be >= 0.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, target)
+			if err != nil {
+				return err
+			}
+			if dropAll {
+				if len(args) != 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine drop: --all cannot be combined with a path.")
+					return exitErr(2)
+				}
+				results, err := dropQueueQuarantineAll(teamDir, dryRun, olderThan, unrestorable, time.Now().UTC())
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine drop: %v\n", err)
+					return exitErr(1)
+				}
+				return renderQueueQuarantineDrop(cmd.OutOrStdout(), results, jsonOut)
+			}
+			if len(args) != 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine drop: requires one path unless --all is set.")
+				return exitErr(2)
+			}
+			if olderThan > 0 || unrestorable {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine drop: --older-than and --unrestorable require --all.")
+				return exitErr(2)
+			}
+			result, err := dropQueueQuarantine(teamDir, args[0], dryRun)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine drop: %v\n", err)
+				return exitErr(1)
+			}
+			return renderQueueQuarantineDrop(cmd.OutOrStdout(), []queueQuarantineDropResult{result}, jsonOut)
+		},
+	}
+	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&dropAll, "all", false, "Drop all matching quarantined files instead of one path.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview quarantined files that would be dropped.")
+	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "With --all, only drop quarantined files that cannot be restored.")
+	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "With --all, only drop files older than this duration based on file mtime.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit drop results as JSON.")
 	return cmd
 }
 
@@ -302,6 +374,81 @@ func restoreQueueQuarantine(teamDir, rawPath string, dryRun, force bool) (queueQ
 	return result, nil
 }
 
+func dropQueueQuarantine(teamDir, rawPath string, dryRun bool) (queueQuarantineDropResult, error) {
+	queueRoot := daemon.QueueRoot(daemon.DaemonRoot(teamDir))
+	rel, err := normalizeQueueQuarantinePath(rawPath)
+	if err != nil {
+		return queueQuarantineDropResult{}, err
+	}
+	item, err := inspectQueueQuarantineFile(queueRoot, rel)
+	if err != nil {
+		return queueQuarantineDropResult{}, err
+	}
+	return dropQueueQuarantineItem(queueRoot, item, dryRun)
+}
+
+func dropQueueQuarantineAll(teamDir string, dryRun bool, olderThan time.Duration, unrestorable bool, now time.Time) ([]queueQuarantineDropResult, error) {
+	items, err := listQueueQuarantine(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	queueRoot := daemon.QueueRoot(daemon.DaemonRoot(teamDir))
+	results := make([]queueQuarantineDropResult, 0, len(items))
+	for _, item := range items {
+		if unrestorable && item.Restorable {
+			continue
+		}
+		if olderThan > 0 && item.ModTime.After(now.Add(-olderThan)) {
+			continue
+		}
+		result, err := dropQueueQuarantineItem(queueRoot, item, dryRun)
+		if err != nil {
+			return results, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func dropQueueQuarantineItem(queueRoot string, item queueQuarantineItem, dryRun bool) (queueQuarantineDropResult, error) {
+	result := queueQuarantineDropResult{
+		Path:       item.Path,
+		State:      item.State,
+		ID:         item.ID,
+		Restorable: item.Restorable,
+		Action:     "would_drop",
+		DryRun:     dryRun,
+	}
+	if dryRun {
+		return result, nil
+	}
+	source, err := queueDoctorSafeQueuePath(queueRoot, item.Path)
+	if err != nil {
+		return result, err
+	}
+	if err := os.Remove(source); err != nil {
+		return result, err
+	}
+	pruneEmptyQueueQuarantineDirs(queueRoot, filepath.Dir(source))
+	result.Action = "dropped"
+	result.Dropped = true
+	result.DryRun = false
+	return result, nil
+}
+
+func pruneEmptyQueueQuarantineDirs(queueRoot, dir string) {
+	stop := filepath.Join(queueRoot, queueQuarantineDir)
+	for {
+		if dir == "" || dir == "." || dir == stop || !strings.HasPrefix(dir, stop) {
+			return
+		}
+		if err := os.Remove(dir); err != nil {
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
+}
+
 func normalizeQueueQuarantinePath(raw string) (string, error) {
 	clean := filepath.Clean(strings.TrimSpace(raw))
 	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
@@ -360,6 +507,25 @@ func renderQueueQuarantineRestore(w io.Writer, result queueQuarantineRestoreResu
 		fmt.Fprintf(w, "Would restore %s -> %s\n", result.Path, result.Destination)
 	default:
 		fmt.Fprintf(w, "Restored %s -> %s\n", result.Path, result.Destination)
+	}
+	return nil
+}
+
+func renderQueueQuarantineDrop(w io.Writer, results []queueQuarantineDropResult, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(results)
+	}
+	if len(results) == 0 {
+		fmt.Fprintln(w, "(no quarantined queue files matched)")
+		return nil
+	}
+	for _, result := range results {
+		switch result.Action {
+		case "would_drop":
+			fmt.Fprintf(w, "Would drop %s\n", result.Path)
+		default:
+			fmt.Fprintf(w, "Dropped %s\n", result.Path)
+		}
 	}
 	return nil
 }

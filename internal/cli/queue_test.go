@@ -455,6 +455,122 @@ func TestQueueQuarantineListAndRestore(t *testing.T) {
 	}
 }
 
+func TestQueueQuarantineDropExplicitAndBatch(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	queueRoot := daemon.QueueRoot(daemon.DaemonRoot(teamDir))
+	now := time.Now().UTC().Truncate(time.Second)
+	writeQuarantinedQueueItem(t, teamDir, "20260619T000000.000000000Z", daemon.QueueStatePending, &daemon.QueueItem{
+		ID:         "q-restorable",
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-133",
+		Payload:    map[string]any{"ticket": "SQU-133", "target": "worker"},
+		QueuedAt:   now,
+		UpdatedAt:  now,
+	})
+	invalidDir := filepath.Join(queueRoot, "quarantine", "20260619T000000.000000000Z", daemon.QueueStatePending)
+	if err := os.WriteFile(filepath.Join(invalidDir, "bad-one.json"), []byte("{\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(invalidDir, "bad-two.json"), []byte("{\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := listQueueQuarantine(teamDir)
+	if err != nil {
+		t.Fatalf("list quarantine: %v", err)
+	}
+	var explicitPath string
+	for _, item := range items {
+		if strings.Contains(item.Path, "bad-one.json") {
+			explicitPath = item.Path
+			break
+		}
+	}
+	if explicitPath == "" {
+		t.Fatalf("missing explicit bad item: %+v", items)
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"queue", "quarantine", "drop", "--target", tmp, "--dry-run", "--json", explicitPath})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("queue quarantine drop dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryResults []queueQuarantineDropResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryResults); err != nil {
+		t.Fatalf("decode explicit drop dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(dryResults) != 1 || dryResults[0].Action != "would_drop" || !dryResults[0].DryRun {
+		t.Fatalf("explicit dry-run results = %+v", dryResults)
+	}
+	if _, err := os.Stat(filepath.Join(queueRoot, explicitPath)); err != nil {
+		t.Fatalf("dry-run removed explicit quarantine: %v", err)
+	}
+
+	drop := NewRootCmd()
+	dropOut, dropErr := &bytes.Buffer{}, &bytes.Buffer{}
+	drop.SetOut(dropOut)
+	drop.SetErr(dropErr)
+	drop.SetArgs([]string{"queue", "quarantine", "drop", "--target", tmp, "--json", explicitPath})
+	if err := drop.Execute(); err != nil {
+		t.Fatalf("queue quarantine drop explicit: %v\nstderr=%s", err, dropErr.String())
+	}
+	var dropped []queueQuarantineDropResult
+	if err := json.Unmarshal(dropOut.Bytes(), &dropped); err != nil {
+		t.Fatalf("decode explicit drop: %v\nbody=%s", err, dropOut.String())
+	}
+	if len(dropped) != 1 || dropped[0].Action != "dropped" || !dropped[0].Dropped {
+		t.Fatalf("explicit drop results = %+v", dropped)
+	}
+	if _, err := os.Stat(filepath.Join(queueRoot, explicitPath)); !os.IsNotExist(err) {
+		t.Fatalf("explicit quarantine still exists or stat failed: %v", err)
+	}
+
+	batchDry := NewRootCmd()
+	batchDryOut, batchDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	batchDry.SetOut(batchDryOut)
+	batchDry.SetErr(batchDryErr)
+	batchDry.SetArgs([]string{"queue", "quarantine", "drop", "--target", tmp, "--all", "--unrestorable", "--dry-run", "--json"})
+	if err := batchDry.Execute(); err != nil {
+		t.Fatalf("queue quarantine drop batch dry-run: %v\nstderr=%s", err, batchDryErr.String())
+	}
+	var batchDryResults []queueQuarantineDropResult
+	if err := json.Unmarshal(batchDryOut.Bytes(), &batchDryResults); err != nil {
+		t.Fatalf("decode batch drop dry-run: %v\nbody=%s", err, batchDryOut.String())
+	}
+	if len(batchDryResults) != 1 || !strings.Contains(batchDryResults[0].Path, "bad-two.json") || batchDryResults[0].Restorable {
+		t.Fatalf("batch dry-run results = %+v", batchDryResults)
+	}
+
+	batch := NewRootCmd()
+	batchOut, batchErr := &bytes.Buffer{}, &bytes.Buffer{}
+	batch.SetOut(batchOut)
+	batch.SetErr(batchErr)
+	batch.SetArgs([]string{"queue", "quarantine", "drop", "--target", tmp, "--all", "--unrestorable", "--json"})
+	if err := batch.Execute(); err != nil {
+		t.Fatalf("queue quarantine drop batch: %v\nstderr=%s", err, batchErr.String())
+	}
+	var batchResults []queueQuarantineDropResult
+	if err := json.Unmarshal(batchOut.Bytes(), &batchResults); err != nil {
+		t.Fatalf("decode batch drop: %v\nbody=%s", err, batchOut.String())
+	}
+	if len(batchResults) != 1 || !batchResults[0].Dropped || batchResults[0].Restorable {
+		t.Fatalf("batch drop results = %+v", batchResults)
+	}
+	remaining, err := listQueueQuarantine(teamDir)
+	if err != nil {
+		t.Fatalf("list remaining quarantine: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].ID != "q-restorable" || !remaining[0].Restorable {
+		t.Fatalf("remaining quarantine = %+v", remaining)
+	}
+}
+
 func TestQueueDoctorOKWithWarnings(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
