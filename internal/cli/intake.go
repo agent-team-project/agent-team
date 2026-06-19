@@ -216,15 +216,17 @@ func newIntakeScheduleCmd() *cobra.Command {
 }
 
 type intakeServeOptions struct {
-	DryRun              bool
-	PreviewTriggers     bool
-	GitHubReconcileJob  bool
-	GitHubCleanupMerged bool
-	LinearSecret        string
-	GitHubSecret        string
-	LinearMaxAge        time.Duration
-	Now                 func() time.Time
-	MaxBodyBytes        int64
+	DryRun                  bool
+	PreviewTriggers         bool
+	GitHubReconcileJob      bool
+	GitHubCleanupMerged     bool
+	LinearSecret            string
+	GitHubSecret            string
+	LinearMaxAge            time.Duration
+	PruneOKOlderThan        time.Duration
+	PruneRecoveredOlderThan time.Duration
+	Now                     func() time.Time
+	MaxBodyBytes            int64
 }
 
 func newIntakeServeCmd() *cobra.Command {
@@ -233,6 +235,8 @@ func newIntakeServeCmd() *cobra.Command {
 		addr   string
 		opts   intakeServeOptions
 	)
+	opts.PruneOKOlderThan = 7 * 24 * time.Hour
+	opts.PruneRecoveredOlderThan = 7 * 24 * time.Hour
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -249,6 +253,14 @@ func newIntakeServeCmd() *cobra.Command {
 			}
 			if opts.LinearMaxAge <= 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake serve: --linear-max-age must be > 0.")
+				return exitErr(2)
+			}
+			if opts.PruneOKOlderThan < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake serve: --prune-ok-older-than must be >= 0.")
+				return exitErr(2)
+			}
+			if opts.PruneRecoveredOlderThan < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake serve: --prune-recovered-older-than must be >= 0.")
 				return exitErr(2)
 			}
 			opts.LinearSecret = firstNonEmpty(opts.LinearSecret, os.Getenv("LINEAR_WEBHOOK_SECRET"))
@@ -301,6 +313,8 @@ func newIntakeServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.LinearSecret, "linear-secret", "", "Linear webhook signing secret. Defaults to LINEAR_WEBHOOK_SECRET when set.")
 	cmd.Flags().StringVar(&opts.GitHubSecret, "github-secret", "", "GitHub webhook secret. Defaults to GITHUB_WEBHOOK_SECRET when set.")
 	cmd.Flags().DurationVar(&opts.LinearMaxAge, "linear-max-age", time.Minute, "Maximum accepted Linear webhook age after signature verification.")
+	cmd.Flags().DurationVar(&opts.PruneOKOlderThan, "prune-ok-older-than", opts.PruneOKOlderThan, "Prune successful delivery history older than this duration after each request. Use 0 to disable.")
+	cmd.Flags().DurationVar(&opts.PruneRecoveredOlderThan, "prune-recovered-older-than", opts.PruneRecoveredOlderThan, "Prune recovered failed delivery history older than this duration after each request. Use 0 to disable.")
 	return cmd
 }
 
@@ -338,7 +352,7 @@ func handleIntakeServeWebhook(w http.ResponseWriter, r *http.Request, teamDir, p
 		delivery.Status = intakeDeliveryStatusError
 		delivery.HTTPStatus = status
 		delivery.Error = message
-		_ = appendIntakeDelivery(teamDir, delivery)
+		_ = recordIntakeServeDelivery(teamDir, delivery, opts)
 		writeIntakeServeError(w, status, message)
 	}
 	if r.Method != http.MethodPost {
@@ -387,8 +401,38 @@ func handleIntakeServeWebhook(w http.ResponseWriter, r *http.Request, teamDir, p
 			delivery.Pipelines = append([]string(nil), result.Preview.Pipelines...)
 		}
 	}
-	_ = appendIntakeDelivery(teamDir, delivery)
+	_ = recordIntakeServeDelivery(teamDir, delivery, opts)
 	writeIntakeServeJSON(w, status, result)
+}
+
+func recordIntakeServeDelivery(teamDir string, delivery intakeDelivery, opts intakeServeOptions) error {
+	if err := appendIntakeDelivery(teamDir, delivery); err != nil {
+		return err
+	}
+	return pruneIntakeServeDeliveries(teamDir, opts, delivery.Time)
+}
+
+func pruneIntakeServeDeliveries(teamDir string, opts intakeServeOptions, now time.Time) error {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if opts.PruneOKOlderThan > 0 {
+		if _, err := pruneIntakeDeliveries(teamDir, intakeDeliveryFilter{
+			Status:       intakeDeliveryStatusOK,
+			ReplayStatus: "any",
+		}, opts.PruneOKOlderThan, now.UTC(), false); err != nil {
+			return err
+		}
+	}
+	if opts.PruneRecoveredOlderThan > 0 {
+		if _, err := pruneIntakeDeliveries(teamDir, intakeDeliveryFilter{
+			Status:       "all",
+			ReplayStatus: intakeDeliveryReplayStatusOK,
+		}, opts.PruneRecoveredOlderThan, now.UTC(), false); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func verifyIntakeServeWebhook(provider string, header http.Header, body []byte, opts intakeServeOptions) (int, error) {

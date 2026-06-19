@@ -308,6 +308,81 @@ func TestIntakeServeErrors(t *testing.T) {
 	}
 }
 
+func TestIntakeServePrunesRetainedDeliveries(t *testing.T) {
+	target := t.TempDir()
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	replayedAt := now.Add(-25 * time.Hour)
+	for _, delivery := range []intakeDelivery{
+		{
+			ID:         "old-ok",
+			Time:       now.Add(-48 * time.Hour),
+			Provider:   "linear",
+			Status:     intakeDeliveryStatusOK,
+			HTTPStatus: http.StatusOK,
+			EventType:  "ticket.created",
+			Ticket:     "SQU-214",
+		},
+		{
+			ID:           "old-recovered",
+			Time:         now.Add(-48 * time.Hour),
+			Provider:     "linear",
+			Status:       intakeDeliveryStatusError,
+			ReplayStatus: intakeDeliveryReplayStatusOK,
+			ReplayedAt:   &replayedAt,
+			HTTPStatus:   http.StatusServiceUnavailable,
+			EventType:    "ticket.created",
+			Ticket:       "SQU-215",
+		},
+		{
+			ID:         "old-unresolved",
+			Time:       now.Add(-48 * time.Hour),
+			Provider:   "linear",
+			Status:     intakeDeliveryStatusError,
+			HTTPStatus: http.StatusServiceUnavailable,
+			EventType:  "ticket.created",
+			Payload:    map[string]any{"source": "linear", "ticket": "SQU-216"},
+			Ticket:     "SQU-216",
+			Error:      "daemon is not running",
+		},
+	} {
+		if err := appendIntakeDelivery(teamDir, delivery); err != nil {
+			t.Fatalf("append %s: %v", delivery.ID, err)
+		}
+	}
+
+	body := `{"action":"Issue created","data":{"identifier":"SQU-217","title":"Fresh dry-run"}}`
+	req := httptest.NewRequest(http.MethodPost, "/linear", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	newIntakeServeHandler(teamDir, intakeServeOptions{
+		DryRun:                  true,
+		Now:                     func() time.Time { return now },
+		PruneOKOlderThan:        24 * time.Hour,
+		PruneRecoveredOlderThan: 24 * time.Hour,
+	}).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	deliveries, err := listIntakeDeliveries(teamDir)
+	if err != nil {
+		t.Fatalf("list after serve retention: %v", err)
+	}
+	ids := deliveryIDs(deliveries)
+	if strings.Contains(ids, "old-ok") || strings.Contains(ids, "old-recovered") {
+		t.Fatalf("serve retention kept pruned rows: %+v", deliveries)
+	}
+	if !strings.Contains(ids, "old-unresolved") || len(deliveries) != 2 {
+		t.Fatalf("serve retention deliveries = %+v", deliveries)
+	}
+	if deliveries[1].Ticket != "SQU-217" || deliveries[1].Status != intakeDeliveryStatusOK || !deliveries[1].DryRun {
+		t.Fatalf("fresh delivery = %+v", deliveries[1])
+	}
+}
+
 func TestIntakeDeliveriesFiltersAndFormat(t *testing.T) {
 	target := t.TempDir()
 	teamDir := filepath.Join(target, ".agent_team")
