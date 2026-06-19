@@ -740,14 +740,16 @@ type queueRetryResult struct {
 }
 
 type queueSummary struct {
-	Total       int            `json:"total"`
-	Pending     int            `json:"pending"`
-	Dead        int            `json:"dead"`
-	Delayed     int            `json:"delayed"`
-	Attempts    int            `json:"attempts"`
-	Quarantined int            `json:"quarantined,omitempty"`
-	Instances   map[string]int `json:"instances"`
-	Events      map[string]int `json:"events"`
+	Total                  int            `json:"total"`
+	Pending                int            `json:"pending"`
+	Dead                   int            `json:"dead"`
+	Delayed                int            `json:"delayed"`
+	Attempts               int            `json:"attempts"`
+	Quarantined            int            `json:"quarantined,omitempty"`
+	QuarantineRestorable   int            `json:"quarantine_restorable,omitempty"`
+	QuarantineUnrestorable int            `json:"quarantine_unrestorable,omitempty"`
+	Instances              map[string]int `json:"instances"`
+	Events                 map[string]int `json:"events"`
 }
 
 func parseQueuePruneState(raw string) (string, error) {
@@ -922,7 +924,7 @@ func runQueueSummary(w io.Writer, teamDir string, filters queueListFilters, json
 	if err != nil {
 		return err
 	}
-	summary.Quarantined = len(filterQueueQuarantineItems(quarantine, filtered))
+	applyQueueQuarantineSummary(&summary, filterQueueQuarantineItems(quarantine, filtered))
 	if jsonOut {
 		return json.NewEncoder(w).Encode(summary)
 	}
@@ -983,9 +985,42 @@ func summarizeQueueItems(items []*daemon.QueueItem, now time.Time) queueSummary 
 	return summary
 }
 
+func applyQueueQuarantineSummary(summary *queueSummary, items []queueQuarantineItem) {
+	if summary == nil {
+		return
+	}
+	summary.Quarantined = len(items)
+	summary.QuarantineRestorable = 0
+	summary.QuarantineUnrestorable = 0
+	for _, item := range items {
+		if item.Restorable {
+			summary.QuarantineRestorable++
+		} else {
+			summary.QuarantineUnrestorable++
+		}
+	}
+}
+
+func queueSummaryLine(summary queueSummary) string {
+	return fmt.Sprintf("queue: total=%d pending=%d dead=%d delayed=%d attempts=%d%s",
+		summary.Total,
+		summary.Pending,
+		summary.Dead,
+		summary.Delayed,
+		summary.Attempts,
+		queueQuarantineSummaryText(summary))
+}
+
+func queueQuarantineSummaryText(summary queueSummary) string {
+	out := fmt.Sprintf(" quarantined=%d", summary.Quarantined)
+	if summary.Quarantined > 0 {
+		out += fmt.Sprintf(" restorable=%d unrestorable=%d", summary.QuarantineRestorable, summary.QuarantineUnrestorable)
+	}
+	return out
+}
+
 func renderQueueSummary(w io.Writer, summary queueSummary) {
-	fmt.Fprintf(w, "queue: total=%d pending=%d dead=%d delayed=%d attempts=%d quarantined=%d\n",
-		summary.Total, summary.Pending, summary.Dead, summary.Delayed, summary.Attempts, summary.Quarantined)
+	fmt.Fprintln(w, queueSummaryLine(summary))
 	if len(summary.Instances) > 0 {
 		fmt.Fprint(w, "instances:")
 		for _, key := range sortedCountKeys(summary.Instances) {

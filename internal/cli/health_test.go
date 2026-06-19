@@ -576,13 +576,13 @@ func TestHealthCommandReportsQueueQuarantine(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
 		t.Fatalf("decode health quarantine json: %v\nbody=%s", err, stdout.String())
 	}
-	if body.Queue.Quarantined != 1 {
+	if body.Queue.Quarantined != 1 || body.Queue.QuarantineRestorable != 1 || body.Queue.QuarantineUnrestorable != 0 {
 		t.Fatalf("queue = %+v, want one quarantined item", body.Queue)
 	}
 	var sawQuarantineIssue bool
 	for _, issue := range body.Issues {
 		if issue.Code == "queue_quarantined" {
-			if issue.Severity != "warning" || !containsString(issue.Actions, "agent-team queue quarantine ls") || !containsString(issue.Actions, "agent-team snapshot --json") {
+			if issue.Severity != "warning" || !containsString(issue.Actions, "agent-team queue quarantine ls") || !containsString(issue.Actions, "agent-team queue quarantine ls --restorable") || !containsString(issue.Actions, "agent-team snapshot --json") {
 				t.Fatalf("queue quarantine issue = %+v", issue)
 			}
 			sawQuarantineIssue = true
@@ -601,7 +601,7 @@ func TestHealthCommandReportsQueueQuarantine(t *testing.T) {
 	if err := text.Execute(); err == nil {
 		t.Fatal("health text succeeded unexpectedly")
 	}
-	for _, want := range []string{"quarantined=1", "queue_quarantined", "agent-team queue quarantine ls"} {
+	for _, want := range []string{"quarantined=1 restorable=1 unrestorable=0", "queue_quarantined", "agent-team queue quarantine ls --restorable"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("health text missing %q:\n%s\nstderr=%s", want, textOut.String(), textErr.String())
 		}

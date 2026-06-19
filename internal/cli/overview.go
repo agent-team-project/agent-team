@@ -243,7 +243,7 @@ func collectOverview(teamDir string, now time.Time, scheduleLimit int) *overview
 	if quarantined, err := listQueueQuarantine(teamDir); err != nil {
 		out.addError("queue_quarantine", err)
 	} else {
-		out.Queue.Quarantined = len(quarantined)
+		applyQueueQuarantineSummary(&out.Queue, quarantined)
 	}
 
 	out.Actions = overviewActions(out, health)
@@ -710,13 +710,7 @@ func renderOverview(w io.Writer, result *overviewResult, jsonOut bool) error {
 		result.Jobs.CleanupReady,
 		result.Jobs.ReadySteps,
 		result.Jobs.StatusChanges)
-	fmt.Fprintf(w, "queue: total=%d pending=%d dead=%d delayed=%d attempts=%d quarantined=%d\n",
-		result.Queue.Total,
-		result.Queue.Pending,
-		result.Queue.Dead,
-		result.Queue.Delayed,
-		result.Queue.Attempts,
-		result.Queue.Quarantined)
+	fmt.Fprintln(w, queueSummaryLine(result.Queue))
 	fmt.Fprintf(w, "pipelines: total=%d jobs=%d ready_steps=%d blocked_steps=%d failed_steps=%d\n",
 		result.Pipelines.Total,
 		result.Pipelines.Jobs,

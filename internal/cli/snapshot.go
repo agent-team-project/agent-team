@@ -203,7 +203,7 @@ func collectSnapshot(teamDir, repoRoot string, opts snapshotOptions) *snapshotRe
 		out.addError("queue_quarantine", err)
 	} else {
 		out.QueueQuarantine = quarantine
-		ensureSnapshotQueueSummary(out, now).Quarantined = len(quarantine)
+		applyQueueQuarantineSummary(ensureSnapshotQueueSummary(out, now), quarantine)
 	}
 	if schedules, err := loadScheduleInfos(teamDir); err != nil {
 		out.addError("schedules", err)
@@ -292,7 +292,7 @@ func collectTeamSnapshot(teamDir, repoRoot, name string, opts snapshotOptions) (
 	} else {
 		teamQuarantine := teamQueueQuarantineItems(top, team, ownedJobs, quarantine)
 		out.QueueQuarantine = teamQuarantine
-		ensureSnapshotQueueSummary(out, now).Quarantined = len(teamQuarantine)
+		applyQueueQuarantineSummary(ensureSnapshotQueueSummary(out, now), teamQuarantine)
 	}
 	if triage, err := collectJobTriage(teamDir, now, defaultJobTriageStaleAfter); err != nil {
 		out.addError("job_triage", err)
@@ -667,13 +667,7 @@ func renderSnapshotSummary(w io.Writer, snapshot *snapshotResult) {
 			countSnapshotTeamDoctorWarnings(snapshot.TeamDoctor.Warnings))
 	}
 	if snapshot.QueueSummary != nil {
-		fmt.Fprintf(w, "queue: total=%d pending=%d dead=%d delayed=%d attempts=%d quarantined=%d\n",
-			snapshot.QueueSummary.Total,
-			snapshot.QueueSummary.Pending,
-			snapshot.QueueSummary.Dead,
-			snapshot.QueueSummary.Delayed,
-			snapshot.QueueSummary.Attempts,
-			snapshot.QueueSummary.Quarantined)
+		fmt.Fprintln(w, queueSummaryLine(*snapshot.QueueSummary))
 	}
 	fmt.Fprintf(w, "schedules: declared=%d upcoming=%d\n", len(snapshot.Schedules), len(snapshot.ScheduleNext))
 	if snapshot.IntakeSummary != nil {

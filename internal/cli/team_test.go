@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -399,7 +400,7 @@ since = "2026-06-18T12:00:00Z"
 	if snapshot.Team.Name != "delivery" || snapshot.InstanceSummary.Total != 3 || snapshot.JobSummary.Total != 1 {
 		t.Fatalf("team status summary = %+v", snapshot)
 	}
-	if snapshot.Queue.Total != 1 || snapshot.Queue.Dead != 1 || snapshot.Queue.Pending != 0 || snapshot.Queue.Quarantined != 1 {
+	if snapshot.Queue.Total != 1 || snapshot.Queue.Dead != 1 || snapshot.Queue.Pending != 0 || snapshot.Queue.Quarantined != 1 || snapshot.Queue.QuarantineRestorable != 1 || snapshot.Queue.QuarantineUnrestorable != 0 {
 		t.Fatalf("team status queue = %+v", snapshot.Queue)
 	}
 	if len(snapshot.PipelineStatus) != 1 || snapshot.PipelineStatus[0].Pipeline != "ticket_to_pr" || snapshot.PipelineStatus[0].ReadySteps != 1 {
@@ -426,7 +427,7 @@ since = "2026-06-18T12:00:00Z"
 	if err := text.Execute(); err != nil {
 		t.Fatalf("team status text: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"Team: delivery", "instances: total=3", "jobs: total=1", "queue: total=1 pending=0 dead=1 delayed=0 attempts=3 quarantined=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1", "Actions:", "agent-team team sync delivery --wait", "agent-team team queue retry delivery --all", "agent-team team queue quarantine delivery", "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes"} {
+	for _, want := range []string{"Team: delivery", "instances: total=3", "jobs: total=1", "queue: total=1 pending=0 dead=1 delayed=0 attempts=3 quarantined=1 restorable=1 unrestorable=0", "pipeline status: pipelines=1 jobs=1 ready_steps=1", "Actions:", "agent-team team sync delivery --wait", "agent-team team queue retry delivery --all", "agent-team team queue quarantine delivery", "agent-team team queue quarantine delivery --restorable", "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("team status text missing %q:\n%s", want, textOut.String())
 		}
@@ -1914,6 +1915,14 @@ instances = ["other"]
 		UpdatedAt:  now.Add(-2 * time.Hour),
 	})
 	writeQuarantinedQueueItem(t, teamDir, "20260619T010000.000000000Z", daemon.QueueStateDead, &daemon.QueueItem{
+		ID:         "q-team-unrestorable",
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-501",
+		Payload:    map[string]any{"job_id": "squ-501", "target": "worker"},
+		UpdatedAt:  now.Add(-2 * time.Hour),
+	})
+	writeQuarantinedQueueItem(t, teamDir, "20260619T010000.000000000Z", daemon.QueueStateDead, &daemon.QueueItem{
 		ID:         "q-other-quarantined",
 		EventType:  "agent.dispatch",
 		Instance:   "other",
@@ -1951,7 +1960,7 @@ instances = ["other"]
 	if err := json.Unmarshal(summaryOut.Bytes(), &queueSummary); err != nil {
 		t.Fatalf("decode queue summary: %v\nbody=%s", err, summaryOut.String())
 	}
-	if queueSummary.Total != 1 || queueSummary.Dead != 1 || queueSummary.Quarantined != 1 || queueSummary.Instances["worker"] != 1 {
+	if queueSummary.Total != 1 || queueSummary.Dead != 1 || queueSummary.Quarantined != 2 || queueSummary.QuarantineRestorable != 1 || queueSummary.QuarantineUnrestorable != 1 || queueSummary.Instances["worker"] != 1 {
 		t.Fatalf("queue summary = %+v", queueSummary)
 	}
 
@@ -1959,7 +1968,7 @@ instances = ["other"]
 	quarantineOut, quarantineErr := &bytes.Buffer{}, &bytes.Buffer{}
 	quarantine.SetOut(quarantineOut)
 	quarantine.SetErr(quarantineErr)
-	quarantine.SetArgs([]string{"team", "queue", "quarantine", "delivery", "--repo", root, "--state", "dead", "--job", "SQU-501", "--json"})
+	quarantine.SetArgs([]string{"team", "queue", "quarantine", "delivery", "--repo", root, "--state", "dead", "--job", "SQU-501", "--restorable", "--json"})
 	if err := quarantine.Execute(); err != nil {
 		t.Fatalf("team queue quarantine: %v\nstderr=%s", err, quarantineErr.String())
 	}
@@ -1973,6 +1982,22 @@ instances = ["other"]
 	teamQuarantinePath := quarantineItems[0].Path
 	otherQuarantinePath := filepath.Join("quarantine", "20260619T010000.000000000Z", daemon.QueueStateDead, "q-other-quarantined.json")
 
+	unrestorable := NewRootCmd()
+	unrestorableOut, unrestorableErr := &bytes.Buffer{}, &bytes.Buffer{}
+	unrestorable.SetOut(unrestorableOut)
+	unrestorable.SetErr(unrestorableErr)
+	unrestorable.SetArgs([]string{"team", "queue", "quarantine", "delivery", "--repo", root, "--unrestorable", "--json"})
+	if err := unrestorable.Execute(); err != nil {
+		t.Fatalf("team queue quarantine unrestorable: %v\nstderr=%s", err, unrestorableErr.String())
+	}
+	var unrestorableItems []queueQuarantineItem
+	if err := json.Unmarshal(unrestorableOut.Bytes(), &unrestorableItems); err != nil {
+		t.Fatalf("decode team queue quarantine unrestorable: %v\nbody=%s", err, unrestorableOut.String())
+	}
+	if len(unrestorableItems) != 1 || unrestorableItems[0].ID != "q-team-unrestorable" || unrestorableItems[0].Restorable {
+		t.Fatalf("team unrestorable quarantine items = %+v", unrestorableItems)
+	}
+
 	quarantineText := NewRootCmd()
 	quarantineTextOut, quarantineTextErr := &bytes.Buffer{}, &bytes.Buffer{}
 	quarantineText.SetOut(quarantineTextOut)
@@ -1981,7 +2006,7 @@ instances = ["other"]
 	if err := quarantineText.Execute(); err != nil {
 		t.Fatalf("team queue quarantine text: %v\nstderr=%s", err, quarantineTextErr.String())
 	}
-	if !strings.Contains(quarantineTextOut.String(), "q-team-quarantined") || strings.Contains(quarantineTextOut.String(), "q-other-quarantined") {
+	if !strings.Contains(quarantineTextOut.String(), "q-team-quarantined") || !strings.Contains(quarantineTextOut.String(), "q-team-unrestorable") || strings.Contains(quarantineTextOut.String(), "q-other-quarantined") {
 		t.Fatalf("team queue quarantine text =\n%s", quarantineTextOut.String())
 	}
 
@@ -2069,7 +2094,7 @@ instances = ["other"]
 	if err := json.Unmarshal(dropAllDryOut.Bytes(), &dropAllResults); err != nil {
 		t.Fatalf("decode team queue quarantine drop --all dry-run: %v\nbody=%s", err, dropAllDryOut.String())
 	}
-	if len(dropAllResults) != 1 || dropAllResults[0].ID != "q-team-quarantined" {
+	if len(dropAllResults) != 2 || queueQuarantineDropIDs(dropAllResults) != "q-team-quarantined,q-team-unrestorable" {
 		t.Fatalf("drop --all dry-run results = %+v", dropAllResults)
 	}
 
@@ -2403,7 +2428,7 @@ branch = "other-oth-701"
 	if len(snapshot.Jobs) != 1 || snapshot.Jobs[0].ID != "squ-701" {
 		t.Fatalf("snapshot jobs = %+v", snapshot.Jobs)
 	}
-	if len(snapshot.Queue) != 1 || snapshot.Queue[0].ID != "q-delivery-snapshot" || snapshot.QueueSummary == nil || snapshot.QueueSummary.Total != 1 || snapshot.QueueSummary.Quarantined != 1 {
+	if len(snapshot.Queue) != 1 || snapshot.Queue[0].ID != "q-delivery-snapshot" || snapshot.QueueSummary == nil || snapshot.QueueSummary.Total != 1 || snapshot.QueueSummary.Quarantined != 1 || snapshot.QueueSummary.QuarantineRestorable != 1 || snapshot.QueueSummary.QuarantineUnrestorable != 0 {
 		t.Fatalf("snapshot queue = %+v summary=%+v", snapshot.Queue, snapshot.QueueSummary)
 	}
 	if len(snapshot.QueueQuarantine) != 1 || snapshot.QueueQuarantine[0].ID != "q-delivery-quarantined" || snapshot.QueueQuarantine[0].Job != "squ-701" {
@@ -2452,7 +2477,7 @@ branch = "other-oth-701"
 		t.Fatalf("team snapshot text: %v\nstderr=%s", err, textErr.String())
 	}
 	textBody := textOut.String()
-	for _, want := range []string{"team: delivery", "jobs: total=1", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1", "pipeline status: pipelines=1", "team doctor: problems=0 warnings=1", "events: 0"} {
+	for _, want := range []string{"team: delivery", "jobs: total=1", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "pipeline status: pipelines=1", "team doctor: problems=0 warnings=1", "events: 0"} {
 		if !strings.Contains(textBody, want) {
 			t.Fatalf("team snapshot text missing %q:\n%s", want, textBody)
 		}
@@ -3649,6 +3674,15 @@ func queueItemIDs(items []daemon.QueueItem) []string {
 	return out
 }
 
+func queueQuarantineDropIDs(items []queueQuarantineDropResult) string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.ID)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ",")
+}
+
 func logRowInstances(rows []logListRow) []string {
 	out := make([]string, 0, len(rows))
 	for _, row := range rows {
@@ -3823,7 +3857,7 @@ pipelines = ["ticket_to_pr"]
 	if snapshot.Health.Jobs == nil || snapshot.Health.Jobs.Summary.Total != 1 || snapshot.Health.Jobs.Summary.Failed != 1 {
 		t.Fatalf("team job summary = %+v", snapshot.Health.Jobs)
 	}
-	if snapshot.Health.Queue.Dead != 1 || snapshot.Health.Queue.Quarantined != 1 {
+	if snapshot.Health.Queue.Dead != 1 || snapshot.Health.Queue.Quarantined != 1 || snapshot.Health.Queue.QuarantineRestorable != 1 || snapshot.Health.Queue.QuarantineUnrestorable != 0 {
 		t.Fatalf("team queue summary = %+v", snapshot.Health.Queue)
 	}
 	if len(snapshot.Health.PipelineStatus) != 1 || snapshot.Health.PipelineStatus[0].Pipeline != "ticket_to_pr" || snapshot.Health.PipelineStatus[0].FailedSteps != 1 {
@@ -3846,7 +3880,7 @@ pipelines = ["ticket_to_pr"]
 		if issue.Code == "queue_dead_letter" && containsString(issue.Actions, "agent-team team queue retry delivery --all --job squ-901") {
 			sawScopedQueueAction = true
 		}
-		if issue.Code == "queue_quarantined" && containsString(issue.Actions, "agent-team team queue quarantine delivery") && containsString(issue.Actions, "agent-team team snapshot delivery --json") {
+		if issue.Code == "queue_quarantined" && containsString(issue.Actions, "agent-team team queue quarantine delivery") && containsString(issue.Actions, "agent-team team queue quarantine delivery --restorable") && containsString(issue.Actions, "agent-team team snapshot delivery --json") {
 			sawQuarantineAction = true
 		}
 	}
@@ -3873,7 +3907,7 @@ pipelines = ["ticket_to_pr"]
 	if err := text.Execute(); err == nil {
 		t.Fatal("team health text unexpectedly succeeded")
 	}
-	for _, want := range []string{"Team: delivery", "health: unhealthy", "jobs: total=1", "quarantined=1", "pipeline_failed_step", "queue_dead_letter", "queue_quarantined", "agent-team team queue quarantine delivery"} {
+	for _, want := range []string{"Team: delivery", "health: unhealthy", "jobs: total=1", "quarantined=1 restorable=1 unrestorable=0", "pipeline_failed_step", "queue_dead_letter", "queue_quarantined", "agent-team team queue quarantine delivery --restorable"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("team health text missing %q:\n%s", want, textOut.String())
 		}
@@ -3894,7 +3928,7 @@ pipelines = ["ticket_to_pr"]
 	if err := json.Unmarshal(defaultOut.Bytes(), &defaultSnapshot); err != nil {
 		t.Fatalf("decode default team health: %v\nbody=%s\nstderr=%s", err, defaultOut.String(), defaultErr.String())
 	}
-	if defaultSnapshot.Health == nil || defaultSnapshot.Health.Queue.Quarantined != 1 || defaultSnapshot.Health.Jobs != nil {
+	if defaultSnapshot.Health == nil || defaultSnapshot.Health.Queue.Quarantined != 1 || defaultSnapshot.Health.Queue.QuarantineRestorable != 1 || defaultSnapshot.Health.Queue.QuarantineUnrestorable != 0 || defaultSnapshot.Health.Jobs != nil {
 		t.Fatalf("default team health = %+v", defaultSnapshot.Health)
 	}
 }

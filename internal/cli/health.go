@@ -513,7 +513,7 @@ func addQueueHealth(result *healthResult, teamDir string, now time.Time) error {
 	if quarantine, err := listQueueQuarantine(teamDir); err != nil {
 		return err
 	} else {
-		result.Queue.Quarantined = len(quarantine)
+		applyQueueQuarantineSummary(&result.Queue, quarantine)
 	}
 	if result.Queue.Dead > 0 {
 		result.addIssueWithSeverityAndActions(
@@ -535,11 +535,39 @@ func addQueueHealth(result *healthResult, teamDir string, now time.Time) error {
 			"",
 			"",
 			"",
-			fmt.Sprintf("queue has %d quarantined file(s)", result.Queue.Quarantined),
-			[]string{"agent-team queue quarantine ls", "agent-team snapshot --json"},
+			fmt.Sprintf("queue has %d quarantined file(s) (%d restorable, %d unrestorable)", result.Queue.Quarantined, result.Queue.QuarantineRestorable, result.Queue.QuarantineUnrestorable),
+			queueQuarantineHealthActions(result.Queue, ""),
 		)
 	}
 	return nil
+}
+
+func queueQuarantineHealthActions(summary queueSummary, teamName string) []string {
+	var listAction, snapshotAction string
+	if teamName == "" {
+		listAction = "agent-team queue quarantine ls"
+		snapshotAction = "agent-team snapshot --json"
+	} else {
+		listAction = fmt.Sprintf("agent-team team queue quarantine %s", teamName)
+		snapshotAction = fmt.Sprintf("agent-team team snapshot %s --json", teamName)
+	}
+	actions := []string{listAction}
+	if summary.QuarantineUnrestorable > 0 {
+		if teamName == "" {
+			actions = append(actions, "agent-team queue quarantine ls --unrestorable")
+		} else {
+			actions = append(actions, fmt.Sprintf("agent-team team queue quarantine %s --unrestorable", teamName))
+		}
+	}
+	if summary.QuarantineRestorable > 0 {
+		if teamName == "" {
+			actions = append(actions, "agent-team queue quarantine ls --restorable")
+		} else {
+			actions = append(actions, fmt.Sprintf("agent-team team queue quarantine %s --restorable", teamName))
+		}
+	}
+	actions = append(actions, snapshotAction)
+	return actions
 }
 
 func addIntakeHealth(result *healthResult, teamDir string) error {
@@ -834,14 +862,7 @@ func renderHealth(w io.Writer, result *healthResult) {
 		result.Summary.Stale,
 	)
 	if result.Queue.Total > 0 || result.Queue.Quarantined > 0 {
-		fmt.Fprintf(w, "queue: total=%d pending=%d dead=%d delayed=%d attempts=%d quarantined=%d\n",
-			result.Queue.Total,
-			result.Queue.Pending,
-			result.Queue.Dead,
-			result.Queue.Delayed,
-			result.Queue.Attempts,
-			result.Queue.Quarantined,
-		)
+		fmt.Fprintln(w, queueSummaryLine(result.Queue))
 	}
 	if result.Intake.Deliveries > 0 {
 		fmt.Fprintf(w, "intake: deliveries=%d errors=%d recovered=%d replayable=%d\n",

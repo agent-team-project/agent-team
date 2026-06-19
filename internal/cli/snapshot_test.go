@@ -135,7 +135,7 @@ branch = "worker-squ-501"
 	if !snapshot.Redacted {
 		t.Fatalf("snapshot should redact by default: %+v", snapshot)
 	}
-	if len(snapshot.Queue) != 1 || snapshot.Queue[0].ID != "q-snapshot" || snapshot.QueueSummary == nil || snapshot.QueueSummary.Dead != 1 || snapshot.QueueSummary.Quarantined != 1 {
+	if len(snapshot.Queue) != 1 || snapshot.Queue[0].ID != "q-snapshot" || snapshot.QueueSummary == nil || snapshot.QueueSummary.Dead != 1 || snapshot.QueueSummary.Quarantined != 1 || snapshot.QueueSummary.QuarantineRestorable != 1 || snapshot.QueueSummary.QuarantineUnrestorable != 0 {
 		t.Fatalf("queue = %+v summary=%+v", snapshot.Queue, snapshot.QueueSummary)
 	}
 	if len(snapshot.QueueQuarantine) != 1 || snapshot.QueueQuarantine[0].ID != "q-snapshot-quarantined" || !snapshot.QueueQuarantine[0].Restorable || snapshot.QueueQuarantine[0].Job != "squ-501" {
@@ -344,7 +344,7 @@ func TestSnapshotSummaryIncludesJobTriage(t *testing.T) {
 				Message: "pipeline target outside team",
 			}},
 		},
-		QueueSummary: &queueSummary{Total: 1, Pending: 1, Quarantined: 1},
+		QueueSummary: &queueSummary{Total: 1, Pending: 1, Quarantined: 1, QuarantineRestorable: 1},
 		IntakeSummary: &overviewIntakeSummary{
 			Deliveries: 1,
 			Errors:     1,
@@ -355,7 +355,7 @@ func TestSnapshotSummaryIncludesJobTriage(t *testing.T) {
 
 	var out bytes.Buffer
 	renderSnapshotSummary(&out, snapshot)
-	for _, want := range []string{"jobs: total=1", "job triage: attention=1 ready_steps=0", "job status: previews=1 changes=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1 failed_steps=0", "pipeline advance: ready=1 route_previews=1", "teams doctor: teams=1 problems=1 warnings=1", "team doctor: problems=1 warnings=0", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1", "intake: deliveries=1 errors=1 recovered=0 replayable=1"} {
+	for _, want := range []string{"jobs: total=1", "job triage: attention=1 ready_steps=0", "job status: previews=1 changes=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1 failed_steps=0", "pipeline advance: ready=1 route_previews=1", "teams doctor: teams=1 problems=1 warnings=1", "team doctor: problems=1 warnings=0", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "intake: deliveries=1 errors=1 recovered=0 replayable=1"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, out.String())
 		}

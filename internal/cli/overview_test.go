@@ -245,7 +245,7 @@ func TestOverviewReportsQueueQuarantineInventory(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
 		t.Fatalf("decode overview quarantine: %v\nbody=%s", err, out.String())
 	}
-	if overview.OK || overview.State != "attention" || overview.Queue.Quarantined != 1 {
+	if overview.OK || overview.State != "attention" || overview.Queue.Quarantined != 1 || overview.Queue.QuarantineRestorable != 0 || overview.Queue.QuarantineUnrestorable != 1 {
 		t.Fatalf("overview = %+v", overview)
 	}
 	if !stringSliceContains(overview.Actions, "agent-team queue quarantine ls") {
@@ -261,7 +261,7 @@ func TestOverviewReportsQueueQuarantineInventory(t *testing.T) {
 		t.Fatalf("overview quarantine text: %v\nstderr=%s", err, textErr.String())
 	}
 	for _, want := range []string{
-		"quarantined=1",
+		"quarantined=1 restorable=0 unrestorable=1",
 		"agent-team queue quarantine ls",
 	} {
 		if !strings.Contains(textOut.String(), want) {
@@ -344,7 +344,7 @@ func TestTeamOverviewScopesCountsAndActions(t *testing.T) {
 	if overview.Topology == nil || overview.Topology.Instances != 2 || overview.Topology.Teams != 1 || overview.Topology.Pipelines != 1 || overview.Topology.Schedules != 1 {
 		t.Fatalf("topology = %+v", overview.Topology)
 	}
-	if overview.Jobs.Summary.Total != 1 || overview.Jobs.Attention != 1 || overview.Queue.Dead != 1 || overview.Queue.Quarantined != 1 || overview.Pipelines.ReadySteps != 1 || overview.Schedules.Due != 1 {
+	if overview.Jobs.Summary.Total != 1 || overview.Jobs.Attention != 1 || overview.Queue.Dead != 1 || overview.Queue.Quarantined != 1 || overview.Queue.QuarantineRestorable != 1 || overview.Queue.QuarantineUnrestorable != 0 || overview.Pipelines.ReadySteps != 1 || overview.Schedules.Due != 1 {
 		t.Fatalf("overview = %+v", overview)
 	}
 	for _, want := range []string{
@@ -405,7 +405,7 @@ func TestTeamOverviewTextRendersTeamSummary(t *testing.T) {
 		"team: delivery",
 		"topology: instances=2 persistent=1 ephemeral=1",
 		"jobs: total=1 queued=0 running=0 blocked=1 done=0 failed=0 attention=1",
-		"queue: total=1 pending=0 dead=1 delayed=0 attempts=3 quarantined=1",
+		"queue: total=1 pending=0 dead=1 delayed=0 attempts=3 quarantined=1 restorable=1 unrestorable=0",
 		"schedules: declared=1 due=1 upcoming=1",
 		"agent-team team repair delivery --dry-run --jobs",
 	} {

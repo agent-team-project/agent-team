@@ -931,11 +931,13 @@ func newTeamQueueCmd() *cobra.Command {
 
 func newTeamQueueQuarantineCmd() *cobra.Command {
 	var (
-		repo        string
-		stateFilter string
-		eventTypes  []string
-		jobs        []string
-		jsonOut     bool
+		repo         string
+		stateFilter  string
+		eventTypes   []string
+		jobs         []string
+		restorable   bool
+		unrestorable bool
+		jsonOut      bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -943,6 +945,10 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 		Short: "List quarantined queue files scoped to one team.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if restorable && unrestorable {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine: --restorable and --unrestorable cannot be combined.")
+				return exitErr(2)
+			}
 			filters, err := parseQueueListFilters(stateFilter, nil, eventTypes, jobs, false, time.Now().UTC())
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine: %v\n", err)
@@ -957,6 +963,7 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine: %v\n", err)
 				return exitErr(1)
 			}
+			items = filterQueueQuarantineRestorable(items, restorable, unrestorable)
 			return renderQueueQuarantineList(cmd.OutOrStdout(), items, jsonOut)
 		},
 	}
@@ -964,6 +971,8 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 	cmd.Flags().StringVar(&stateFilter, "state", "", "Filter by queue state: pending or dead.")
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "Filter by event type; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Filter by job id or ticket; repeat or comma-separate values.")
+	cmd.Flags().BoolVar(&restorable, "restorable", false, "Only show quarantined files that can be restored.")
+	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "Only show quarantined files that cannot be restored.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team-owned quarantined queue files as JSON.")
 	cmd.AddCommand(newTeamQueueQuarantineShowCmd())
 	cmd.AddCommand(newTeamQueueQuarantineRestoreCmd())
@@ -3369,7 +3378,7 @@ func collectTeamStatus(teamDir, name string, now time.Time) (*teamStatusSnapshot
 	if err != nil {
 		return nil, err
 	}
-	queueSummary.Quarantined = len(quarantine)
+	applyQueueQuarantineSummary(&queueSummary, quarantine)
 	pipelineStatus, err := collectPipelineStatusRows(teamDir, "")
 	if err != nil {
 		return nil, err
@@ -4018,7 +4027,7 @@ func addTeamQueueHealth(result *healthResult, teamDir string, top *topology.Topo
 	if err != nil {
 		return err
 	}
-	result.Queue.Quarantined = len(quarantine)
+	applyQueueQuarantineSummary(&result.Queue, quarantine)
 	if result.Queue.Dead > 0 {
 		result.addIssueWithSeverityAndActions(
 			"queue_dead_letter",
@@ -4039,8 +4048,8 @@ func addTeamQueueHealth(result *healthResult, teamDir string, top *topology.Topo
 			"",
 			"",
 			"",
-			fmt.Sprintf("team %q queue has %d quarantined file(s)", team.Name, result.Queue.Quarantined),
-			[]string{fmt.Sprintf("agent-team team queue quarantine %s", team.Name), fmt.Sprintf("agent-team team snapshot %s --json", team.Name)},
+			fmt.Sprintf("team %q queue has %d quarantined file(s) (%d restorable, %d unrestorable)", team.Name, result.Queue.Quarantined, result.Queue.QuarantineRestorable, result.Queue.QuarantineUnrestorable),
+			queueQuarantineHealthActions(result.Queue, team.Name),
 		)
 	}
 	return nil
@@ -4480,7 +4489,7 @@ func collectTeamQueueSummary(teamDir, name string, filters queueListFilters, now
 	if err != nil {
 		return queueSummary{}, err
 	}
-	summary.Quarantined = len(filterQueueQuarantineItems(quarantine, filters.withNow(now)))
+	applyQueueQuarantineSummary(&summary, filterQueueQuarantineItems(quarantine, filters.withNow(now)))
 	return summary, nil
 }
 
@@ -5769,8 +5778,9 @@ func teamStatusActions(top *topology.Topology, team *topology.Team, snapshot *te
 		add(fmt.Sprintf("agent-team team queue retry %s --all", team.Name))
 	}
 	if snapshot.Queue.Quarantined > 0 {
-		add(fmt.Sprintf("agent-team team queue quarantine %s", team.Name))
-		add(fmt.Sprintf("agent-team team snapshot %s --json", team.Name))
+		for _, action := range queueQuarantineHealthActions(snapshot.Queue, team.Name) {
+			add(action)
+		}
 	}
 	if snapshot.Queue.Pending > 0 {
 		add(fmt.Sprintf("agent-team team queue %s --state pending", team.Name))
@@ -5850,14 +5860,7 @@ func renderTeamStatus(w io.Writer, snapshot *teamStatusSnapshot, jsonOut bool) e
 		snapshot.InstanceSummary.Stale,
 	)
 	renderJobSummary(w, snapshot.JobSummary)
-	fmt.Fprintf(w, "queue: total=%d pending=%d dead=%d delayed=%d attempts=%d quarantined=%d\n",
-		snapshot.Queue.Total,
-		snapshot.Queue.Pending,
-		snapshot.Queue.Dead,
-		snapshot.Queue.Delayed,
-		snapshot.Queue.Attempts,
-		snapshot.Queue.Quarantined,
-	)
+	fmt.Fprintln(w, queueSummaryLine(snapshot.Queue))
 	if snapshot.PipelineStatus != nil {
 		fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d failed_steps=%d\n",
 			len(snapshot.PipelineStatus),

@@ -401,6 +401,34 @@ func TestQueueQuarantineListAndRestore(t *testing.T) {
 		t.Fatalf("invalid item = %+v", invalid)
 	}
 
+	summaryCmd := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryCmd.SetOut(summaryOut)
+	summaryCmd.SetErr(summaryErr)
+	summaryCmd.SetArgs([]string{"queue", "ls", "--target", tmp, "--summary", "--json"})
+	if err := summaryCmd.Execute(); err != nil {
+		t.Fatalf("queue summary with quarantine: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var summary queueSummary
+	if err := json.Unmarshal(summaryOut.Bytes(), &summary); err != nil {
+		t.Fatalf("decode quarantine summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if summary.Quarantined != 2 || summary.QuarantineRestorable != 1 || summary.QuarantineUnrestorable != 1 {
+		t.Fatalf("quarantine summary = %+v", summary)
+	}
+
+	summaryText := NewRootCmd()
+	summaryTextOut, summaryTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryText.SetOut(summaryTextOut)
+	summaryText.SetErr(summaryTextErr)
+	summaryText.SetArgs([]string{"queue", "ls", "--target", tmp, "--summary"})
+	if err := summaryText.Execute(); err != nil {
+		t.Fatalf("queue summary text with quarantine: %v\nstderr=%s", err, summaryTextErr.String())
+	}
+	if !strings.Contains(summaryTextOut.String(), "quarantined=2 restorable=1 unrestorable=1") {
+		t.Fatalf("queue summary text =\n%s", summaryTextOut.String())
+	}
+
 	filtered := NewRootCmd()
 	filteredOut, filteredErr := &bytes.Buffer{}, &bytes.Buffer{}
 	filtered.SetOut(filteredOut)
@@ -1207,7 +1235,7 @@ func TestQueuePruneLocal(t *testing.T) {
 	if err := json.Unmarshal(summaryOut.Bytes(), &summary); err != nil {
 		t.Fatalf("decode queue summary json: %v\nbody=%s", err, summaryOut.String())
 	}
-	if summary.Total != 3 || summary.Pending != 1 || summary.Dead != 2 || summary.Attempts != daemon.MaxQueueAttempts*2 || summary.Quarantined != 1 {
+	if summary.Total != 3 || summary.Pending != 1 || summary.Dead != 2 || summary.Attempts != daemon.MaxQueueAttempts*2 || summary.Quarantined != 1 || summary.QuarantineRestorable != 1 || summary.QuarantineUnrestorable != 0 {
 		t.Fatalf("summary = %+v", summary)
 	}
 	if summary.Instances["worker"] != 3 || summary.Events["agent.dispatch"] != 3 {
