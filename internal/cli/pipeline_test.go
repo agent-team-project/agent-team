@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,6 +79,30 @@ after = ["implement"]
 	if len(rows) != 1 || rows[0].Name != "ticket_to_pr" || len(rows[0].Steps) != 2 {
 		t.Fatalf("pipeline rows = %+v", rows)
 	}
+
+	formatList := NewRootCmd()
+	formatListOut, formatListErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatList.SetOut(formatListOut)
+	formatList.SetErr(formatListErr)
+	formatList.SetArgs([]string{"pipeline", "ls", "--repo", root, "--format", "{{.Name}} {{len .Steps}}"})
+	if err := formatList.Execute(); err != nil {
+		t.Fatalf("pipeline ls format: %v\nstderr=%s", err, formatListErr.String())
+	}
+	if got, want := formatListOut.String(), "ticket_to_pr 2\n"; got != want {
+		t.Fatalf("pipeline ls format output = %q, want %q", got, want)
+	}
+
+	formatShow := NewRootCmd()
+	formatShowOut, formatShowErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatShow.SetOut(formatShowOut)
+	formatShow.SetErr(formatShowErr)
+	formatShow.SetArgs([]string{"pipeline", "show", "ticket_to_pr", "--repo", root, "--format", "{{.Name}} {{len .Steps}} {{range .Steps}}{{.ID}};{{end}}"})
+	if err := formatShow.Execute(); err != nil {
+		t.Fatalf("pipeline show format: %v\nstderr=%s", err, formatShowErr.String())
+	}
+	if got, want := formatShowOut.String(), "ticket_to_pr 2 implement;review;\n"; got != want {
+		t.Fatalf("pipeline show format output = %q, want %q", got, want)
+	}
 }
 
 func TestPipelineShowMissing(t *testing.T) {
@@ -100,6 +125,39 @@ func TestPipelineShowMissing(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `pipeline "missing" not found`) {
 		t.Fatalf("missing stderr = %q", stderr.String())
+	}
+}
+
+func TestPipelineInfoFormatValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"pipeline", "ls", "--format", "{{.Name}}", "--json"}, "--format cannot be combined"},
+		{[]string{"pipeline", "ls", "--format", "{{"}, "invalid --format template"},
+		{[]string{"pipeline", "show", "ticket_to_pr", "--format", "{{.Name}}", "--json"}, "--format cannot be combined"},
+		{[]string{"pipeline", "show", "ticket_to_pr", "--format", "{{"}, "invalid --format template"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("%v: err = %v, want exit 2", tc.args, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v: validation wrote stdout: %q", tc.args, out.String())
+		}
 	}
 }
 

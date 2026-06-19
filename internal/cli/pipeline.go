@@ -37,6 +37,7 @@ func newPipelineLsCmd() *cobra.Command {
 	var (
 		repo    string
 		jsonOut bool
+		format  string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -44,6 +45,15 @@ func newPipelineLsCmd() *cobra.Command {
 		Short: "List declared pipelines.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ls: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineInfoFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline ls: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -53,11 +63,12 @@ func newPipelineLsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline ls: %v\n", err)
 				return exitErr(1)
 			}
-			return renderPipelineList(cmd.OutOrStdout(), pipelines, jsonOut)
+			return renderPipelineList(cmd.OutOrStdout(), pipelines, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipelines as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each pipeline with a Go template, e.g. '{{.Name}} {{len .Steps}}'.")
 	return cmd
 }
 
@@ -65,6 +76,7 @@ func newPipelineShowCmd() *cobra.Command {
 	var (
 		repo    string
 		jsonOut bool
+		format  string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -72,6 +84,15 @@ func newPipelineShowCmd() *cobra.Command {
 		Short: "Show one declared pipeline.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline show: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineInfoFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline show: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -81,11 +102,12 @@ func newPipelineShowCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline show: %v\n", err)
 				return exitErr(1)
 			}
-			return renderPipelineDetail(cmd.OutOrStdout(), info, jsonOut)
+			return renderPipelineDetail(cmd.OutOrStdout(), info, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the pipeline as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the pipeline with a Go template, e.g. '{{.Name}} {{len .Steps}}'.")
 	return cmd
 }
 
@@ -1088,9 +1110,17 @@ func pipelineAdvanceAction(result *jobAdvanceResult) string {
 	return "advanced"
 }
 
-func renderPipelineList(w io.Writer, pipelines []pipelineInfo, jsonOut bool) error {
+func renderPipelineList(w io.Writer, pipelines []pipelineInfo, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(pipelines)
+	}
+	if tmpl != nil {
+		for _, info := range pipelines {
+			if err := renderPipelineInfoFormat(w, info, tmpl); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	if len(pipelines) == 0 {
 		fmt.Fprintln(w, "(no pipelines declared)")
@@ -1105,9 +1135,12 @@ func renderPipelineList(w io.Writer, pipelines []pipelineInfo, jsonOut bool) err
 	return nil
 }
 
-func renderPipelineDetail(w io.Writer, info pipelineInfo, jsonOut bool) error {
+func renderPipelineDetail(w io.Writer, info pipelineInfo, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(info)
+	}
+	if tmpl != nil {
+		return renderPipelineInfoFormat(w, info, tmpl)
 	}
 	fmt.Fprintf(w, "Pipeline: %s\n", info.Name)
 	fmt.Fprintf(w, "Trigger:  %s\n", summariseTriggerMap(info.Trigger))
@@ -1124,6 +1157,25 @@ func renderPipelineDetail(w io.Writer, info pipelineInfo, jsonOut bool) error {
 		fmt.Fprintf(w, "  %s target=%s after=%s\n", step.ID, step.Target, after)
 	}
 	return nil
+}
+
+func parsePipelineInfoFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("pipeline-info-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderPipelineInfoFormat(w io.Writer, info pipelineInfo, tmpl *template.Template) error {
+	if err := tmpl.Execute(w, info); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 func renderPipelineDoctor(stdout, stderr io.Writer, result *pipelineDoctorResult, jsonOut bool) error {
