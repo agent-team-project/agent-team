@@ -332,6 +332,8 @@ func TestIntakeDeliveriesFiltersAndFormat(t *testing.T) {
 		Provider:   "github",
 		Status:     intakeDeliveryStatusError,
 		HTTPStatus: http.StatusUnauthorized,
+		EventType:  "pr.opened",
+		Payload:    map[string]any{"source": "github", "pr": "205", "repository": "acme/repo"},
 		Error:      "missing X-Hub-Signature-256 header",
 	}); err != nil {
 		t.Fatalf("append github delivery: %v", err)
@@ -363,6 +365,9 @@ func TestIntakeDeliveriesFiltersAndFormat(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].ID != "github-error" {
 		t.Fatalf("tail deliveries = %+v", rows)
+	}
+	if len(rows[0].Actions) != 2 || !strings.Contains(rows[0].Actions[0], "agent-team intake replay github-error --dry-run --preview-triggers") {
+		t.Fatalf("tail delivery actions = %+v", rows[0].Actions)
 	}
 }
 

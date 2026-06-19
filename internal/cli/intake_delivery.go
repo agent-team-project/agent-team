@@ -48,6 +48,7 @@ type intakeDelivery struct {
 	DryRun     bool           `json:"dry_run,omitempty"`
 	Matched    []string       `json:"matched,omitempty"`
 	Pipelines  []string       `json:"pipelines,omitempty"`
+	Actions    []string       `json:"actions,omitempty"`
 }
 
 func newIntakeDeliveriesCmd() *cobra.Command {
@@ -100,6 +101,7 @@ func newIntakeDeliveriesCmd() *cobra.Command {
 			}
 			deliveries = filterIntakeDeliveries(deliveries, provider, status)
 			deliveries = tailIntakeDeliveries(deliveries, tailLines)
+			deliveries = withIntakeDeliveryActions(deliveries)
 			return renderIntakeDeliveries(cmd.OutOrStdout(), deliveries, jsonOut, tmpl)
 		},
 	}
@@ -319,6 +321,28 @@ func tailIntakeDeliveries(deliveries []intakeDelivery, tail int) []intakeDeliver
 	return deliveries[len(deliveries)-tail:]
 }
 
+func withIntakeDeliveryActions(deliveries []intakeDelivery) []intakeDelivery {
+	out := make([]intakeDelivery, len(deliveries))
+	copy(out, deliveries)
+	for i := range out {
+		out[i].Actions = intakeDeliveryActions(out[i])
+	}
+	return out
+}
+
+func intakeDeliveryActions(delivery intakeDelivery) []string {
+	if delivery.Status != intakeDeliveryStatusError {
+		return nil
+	}
+	if strings.TrimSpace(delivery.EventType) != "" && len(delivery.Payload) > 0 {
+		return []string{
+			fmt.Sprintf("agent-team intake replay %s --dry-run --preview-triggers", delivery.ID),
+			fmt.Sprintf("agent-team intake replay %s", delivery.ID),
+		}
+	}
+	return []string{"inspect webhook source; no normalized event payload was recorded"}
+}
+
 func parseIntakeDeliveryFormat(format string) (*template.Template, error) {
 	if strings.TrimSpace(format) == "" {
 		return nil, nil
@@ -350,9 +374,9 @@ func renderIntakeDeliveries(w io.Writer, deliveries []intakeDelivery, jsonOut bo
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TIME\tID\tPROVIDER\tSTATUS\tHTTP\tEVENT\tTICKET\tPR\tERROR")
+	fmt.Fprintln(tw, "TIME\tID\tPROVIDER\tSTATUS\tHTTP\tEVENT\tTICKET\tPR\tACTIONS\tERROR")
 	for _, delivery := range deliveries {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
 			delivery.Time.Format(time.RFC3339),
 			delivery.ID,
 			emptyDash(delivery.Provider),
@@ -361,6 +385,7 @@ func renderIntakeDeliveries(w io.Writer, deliveries []intakeDelivery, jsonOut bo
 			emptyDash(delivery.EventType),
 			emptyDash(delivery.Ticket),
 			emptyDash(delivery.PR),
+			emptyDash(strings.Join(delivery.Actions, "; ")),
 			emptyDash(delivery.Error),
 		)
 	}
