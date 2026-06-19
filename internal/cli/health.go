@@ -196,6 +196,7 @@ type healthResult struct {
 	Daemon         healthDaemon               `json:"daemon"`
 	Summary        psSummaryJSON              `json:"summary"`
 	Queue          queueSummary               `json:"queue"`
+	Intake         overviewIntakeSummary      `json:"intake"`
 	Jobs           *jobTriageSnapshot         `json:"jobs,omitempty"`
 	JobStatus      []jobStatusReconcileResult `json:"job_status_preview,omitempty"`
 	PipelineStatus []pipelineStatusRow        `json:"pipeline_status,omitempty"`
@@ -385,6 +386,9 @@ func collectHealthWithOptions(teamDir string, now time.Time, opts healthOptions)
 	if err := addQueueHealth(result, teamDir, now); err != nil {
 		return nil, err
 	}
+	if err := addIntakeHealth(result, teamDir); err != nil {
+		return nil, err
+	}
 	if opts.includeJobs {
 		if err := addJobHealth(result, teamDir, now); err != nil {
 			return nil, err
@@ -518,6 +522,35 @@ func addQueueHealth(result *healthResult, teamDir string, now time.Time) error {
 			[]string{"agent-team queue retry --all", "agent-team repair --skip-tick"},
 		)
 	}
+	return nil
+}
+
+func addIntakeHealth(result *healthResult, teamDir string) error {
+	if result == nil {
+		return nil
+	}
+	deliveries, err := listIntakeDeliveries(teamDir)
+	if err != nil {
+		return err
+	}
+	result.Intake = overviewIntakeFromDeliveries(deliveries)
+	if result.Intake.Errors == 0 {
+		return nil
+	}
+	actions := []string{"agent-team intake deliveries --unresolved"}
+	if result.Intake.Replayable > 0 {
+		actions = append(actions, "agent-team intake replay --all --dry-run --preview-triggers")
+	}
+	result.addIssueWithSeverityAndActions(
+		"intake_unresolved",
+		"error",
+		"",
+		"",
+		"",
+		"",
+		fmt.Sprintf("intake has %d unresolved delivery failure(s)", result.Intake.Errors),
+		actions,
+	)
 	return nil
 }
 
@@ -790,6 +823,14 @@ func renderHealth(w io.Writer, result *healthResult) {
 			result.Queue.Dead,
 			result.Queue.Delayed,
 			result.Queue.Attempts,
+		)
+	}
+	if result.Intake.Deliveries > 0 {
+		fmt.Fprintf(w, "intake: deliveries=%d errors=%d recovered=%d replayable=%d\n",
+			result.Intake.Deliveries,
+			result.Intake.Errors,
+			result.Intake.Recovered,
+			result.Intake.Replayable,
 		)
 	}
 	if result.Jobs != nil {

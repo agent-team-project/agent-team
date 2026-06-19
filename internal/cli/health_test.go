@@ -547,6 +547,86 @@ func TestHealthCommandReportsDeadQueueItems(t *testing.T) {
 	}
 }
 
+func TestHealthCommandReportsIntakeFailures(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	replayedAt := time.Date(2026, 6, 19, 12, 10, 0, 0, time.UTC)
+	if err := appendIntakeDelivery(teamDir, intakeDelivery{
+		ID:         "intake-health",
+		Time:       time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC),
+		Provider:   "linear",
+		Status:     intakeDeliveryStatusError,
+		HTTPStatus: 503,
+		EventType:  "ticket.created",
+		Payload:    map[string]any{"source": "linear", "ticket": "SQU-220", "title": "Health intake"},
+		Ticket:     "SQU-220",
+		Error:      "daemon is not running",
+	}); err != nil {
+		t.Fatalf("append intake delivery: %v", err)
+	}
+	if err := appendIntakeDelivery(teamDir, intakeDelivery{
+		ID:           "intake-recovered",
+		Time:         time.Date(2026, 6, 19, 11, 0, 0, 0, time.UTC),
+		Provider:     "linear",
+		Status:       intakeDeliveryStatusError,
+		ReplayStatus: intakeDeliveryReplayStatusOK,
+		ReplayedAt:   &replayedAt,
+		HTTPStatus:   503,
+		EventType:    "ticket.created",
+		Payload:      map[string]any{"source": "linear", "ticket": "SQU-221", "title": "Recovered intake"},
+		Ticket:       "SQU-221",
+		Error:        "daemon is not running",
+	}); err != nil {
+		t.Fatalf("append recovered intake delivery: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"health", "--json", "--target", tmp})
+	err := cmd.Execute()
+	var code ExitCode
+	if !errors.As(err, &code) || code != 1 {
+		t.Fatalf("err = %v, want exit 1\nstderr=%s", err, stderr.String())
+	}
+	var body healthResult
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode health json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Intake.Deliveries != 2 || body.Intake.Errors != 1 || body.Intake.Recovered != 1 || body.Intake.Replayable != 1 || body.Intake.LatestErrorID != "intake-health" {
+		t.Fatalf("intake summary = %+v", body.Intake)
+	}
+	var sawIntakeIssue bool
+	for _, issue := range body.Issues {
+		if issue.Code == "intake_unresolved" {
+			if !containsString(issue.Actions, "agent-team intake deliveries --unresolved") || !containsString(issue.Actions, "agent-team intake replay --all --dry-run --preview-triggers") {
+				t.Fatalf("intake issue actions = %+v", issue.Actions)
+			}
+			sawIntakeIssue = true
+			break
+		}
+	}
+	if !sawIntakeIssue {
+		t.Fatalf("issues = %+v, missing intake_unresolved", body.Issues)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"health", "--target", tmp})
+	if err := text.Execute(); err == nil {
+		t.Fatal("health text succeeded unexpectedly")
+	}
+	for _, want := range []string{"intake: deliveries=2 errors=1 recovered=1 replayable=1", "intake_unresolved", "agent-team intake deliveries --unresolved"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("health text missing %q:\n%s", want, textOut.String())
+		}
+	}
+}
+
 func TestHealthCommandJobsReportsJobAttention(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
