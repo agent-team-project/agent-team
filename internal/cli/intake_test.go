@@ -253,6 +253,28 @@ func TestIntakeServeLinearPublishes(t *testing.T) {
 	if j.Pipeline != "ticket_triage" || j.TicketURL != "https://linear.app/squirtlesquad/issue/SQU-202/server-intake" {
 		t.Fatalf("server-created job = %+v", j)
 	}
+	deliveries, err := listIntakeDeliveries(teamDir)
+	if err != nil {
+		t.Fatalf("list intake deliveries: %v", err)
+	}
+	if len(deliveries) != 1 || deliveries[0].Provider != "linear" || deliveries[0].Status != intakeDeliveryStatusOK || deliveries[0].EventType != "ticket.created" || deliveries[0].Ticket != "SQU-202" {
+		t.Fatalf("deliveries = %+v", deliveries)
+	}
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "deliveries", "--target", target, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake deliveries: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []intakeDelivery
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode deliveries json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Ticket != "SQU-202" {
+		t.Fatalf("delivery rows = %+v", rows)
+	}
 }
 
 func TestIntakeServeErrors(t *testing.T) {
@@ -283,6 +305,64 @@ func TestIntakeServeErrors(t *testing.T) {
 				t.Fatalf("missing error body: %+v", body)
 			}
 		})
+	}
+}
+
+func TestIntakeDeliveriesFiltersAndFormat(t *testing.T) {
+	target := t.TempDir()
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	if err := appendIntakeDelivery(teamDir, intakeDelivery{
+		ID:         "linear-ok",
+		Time:       now,
+		Provider:   "linear",
+		Status:     intakeDeliveryStatusOK,
+		HTTPStatus: http.StatusOK,
+		EventType:  "ticket.created",
+		Ticket:     "SQU-205",
+	}); err != nil {
+		t.Fatalf("append linear delivery: %v", err)
+	}
+	if err := appendIntakeDelivery(teamDir, intakeDelivery{
+		ID:         "github-error",
+		Time:       now.Add(time.Second),
+		Provider:   "github",
+		Status:     intakeDeliveryStatusError,
+		HTTPStatus: http.StatusUnauthorized,
+		Error:      "missing X-Hub-Signature-256 header",
+	}); err != nil {
+		t.Fatalf("append github delivery: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "deliveries", "--target", target, "--provider", "github", "--status", "error", "--format", "{{.Provider}} {{.Status}} {{.HTTPStatus}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake deliveries format: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "github error 401" {
+		t.Fatalf("formatted deliveries = %q", got)
+	}
+
+	jsonCmd := NewRootCmd()
+	jsonOut, jsonErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jsonCmd.SetOut(jsonOut)
+	jsonCmd.SetErr(jsonErr)
+	jsonCmd.SetArgs([]string{"intake", "deliveries", "--target", target, "--tail", "1", "--json"})
+	if err := jsonCmd.Execute(); err != nil {
+		t.Fatalf("intake deliveries tail json: %v\nstderr=%s", err, jsonErr.String())
+	}
+	var rows []intakeDelivery
+	if err := json.Unmarshal(jsonOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode tail deliveries: %v\nbody=%s", err, jsonOut.String())
+	}
+	if len(rows) != 1 || rows[0].ID != "github-error" {
+		t.Fatalf("tail deliveries = %+v", rows)
 	}
 }
 

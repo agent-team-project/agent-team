@@ -37,6 +37,7 @@ func newIntakeCmd() *cobra.Command {
 	cmd.AddCommand(newIntakeGitHubCmd())
 	cmd.AddCommand(newIntakeScheduleCmd())
 	cmd.AddCommand(newIntakeServeCmd())
+	cmd.AddCommand(newIntakeDeliveriesCmd())
 	return cmd
 }
 
@@ -330,34 +331,60 @@ func newIntakeServeHandler(teamDir string, opts intakeServeOptions) http.Handler
 }
 
 func handleIntakeServeWebhook(w http.ResponseWriter, r *http.Request, teamDir, provider string, normalize func([]byte) (*intake.Event, error), opts intakeServeOptions) {
+	delivery := newIntakeDeliveryRecord(provider, r, opts.Now().UTC(), opts.DryRun)
+	fail := func(status int, message string) {
+		delivery.Status = intakeDeliveryStatusError
+		delivery.HTTPStatus = status
+		delivery.Error = message
+		_ = appendIntakeDelivery(teamDir, delivery)
+		writeIntakeServeError(w, status, message)
+	}
 	if r.Method != http.MethodPost {
-		writeIntakeServeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		fail(http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, opts.MaxBodyBytes))
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			writeIntakeServeError(w, http.StatusRequestEntityTooLarge, "payload too large")
+			fail(http.StatusRequestEntityTooLarge, "payload too large")
 			return
 		}
-		writeIntakeServeError(w, http.StatusBadRequest, fmt.Sprintf("read request body: %v", err))
+		fail(http.StatusBadRequest, fmt.Sprintf("read request body: %v", err))
 		return
 	}
 	if status, err := verifyIntakeServeWebhook(provider, r.Header, body, opts); err != nil {
-		writeIntakeServeError(w, status, err.Error())
+		fail(status, err.Error())
 		return
 	}
 	ev, err := normalize(body)
 	if err != nil {
-		writeIntakeServeError(w, http.StatusBadRequest, err.Error())
+		fail(http.StatusBadRequest, err.Error())
 		return
 	}
+	delivery.EventType = ev.Type
+	delivery.Ticket = previewPayloadString(ev.Payload, "ticket")
+	delivery.PR = previewPayloadString(ev.Payload, "pr_url")
 	result, status, err := processIntakeServeEvent(teamDir, provider, ev, opts)
 	if err != nil {
-		writeIntakeServeError(w, status, err.Error())
+		fail(status, err.Error())
 		return
 	}
+	delivery.Status = intakeDeliveryStatusOK
+	delivery.HTTPStatus = status
+	if result != nil {
+		if result.Reconcile != nil && result.Reconcile.Job != nil {
+			delivery.JobID = result.Reconcile.Job.ID
+		}
+		if result.Outcome != nil {
+			delivery.Matched = append([]string(nil), result.Outcome.Matched...)
+		}
+		if result.Preview != nil {
+			delivery.Matched = append([]string(nil), result.Preview.Matched...)
+			delivery.Pipelines = append([]string(nil), result.Preview.Pipelines...)
+		}
+	}
+	_ = appendIntakeDelivery(teamDir, delivery)
 	writeIntakeServeJSON(w, status, result)
 }
 
