@@ -3016,6 +3016,154 @@ func TestJobCleanupCanForceDeleteUnmergedBranch(t *testing.T) {
 	}
 }
 
+func TestJobCleanupAllPreviewsAndAppliesDoneOwnership(t *testing.T) {
+	target := t.TempDir()
+	initInto(t, target)
+	initGitRepoForJobTest(t, target)
+	teamDir := filepath.Join(target, ".agent_team")
+	makeMergedBranch := func(branch string) {
+		t.Helper()
+		runGitForJobTest(t, target, "checkout", "-b", branch)
+		runGitForJobTest(t, target, "checkout", "main")
+	}
+	branchA := "worktree-worker-squ-301"
+	branchB := "worktree-worker-squ-302"
+	branchQueued := "worktree-worker-squ-303"
+	makeMergedBranch(branchA)
+	makeMergedBranch(branchB)
+	makeMergedBranch(branchQueued)
+	now := time.Now().UTC()
+	jobs := []*job.Job{
+		{
+			ID:        "squ-301",
+			Ticket:    "SQU-301",
+			Target:    "worker",
+			Status:    job.StatusDone,
+			Branch:    branchA,
+			Worktree:  filepath.Join(target, ".claude", "worktrees", "worker-squ-301"),
+			PR:        "https://github.com/acme/repo/pull/301",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "squ-302",
+			Ticket:    "SQU-302",
+			Target:    "worker",
+			Status:    job.StatusDone,
+			Branch:    branchB,
+			PR:        "https://github.com/acme/repo/pull/302",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "squ-303",
+			Ticket:    "SQU-303",
+			Target:    "worker",
+			Status:    job.StatusQueued,
+			Branch:    branchQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "squ-304",
+			Ticket:    "SQU-304",
+			Target:    "worker",
+			Status:    job.StatusDone,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	}
+	for _, j := range jobs {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+
+	preview := NewRootCmd()
+	previewOut, previewErr := &bytes.Buffer{}, &bytes.Buffer{}
+	preview.SetOut(previewOut)
+	preview.SetErr(previewErr)
+	preview.SetArgs([]string{"job", "cleanup", "--all", "--repo", target, "--dry-run", "--json"})
+	if err := preview.Execute(); err != nil {
+		t.Fatalf("job cleanup --all dry-run: %v\nstderr=%s", err, previewErr.String())
+	}
+	var previewResult jobCleanupBatchResult
+	if err := json.Unmarshal(previewOut.Bytes(), &previewResult); err != nil {
+		t.Fatalf("decode cleanup --all dry-run json: %v\nbody=%s", err, previewOut.String())
+	}
+	if !previewResult.DryRun || previewResult.Total != 2 || previewResult.Previewed != 2 || previewResult.Failed != 0 || len(previewResult.Items) != 2 {
+		t.Fatalf("cleanup --all preview = %+v", previewResult)
+	}
+	if previewResult.Items[0].JobID != "squ-301" || previewResult.Items[1].JobID != "squ-302" {
+		t.Fatalf("cleanup --all preview items = %+v", previewResult.Items)
+	}
+	if previewResult.Items[0].Preview == nil || !previewResult.Items[0].Preview.BranchExists || previewResult.Items[0].Preview.WorktreeExists {
+		t.Fatalf("cleanup --all preview item = %+v", previewResult.Items[0])
+	}
+	if !branchExists(t, target, branchA) || !branchExists(t, target, branchB) || !branchExists(t, target, branchQueued) {
+		t.Fatalf("dry-run removed a branch")
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"job", "cleanup", "--all", "--repo", target, "--merged", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("job cleanup --all apply: %v\nstderr=%s", err, applyErr.String())
+	}
+	var applied jobCleanupBatchResult
+	if err := json.Unmarshal(applyOut.Bytes(), &applied); err != nil {
+		t.Fatalf("decode cleanup --all apply json: %v\nbody=%s", err, applyOut.String())
+	}
+	if applied.DryRun || !applied.Merged || applied.Total != 2 || applied.Cleaned != 2 || applied.Failed != 0 || len(applied.Items) != 2 {
+		t.Fatalf("cleanup --all applied = %+v", applied)
+	}
+	cleanedA, err := job.Read(teamDir, "squ-301")
+	if err != nil {
+		t.Fatalf("read cleaned A: %v", err)
+	}
+	cleanedB, err := job.Read(teamDir, "squ-302")
+	if err != nil {
+		t.Fatalf("read cleaned B: %v", err)
+	}
+	if cleanedA.Branch != "" || cleanedA.Worktree != "" || cleanedA.LastEvent != "cleanup" || cleanedB.Branch != "" || cleanedB.LastEvent != "cleanup" {
+		t.Fatalf("cleaned jobs = %+v %+v", cleanedA, cleanedB)
+	}
+	if branchExists(t, target, branchA) || branchExists(t, target, branchB) {
+		t.Fatalf("cleanup --all left cleaned branches behind")
+	}
+	if !branchExists(t, target, branchQueued) {
+		t.Fatalf("cleanup --all removed queued branch %s", branchQueued)
+	}
+	queued, err := job.Read(teamDir, "squ-303")
+	if err != nil {
+		t.Fatalf("read queued: %v", err)
+	}
+	if queued.Branch != branchQueued {
+		t.Fatalf("queued job was mutated = %+v", queued)
+	}
+	events, err := job.ListEvents(teamDir, "squ-301")
+	if err != nil {
+		t.Fatalf("list cleanup events: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "cleanup" {
+		t.Fatalf("cleanup events = %+v", events)
+	}
+
+	empty := NewRootCmd()
+	emptyOut, emptyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	empty.SetOut(emptyOut)
+	empty.SetErr(emptyErr)
+	empty.SetArgs([]string{"job", "cleanup", "--all", "--repo", target, "--dry-run"})
+	if err := empty.Execute(); err != nil {
+		t.Fatalf("job cleanup --all empty dry-run: %v\nstderr=%s", err, emptyErr.String())
+	}
+	if !strings.Contains(emptyOut.String(), "No cleanup-ready jobs.") {
+		t.Fatalf("empty cleanup output = %q", emptyOut.String())
+	}
+}
+
 func TestJobReconcileGitHubMergedCleansOwnedWorktree(t *testing.T) {
 	target, mgr, cleanup := setupDispatchCommandRepo(t)
 	defer cleanup()

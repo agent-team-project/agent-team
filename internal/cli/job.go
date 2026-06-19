@@ -1429,6 +1429,7 @@ func newJobReopenCmd() *cobra.Command {
 func newJobCleanupCmd() *cobra.Command {
 	var (
 		repo        string
+		all         bool
 		merged      bool
 		forceBranch bool
 		dryRun      bool
@@ -1437,9 +1438,17 @@ func newJobCleanupCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "cleanup <job-id>",
+		Use:   "cleanup <job-id>|--all",
 		Short: "Remove a job-owned worker worktree and branch after merge.",
-		Args:  cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if all {
+				if len(args) != 0 {
+					return fmt.Errorf("--all cannot be combined with explicit job ids")
+				}
+				return nil
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: --format cannot be combined with --json.")
@@ -1447,6 +1456,10 @@ func newJobCleanupCmd() *cobra.Command {
 			}
 			if dryRun && format != "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: --format cannot be combined with --dry-run.")
+				return exitErr(2)
+			}
+			if all && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: --format cannot be combined with --all.")
 				return exitErr(2)
 			}
 			if !merged && !dryRun {
@@ -1457,6 +1470,28 @@ func newJobCleanupCmd() *cobra.Command {
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job cleanup: %v\n", err)
 				return exitErr(2)
+			}
+			if all {
+				teamDir, err := resolveTeamDir(cmd, repo)
+				if err != nil {
+					return err
+				}
+				result, err := runJobCleanupAll(teamDir, filepath.Dir(teamDir), dryRun, merged, forceBranch)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job cleanup: %v\n", err)
+					return exitErr(1)
+				}
+				if jsonOut {
+					if err := json.NewEncoder(cmd.OutOrStdout()).Encode(result); err != nil {
+						return err
+					}
+				} else {
+					renderJobCleanupBatch(cmd.OutOrStdout(), result)
+				}
+				if result.Failed > 0 {
+					return exitErr(1)
+				}
+				return nil
 			}
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
 			if err != nil {
@@ -1499,6 +1534,7 @@ func newJobCleanupCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&all, "all", false, "Clean all done jobs that still own a recorded worktree or branch.")
 	cmd.Flags().BoolVar(&merged, "merged", false, "Confirm the job's PR has merged before removing its worktree and branch.")
 	cmd.Flags().BoolVar(&forceBranch, "force-branch", false, "With --merged, delete the job branch with git branch -D if it is not locally merged.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the job-owned worktree and branch cleanup without removing anything.")
@@ -2347,6 +2383,28 @@ type jobCleanupPreview struct {
 	WouldRemoveBranch   bool   `json:"would_remove_branch"`
 	Summary             string `json:"summary"`
 	DryRun              bool   `json:"dry_run"`
+}
+
+type jobCleanupBatchResult struct {
+	DryRun      bool                  `json:"dry_run"`
+	Merged      bool                  `json:"merged,omitempty"`
+	ForceBranch bool                  `json:"force_branch,omitempty"`
+	Total       int                   `json:"total"`
+	Previewed   int                   `json:"previewed,omitempty"`
+	Cleaned     int                   `json:"cleaned,omitempty"`
+	Failed      int                   `json:"failed,omitempty"`
+	Items       []jobCleanupBatchItem `json:"items"`
+}
+
+type jobCleanupBatchItem struct {
+	JobID    string             `json:"job_id"`
+	Status   job.Status         `json:"status"`
+	Worktree string             `json:"worktree,omitempty"`
+	Branch   string             `json:"branch,omitempty"`
+	Summary  string             `json:"summary,omitempty"`
+	Error    string             `json:"error,omitempty"`
+	Preview  *jobCleanupPreview `json:"preview,omitempty"`
+	Job      *job.Job           `json:"job,omitempty"`
 }
 
 type jobSummary struct {
@@ -4576,6 +4634,99 @@ func renderJobCleanupPreview(w io.Writer, preview jobCleanupPreview) {
 	}
 }
 
+func runJobCleanupAll(teamDir, repoRoot string, dryRun, merged, forceBranch bool) (jobCleanupBatchResult, error) {
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return jobCleanupBatchResult{}, err
+	}
+	candidates := cleanupReadyJobs(jobs)
+	result := jobCleanupBatchResult{
+		DryRun:      dryRun,
+		Merged:      merged,
+		ForceBranch: forceBranch,
+		Total:       len(candidates),
+		Items:       make([]jobCleanupBatchItem, 0, len(candidates)),
+	}
+	for _, j := range candidates {
+		item := jobCleanupBatchItem{
+			JobID:    j.ID,
+			Status:   j.Status,
+			Worktree: strings.TrimSpace(j.Worktree),
+			Branch:   strings.TrimSpace(j.Branch),
+		}
+		if dryRun {
+			preview, err := previewJobCleanup(repoRoot, j, forceBranch)
+			if err != nil {
+				item.Error = err.Error()
+				result.Failed++
+			} else {
+				item.Summary = preview.Summary
+				item.Preview = &preview
+				result.Previewed++
+			}
+			result.Items = append(result.Items, item)
+			continue
+		}
+		summary, err := cleanupJobOwnedWorktree(repoRoot, j, forceBranch)
+		if err != nil {
+			item.Error = err.Error()
+			result.Failed++
+			result.Items = append(result.Items, item)
+			continue
+		}
+		j.Worktree = ""
+		j.Branch = ""
+		j.LastEvent = "cleanup"
+		j.LastStatus = summary
+		j.UpdatedAt = time.Now().UTC()
+		if err := writeJobWithAudit(teamDir, j, "", "cli", "", nil); err != nil {
+			item.Error = err.Error()
+			result.Failed++
+			result.Items = append(result.Items, item)
+			continue
+		}
+		item.Summary = summary
+		item.Job = j
+		result.Cleaned++
+		result.Items = append(result.Items, item)
+	}
+	return result, nil
+}
+
+func cleanupReadyJobs(jobs []*job.Job) []*job.Job {
+	out := make([]*job.Job, 0, len(jobs))
+	for _, j := range jobs {
+		if j == nil || j.Status != job.StatusDone || !jobNeedsCleanup(j) {
+			continue
+		}
+		out = append(out, j)
+	}
+	return out
+}
+
+func renderJobCleanupBatch(w io.Writer, result jobCleanupBatchResult) {
+	if result.Total == 0 {
+		fmt.Fprintln(w, "No cleanup-ready jobs.")
+		return
+	}
+	if result.DryRun {
+		fmt.Fprintf(w, "Job cleanup dry-run: cleanup-ready jobs=%d previewed=%d failed=%d\n", result.Total, result.Previewed, result.Failed)
+	} else {
+		fmt.Fprintf(w, "Job cleanup: cleanup-ready jobs=%d cleaned=%d failed=%d\n", result.Total, result.Cleaned, result.Failed)
+	}
+	for _, item := range result.Items {
+		if item.Error != "" {
+			fmt.Fprintf(w, "Job: %s cleanup failed (%s)\n", item.JobID, item.Error)
+			continue
+		}
+		if result.DryRun && item.Preview != nil {
+			renderJobCleanupPreview(w, *item.Preview)
+			continue
+		}
+		fmt.Fprintf(w, "Job: %s cleanup complete (%s)\n", item.JobID, item.Summary)
+	}
+}
+
 func cleanupJobOwnedWorktree(repoRoot string, j *job.Job, forceBranch bool) (string, error) {
 	if strings.TrimSpace(j.Worktree) == "" && strings.TrimSpace(j.Branch) == "" {
 		return "nothing to clean", nil
@@ -4617,28 +4768,55 @@ func cleanupJobOwnedWorktree(repoRoot string, j *job.Job, forceBranch bool) (str
 }
 
 func validateJobOwnedWorktree(repoRoot, worktreePath string) error {
-	root, err := filepath.Abs(filepath.Join(repoRoot, ".claude", "worktrees"))
+	rawRoot, err := filepath.Abs(filepath.Join(repoRoot, ".claude", "worktrees"))
 	if err != nil {
 		return err
 	}
-	if resolvedRoot, err := filepath.EvalSymlinks(root); err == nil {
-		root = resolvedRoot
-	}
-	path, err := filepath.Abs(worktreePath)
+	rawPath, err := filepath.Abs(worktreePath)
 	if err != nil {
 		return err
 	}
-	if resolvedPath, err := filepath.EvalSymlinks(path); err == nil {
-		path = resolvedPath
+	if pathInsideDir(rawRoot, rawPath) {
+		return nil
 	}
+	root := resolvePathWithExistingPrefix(rawRoot)
+	path := resolvePathWithExistingPrefix(rawPath)
+	if pathInsideDir(root, path) {
+		return nil
+	}
+	return fmt.Errorf("refusing to remove worktree outside %s: %s", root, path)
+}
+
+func resolvePathWithExistingPrefix(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved
+	}
+	missing := []string{}
+	current := path
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return resolved
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return path
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+func pathInsideDir(root, path string) bool {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
-		return err
+		return false
 	}
-	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return fmt.Errorf("refusing to remove worktree outside %s: %s", root, path)
-	}
-	return nil
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 func gitBranchExists(repoRoot, branch string) (bool, error) {
