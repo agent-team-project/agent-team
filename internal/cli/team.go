@@ -49,6 +49,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamPipelinesCmd())
 	cmd.AddCommand(newTeamSchedulesCmd())
 	cmd.AddCommand(newTeamHealthCmd())
+	cmd.AddCommand(newTeamMonitorCmd())
 	cmd.AddCommand(newTeamStatusCmd())
 	return cmd
 }
@@ -2126,6 +2127,180 @@ func newTeamStatusCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team status as JSON.")
+	return cmd
+}
+
+func newTeamMonitorCmd() *cobra.Command {
+	var (
+		repo            string
+		all             bool
+		watch           bool
+		plan            bool
+		jobs            bool
+		schedules       bool
+		stopExtras      bool
+		jsonOut         bool
+		noClear         bool
+		latest          bool
+		last            int
+		format          string
+		sortBy          string
+		statsSortBy     string
+		staleOnly       bool
+		unhealthyOnly   bool
+		eventTail       int
+		eventSince      string
+		interval        time.Duration
+		statusFilters   []string
+		agentFilters    []string
+		phaseFilters    []string
+		instanceFilters []string
+		actionFilters   []string
+		eventActions    []string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "monitor <team>",
+		Short: "Show a combined operator snapshot for one team.",
+		Long: "Show a Docker-style operator snapshot scoped to one declared team, combining team health, " +
+			"instance rows, daemon-managed process stats, and optional plan, job, schedule, and lifecycle event sections.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if eventTail < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --events must be >= 0.")
+				return exitErr(2)
+			}
+			if last < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --last must be >= 0.")
+				return exitErr(2)
+			}
+			if latest && last > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: choose one of --latest or --last.")
+				return exitErr(2)
+			}
+			if stopExtras && !plan {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --stop-extras requires --plan.")
+				return exitErr(2)
+			}
+			if strings.TrimSpace(eventSince) != "" && eventTail == 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --since requires --events.")
+				return exitErr(2)
+			}
+			if len(eventActions) > 0 && eventTail == 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --event-action requires --events.")
+				return exitErr(2)
+			}
+			if len(actionFilters) > 0 && !plan {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --action requires --plan.")
+				return exitErr(2)
+			}
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			formatTemplate, err := parseMonitorFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team monitor: %v\n", err)
+				return exitErr(2)
+			}
+			opts, err := newMonitorOptionsWithInstancesPhasesStaleAndUnhealthy(all, statusFilters, agentFilters, phaseFilters, instanceFilters, staleOnly, unhealthyOnly)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team monitor: %v\n", err)
+				return exitErr(2)
+			}
+			sortMode, err := parsePsSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team monitor: %v\n", err)
+				return exitErr(2)
+			}
+			statsSortMode, err := parseStatsSortFlag(statsSortBy, "--stats-sort")
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team monitor: %v\n", err)
+				return exitErr(2)
+			}
+			planActions, err := planActionFilterSet(actionFilters)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team monitor: %v\n", err)
+				return exitErr(2)
+			}
+			eventFilters, err := newMonitorEventFilters(eventActions, eventSince, time.Now)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team monitor: %v\n", err)
+				return exitErr(2)
+			}
+			opts.PS.Sort = sortMode
+			opts.PS.SortSet = cmd.Flags().Changed("sort")
+			opts.Stats.Sort = statsSortMode
+			opts.Stats.SortSet = cmd.Flags().Changed("stats-sort")
+			opts.PS.Limit = last
+			opts.Stats.Limit = last
+			if latest {
+				opts.PS.Limit = 1
+				opts.Stats.Limit = 1
+			}
+			opts.IncludePlan = plan
+			opts.IncludeJobs = jobs
+			opts.IncludeSchedules = schedules
+			opts.StopExtras = stopExtras
+			opts.PlanActions = planActions
+			opts.EventTail = eventTail
+			opts.EventFilters = eventFilters
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				if formatTemplate != nil {
+					return runTeamMonitorFormatWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], interval, time.Now, readProcessStats, opts, formatTemplate)
+				}
+				clear := !noClear && !jsonOut
+				return runTeamMonitorWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], interval, time.Now, readProcessStats, jsonOut, opts, clear)
+			}
+			snapshot, err := collectTeamMonitorSnapshot(teamDir, args[0], time.Now().UTC(), readProcessStats, opts)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team monitor: %v\n", err)
+				return exitErr(1)
+			}
+			if jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(snapshot)
+			}
+			if formatTemplate != nil {
+				return renderMonitorFormat(cmd.OutOrStdout(), snapshot, formatTemplate)
+			}
+			return renderMonitor(cmd.OutOrStdout(), snapshot)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "Include stopped, exited, crashed, and missing team-owned instances in the stats section.")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the team monitor snapshot until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().BoolVar(&plan, "plan", false, "Include team-scoped desired-state actions from instances.toml and daemon metadata.")
+	cmd.Flags().BoolVar(&jobs, "jobs", false, "Include team-owned durable job summary, attention, ready-step state, and status-file previews.")
+	cmd.Flags().BoolVar(&schedules, "schedules", false, "Include due and upcoming team schedules.")
+	cmd.Flags().BoolVar(&stopExtras, "stop-extras", false, "With --plan, preview running team-agent extras as stop actions.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON. With --watch, writes one JSON object per refresh.")
+	cmd.Flags().BoolVar(&latest, "latest", false, "Show only the most recently started team-owned instance after other filters.")
+	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show only the N most recently started team-owned instances after other filters (0 = all).")
+	cmd.Flags().StringVar(&format, "format", "", "Render team monitor snapshots with a Go template, e.g. '{{.Team.Name}} {{len .Instances}}'.")
+	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort instance rows by name, status, agent, phase, stale, unhealthy, started, stopped, or exited.")
+	cmd.Flags().StringVar(&statsSortBy, "stats-sort", "name", "Sort stats rows by name, cpu, mem, rss, status, agent, phase, stale, or unhealthy.")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show team-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed or stale team-owned instances.")
+	cmd.Flags().IntVar(&eventTail, "events", 0, "Include the last N matching team lifecycle events in the full monitor (0 = omit).")
+	cmd.Flags().StringSliceVar(&eventActions, "event-action", nil, "With --events, only show lifecycle events with this action. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&eventSince, "since", "", "With --events, only show lifecycle events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
+	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show team-owned lifecycle status in instance, stats, and plan sections: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&agentFilters, "agent", nil, "Only show team-owned instances, stats, and plan rows for this agent. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show team-owned instances and stats in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only show team-owned instances with this name. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "With --plan, only show plan rows with this action: start, resume, keep, on-demand, stop, or extra. Can repeat or comma-separate.")
 	return cmd
 }
 

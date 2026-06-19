@@ -252,6 +252,7 @@ func newMonitorOptionsWithInstancesPhasesStaleAndUnhealthy(all bool, statusFilte
 }
 
 type monitorSnapshot struct {
+	Team           *teamInfo                  `json:"team,omitempty"`
 	Health         *healthResult              `json:"health"`
 	Plan           *planResult                `json:"plan,omitempty"`
 	Jobs           *jobTriageSnapshot         `json:"jobs,omitempty"`
@@ -343,6 +344,62 @@ func runMonitorFormatWatch(ctx context.Context, w io.Writer, teamDir string, int
 	defer ticker.Stop()
 	for {
 		snapshot, err := collectMonitorSnapshot(teamDir, now(), probe, opts)
+		if err != nil {
+			return err
+		}
+		if err := renderMonitorFormat(w, snapshot, tmpl); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func runTeamMonitorWatch(ctx context.Context, w io.Writer, teamDir, name string, interval time.Duration, now func() time.Time, probe processStatsProbe, jsonOut bool, opts monitorOptions, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		snapshot, err := collectTeamMonitorSnapshot(teamDir, name, now(), probe, opts)
+		if err != nil {
+			return err
+		}
+		if jsonOut {
+			if err := json.NewEncoder(w).Encode(snapshot); err != nil {
+				return err
+			}
+		} else {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+			if err := renderMonitor(w, snapshot); err != nil {
+				return err
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
+}
+
+func runTeamMonitorFormatWatch(ctx context.Context, w io.Writer, teamDir, name string, interval time.Duration, now func() time.Time, probe processStatsProbe, opts monitorOptions, tmpl *template.Template) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		snapshot, err := collectTeamMonitorSnapshot(teamDir, name, now(), probe, opts)
 		if err != nil {
 			return err
 		}
@@ -824,6 +881,161 @@ func collectMonitorSnapshot(teamDir string, now time.Time, probe processStatsPro
 	return snapshot, nil
 }
 
+func collectTeamMonitorSnapshot(teamDir, name string, now time.Time, probe processStatsProbe, opts monitorOptions) (*monitorSnapshot, error) {
+	now = now.UTC()
+	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := collectPsRows(teamDir, now)
+	if err != nil {
+		return nil, err
+	}
+	teamRows := teamInstanceRows(top, team, rows)
+	opts.Stats.phaseByInstance = statsPhaseByRows(teamRows)
+	opts.Stats.staleByInstance = statsStaleByRows(teamRows)
+	health := buildHealthWithDaemonStatus(collectDaemonStatus(teamDir), teamRuntimeRows(top, team, rows), teamScopedTopology(top, team), now, healthOptions{
+		filters: opts.PS,
+	})
+	if opts.IncludeJobs {
+		if err := addTeamJobHealth(health, teamDir, top, team, now); err != nil {
+			return nil, err
+		}
+	}
+	displayRows := filterLimitSortPsRows(teamRows, opts.PS)
+	selectedInstances := monitorSelectedInstanceSet(displayRows, opts.PS)
+	info := teamInfoFromTopology(team)
+	snapshot := &monitorSnapshot{
+		Team:         &info,
+		Health:       health,
+		Instances:    psJSONRows(displayRows),
+		Stats:        []statsJSONRow{},
+		instanceRows: displayRows,
+		statsEmpty:   "(no running team-owned instances; use --all to include stopped/exited instances)",
+	}
+	if opts.Stats.All {
+		snapshot.statsEmpty = "(no daemon-managed team-owned instances)"
+	}
+	if statsOptionsHasFilters(opts.Stats) || opts.PS.stale || opts.PS.unhealthy {
+		snapshot.statsEmpty = "(no matching team-owned instances)"
+	}
+	if opts.IncludePlan {
+		plan, err := collectPlan(teamDir)
+		if err != nil {
+			return nil, err
+		}
+		if opts.StopExtras {
+			markPlanStopExtras(plan)
+		}
+		plan.Instances = teamPlanRows(top, team, plan.Instances, opts.StopExtras)
+		planOpts := opts.PS
+		if selectedInstances != nil {
+			planOpts.instances = selectedInstances
+		}
+		plan.Instances = filterPlanRowsWithActions(plan.Instances, planOpts, opts.PlanActions)
+		plan.Summary = summarizePlanRows(plan.Instances)
+		snapshot.Plan = plan
+	}
+	if opts.IncludeJobs {
+		jobs := health.Jobs
+		jobStatus := health.JobStatus
+		pipelineStatus := health.PipelineStatus
+		health.Jobs = nil
+		health.JobStatus = nil
+		health.PipelineStatus = nil
+		snapshot.Jobs = jobs
+		snapshot.JobStatus = jobStatus
+		snapshot.PipelineStatus = pipelineStatus
+	}
+	if opts.IncludeSchedules {
+		schedules, err := collectTeamScheduleForecast(teamDir, team, now)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.Schedules = schedules
+	}
+
+	var base instanceLister
+	client, err := newDaemonClient(teamDir)
+	switch {
+	case err == nil:
+		base = client
+	case errors.Is(err, errDaemonNotRunning):
+		base = localInstanceLister{daemonRoot: daemon.DaemonRoot(teamDir)}
+	default:
+		return nil, err
+	}
+	statsRows, err := collectStatsRows(teamWaitLister{instanceLister: base, top: top, team: team}, nil, opts.Stats, now, probe)
+	if err != nil {
+		snapshot.StatsError = err.Error()
+	} else {
+		if opts.PS.stale || opts.PS.unhealthy {
+			statsRows = filterStatsRowsToInstanceOrder(statsRows, displayRows)
+		}
+		snapshot.statsRows = statsRows
+		snapshot.Stats = statsJSONRows(statsRows)
+	}
+	if opts.EventTail > 0 {
+		filters, err := teamMonitorEventFilters(teamDir, name, opts, selectedInstances)
+		if err != nil {
+			snapshot.EventsError = err.Error()
+		} else {
+			var eventClient eventsClient = localEventsClient{daemonRoot: daemon.DaemonRoot(teamDir)}
+			if client != nil {
+				eventClient = client
+			}
+			events, err := collectMonitorEvents(context.Background(), eventClient, opts.EventTail, filters)
+			if err != nil {
+				snapshot.EventsError = err.Error()
+			} else {
+				snapshot.eventRows = events
+				snapshot.Events = events
+			}
+		}
+	}
+	return snapshot, nil
+}
+
+func collectTeamScheduleForecast(teamDir string, team *topology.Team, now time.Time) (*scheduleForecast, error) {
+	schedules, err := loadScheduleInfos(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	rows := nextScheduleRows(teamSchedules(team, schedules), now, 0)
+	forecast := &scheduleForecast{Total: len(rows), Rows: rows}
+	for _, row := range rows {
+		switch {
+		case row.Due:
+			forecast.Due++
+		case row.NextRun != nil:
+			forecast.Upcoming++
+		default:
+			forecast.Unseen++
+		}
+	}
+	return forecast, nil
+}
+
+func teamMonitorEventFilters(teamDir, name string, opts monitorOptions, selectedInstances map[string]bool) (eventFilters, error) {
+	filters, err := teamEventFilters(teamDir, name, nil, nil, "", time.Now)
+	if err != nil {
+		return filters, err
+	}
+	filters.actions = opts.EventFilters.actions
+	filters.since = opts.EventFilters.since
+	filters.agents = opts.PS.agents
+	filters.statuses = opts.PS.statuses
+	switch {
+	case len(opts.PS.instances) > 0:
+		filters.instances = opts.PS.instances
+		filters.instancePrefixes = nil
+	case selectedInstances != nil:
+		filters.instances = selectedInstances
+		filters.instancePrefixes = nil
+	}
+	return filters, nil
+}
+
 func monitorSelectedInstanceSet(rows []instanceRow, opts psOptions) map[string]bool {
 	if opts.Limit <= 0 && len(opts.phases) == 0 && !opts.stale && !opts.unhealthy {
 		return nil
@@ -894,6 +1106,12 @@ func renderMonitorFormat(w io.Writer, snapshot *monitorSnapshot, tmpl *template.
 }
 
 func renderMonitor(w io.Writer, snapshot *monitorSnapshot) error {
+	if snapshot.Team != nil {
+		fmt.Fprintf(w, "Team: %s\n", snapshot.Team.Name)
+		if snapshot.Team.Description != "" {
+			fmt.Fprintf(w, "Description: %s\n", snapshot.Team.Description)
+		}
+	}
 	renderHealth(w, snapshot.Health)
 
 	if snapshot.Plan != nil {

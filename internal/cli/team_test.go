@@ -841,6 +841,15 @@ func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
 		{"team", "snapshot", "delivery", "--json", "--output", "snapshot.json"},
 		{"team", "snapshot", "delivery", "--events", "-2"},
 		{"team", "snapshot", "delivery", "--schedule-limit", "-1"},
+		{"team", "monitor", "delivery", "--format", "{{.Team.Name}}", "--json"},
+		{"team", "monitor", "delivery", "--events", "-1"},
+		{"team", "monitor", "delivery", "--since", "10m"},
+		{"team", "monitor", "delivery", "--event-action", "dispatch"},
+		{"team", "monitor", "delivery", "--stop-extras"},
+		{"team", "monitor", "delivery", "--action", "start"},
+		{"team", "monitor", "delivery", "--latest", "--last", "1"},
+		{"team", "monitor", "delivery", "--last", "-1"},
+		{"team", "monitor", "delivery", "--watch", "--interval", "-1s"},
 	} {
 		cmd := NewRootCmd()
 		stderr := &bytes.Buffer{}
@@ -1643,6 +1652,227 @@ branch = "other-oth-701"
 		if strings.Contains(textBody, leak) {
 			t.Fatalf("team snapshot text leaked %q:\n%s", leak, textBody)
 		}
+	}
+}
+
+func TestTeamMonitorScopesDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.other]
+agent = "other"
+ephemeral = true
+replicas = 1
+
+[[instances.other.triggers]]
+event = "agent.dispatch"
+match.target = "other"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[pipelines.platform_work]
+trigger.event = "ticket.created"
+trigger.match.team = "platform"
+
+[[pipelines.platform_work.steps]]
+id = "implement"
+target = "other"
+
+[schedules.delivery_due]
+every = "24h"
+payload.target = "worker"
+
+[schedules.platform_due]
+every = "24h"
+payload.target = "other"
+
+[teams.delivery]
+description = "Delivery team"
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+schedules = ["delivery_due"]
+
+[teams.platform]
+instances = ["other"]
+pipelines = ["platform_work"]
+schedules = ["platform_due"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-702",
+			Ticket:    "SQU-702",
+			Target:    "worker",
+			Kickoff:   "SQU-702: implement",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusBlocked},
+			},
+		},
+		{
+			ID:        "oth-702",
+			Ticket:    "OTH-702",
+			Target:    "other",
+			Kickoff:   "OTH-702: implement",
+			Pipeline:  "platform_work",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "other", Status: job.StatusBlocked},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "worker-squ-702"), `[status]
+phase = "blocked"
+description = "waiting on review"
+since = "2026-06-18T12:00:00Z"
+
+[work]
+job = "squ-702"
+ticket = "SQU-702"
+branch = "worker-squ-702"
+`, now)
+	writeStatus(t, filepath.Join(teamDir, "state", "other-oth-702"), `[status]
+phase = "blocked"
+description = "unrelated"
+since = "2026-06-18T12:00:00Z"
+
+[work]
+job = "oth-702"
+ticket = "OTH-702"
+branch = "other-oth-702"
+`, now)
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:         "q-delivery-monitor",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-702",
+			Payload:    map[string]any{"job_id": "squ-702", "target": "worker", "ticket": "SQU-702"},
+			QueuedAt:   now.Add(-time.Minute),
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+		{
+			ID:         "q-platform-monitor",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "other",
+			InstanceID: "other-oth-702",
+			Payload:    map[string]any{"job_id": "oth-702", "target": "other", "ticket": "OTH-702"},
+			QueuedAt:   now.Add(-time.Minute),
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+	} {
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+			t.Fatalf("write queue item %s: %v", item.ID, err)
+		}
+	}
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	for _, ev := range []*daemon.LifecycleEvent{
+		{TS: now.Add(-3 * time.Minute), Action: "start", Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, Message: "manager up"},
+		{TS: now.Add(-2 * time.Minute), Action: "dispatch", Instance: "worker-squ-702", Agent: "worker", Status: daemon.StatusRunning, Message: "delivery worker"},
+		{TS: now.Add(-time.Minute), Action: "dispatch", Instance: "other-oth-702", Agent: "other", Status: daemon.StatusRunning, Message: "platform worker"},
+	} {
+		if err := daemon.AppendLifecycleEvent(daemonRoot, ev); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "monitor", "delivery", "--repo", root, "--all", "--plan", "--jobs", "--schedules", "--events", "10", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team monitor json: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot monitorSnapshot
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode team monitor: %v\nbody=%s", err, out.String())
+	}
+	if snapshot.Team == nil || snapshot.Team.Name != "delivery" {
+		t.Fatalf("team metadata = %+v", snapshot.Team)
+	}
+	if snapshot.Health == nil || snapshot.Health.Jobs != nil || snapshot.Health.Queue.Total != 1 {
+		t.Fatalf("health = %+v", snapshot.Health)
+	}
+	if len(snapshot.Instances) != 2 || snapshot.Instances[0].Instance == "other-oth-702" || snapshot.Instances[1].Instance == "other-oth-702" {
+		t.Fatalf("instances = %+v", snapshot.Instances)
+	}
+	if snapshot.Plan == nil || snapshot.Plan.Summary.Total == 0 {
+		t.Fatalf("plan = %+v", snapshot.Plan)
+	}
+	if snapshot.Jobs == nil || snapshot.Jobs.Summary.Total != 1 || len(snapshot.Jobs.ReadySteps) != 1 {
+		t.Fatalf("jobs = %+v", snapshot.Jobs)
+	}
+	if len(snapshot.JobStatus) != 1 || snapshot.JobStatus[0].JobID != "squ-702" {
+		t.Fatalf("job status = %+v", snapshot.JobStatus)
+	}
+	if len(snapshot.PipelineStatus) != 1 || snapshot.PipelineStatus[0].Pipeline != "ticket_to_pr" || snapshot.PipelineStatus[0].ReadySteps != 1 {
+		t.Fatalf("pipeline status = %+v", snapshot.PipelineStatus)
+	}
+	if snapshot.Schedules == nil || len(snapshot.Schedules.Rows) != 1 || snapshot.Schedules.Rows[0].Name != "delivery_due" {
+		t.Fatalf("schedules = %+v", snapshot.Schedules)
+	}
+	if got := lifecycleEventInstances(snapshot.Events); strings.Join(got, ",") != "manager,worker-squ-702" {
+		t.Fatalf("events = %v\nbody=%s", got, out.String())
+	}
+	body := out.String()
+	for _, leak := range []string{"platform_due", "platform_work", "oth-702", "q-platform-monitor", "platform worker"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("team monitor json leaked %q:\n%s", leak, body)
+		}
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"team", "monitor", "delivery", "--repo", root, "--all", "--jobs", "--schedules", "--events", "10"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("team monitor text: %v\nstderr=%s", err, textErr.String())
+	}
+	textBody := textOut.String()
+	for _, want := range []string{"Team: delivery", "jobs:", "schedules:", "instances:", "events:", "stats:"} {
+		if !strings.Contains(textBody, want) {
+			t.Fatalf("team monitor text missing %q:\n%s", want, textBody)
+		}
+	}
+	for _, leak := range []string{"platform_due", "platform_work", "oth-702", "q-platform-monitor"} {
+		if strings.Contains(textBody, leak) {
+			t.Fatalf("team monitor text leaked %q:\n%s", leak, textBody)
+		}
+	}
+
+	formatted := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatted.SetOut(formatOut)
+	formatted.SetErr(formatErr)
+	formatted.SetArgs([]string{"team", "monitor", "delivery", "--repo", root, "--format", "{{.Team.Name}} {{len .Instances}}"})
+	if err := formatted.Execute(); err != nil {
+		t.Fatalf("team monitor format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if strings.TrimSpace(formatOut.String()) != "delivery 2" {
+		t.Fatalf("team monitor format = %q", formatOut.String())
 	}
 }
 
