@@ -418,6 +418,10 @@ func dropQueueQuarantineAll(teamDir string, dryRun bool, olderThan time.Duration
 	if err != nil {
 		return nil, err
 	}
+	return dropQueueQuarantineItems(teamDir, items, dryRun, olderThan, unrestorable, now)
+}
+
+func dropQueueQuarantineItems(teamDir string, items []queueQuarantineItem, dryRun bool, olderThan time.Duration, unrestorable bool, now time.Time) ([]queueQuarantineDropResult, error) {
 	queueRoot := daemon.QueueRoot(daemon.DaemonRoot(teamDir))
 	results := make([]queueQuarantineDropResult, 0, len(items))
 	for _, item := range items {

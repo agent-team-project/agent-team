@@ -1970,6 +1970,8 @@ instances = ["other"]
 	if len(quarantineItems) != 1 || quarantineItems[0].ID != "q-team-quarantined" || quarantineItems[0].Job != "squ-501" {
 		t.Fatalf("team queue quarantine items = %+v", quarantineItems)
 	}
+	teamQuarantinePath := quarantineItems[0].Path
+	otherQuarantinePath := filepath.Join("quarantine", "20260619T010000.000000000Z", daemon.QueueStateDead, "q-other-quarantined.json")
 
 	quarantineText := NewRootCmd()
 	quarantineTextOut, quarantineTextErr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -1981,6 +1983,66 @@ instances = ["other"]
 	}
 	if !strings.Contains(quarantineTextOut.String(), "q-team-quarantined") || strings.Contains(quarantineTextOut.String(), "q-other-quarantined") {
 		t.Fatalf("team queue quarantine text =\n%s", quarantineTextOut.String())
+	}
+
+	restoreDry := NewRootCmd()
+	restoreDryOut, restoreDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreDry.SetOut(restoreDryOut)
+	restoreDry.SetErr(restoreDryErr)
+	restoreDry.SetArgs([]string{"team", "queue", "quarantine", "restore", "delivery", teamQuarantinePath, "--repo", root, "--dry-run", "--json"})
+	if err := restoreDry.Execute(); err != nil {
+		t.Fatalf("team queue quarantine restore dry-run: %v\nstderr=%s", err, restoreDryErr.String())
+	}
+	var restoreResult queueQuarantineRestoreResult
+	if err := json.Unmarshal(restoreDryOut.Bytes(), &restoreResult); err != nil {
+		t.Fatalf("decode team queue quarantine restore dry-run: %v\nbody=%s", err, restoreDryOut.String())
+	}
+	if restoreResult.ID != "q-team-quarantined" || restoreResult.Action != "would_restore" || !restoreResult.DryRun {
+		t.Fatalf("restore result = %+v", restoreResult)
+	}
+
+	restoreOther := NewRootCmd()
+	restoreOtherOut, restoreOtherErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreOther.SetOut(restoreOtherOut)
+	restoreOther.SetErr(restoreOtherErr)
+	restoreOther.SetArgs([]string{"team", "queue", "quarantine", "restore", "delivery", otherQuarantinePath, "--repo", root, "--dry-run"})
+	if err := restoreOther.Execute(); err == nil {
+		t.Fatal("team queue quarantine restore unrelated item unexpectedly succeeded")
+	}
+	if !strings.Contains(restoreOtherErr.String(), "not owned by team") {
+		t.Fatalf("restore unrelated stderr = %q stdout=%q", restoreOtherErr.String(), restoreOtherOut.String())
+	}
+
+	dropDry := NewRootCmd()
+	dropDryOut, dropDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropDry.SetOut(dropDryOut)
+	dropDry.SetErr(dropDryErr)
+	dropDry.SetArgs([]string{"team", "queue", "quarantine", "drop", "delivery", teamQuarantinePath, "--repo", root, "--dry-run", "--json"})
+	if err := dropDry.Execute(); err != nil {
+		t.Fatalf("team queue quarantine drop dry-run: %v\nstderr=%s", err, dropDryErr.String())
+	}
+	var dropResults []queueQuarantineDropResult
+	if err := json.Unmarshal(dropDryOut.Bytes(), &dropResults); err != nil {
+		t.Fatalf("decode team queue quarantine drop dry-run: %v\nbody=%s", err, dropDryOut.String())
+	}
+	if len(dropResults) != 1 || dropResults[0].ID != "q-team-quarantined" || dropResults[0].Action != "would_drop" || !dropResults[0].DryRun {
+		t.Fatalf("drop dry-run results = %+v", dropResults)
+	}
+
+	dropAllDry := NewRootCmd()
+	dropAllDryOut, dropAllDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropAllDry.SetOut(dropAllDryOut)
+	dropAllDry.SetErr(dropAllDryErr)
+	dropAllDry.SetArgs([]string{"team", "queue", "quarantine", "drop", "delivery", "--repo", root, "--all", "--dry-run", "--json"})
+	if err := dropAllDry.Execute(); err != nil {
+		t.Fatalf("team queue quarantine drop --all dry-run: %v\nstderr=%s", err, dropAllDryErr.String())
+	}
+	var dropAllResults []queueQuarantineDropResult
+	if err := json.Unmarshal(dropAllDryOut.Bytes(), &dropAllResults); err != nil {
+		t.Fatalf("decode team queue quarantine drop --all dry-run: %v\nbody=%s", err, dropAllDryOut.String())
+	}
+	if len(dropAllResults) != 1 || dropAllResults[0].ID != "q-team-quarantined" {
+		t.Fatalf("drop --all dry-run results = %+v", dropAllResults)
 	}
 
 	jobFiltered := NewRootCmd()

@@ -964,6 +964,115 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "Filter by event type; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Filter by job id or ticket; repeat or comma-separate values.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team-owned quarantined queue files as JSON.")
+	cmd.AddCommand(newTeamQueueQuarantineRestoreCmd())
+	cmd.AddCommand(newTeamQueueQuarantineDropCmd())
+	return cmd
+}
+
+func newTeamQueueQuarantineRestoreCmd() *cobra.Command {
+	var (
+		repo    string
+		dryRun  bool
+		force   bool
+		jsonOut bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "restore <team> <quarantine-path>",
+		Short: "Restore one team-owned quarantined queue file.",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			if _, err := readTeamQueueQuarantineItem(teamDir, args[0], args[1]); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: %v\n", err)
+				return exitErr(1)
+			}
+			result, err := restoreQueueQuarantine(teamDir, args[1], dryRun, force)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: %v\n", err)
+				return exitErr(1)
+			}
+			return renderQueueQuarantineRestore(cmd.OutOrStdout(), result, jsonOut)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the restore without moving files.")
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing active queue file with the same restore path.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit restore result as JSON.")
+	return cmd
+}
+
+func newTeamQueueQuarantineDropCmd() *cobra.Command {
+	var (
+		repo         string
+		dropAll      bool
+		dryRun       bool
+		unrestorable bool
+		olderThan    time.Duration
+		jsonOut      bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "drop <team> [quarantine-path]",
+		Short: "Drop team-owned quarantined queue files after inspection.",
+		Long:  "Drop one team-owned quarantined queue file by path, or drop a filtered team-owned batch with --all.",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if olderThan < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: --older-than must be >= 0.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			if dropAll {
+				if len(args) != 1 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: --all requires exactly one team and cannot be combined with a path.")
+					return exitErr(2)
+				}
+				items, err := collectTeamQueueQuarantineItems(teamDir, args[0], queueListFilters{})
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: %v\n", err)
+					return exitErr(1)
+				}
+				results, err := dropQueueQuarantineItems(teamDir, items, dryRun, olderThan, unrestorable, time.Now().UTC())
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: %v\n", err)
+					return exitErr(1)
+				}
+				return renderQueueQuarantineDrop(cmd.OutOrStdout(), results, jsonOut)
+			}
+			if len(args) != 2 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: requires <team> and one path unless --all is set.")
+				return exitErr(2)
+			}
+			if olderThan > 0 || unrestorable {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: --older-than and --unrestorable require --all.")
+				return exitErr(2)
+			}
+			item, err := readTeamQueueQuarantineItem(teamDir, args[0], args[1])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: %v\n", err)
+				return exitErr(1)
+			}
+			result, err := dropQueueQuarantineItem(daemon.QueueRoot(daemon.DaemonRoot(teamDir)), item, dryRun)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: %v\n", err)
+				return exitErr(1)
+			}
+			return renderQueueQuarantineDrop(cmd.OutOrStdout(), []queueQuarantineDropResult{result}, jsonOut)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&dropAll, "all", false, "Drop all matching team-owned quarantined files instead of one path.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview quarantined files that would be dropped.")
+	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "With --all, only drop quarantined files that cannot be restored.")
+	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "With --all, only drop files older than this duration based on file mtime.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit drop results as JSON.")
 	return cmd
 }
 
@@ -4135,6 +4244,31 @@ func collectTeamQueueQuarantineItems(teamDir, name string, filters queueListFilt
 		return nil, err
 	}
 	return filterQueueQuarantineItems(items, filters), nil
+}
+
+func readTeamQueueQuarantineItem(teamDir, name, rawPath string) (queueQuarantineItem, error) {
+	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return queueQuarantineItem{}, err
+	}
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return queueQuarantineItem{}, err
+	}
+	queueRoot := daemon.QueueRoot(daemon.DaemonRoot(teamDir))
+	rel, err := normalizeQueueQuarantinePath(rawPath)
+	if err != nil {
+		return queueQuarantineItem{}, err
+	}
+	item, err := inspectQueueQuarantineFile(queueRoot, rel)
+	if err != nil {
+		return queueQuarantineItem{}, err
+	}
+	matches := teamQueueQuarantineItems(top, team, teamJobs(top, team, jobs), []queueQuarantineItem{item})
+	if len(matches) == 0 {
+		return queueQuarantineItem{}, fmt.Errorf("quarantined queue file %q is not owned by team %q", item.Path, name)
+	}
+	return item, nil
 }
 
 func readTeamQueueItem(cmd *cobra.Command, teamDir, name, id, verb string) (*daemon.QueueItem, error) {
