@@ -473,6 +473,34 @@ func TestQueueQuarantineListAndRestore(t *testing.T) {
 		t.Fatalf("conflict stderr = %q", conflictErr.String())
 	}
 
+	restoreAllDry := NewRootCmd()
+	restoreAllDryOut, restoreAllDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreAllDry.SetOut(restoreAllDryOut)
+	restoreAllDry.SetErr(restoreAllDryErr)
+	restoreAllDry.SetArgs([]string{"queue", "quarantine", "restore", "--target", tmp, "--all", "--state", "pending", "--instance", "worker", "--event-type", "agent.dispatch", "--job", "SQU-132", "--dry-run", "--json"})
+	if err := restoreAllDry.Execute(); err != nil {
+		t.Fatalf("queue quarantine restore --all dry-run: %v\nstderr=%s", err, restoreAllDryErr.String())
+	}
+	var restoreAllResults []queueQuarantineRestoreResult
+	if err := json.Unmarshal(restoreAllDryOut.Bytes(), &restoreAllResults); err != nil {
+		t.Fatalf("decode restore --all dry-run: %v\nbody=%s", err, restoreAllDryOut.String())
+	}
+	if len(restoreAllResults) != 1 || restoreAllResults[0].ID != "stored-id" || restoreAllResults[0].Action != "would_restore" || !restoreAllResults[0].DryRun {
+		t.Fatalf("restore --all dry-run results = %+v", restoreAllResults)
+	}
+
+	restorePathWithFilter := NewRootCmd()
+	restorePathWithFilterOut, restorePathWithFilterErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restorePathWithFilter.SetOut(restorePathWithFilterOut)
+	restorePathWithFilter.SetErr(restorePathWithFilterErr)
+	restorePathWithFilter.SetArgs([]string{"queue", "quarantine", "restore", "--target", tmp, "--job", "SQU-132", restorable.Path})
+	if err := restorePathWithFilter.Execute(); err == nil {
+		t.Fatalf("queue quarantine restore path with filter succeeded: stdout=%s", restorePathWithFilterOut.String())
+	}
+	if !strings.Contains(restorePathWithFilterErr.String(), "filters require --all") {
+		t.Fatalf("restore path filter stderr = %q", restorePathWithFilterErr.String())
+	}
+
 	show := NewRootCmd()
 	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
 	show.SetOut(showOut)

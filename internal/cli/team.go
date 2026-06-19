@@ -1016,20 +1016,56 @@ func newTeamQueueQuarantineShowCmd() *cobra.Command {
 
 func newTeamQueueQuarantineRestoreCmd() *cobra.Command {
 	var (
-		repo    string
-		dryRun  bool
-		force   bool
-		jsonOut bool
+		repo        string
+		restoreAll  bool
+		dryRun      bool
+		force       bool
+		stateFilter string
+		eventTypes  []string
+		jobs        []string
+		jsonOut     bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "restore <team> <quarantine-path>",
-		Short: "Restore one team-owned quarantined queue file.",
-		Args:  cobra.ExactArgs(2),
+		Short: "Restore team-owned quarantined queue files.",
+		Long:  "Restore one team-owned quarantined queue file by path, or restore a filtered team-owned batch of restorable files with --all.",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			filters, err := parseQueueListFilters(stateFilter, nil, eventTypes, jobs, false, time.Now().UTC())
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
+			}
+			if restoreAll {
+				if len(args) != 1 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: --all requires exactly one team and cannot be combined with a path.")
+					return exitErr(2)
+				}
+				items, err := collectTeamQueueQuarantineItems(teamDir, args[0], filters)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: %v\n", err)
+					return exitErr(1)
+				}
+				items = filterQueueQuarantineRestorable(items, true, false)
+				results, err := restoreQueueQuarantineItems(teamDir, items, dryRun, force)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: %v\n", err)
+					return exitErr(1)
+				}
+				return renderQueueQuarantineRestoreMany(cmd.OutOrStdout(), results, jsonOut)
+			}
+			if len(args) != 2 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: requires <team> and one path unless --all is set.")
+				return exitErr(2)
+			}
+			if !filters.empty() {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: filters require --all.")
+				return exitErr(2)
 			}
 			if _, err := readTeamQueueQuarantineItem(teamDir, args[0], args[1]); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: %v\n", err)
@@ -1044,8 +1080,12 @@ func newTeamQueueQuarantineRestoreCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&restoreAll, "all", false, "Restore all matching team-owned restorable quarantined files instead of one path.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the restore without moving files.")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing active queue file with the same restore path.")
+	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead.")
+	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit restore result as JSON.")
 	return cmd
 }

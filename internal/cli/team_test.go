@@ -2038,6 +2038,34 @@ instances = ["other"]
 		t.Fatalf("team queue quarantine show text =\n%s", showQuarantineTextOut.String())
 	}
 
+	restoreAllDry := NewRootCmd()
+	restoreAllDryOut, restoreAllDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreAllDry.SetOut(restoreAllDryOut)
+	restoreAllDry.SetErr(restoreAllDryErr)
+	restoreAllDry.SetArgs([]string{"team", "queue", "quarantine", "restore", "delivery", "--repo", root, "--all", "--job", "SQU-501", "--state", "dead", "--dry-run", "--json"})
+	if err := restoreAllDry.Execute(); err != nil {
+		t.Fatalf("team queue quarantine restore --all dry-run: %v\nstderr=%s", err, restoreAllDryErr.String())
+	}
+	var restoreAllResults []queueQuarantineRestoreResult
+	if err := json.Unmarshal(restoreAllDryOut.Bytes(), &restoreAllResults); err != nil {
+		t.Fatalf("decode team queue quarantine restore --all dry-run: %v\nbody=%s", err, restoreAllDryOut.String())
+	}
+	if len(restoreAllResults) != 1 || restoreAllResults[0].ID != "q-team-quarantined" || restoreAllResults[0].Action != "would_restore" || !restoreAllResults[0].DryRun {
+		t.Fatalf("team restore --all dry-run results = %+v", restoreAllResults)
+	}
+
+	restoreFilterPath := NewRootCmd()
+	restoreFilterPathOut, restoreFilterPathErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreFilterPath.SetOut(restoreFilterPathOut)
+	restoreFilterPath.SetErr(restoreFilterPathErr)
+	restoreFilterPath.SetArgs([]string{"team", "queue", "quarantine", "restore", "delivery", teamQuarantinePath, "--repo", root, "--job", "SQU-501", "--dry-run"})
+	if err := restoreFilterPath.Execute(); err == nil {
+		t.Fatalf("team queue quarantine restore path with filter succeeded: stdout=%s", restoreFilterPathOut.String())
+	}
+	if !strings.Contains(restoreFilterPathErr.String(), "filters require --all") {
+		t.Fatalf("restore path filter stderr = %q", restoreFilterPathErr.String())
+	}
+
 	restoreDry := NewRootCmd()
 	restoreDryOut, restoreDryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restoreDry.SetOut(restoreDryOut)
