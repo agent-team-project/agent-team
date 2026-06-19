@@ -38,6 +38,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamPlanCmd())
 	cmd.AddCommand(newTeamPsCmd())
 	cmd.AddCommand(newTeamJobsCmd())
+	cmd.AddCommand(newTeamReadyCmd())
 	cmd.AddCommand(newTeamQueueCmd())
 	cmd.AddCommand(newTeamLogsCmd())
 	cmd.AddCommand(newTeamEventsCmd())
@@ -488,6 +489,52 @@ func newTeamJobsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "id", "Sort jobs by id, status, target, ticket, created, updated, instance, branch, or pr.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team jobs as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
+	return cmd
+}
+
+func newTeamReadyCmd() *cobra.Command {
+	var (
+		repo    string
+		states  []string
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "ready <team>",
+		Short: "List ready pipeline jobs owned by one team.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ready: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			stateFilter, err := parseJobNextStateFilter(states, !cmd.Flags().Changed("state"))
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team ready: %v\n", err)
+				return exitErr(2)
+			}
+			tmpl, err := parseJobReadyFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team ready: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			rows, err := collectTeamReadyRows(teamDir, args[0], stateFilter)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team ready: %v\n", err)
+				return exitErr(1)
+			}
+			return renderTeamReadyRows(cmd.OutOrStdout(), rows, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringSliceVar(&states, "state", nil, "Next-step state to include: ready, queued, running, blocked, failed, done, none, or all. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team ready rows as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.")
 	return cmd
 }
 
@@ -3478,6 +3525,49 @@ func collectTeamJobs(teamDir, name string, status job.Status, sortMode string) (
 	}
 	sortJobs(owned, sortMode)
 	return owned, nil
+}
+
+func collectTeamReadyRows(teamDir, name string, states map[string]bool) ([]jobReadyRow, error) {
+	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	owned := teamJobs(top, team, jobs)
+	rows := make([]jobReadyRow, 0, len(owned))
+	for _, j := range owned {
+		if j == nil || len(j.Steps) == 0 {
+			continue
+		}
+		next := inspectNextJobStep(j)
+		if len(states) > 0 && !states[next.State] {
+			continue
+		}
+		rows = append(rows, jobReadyRowFromJob(j, next))
+	}
+	return rows, nil
+}
+
+func renderTeamReadyRows(w io.Writer, rows []jobReadyRow, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(rows)
+	}
+	if tmpl != nil {
+		for _, row := range rows {
+			if err := tmpl.Execute(w, row); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	renderJobReadyTable(w, rows)
+	return nil
 }
 
 func collectTeamQueueItems(teamDir, name string, filters queueListFilters, now time.Time) ([]*daemon.QueueItem, error) {

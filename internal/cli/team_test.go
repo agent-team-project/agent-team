@@ -70,6 +70,22 @@ since = "2026-06-18T12:00:00Z"
 	if err := job.Write(teamDir, pipelineJob); err != nil {
 		t.Fatalf("write job: %v", err)
 	}
+	outsideJob := &job.Job{
+		ID:        "oth-801",
+		Ticket:    "OTH-801",
+		Target:    "platform",
+		Pipeline:  "platform_ops",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "platform-worker", Status: job.StatusDone},
+			{ID: "review", Target: "platform-manager", Status: job.StatusBlocked, After: []string{"implement"}},
+		},
+	}
+	if err := job.Write(teamDir, outsideJob); err != nil {
+		t.Fatalf("write outside job: %v", err)
+	}
 	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), &daemon.QueueItem{
 		ID:             "q-status-team",
 		State:          daemon.QueueStateDead,
@@ -179,6 +195,34 @@ since = "2026-06-18T12:00:00Z"
 	}
 	if got := strings.TrimSpace(formatOut.String()); got != "squ-801 ticket_to_pr" {
 		t.Fatalf("team jobs format = %q", got)
+	}
+
+	ready := NewRootCmd()
+	readyOut, readyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	ready.SetOut(readyOut)
+	ready.SetErr(readyErr)
+	ready.SetArgs([]string{"team", "ready", "delivery", "--repo", root, "--json"})
+	if err := ready.Execute(); err != nil {
+		t.Fatalf("team ready: %v\nstderr=%s", err, readyErr.String())
+	}
+	var readyRows []jobReadyRow
+	if err := json.Unmarshal(readyOut.Bytes(), &readyRows); err != nil {
+		t.Fatalf("decode team ready: %v\nbody=%s", err, readyOut.String())
+	}
+	if len(readyRows) != 1 || readyRows[0].JobID != "squ-801" || readyRows[0].State != "ready" || readyRows[0].StepID != "review" {
+		t.Fatalf("team ready rows = %+v", readyRows)
+	}
+
+	readyFormat := NewRootCmd()
+	readyFormatOut, readyFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	readyFormat.SetOut(readyFormatOut)
+	readyFormat.SetErr(readyFormatErr)
+	readyFormat.SetArgs([]string{"team", "ready", "delivery", "--repo", root, "--state", "all", "--format", "{{.JobID}} {{.State}} {{.StepID}}"})
+	if err := readyFormat.Execute(); err != nil {
+		t.Fatalf("team ready format: %v\nstderr=%s", err, readyFormatErr.String())
+	}
+	if got := strings.TrimSpace(readyFormatOut.String()); got != "squ-801 ready review" {
+		t.Fatalf("team ready format = %q", got)
 	}
 
 	pipelines := NewRootCmd()

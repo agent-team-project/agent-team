@@ -235,6 +235,8 @@ agent-team team wait <team> [<instance>...] [-q] [--latest | --last N] [--status
                                   # scoped wait for declared persistent team members and live team-owned ephemeral children
 agent-team team run <team> <ticket> [kickoff...] [--pipeline name] [--ticket-url <url>] [--dispatch] [--workspace auto|worktree|repo] [--dry-run] [--format '{{.ID}} {{.Pipeline}}'] [--json]
                                   # create a durable job through the team's single declared pipeline, or a selected pipeline for multi-pipeline teams
+agent-team team ready <team> [--state ready|queued|running|blocked|failed|done|none|all] [--format '{{.JobID}} {{.State}} {{.StepID}}'] [--json]
+                                  # list next-step readiness for pipeline jobs owned by one team
 agent-team team prune <team> [-q] [--dry-run] [--older-than 24h] [--status exited|crashed] [--phase done] [--stale] [--unhealthy] [--summary] [--format '{{.Instance}} {{.Path}}'] [--json]
                                   # scoped cleanup for finished daemon-known instances owned by one team
 agent-team team stats <team> [<instance>...] [-w] [--no-clear] [-a] [--latest | --last N] [--status running] [--phase idle] [--stale] [--unhealthy] [--summary] [--sort cpu|mem|rss|status|agent|phase|stale|unhealthy|name] [--format '{{.Instance}} {{.CPUPercent}} {{.RSS}}'] [--json] [--interval 2s]
