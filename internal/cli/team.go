@@ -863,8 +863,12 @@ func newTeamTickCmd() *cobra.Command {
 		skipAdvance   bool
 		dryRun        bool
 		previewRoutes bool
+		watch         bool
+		untilIdle     bool
 		jsonOut       bool
 		format        string
+		interval      time.Duration
+		maxCycles     int
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -881,8 +885,28 @@ func newTeamTickCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --limit must be >= 0.")
 				return exitErr(2)
 			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if watch && untilIdle {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: choose one of --watch or --until-idle.")
+				return exitErr(2)
+			}
+			if untilIdle && dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --until-idle cannot be combined with --dry-run.")
+				return exitErr(2)
+			}
 			if previewRoutes && !dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --preview-routes requires --dry-run.")
+				return exitErr(2)
+			}
+			if maxCycles <= 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --max-cycles must be > 0.")
+				return exitErr(2)
+			}
+			if cmd.Flags().Changed("max-cycles") && !untilIdle {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --max-cycles requires --until-idle.")
 				return exitErr(2)
 			}
 			tmpl, err := parseTeamTickFormat(format)
@@ -894,13 +918,41 @@ func newTeamTickCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := runTeamTick(cmd, teamDir, args[0], workspace, limit, tickOptions{
+			opts := tickOptions{
 				SkipSchedules: skipSchedules,
 				SkipDrain:     skipDrain,
 				SkipAdvance:   skipAdvance,
 				DryRun:        dryRun,
 				PreviewRoutes: previewRoutes,
-			})
+			}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				if err := runTeamTickLoop(ctx, cmd, teamDir, args[0], workspace, limit, opts, jsonOut, tmpl, interval); err != nil {
+					if errors.Is(err, errDaemonNotRunning) {
+						fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: daemon is not running — start it with `agent-team start`, or use --dry-run.")
+						return exitErr(2)
+					}
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team tick: %v\n", err)
+					return exitErr(1)
+				}
+				return nil
+			}
+			if untilIdle {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				result, err := runTeamTickUntilIdle(ctx, cmd, teamDir, args[0], workspace, limit, opts, maxCycles, interval)
+				if err != nil {
+					if errors.Is(err, errDaemonNotRunning) {
+						fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: daemon is not running — start it with `agent-team start`, or use --dry-run.")
+						return exitErr(2)
+					}
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team tick: %v\n", err)
+					return exitErr(1)
+				}
+				return renderTeamTickUntilIdleResult(cmd.OutOrStdout(), result, jsonOut, tmpl)
+			}
+			result, err := runTeamTick(cmd, teamDir, args[0], workspace, limit, opts)
 			if err != nil {
 				if errors.Is(err, errDaemonNotRunning) {
 					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: daemon is not running — start it with `agent-team start`, or use --dry-run.")
@@ -920,8 +972,12 @@ func newTeamTickCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipAdvance, "skip-advance", false, "Skip pipeline advancement work.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview team-owned maintenance work without mutating state.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include route and dispatch payload previews for ready pipeline steps.")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Run the team tick repeatedly until interrupted.")
+	cmd.Flags().BoolVar(&untilIdle, "until-idle", false, "Run team tick cycles until no immediate team schedule, queue, or pipeline work remains.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the team tick result with a Go template, e.g. '{{.Team.Name}} {{.Tick.Queue.WouldDispatch}}'.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch, or delay between --until-idle cycles.")
+	cmd.Flags().IntVar(&maxCycles, "max-cycles", 20, "With --until-idle, stop after this many cycles if work keeps appearing.")
 	return cmd
 }
 
@@ -1432,6 +1488,14 @@ type teamTickResult struct {
 	Team      teamInfo   `json:"team"`
 	CheckedAt string     `json:"checked_at"`
 	Tick      tickResult `json:"tick"`
+}
+
+type teamTickUntilIdleResult struct {
+	Team      teamInfo          `json:"team"`
+	CyclesRun int               `json:"cycles_run"`
+	Idle      bool              `json:"idle"`
+	HitLimit  bool              `json:"hit_limit,omitempty"`
+	Cycles    []*teamTickResult `json:"cycles"`
 }
 
 func loadTeamInfos(teamDir string) ([]teamInfo, error) {
@@ -2677,6 +2741,75 @@ func runTeamTick(cmd *cobra.Command, teamDir, name, workspace string, limit int,
 	return result, nil
 }
 
+func runTeamTickLoop(ctx context.Context, cmd *cobra.Command, teamDir, name, workspace string, limit int, opts tickOptions, jsonOut bool, tmpl *template.Template, interval time.Duration) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	first := true
+	for {
+		result, err := runTeamTick(cmd, teamDir, name, workspace, limit, opts)
+		if err != nil {
+			return err
+		}
+		if !first && !jsonOut {
+			fmt.Fprintln(cmd.OutOrStdout())
+		}
+		if err := renderTeamTickResult(cmd.OutOrStdout(), result, jsonOut, tmpl); err != nil {
+			return err
+		}
+		first = false
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func runTeamTickUntilIdle(ctx context.Context, cmd *cobra.Command, teamDir, name, workspace string, limit int, opts tickOptions, maxCycles int, interval time.Duration) (*teamTickUntilIdleResult, error) {
+	if maxCycles <= 0 {
+		maxCycles = 1
+	}
+	result := &teamTickUntilIdleResult{Cycles: []*teamTickResult{}}
+	for cycle := 0; cycle < maxCycles; cycle++ {
+		if cycle > 0 && interval > 0 {
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				result.CyclesRun = len(result.Cycles)
+				return result, nil
+			case <-timer.C:
+			}
+		}
+		tick, err := runTeamTick(cmd, teamDir, name, workspace, limit, opts)
+		if err != nil {
+			result.CyclesRun = len(result.Cycles)
+			return result, err
+		}
+		if result.Team.Name == "" {
+			result.Team = tick.Team
+		}
+		result.Cycles = append(result.Cycles, tick)
+		if teamTickResultIsIdle(tick) {
+			result.Idle = true
+			break
+		}
+	}
+	result.CyclesRun = len(result.Cycles)
+	result.HitLimit = !result.Idle && result.CyclesRun >= maxCycles
+	return result, nil
+}
+
+func teamTickResultIsIdle(result *teamTickResult) bool {
+	if result == nil {
+		return true
+	}
+	return tickResultIsIdle(&result.Tick)
+}
+
 func previewTeamScheduleFire(teamDir string, team *topology.Team, now time.Time) (*daemon.ScheduleFireResult, error) {
 	schedules, err := loadScheduleInfos(teamDir)
 	if err != nil {
@@ -2804,6 +2937,42 @@ func renderTeamTickResult(w io.Writer, result *teamTickResult, jsonOut bool, tmp
 		return renderPipelineAdvanceResults(w, result.Tick.Advance, false, nil)
 	}
 	fmt.Fprintln(w, "Pipeline advance: skipped")
+	return nil
+}
+
+func renderTeamTickUntilIdleResult(w io.Writer, result *teamTickUntilIdleResult, jsonOut bool, tmpl *template.Template) error {
+	if result == nil {
+		result = &teamTickUntilIdleResult{Cycles: []*teamTickResult{}}
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(result)
+	}
+	if tmpl != nil {
+		if err := tmpl.Execute(w, result); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(w)
+		return err
+	}
+	for i, cycle := range result.Cycles {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintf(w, "Cycle %d:\n", i+1)
+		if err := renderTeamTickResult(w, cycle, false, nil); err != nil {
+			return err
+		}
+	}
+	if len(result.Cycles) > 0 {
+		fmt.Fprintln(w)
+	}
+	if result.Idle {
+		fmt.Fprintf(w, "team tick: idle after %d cycle(s)\n", result.CyclesRun)
+	} else if result.HitLimit {
+		fmt.Fprintf(w, "team tick: hit max cycles (%d) before idle\n", result.CyclesRun)
+	} else {
+		fmt.Fprintf(w, "team tick: stopped after %d cycle(s)\n", result.CyclesRun)
+	}
 	return nil
 }
 

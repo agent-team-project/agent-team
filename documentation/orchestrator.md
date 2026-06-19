@@ -225,8 +225,8 @@ agent-team sync [-q] [--dry-run] [--stop-extras] [--agent manager] [--instance m
                                   # reload topology, reconcile metadata, start/resume persistent instances, and optionally stop running extras
 agent-team tick [-w | --until-idle] [--interval 2s] [--max-cycles N] [--dry-run] [--preview-routes] [--skip-reconcile] [--skip-schedules] [--skip-drain] [--skip-advance] [--limit N] [--workspace auto|worktree|repo] [--format '{{.Queue.Dispatched}} {{len .Advance}}'] [--json]
                                   # operator maintenance cycle, watch loop, or finite drain until no immediate schedule/queue/pipeline work remains
-agent-team team tick <team> [--dry-run] [--preview-routes] [--skip-schedules] [--skip-drain] [--skip-advance] [--limit N] [--workspace auto|worktree|repo] [--json]
-                                  # scoped run or preview of one team's due schedules, drainable queue items, and ready pipeline steps
+agent-team team tick <team> [-w | --until-idle] [--interval 2s] [--max-cycles N] [--dry-run] [--preview-routes] [--skip-schedules] [--skip-drain] [--skip-advance] [--limit N] [--workspace auto|worktree|repo] [--json]
+                                  # scoped run, watch loop, finite drain, or preview for one team's due schedules, queue, and pipeline steps
 agent-team inspect [<instance>...] [--all] [--latest | --last N] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--format '{{.Instance}} {{if .Runtime}}{{.Runtime.Lifecycle}}{{end}}'] [--json]
                                   # runtime metadata + state/status/topology detail; reads persisted runtime metadata if the daemon is down
 agent-team wait [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--until terminal|running|stopped|exited|crashed|removed] [--until-phase done] [--timeout 5m] [--interval 500ms] [--dry-run] [--fail-on-crash] [--summary] [--format '{{.Instance}} {{.Status}} {{.Phase}}'] [--json] # wait for lifecycle or work-phase condition; uses persisted metadata if daemon is down

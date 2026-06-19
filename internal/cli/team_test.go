@@ -1471,6 +1471,141 @@ schedules = ["platform_due"]
 	stopAndWaitForTest(t, mgr, teamJob.Steps[0].Instance)
 }
 
+func TestTeamTickUntilIdleScopesQueueWork(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "agent-team-team-tick-idle-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	teamDir := filepath.Join(root, ".agent_team")
+	for _, agent := range []string{"worker", "other"} {
+		agentDir := filepath.Join(teamDir, "agents", agent)
+		if err := os.MkdirAll(agentDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\ndescription: test " + agent + "\n---\n\nYou are a test " + agent + ".\n"
+		if err := os.WriteFile(filepath.Join(agentDir, "agent.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.other]
+agent = "other"
+ephemeral = true
+replicas = 1
+
+[[instances.other.triggers]]
+event = "agent.dispatch"
+match.target = "other"
+
+[teams.delivery]
+instances = ["worker"]
+
+[teams.platform]
+instances = ["other"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:         "q-idle-delivery",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-idle-delivery",
+			Payload:    map[string]any{"target": "worker", "name": "worker-idle-delivery", "ticket": "SQU-IDLE"},
+			QueuedAt:   now.Add(-time.Minute),
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+		{
+			ID:         "q-idle-platform",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "other",
+			InstanceID: "other-idle-platform",
+			Payload:    map[string]any{"target": "other", "name": "other-idle-platform", "ticket": "OTH-IDLE"},
+			QueuedAt:   now.Add(-time.Minute),
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+	} {
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+			t.Fatalf("write queue item %s: %v", item.ID, err)
+		}
+	}
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), fakeSpawnerForTest(t, 2*time.Second))
+	cleanupDaemon := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanupDaemon()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "tick", "delivery", "--repo", root, "--skip-schedules", "--skip-advance", "--until-idle", "--interval", "0s", "--max-cycles", "3", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team tick until-idle: %v\nstderr=%s", err, stderr.String())
+	}
+	var result teamTickUntilIdleResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode team tick until-idle: %v\nbody=%s", err, out.String())
+	}
+	if result.Team.Name != "delivery" || !result.Idle || result.CyclesRun != 2 || len(result.Cycles) != 2 {
+		t.Fatalf("until-idle result = %+v", result)
+	}
+	if result.Cycles[0].Tick.Queue == nil || result.Cycles[0].Tick.Queue.Dispatched != 1 {
+		t.Fatalf("first cycle queue = %+v", result.Cycles[0].Tick.Queue)
+	}
+	if result.Cycles[1].Tick.Queue == nil || result.Cycles[1].Tick.Queue.Dispatched != 0 || result.Cycles[1].Tick.Queue.Pending != 0 {
+		t.Fatalf("second cycle queue = %+v", result.Cycles[1].Tick.Queue)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-idle-delivery"); !os.IsNotExist(err) {
+		t.Fatalf("delivery queue item still exists or unexpected err=%v", err)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-idle-platform"); err != nil {
+		t.Fatalf("platform queue item changed: %v", err)
+	}
+	stopAndWaitForTest(t, mgr, "worker-idle-delivery")
+}
+
+func TestTeamTickRejectsInvalidLoopFlags(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "watch until idle",
+			args: []string{"team", "tick", "delivery", "--watch", "--until-idle"},
+			want: "choose one of --watch or --until-idle",
+		},
+		{
+			name: "dry until idle",
+			args: []string{"team", "tick", "delivery", "--until-idle", "--dry-run"},
+			want: "--until-idle cannot be combined with --dry-run",
+		},
+		{
+			name: "max cycles without until idle",
+			args: []string{"team", "tick", "delivery", "--max-cycles", "2"},
+			want: "--max-cycles requires --until-idle",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			stderr := &bytes.Buffer{}
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err == nil {
+				t.Fatalf("team tick %s succeeded", tc.name)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
 func setupTeamScopedPlanFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
