@@ -579,6 +579,7 @@ func newTeamPsCmd() *cobra.Command {
 		noClear  bool
 		interval time.Duration
 		jsonOut  bool
+		format   string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -589,6 +590,15 @@ func newTeamPsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ps: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if format != "" && (watch || jsonOut) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ps: --format cannot be combined with --watch or --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePsFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team ps: %v\n", err)
 				return exitErr(2)
 			}
 			teamDir, err := resolveTeamDir(cmd, repo)
@@ -606,7 +616,7 @@ func newTeamPsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team ps: %v\n", err)
 				return exitErr(1)
 			}
-			return renderTeamPs(cmd.OutOrStdout(), rows, jsonOut)
+			return renderTeamPs(cmd.OutOrStdout(), rows, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
@@ -614,6 +624,7 @@ func newTeamPsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team instances as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each team instance with a Go template, e.g. '{{.Instance}} {{.Status}}'.")
 	return cmd
 }
 
@@ -6119,7 +6130,10 @@ func renderTeamPlan(w io.Writer, snapshot *teamPlanSnapshot) {
 	renderPlan(w, snapshot.Plan)
 }
 
-func renderTeamPs(w io.Writer, rows []instanceRow, jsonOut bool) error {
+func renderTeamPs(w io.Writer, rows []instanceRow, jsonOut bool, tmpl *template.Template) error {
+	if tmpl != nil {
+		return renderPsFormat(w, rows, tmpl)
+	}
 	return renderTeamPsWithClear(w, rows, jsonOut, false)
 }
 

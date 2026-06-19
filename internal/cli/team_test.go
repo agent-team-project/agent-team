@@ -188,6 +188,20 @@ since = "2026-06-18T12:00:00Z"
 		}
 	}
 
+	psFormat := NewRootCmd()
+	psFormatOut, psFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	psFormat.SetOut(psFormatOut)
+	psFormat.SetErr(psFormatErr)
+	psFormat.SetArgs([]string{"team", "ps", "delivery", "--repo", root, "--format", "{{.Instance}} {{.Phase}}"})
+	if err := psFormat.Execute(); err != nil {
+		t.Fatalf("team ps format: %v\nstderr=%s", err, psFormatErr.String())
+	}
+	for _, want := range []string{"manager idle", "ticket-manager unknown", "worker unknown"} {
+		if !strings.Contains(psFormatOut.String(), want) {
+			t.Fatalf("team ps format missing %q:\n%s", want, psFormatOut.String())
+		}
+	}
+
 	jobs := NewRootCmd()
 	jobsOut, jobsErr := &bytes.Buffer{}, &bytes.Buffer{}
 	jobs.SetOut(jobsOut)
@@ -4265,6 +4279,49 @@ func TestTeamPsRejectsNegativeInterval(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--interval must be >= 0") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestTeamPsRejectsFormatCombinations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "format with json",
+			args: []string{"team", "ps", "delivery", "--format", "{{.Instance}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "format with watch",
+			args: []string{"team", "ps", "delivery", "--format", "{{.Instance}}", "--watch"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "invalid format",
+			args: []string{"team", "ps", "delivery", "--format", "{{"},
+			want: "invalid --format template",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("team ps invalid format succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("team ps err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 
