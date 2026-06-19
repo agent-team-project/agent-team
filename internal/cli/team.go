@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +28,9 @@ func newTeamCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newTeamLsCmd())
 	cmd.AddCommand(newTeamShowCmd())
+	cmd.AddCommand(newTeamUpCmd())
+	cmd.AddCommand(newTeamDownCmd())
+	cmd.AddCommand(newTeamRestartCmd())
 	cmd.AddCommand(newTeamPsCmd())
 	cmd.AddCommand(newTeamJobsCmd())
 	cmd.AddCommand(newTeamPipelinesCmd())
@@ -271,6 +275,241 @@ func newTeamSchedulesCmd() *cobra.Command {
 	return cmd
 }
 
+func newTeamUpCmd() *cobra.Command {
+	var (
+		repo         string
+		prompt       string
+		wait         bool
+		timeout      time.Duration
+		readyTimeout time.Duration
+		dryRun       bool
+		summary      bool
+		attach       bool
+		tail         string
+		quiet        bool
+		jsonOut      bool
+		format       string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:     "up <team>",
+		Aliases: []string{"start"},
+		Short:   "Start or resume a team's declared persistent instances.",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			tailLines, formatTemplate, err := validateTeamUpOptions(cmd, "agent-team team up", teamLifecycleUpOptions{
+				Wait:          wait,
+				Timeout:       timeout,
+				ReadyTimeout:  readyTimeout,
+				DryRun:        dryRun,
+				Summary:       summary,
+				Attach:        attach,
+				AttachTailSet: cmd.Flags().Changed("tail"),
+				Tail:          tail,
+				Quiet:         quiet,
+				JSON:          jsonOut,
+				Format:        format,
+			})
+			if err != nil {
+				return err
+			}
+			_, names, err := loadTeamPersistentLifecycleInstances(cmd, repo, args[0])
+			if err != nil {
+				return reportTeamLifecycleLoadError(cmd, "agent-team team up", err)
+			}
+			if len(names) == 0 {
+				return writeEmptyTeamLifecycleStart(cmd, args[0], "up", dryRun, wait, summary, quiet, jsonOut, formatTemplate)
+			}
+			if !dryRun {
+				if err := ensureDaemonReadyWithTimeout(cmd, repo, jsonOut || quiet, readyTimeout); err != nil {
+					return err
+				}
+			}
+			return runInstanceUpWithOptions(cmd, repo, prompt, names, instanceUpOptions{
+				Wait:          wait,
+				Timeout:       timeout,
+				DryRun:        dryRun,
+				Summary:       summary,
+				Attach:        attach,
+				AttachTail:    tailLines,
+				AttachTailSet: cmd.Flags().Changed("tail"),
+				Quiet:         quiet,
+				JSON:          jsonOut,
+				Format:        formatTemplate,
+				Health:        teamLifecycleHealthOptions(names),
+			})
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&prompt, "prompt", "", "Override the default kickoff prompt.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for selected instances to become healthy after starting.")
+	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
+	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for implicit daemon readiness (0 = no timeout).")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview planned start/resume actions without changing daemon state.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate action counts instead of per-instance rows.")
+	cmd.Flags().BoolVar(&attach, "attach", false, "Follow the selected instance log after starting or resuming. Requires exactly one selected instance.")
+	cmd.Flags().StringVar(&tail, "tail", "50", "With --attach, show only the last N lines before following (0 or all = all).")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output and use only the exit code.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.")
+	return cmd
+}
+
+func newTeamDownCmd() *cobra.Command {
+	var (
+		repo        string
+		force       bool
+		wait        bool
+		timeout     time.Duration
+		waitTimeout time.Duration
+		dryRun      bool
+		remove      bool
+		summary     bool
+		quiet       bool
+		jsonOut     bool
+		format      string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:     "down <team>",
+		Aliases: []string{"stop"},
+		Short:   "Stop a team's persistent instances and active ephemeral children.",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			formatTemplate, err := validateTeamDownOptions(cmd, "agent-team team down", teamLifecycleDownOptions{
+				Wait:        wait,
+				Timeout:     timeout,
+				WaitTimeout: waitTimeout,
+				DryRun:      dryRun,
+				Summary:     summary,
+				Quiet:       quiet,
+				JSON:        jsonOut,
+				Format:      format,
+			})
+			if err != nil {
+				return err
+			}
+			_, names, err := loadTeamStopLifecycleInstances(cmd, repo, args[0])
+			if err != nil {
+				return reportTeamLifecycleLoadError(cmd, "agent-team team down", err)
+			}
+			if len(names) == 0 {
+				return writeEmptyTeamLifecycleDown(cmd, args[0], "stop", dryRun, summary, quiet, jsonOut, formatTemplate)
+			}
+			return runInstanceDownWithOptions(cmd, repo, names, instanceDownOptions{
+				Force:          force,
+				Wait:           wait,
+				Timeout:        timeout,
+				WaitTimeout:    waitTimeout,
+				WaitTimeoutSet: cmd.Flags().Changed("wait-timeout"),
+				DryRun:         dryRun,
+				Remove:         remove,
+				Summary:        summary,
+				Quiet:          quiet,
+				JSON:           jsonOut,
+				Format:         formatTemplate,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Escalate to SIGKILL if an instance does not stop within --timeout.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for stopped instances to reach a terminal state.")
+	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Grace before --force kills. With --wait and no --wait-timeout, also used as the wait deadline (0 = no wait deadline; force defaults to 10s).")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 0, "Maximum time to wait for terminal state with --wait. Defaults to --timeout when unset; set 0 explicitly for no wait timeout.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview planned stop actions without changing daemon state.")
+	cmd.Flags().BoolVar(&remove, "rm", false, "Remove selected instance state and daemon metadata after stopping.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate action counts instead of per-instance rows.")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output and use only the exit code.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.")
+	return cmd
+}
+
+func newTeamRestartCmd() *cobra.Command {
+	var (
+		repo         string
+		prompt       string
+		timeout      time.Duration
+		readyTimeout time.Duration
+		wait         bool
+		waitTimeout  time.Duration
+		force        bool
+		dryRun       bool
+		summary      bool
+		attach       bool
+		tail         string
+		quiet        bool
+		jsonOut      bool
+		format       string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "restart <team>",
+		Short: "Restart or resume a team's declared persistent instances.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			tailLines, formatTemplate, err := validateTeamRestartOptions(cmd, "agent-team team restart", teamLifecycleRestartOptions{
+				Timeout:       timeout,
+				ReadyTimeout:  readyTimeout,
+				Wait:          wait,
+				WaitTimeout:   waitTimeout,
+				DryRun:        dryRun,
+				Summary:       summary,
+				Attach:        attach,
+				AttachTailSet: cmd.Flags().Changed("tail"),
+				Tail:          tail,
+				Quiet:         quiet,
+				JSON:          jsonOut,
+				Format:        format,
+			})
+			if err != nil {
+				return err
+			}
+			_, names, err := loadTeamPersistentLifecycleInstances(cmd, repo, args[0])
+			if err != nil {
+				return reportTeamLifecycleLoadError(cmd, "agent-team team restart", err)
+			}
+			if len(names) == 0 {
+				return writeEmptyTeamLifecycleStart(cmd, args[0], "restart", dryRun, wait, summary, quiet, jsonOut, formatTemplate)
+			}
+			if !dryRun {
+				if err := ensureDaemonReadyWithTimeout(cmd, repo, jsonOut || quiet, readyTimeout); err != nil {
+					return err
+				}
+			}
+			return runInstanceRestart(cmd, repo, prompt, names, instanceRestartOptions{
+				Timeout:       timeout,
+				Wait:          wait,
+				WaitTimeout:   waitTimeout,
+				Force:         force,
+				DryRun:        dryRun,
+				Summary:       summary,
+				Attach:        attach,
+				AttachTail:    tailLines,
+				AttachTailSet: cmd.Flags().Changed("tail"),
+				Quiet:         quiet,
+				JSON:          jsonOut,
+				Format:        formatTemplate,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&prompt, "prompt", "", "Override the default kickoff prompt for instances started fresh.")
+	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait for each running instance to stop before resuming (0 = daemon default).")
+	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for implicit daemon readiness (0 = no timeout).")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for selected instances to become healthy after restarting.")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 0, "Maximum time to wait for health with --wait (0 = no timeout).")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Escalate to SIGKILL if a running instance does not stop within --timeout before restarting.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview planned restart/resume actions without changing daemon state.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate action counts instead of per-instance rows.")
+	cmd.Flags().BoolVar(&attach, "attach", false, "Follow the selected instance log after restarting or resuming. Requires exactly one selected instance.")
+	cmd.Flags().StringVar(&tail, "tail", "50", "With --attach, show only the last N lines before following (0 or all = all).")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output and use only the exit code.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.")
+	return cmd
+}
+
 func newTeamHealthCmd() *cobra.Command {
 	var (
 		repo        string
@@ -502,6 +741,323 @@ func collectTeamPsRows(teamDir, name string, now time.Time) ([]instanceRow, erro
 		return nil, err
 	}
 	return teamInstanceRows(top, team, rows), nil
+}
+
+type teamLifecycleUpOptions struct {
+	Wait          bool
+	Timeout       time.Duration
+	ReadyTimeout  time.Duration
+	DryRun        bool
+	Summary       bool
+	Attach        bool
+	AttachTailSet bool
+	Tail          string
+	Quiet         bool
+	JSON          bool
+	Format        string
+}
+
+type teamLifecycleDownOptions struct {
+	Wait        bool
+	Timeout     time.Duration
+	WaitTimeout time.Duration
+	DryRun      bool
+	Summary     bool
+	Quiet       bool
+	JSON        bool
+	Format      string
+}
+
+type teamLifecycleRestartOptions struct {
+	Timeout       time.Duration
+	ReadyTimeout  time.Duration
+	Wait          bool
+	WaitTimeout   time.Duration
+	DryRun        bool
+	Summary       bool
+	Attach        bool
+	AttachTailSet bool
+	Tail          string
+	Quiet         bool
+	JSON          bool
+	Format        string
+}
+
+func loadTeamPersistentLifecycleInstances(cmd *cobra.Command, repo, name string) (string, []string, error) {
+	teamDir, err := resolveTeamDir(cmd, repo)
+	if err != nil {
+		return "", nil, err
+	}
+	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return "", nil, err
+	}
+	return teamDir, teamPersistentLifecycleInstanceNames(top, team), nil
+}
+
+func loadTeamStopLifecycleInstances(cmd *cobra.Command, repo, name string) (string, []string, error) {
+	teamDir, err := resolveTeamDir(cmd, repo)
+	if err != nil {
+		return "", nil, err
+	}
+	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return "", nil, err
+	}
+	names := teamPersistentLifecycleInstanceNames(top, team)
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return "", nil, err
+	}
+	names = append(names, teamEphemeralChildLifecycleInstanceNames(top, team, metas)...)
+	return teamDir, names, nil
+}
+
+func teamPersistentLifecycleInstanceNames(top *topology.Topology, team *topology.Team) []string {
+	if top == nil || team == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	names := make([]string, 0, len(team.Instances))
+	for _, name := range team.Instances {
+		if seen[name] {
+			continue
+		}
+		inst := top.Instances[name]
+		if inst == nil || inst.Ephemeral {
+			continue
+		}
+		names = append(names, name)
+		seen[name] = true
+	}
+	return names
+}
+
+func teamEphemeralChildLifecycleInstanceNames(top *topology.Topology, team *topology.Team, metas []*daemon.Metadata) []string {
+	if top == nil || team == nil {
+		return nil
+	}
+	owners := map[string]bool{}
+	for _, name := range team.Instances {
+		if inst := top.Instances[name]; inst != nil && inst.Ephemeral {
+			owners[inst.Name] = true
+		}
+	}
+	if len(owners) == 0 {
+		return nil
+	}
+	var names []string
+	seen := map[string]bool{}
+	for _, meta := range metas {
+		if meta == nil || seen[meta.Instance] {
+			continue
+		}
+		owner, ok := declaredEphemeralOwner(top, meta.Instance, meta.Agent)
+		if !ok || !owners[owner.Name] {
+			continue
+		}
+		names = append(names, meta.Instance)
+		seen[meta.Instance] = true
+	}
+	sort.Strings(names)
+	return names
+}
+
+func reportTeamLifecycleLoadError(cmd *cobra.Command, prefix string, err error) error {
+	var code ExitCode
+	if errors.As(err, &code) {
+		return err
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", prefix, err)
+	return exitErr(1)
+}
+
+func validateTeamUpOptions(cmd *cobra.Command, prefix string, opts teamLifecycleUpOptions) (int, *template.Template, error) {
+	if opts.Timeout < 0 {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--timeout must be >= 0")
+	}
+	if opts.ReadyTimeout < 0 {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--ready-timeout must be >= 0")
+	}
+	if opts.DryRun && opts.Wait {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--dry-run cannot be combined with --wait")
+	}
+	if opts.Attach && opts.JSON {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--attach cannot be combined with --json")
+	}
+	if opts.Quiet && opts.JSON {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "choose one of --quiet or --json")
+	}
+	if opts.Quiet && opts.Summary {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "choose one of --quiet or --summary")
+	}
+	if opts.Summary && opts.Attach {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--summary cannot be combined with --attach")
+	}
+	if opts.Format != "" && (opts.Quiet || opts.JSON || opts.Attach || opts.Summary) {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--format cannot be combined with --quiet, --json, --attach, or --summary")
+	}
+	if opts.Quiet && opts.Attach {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--quiet cannot be combined with --attach")
+	}
+	if opts.Attach && opts.DryRun {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--attach cannot be combined with --dry-run")
+	}
+	if opts.Attach && opts.Wait {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "choose one of --attach or --wait")
+	}
+	if !opts.Attach && opts.AttachTailSet {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--tail requires --attach")
+	}
+	tailLines, err := parseLogTail(opts.Tail)
+	if err != nil {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, err.Error())
+	}
+	formatTemplate, err := parseLifecycleActionFormat(opts.Format)
+	if err != nil {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, err.Error())
+	}
+	return tailLines, formatTemplate, nil
+}
+
+func validateTeamDownOptions(cmd *cobra.Command, prefix string, opts teamLifecycleDownOptions) (*template.Template, error) {
+	if opts.Timeout < 0 {
+		return nil, teamLifecycleUsageError(cmd, prefix, "--timeout must be >= 0")
+	}
+	if opts.WaitTimeout < 0 {
+		return nil, teamLifecycleUsageError(cmd, prefix, "--wait-timeout must be >= 0")
+	}
+	if opts.DryRun && opts.Wait {
+		return nil, teamLifecycleUsageError(cmd, prefix, "--dry-run cannot be combined with --wait")
+	}
+	if opts.Quiet && opts.JSON {
+		return nil, teamLifecycleUsageError(cmd, prefix, "choose one of --quiet or --json")
+	}
+	if opts.Quiet && opts.Summary {
+		return nil, teamLifecycleUsageError(cmd, prefix, "choose one of --quiet or --summary")
+	}
+	if opts.Format != "" && (opts.Quiet || opts.JSON || opts.Summary) {
+		return nil, teamLifecycleUsageError(cmd, prefix, "--format cannot be combined with --quiet, --json, or --summary")
+	}
+	formatTemplate, err := parseLifecycleActionFormat(opts.Format)
+	if err != nil {
+		return nil, teamLifecycleUsageError(cmd, prefix, err.Error())
+	}
+	return formatTemplate, nil
+}
+
+func validateTeamRestartOptions(cmd *cobra.Command, prefix string, opts teamLifecycleRestartOptions) (int, *template.Template, error) {
+	if opts.Timeout < 0 {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--timeout must be >= 0")
+	}
+	if opts.ReadyTimeout < 0 {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--ready-timeout must be >= 0")
+	}
+	if opts.WaitTimeout < 0 {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--wait-timeout must be >= 0")
+	}
+	if opts.DryRun && opts.Wait {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--dry-run cannot be combined with --wait")
+	}
+	if opts.Attach && opts.JSON {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--attach cannot be combined with --json")
+	}
+	if opts.Quiet && opts.JSON {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "choose one of --quiet or --json")
+	}
+	if opts.Quiet && opts.Summary {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "choose one of --quiet or --summary")
+	}
+	if opts.Summary && opts.Attach {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--summary cannot be combined with --attach")
+	}
+	if opts.Format != "" && (opts.Quiet || opts.JSON || opts.Attach || opts.Summary) {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--format cannot be combined with --quiet, --json, --attach, or --summary")
+	}
+	if opts.Quiet && opts.Attach {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--quiet cannot be combined with --attach")
+	}
+	if opts.Attach && opts.DryRun {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--attach cannot be combined with --dry-run")
+	}
+	if opts.Attach && opts.Wait {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "choose one of --attach or --wait")
+	}
+	if !opts.Attach && opts.AttachTailSet {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--tail requires --attach")
+	}
+	tailLines, err := parseLogTail(opts.Tail)
+	if err != nil {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, err.Error())
+	}
+	formatTemplate, err := parseLifecycleActionFormat(opts.Format)
+	if err != nil {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, err.Error())
+	}
+	return tailLines, formatTemplate, nil
+}
+
+func teamLifecycleUsageError(cmd *cobra.Command, prefix, message string) error {
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s: %s.\n", prefix, strings.TrimSuffix(message, "."))
+	return exitErr(2)
+}
+
+func teamLifecycleHealthOptions(names []string) healthOptions {
+	instances := map[string]bool{}
+	for _, name := range names {
+		if strings.TrimSpace(name) != "" {
+			instances[name] = true
+		}
+	}
+	if len(instances) == 0 {
+		return healthOptions{}
+	}
+	return healthOptions{filters: psOptions{instances: instances}}
+}
+
+func writeEmptyTeamLifecycleStart(cmd *cobra.Command, teamName, verb string, dryRun, wait, summary, quiet, jsonOut bool, formatTemplate *template.Template) error {
+	out := cmd.OutOrStdout()
+	if jsonOut {
+		if summary {
+			return json.NewEncoder(out).Encode(lifecycleActionSummaryResult{
+				Summary: summarizeLifecycleActions(nil, dryRun),
+			})
+		}
+		if wait {
+			return json.NewEncoder(out).Encode(lifecycleHealthResult{Actions: []lifecycleActionResult{}})
+		}
+		return json.NewEncoder(out).Encode([]lifecycleActionResult{})
+	}
+	if quiet || formatTemplate != nil {
+		return nil
+	}
+	if summary {
+		renderLifecycleActionSummary(out, summarizeLifecycleActions(nil, dryRun))
+		return nil
+	}
+	fmt.Fprintf(out, "(no persistent instances to %s for team %q)\n", verb, strings.TrimSpace(teamName))
+	return nil
+}
+
+func writeEmptyTeamLifecycleDown(cmd *cobra.Command, teamName, verb string, dryRun, summary, quiet, jsonOut bool, formatTemplate *template.Template) error {
+	out := cmd.OutOrStdout()
+	if jsonOut {
+		if summary {
+			return json.NewEncoder(out).Encode(lifecycleActionSummaryResult{
+				Summary: summarizeInstanceDownActions(nil, dryRun),
+			})
+		}
+		return json.NewEncoder(out).Encode([]instanceDownResult{})
+	}
+	if quiet || formatTemplate != nil {
+		return nil
+	}
+	if summary {
+		renderLifecycleActionSummary(out, summarizeInstanceDownActions(nil, dryRun))
+		return nil
+	}
+	fmt.Fprintf(out, "(nothing to %s for team %q)\n", verb, strings.TrimSpace(teamName))
+	return nil
 }
 
 func addTeamJobHealth(result *healthResult, teamDir string, top *topology.Topology, team *topology.Team, now time.Time) error {

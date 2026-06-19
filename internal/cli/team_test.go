@@ -381,6 +381,146 @@ instances = ["manager"]
 	}
 }
 
+func TestTeamLifecycleDryRunScopesInstances(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.ticket-manager]
+agent = "ticket-manager"
+
+[instances.build-worker]
+agent = "worker"
+ephemeral = true
+
+[instances.other]
+agent = "other"
+
+[teams.delivery]
+instances = ["manager", "ticket-manager", "worker"]
+
+[teams.platform]
+instances = ["other", "build-worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "worker-squ-101", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "build-worker-1", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "other", Agent: "other", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	up := NewRootCmd()
+	upOut, upErr := &bytes.Buffer{}, &bytes.Buffer{}
+	up.SetOut(upOut)
+	up.SetErr(upErr)
+	up.SetArgs([]string{"team", "up", "delivery", "--repo", root, "--dry-run", "--json"})
+	if err := up.Execute(); err != nil {
+		t.Fatalf("team up dry-run: %v\nstderr=%s", err, upErr.String())
+	}
+	var upRows []lifecycleActionResult
+	if err := json.Unmarshal(upOut.Bytes(), &upRows); err != nil {
+		t.Fatalf("decode team up: %v\nbody=%s", err, upOut.String())
+	}
+	if got := lifecycleResultInstances(upRows); strings.Join(got, ",") != "manager,ticket-manager" {
+		t.Fatalf("team up instances = %v", got)
+	}
+
+	down := NewRootCmd()
+	downOut, downErr := &bytes.Buffer{}, &bytes.Buffer{}
+	down.SetOut(downOut)
+	down.SetErr(downErr)
+	down.SetArgs([]string{"team", "down", "delivery", "--repo", root, "--dry-run", "--json"})
+	if err := down.Execute(); err != nil {
+		t.Fatalf("team down dry-run: %v\nstderr=%s", err, downErr.String())
+	}
+	var downRows []instanceDownResult
+	if err := json.Unmarshal(downOut.Bytes(), &downRows); err != nil {
+		t.Fatalf("decode team down: %v\nbody=%s", err, downOut.String())
+	}
+	downNames := instanceDownResultNames(downRows)
+	for _, want := range []string{"manager", "ticket-manager", "worker-squ-101"} {
+		if !stringInSlice(want, downNames) {
+			t.Fatalf("team down instances = %v, missing %s", downNames, want)
+		}
+	}
+	for _, unwanted := range []string{"worker", "build-worker-1", "other"} {
+		if stringInSlice(unwanted, downNames) {
+			t.Fatalf("team down instances = %v, included %s", downNames, unwanted)
+		}
+	}
+
+	restart := NewRootCmd()
+	restartOut, restartErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restart.SetOut(restartOut)
+	restart.SetErr(restartErr)
+	restart.SetArgs([]string{"team", "restart", "delivery", "--repo", root, "--dry-run", "--json"})
+	if err := restart.Execute(); err != nil {
+		t.Fatalf("team restart dry-run: %v\nstderr=%s", err, restartErr.String())
+	}
+	var restartRows []lifecycleActionResult
+	if err := json.Unmarshal(restartOut.Bytes(), &restartRows); err != nil {
+		t.Fatalf("decode team restart: %v\nbody=%s", err, restartOut.String())
+	}
+	if got := lifecycleResultInstances(restartRows); strings.Join(got, ",") != "manager,ticket-manager" {
+		t.Fatalf("team restart instances = %v", got)
+	}
+}
+
+func TestTeamLifecycleOutputFlagConflicts(t *testing.T) {
+	for _, args := range [][]string{
+		{"team", "up", "delivery", "--quiet", "--json"},
+		{"team", "up", "delivery", "--tail", "10", "--dry-run"},
+		{"team", "down", "delivery", "--quiet", "--json"},
+		{"team", "restart", "delivery", "--quiet", "--json"},
+	} {
+		cmd := NewRootCmd()
+		stderr := &bytes.Buffer{}
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(stderr)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("%v succeeded", args)
+		}
+		if strings.TrimSpace(stderr.String()) == "" {
+			t.Fatalf("%v produced empty stderr", args)
+		}
+	}
+}
+
+func lifecycleResultInstances(rows []lifecycleActionResult) []string {
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.Instance)
+	}
+	return out
+}
+
+func instanceDownResultNames(rows []instanceDownResult) []string {
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.Instance)
+	}
+	return out
+}
+
+func stringInSlice(needle string, haystack []string) bool {
+	for _, item := range haystack {
+		if item == needle {
+			return true
+		}
+	}
+	return false
+}
+
 func TestTeamHealthJobsAreTeamScoped(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
