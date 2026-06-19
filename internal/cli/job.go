@@ -2780,6 +2780,10 @@ func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, n
 		addTriageReason("failed", "critical")
 	case job.StatusBlocked:
 		addTriageReason("blocked", "warning")
+	case job.StatusDone:
+		if jobNeedsCleanup(j) {
+			addTriageReason("cleanup_ready", "info")
+		}
 	case job.StatusRunning:
 		if strings.TrimSpace(j.Instance) == "" {
 			addTriageReason("running_without_instance", "warning")
@@ -2929,7 +2933,17 @@ func actionsForJobTriageItem(item jobTriageItem) []string {
 	if stringSliceContains(item.Reasons, "stale_running") || stringSliceContains(item.Reasons, "running_without_instance") {
 		add("agent-team job reconcile status")
 	}
+	if stringSliceContains(item.Reasons, "cleanup_ready") {
+		add(fmt.Sprintf("agent-team job cleanup %s --dry-run", item.JobID))
+	}
 	return actions
+}
+
+func jobNeedsCleanup(j *job.Job) bool {
+	if j == nil {
+		return false
+	}
+	return strings.TrimSpace(j.Worktree) != "" || strings.TrimSpace(j.Branch) != ""
 }
 
 func stringSliceContains(items []string, want string) bool {

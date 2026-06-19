@@ -224,6 +224,46 @@ branch = "worker-squ-208"
 	}
 }
 
+func TestJobShowIncludesCleanupActionForDoneOwnedWorktree(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-209",
+		Ticket:    "SQU-209",
+		Target:    "worker",
+		Status:    job.StatusDone,
+		Branch:    "worktree-worker-squ-209",
+		Worktree:  filepath.Join(tmp, ".claude", "worktrees", "worker-squ-209"),
+		PR:        "https://github.com/acme/repo/pull/209",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write cleanup-ready job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "show", "squ-209", "--repo", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job show cleanup-ready: %v\nstderr=%s", err, stderr.String())
+	}
+	for _, want := range []string{
+		"Worktree:",
+		"worktree-worker-squ-209",
+		"Actions:",
+		"agent-team job cleanup squ-209 --dry-run",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("job show cleanup-ready missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
 func TestJobCreateDryRunDoesNotWrite(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -557,6 +597,15 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		t.Fatalf("write ready job: %v", err)
 	}
 
+	cleanupReady := mustNewJob(t, "SQU-206", "worker")
+	cleanupReady.Status = job.StatusDone
+	cleanupReady.Branch = "worktree-worker-squ-206"
+	cleanupReady.Worktree = filepath.Join(tmp, ".claude", "worktrees", "worker-squ-206")
+	cleanupReady.PR = "https://github.com/acme/repo/pull/206"
+	if err := job.Write(teamDir, cleanupReady); err != nil {
+		t.Fatalf("write cleanup-ready job: %v", err)
+	}
+
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
@@ -566,7 +615,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		t.Fatalf("job triage: %v\nstderr=%s", err, stderr.String())
 	}
 	for _, want := range []string{
-		"jobs: total=5",
+		"jobs: total=6",
 		"queue: total=1 pending=0 dead=1",
 		"Attention:",
 		"squ-201",
@@ -586,6 +635,9 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		"squ-205",
 		"implement",
 		"agent-team job advance squ-205",
+		"squ-206",
+		"cleanup_ready",
+		"agent-team job cleanup squ-206 --dry-run",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("job triage missing %q:\n%s", want, out.String())
@@ -604,7 +656,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	if err := json.Unmarshal(jsonOut.Bytes(), &snapshot); err != nil {
 		t.Fatalf("decode triage json: %v\nbody=%s", err, jsonOut.String())
 	}
-	if snapshot.Summary.Total != 5 || snapshot.Queue.Dead != 1 || len(snapshot.Attention) != 4 || len(snapshot.ReadySteps) != 1 {
+	if snapshot.Summary.Total != 6 || snapshot.Queue.Dead != 1 || len(snapshot.Attention) != 5 || len(snapshot.ReadySteps) != 1 {
 		t.Fatalf("triage snapshot = %+v", snapshot)
 	}
 	reasons := map[string][]string{}
@@ -621,6 +673,12 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	}
 	if !containsString(actions["squ-201"], "agent-team job retry squ-201 --dispatch") {
 		t.Fatalf("squ-201 actions = %v", actions["squ-201"])
+	}
+	if !containsString(reasons["squ-206"], "cleanup_ready") {
+		t.Fatalf("squ-206 reasons = %v", reasons["squ-206"])
+	}
+	if !containsString(actions["squ-206"], "agent-team job cleanup squ-206 --dry-run") {
+		t.Fatalf("squ-206 actions = %v", actions["squ-206"])
 	}
 	if snapshot.ReadySteps[0].JobID != "squ-205" || snapshot.ReadySteps[0].StepID != "implement" {
 		t.Fatalf("ready steps = %+v", snapshot.ReadySteps)
@@ -655,6 +713,22 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	}
 	if len(reasonSnapshot.Attention) != 1 || reasonSnapshot.Attention[0].JobID != "squ-204" {
 		t.Fatalf("reason triage attention = %+v", reasonSnapshot.Attention)
+	}
+
+	cleanupReasonCmd := NewRootCmd()
+	cleanupReasonOut, cleanupReasonErr := &bytes.Buffer{}, &bytes.Buffer{}
+	cleanupReasonCmd.SetOut(cleanupReasonOut)
+	cleanupReasonCmd.SetErr(cleanupReasonErr)
+	cleanupReasonCmd.SetArgs([]string{"job", "triage", "--repo", tmp, "--reason", "cleanup_ready", "--json"})
+	if err := cleanupReasonCmd.Execute(); err != nil {
+		t.Fatalf("job triage cleanup reason: %v\nstderr=%s", err, cleanupReasonErr.String())
+	}
+	var cleanupReasonSnapshot jobTriageSnapshot
+	if err := json.Unmarshal(cleanupReasonOut.Bytes(), &cleanupReasonSnapshot); err != nil {
+		t.Fatalf("decode cleanup reason triage json: %v\nbody=%s", err, cleanupReasonOut.String())
+	}
+	if len(cleanupReasonSnapshot.Attention) != 1 || cleanupReasonSnapshot.Attention[0].JobID != "squ-206" {
+		t.Fatalf("cleanup reason triage attention = %+v", cleanupReasonSnapshot.Attention)
 	}
 }
 
