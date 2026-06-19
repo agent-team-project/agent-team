@@ -1278,9 +1278,197 @@ schedules = ["platform_due"]
 	if err := invalid.Execute(); err == nil {
 		t.Fatal("team tick without --dry-run succeeded")
 	}
-	if !strings.Contains(invalidErr.String(), "scoped mutation is not available yet") {
+	if !strings.Contains(invalidErr.String(), "daemon is not running") || !strings.Contains(invalidErr.String(), "use --dry-run") {
 		t.Fatalf("team tick invalid stderr = %q stdout=%q", invalidErr.String(), invalidOut.String())
 	}
+}
+
+func TestTeamTickRunsScopedMaintenance(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "agent-team-team-tick-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	teamDir := filepath.Join(root, ".agent_team")
+	for _, agent := range []string{"worker", "other"} {
+		agentDir := filepath.Join(teamDir, "agents", agent)
+		if err := os.MkdirAll(agentDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\ndescription: test " + agent + "\n---\n\nYou are a test " + agent + ".\n"
+		if err := os.WriteFile(filepath.Join(agentDir, "agent.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[[instances.manager.triggers]]
+event = "schedule"
+
+[instances.other]
+agent = "other"
+ephemeral = true
+replicas = 1
+
+[[instances.other.triggers]]
+event = "agent.dispatch"
+match.target = "other"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[pipelines.platform_work]
+trigger.event = "ticket.created"
+trigger.match.team = "platform"
+
+[[pipelines.platform_work.steps]]
+id = "implement"
+target = "other"
+
+[schedules.delivery_due]
+every = "24h"
+run_on_start = true
+payload.target = "worker"
+
+[schedules.platform_due]
+every = "24h"
+run_on_start = true
+payload.target = "other"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+schedules = ["delivery_due"]
+
+[teams.platform]
+instances = ["other"]
+pipelines = ["platform_work"]
+schedules = ["platform_due"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-200",
+			Ticket:    "SQU-200",
+			Target:    "worker",
+			Kickoff:   "SQU-200: implement",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusBlocked},
+			},
+		},
+		{
+			ID:        "oth-200",
+			Ticket:    "OTH-200",
+			Target:    "other",
+			Kickoff:   "OTH-200: implement",
+			Pipeline:  "platform_work",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "other", Status: job.StatusBlocked},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:         "q-delivery-run",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-200",
+			Payload:    map[string]any{"job_id": "squ-200", "target": "worker", "name": "worker-squ-200", "ticket": "SQU-200"},
+			QueuedAt:   now.Add(-time.Minute),
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+		{
+			ID:         "q-platform-run",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "other",
+			InstanceID: "other-oth-200",
+			Payload:    map[string]any{"job_id": "oth-200", "target": "other", "name": "other-oth-200", "ticket": "OTH-200"},
+			QueuedAt:   now.Add(-time.Minute),
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+	} {
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+			t.Fatalf("write queue item %s: %v", item.ID, err)
+		}
+	}
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), fakeSpawnerForTest(t, 2*time.Second))
+	cleanupDaemon := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanupDaemon()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "tick", "delivery", "--repo", root, "--workspace", "repo", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team tick: %v\nstderr=%s", err, stderr.String())
+	}
+	var result teamTickResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode team tick: %v\nbody=%s", err, out.String())
+	}
+	if result.Tick.DryRun || result.Tick.Schedule == nil || result.Tick.Schedule.Fired != 1 || len(result.Tick.Schedule.Schedules) != 1 || result.Tick.Schedule.Schedules[0].Name != "delivery_due" {
+		t.Fatalf("team tick schedule = %+v", result.Tick.Schedule)
+	}
+	if result.Tick.Queue == nil || result.Tick.Queue.Dispatched != 1 || result.Tick.Queue.Pending != 0 || len(result.Tick.Queue.Outcomes) != 1 || result.Tick.Queue.Outcomes[0].InstanceID != "worker-squ-200" {
+		t.Fatalf("team tick queue = %+v", result.Tick.Queue)
+	}
+	if len(result.Tick.Advance) != 1 || result.Tick.Advance[0].JobID != "squ-200" || result.Tick.Advance[0].Action != "advanced" || result.Tick.Advance[0].StepStatus != job.StatusRunning {
+		t.Fatalf("team tick advance = %+v", result.Tick.Advance)
+	}
+	if _, err := daemon.ReadScheduleState(daemon.DaemonRoot(teamDir), "delivery_due"); err != nil {
+		t.Fatalf("delivery schedule state missing: %v", err)
+	}
+	if _, err := daemon.ReadScheduleState(daemon.DaemonRoot(teamDir), "platform_due"); !os.IsNotExist(err) {
+		t.Fatalf("platform schedule state changed, err=%v", err)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-delivery-run"); !os.IsNotExist(err) {
+		t.Fatalf("delivery queue item still exists or unexpected err=%v", err)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-platform-run"); err != nil {
+		t.Fatalf("platform queue item changed: %v", err)
+	}
+	teamJob, err := job.Read(teamDir, "squ-200")
+	if err != nil {
+		t.Fatalf("read team job: %v", err)
+	}
+	if len(teamJob.Steps) != 1 || teamJob.Steps[0].Status != job.StatusRunning || teamJob.Steps[0].Instance == "" {
+		t.Fatalf("team job after tick = %+v", teamJob)
+	}
+	otherJob, err := job.Read(teamDir, "oth-200")
+	if err != nil {
+		t.Fatalf("read other job: %v", err)
+	}
+	if len(otherJob.Steps) != 1 || otherJob.Steps[0].Status != job.StatusBlocked {
+		t.Fatalf("other job changed = %+v", otherJob)
+	}
+	messages, err := daemon.ReadMessages(daemon.DaemonRoot(teamDir), "manager")
+	if err != nil {
+		t.Fatalf("read manager messages: %v", err)
+	}
+	if len(messages) != 1 || !strings.Contains(messages[0].Body, "delivery_due") || strings.Contains(messages[0].Body, "platform_due") {
+		t.Fatalf("manager messages = %+v", messages)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-200")
+	stopAndWaitForTest(t, mgr, teamJob.Steps[0].Instance)
 }
 
 func setupTeamScopedPlanFixture(t *testing.T) string {

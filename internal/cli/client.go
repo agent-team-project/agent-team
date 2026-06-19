@@ -524,10 +524,15 @@ func (c *daemonClient) QueueRetry(id string) (*daemon.EventOutcome, error) {
 }
 
 func (c *daemonClient) QueueDrain(dryRun bool) (*daemon.QueueDrainResult, error) {
-	u := c.baseURL + "/v1/queue/drain"
-	if dryRun {
-		u += "?dry_run=true"
-	}
+	return c.queueDrain(dryRun, nil, false)
+}
+
+func (c *daemonClient) QueueDrainScoped(dryRun bool, ids []string) (*daemon.QueueDrainResult, error) {
+	return c.queueDrain(dryRun, ids, true)
+}
+
+func (c *daemonClient) queueDrain(dryRun bool, ids []string, scoped bool) (*daemon.QueueDrainResult, error) {
+	u := daemonQueryURL(c.baseURL+"/v1/queue/drain", dryRun, "id", ids, scoped)
 	resp, err := c.hc.Post(u, "application/json", bytes.NewReader([]byte("{}")))
 	if err != nil {
 		return nil, fmt.Errorf("daemon: queue drain: %w", err)
@@ -544,10 +549,15 @@ func (c *daemonClient) QueueDrain(dryRun bool) (*daemon.QueueDrainResult, error)
 }
 
 func (c *daemonClient) ScheduleFire(dryRun bool) (*daemon.ScheduleFireResult, error) {
-	u := c.baseURL + "/v1/schedules/fire"
-	if dryRun {
-		u += "?dry_run=true"
-	}
+	return c.scheduleFire(dryRun, nil, false)
+}
+
+func (c *daemonClient) ScheduleFireScoped(dryRun bool, names []string) (*daemon.ScheduleFireResult, error) {
+	return c.scheduleFire(dryRun, names, true)
+}
+
+func (c *daemonClient) scheduleFire(dryRun bool, names []string, scoped bool) (*daemon.ScheduleFireResult, error) {
+	u := daemonQueryURL(c.baseURL+"/v1/schedules/fire", dryRun, "name", names, scoped)
 	resp, err := c.hc.Post(u, "application/json", bytes.NewReader([]byte("{}")))
 	if err != nil {
 		return nil, fmt.Errorf("daemon: schedules fire: %w", err)
@@ -561,6 +571,28 @@ func (c *daemonClient) ScheduleFire(dryRun bool) (*daemon.ScheduleFireResult, er
 		return nil, fmt.Errorf("daemon: schedules fire decode: %w", err)
 	}
 	return &out, nil
+}
+
+func daemonQueryURL(base string, dryRun bool, scopedKey string, scopedValues []string, scoped bool) string {
+	values := url.Values{}
+	if dryRun {
+		values.Set("dry_run", "true")
+	}
+	if scoped {
+		if len(scopedValues) == 0 {
+			values.Add(scopedKey, "")
+		} else {
+			for _, value := range scopedValues {
+				if value != "" {
+					values.Add(scopedKey, value)
+				}
+			}
+		}
+	}
+	if encoded := values.Encode(); encoded != "" {
+		return base + "?" + encoded
+	}
+	return base
 }
 
 // topologyResponse mirrors the wire shape of /v1/topology.

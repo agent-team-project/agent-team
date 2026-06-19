@@ -475,10 +475,19 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 			result *QueueDrainResult
 			err    error
 		)
+		ids := queryValues(r, "id")
 		if r.URL.Query().Get("dry_run") == "true" {
-			result, err = events.PreviewDrainQueuesWithResult()
+			if ids != nil {
+				result, err = events.PreviewDrainQueuesWithResultForIDs(ids)
+			} else {
+				result, err = events.PreviewDrainQueuesWithResult()
+			}
 		} else {
-			result, err = events.DrainQueuesWithResult()
+			if ids != nil {
+				result, err = events.DrainQueuesWithResultForIDs(ids)
+			} else {
+				result, err = events.DrainQueuesWithResult()
+			}
 		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -566,10 +575,19 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 			result *ScheduleFireResult
 			err    error
 		)
+		names := queryValues(r, "name")
 		if r.URL.Query().Get("dry_run") == "true" {
-			result, err = events.PreviewDueSchedulesWithResult(time.Now().UTC())
+			if names != nil {
+				result, err = events.PreviewDueSchedulesWithResultForNames(time.Now().UTC(), names)
+			} else {
+				result, err = events.PreviewDueSchedulesWithResult(time.Now().UTC())
+			}
 		} else {
-			result, err = events.FireDueSchedulesWithResult(time.Now().UTC())
+			if names != nil {
+				result, err = events.FireDueSchedulesWithResultForNames(time.Now().UTC(), names)
+			} else {
+				result, err = events.FireDueSchedulesWithResult(time.Now().UTC())
+			}
 		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -654,6 +672,23 @@ func eventResponseMap(outcomes []EventOutcome) map[string]any {
 func readRequestBody(r *http.Request) []byte {
 	body, _ := io.ReadAll(r.Body)
 	return body
+}
+
+func queryValues(r *http.Request, key string) []string {
+	if r == nil {
+		return nil
+	}
+	raw, ok := r.URL.Query()[key]
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, value := range raw {
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func splitQueuePath(path string) (id, action string, ok bool) {

@@ -998,7 +998,7 @@ func (r *EventResolver) onReap(spawned string) {
 	}
 	var next *queuedEvent
 	if len(tr.queue) > 0 {
-		next, tr.queue = popReadyQueuedEvent(tr.queue, time.Now().UTC())
+		next, tr.queue = popReadyQueuedEvent(tr.queue, time.Now().UTC(), nil)
 		if next != nil {
 			tr.running++
 		}
@@ -1020,9 +1020,12 @@ func (r *EventResolver) onReap(spawned string) {
 	_ = RemoveQueueItem(r.mgr.daemonRoot, next.id)
 }
 
-func popReadyQueuedEvent(queue []*queuedEvent, now time.Time) (*queuedEvent, []*queuedEvent) {
+func popReadyQueuedEvent(queue []*queuedEvent, now time.Time, ids map[string]bool) (*queuedEvent, []*queuedEvent) {
 	for i, ev := range queue {
 		if ev == nil {
+			continue
+		}
+		if !queueDrainIDAllowed(ids, ev.id) {
 			continue
 		}
 		if !ev.nextRetry.IsZero() && ev.nextRetry.After(now) {
@@ -1114,12 +1117,22 @@ func (r *EventResolver) DrainQueues() {
 // DrainQueuesWithResult attempts ready queued items while replica capacity is
 // available and returns a summary suitable for operator-facing APIs.
 func (r *EventResolver) DrainQueuesWithResult() (*QueueDrainResult, error) {
+	return r.drainQueuesWithResult(nil)
+}
+
+// DrainQueuesWithResultForIDs attempts ready queued items whose persisted IDs
+// are included in ids while replica capacity is available.
+func (r *EventResolver) DrainQueuesWithResultForIDs(ids []string) (*QueueDrainResult, error) {
+	return r.drainQueuesWithResult(stringAllowSet(ids))
+}
+
+func (r *EventResolver) drainQueuesWithResult(ids map[string]bool) (*QueueDrainResult, error) {
 	if err := r.loadPersistedQueue(); err != nil {
 		return nil, err
 	}
 	result := &QueueDrainResult{Outcomes: []EventOutcome{}}
 	for {
-		declared, ev := r.nextDrainableQueuedEvent()
+		declared, ev := r.nextDrainableQueuedEvent(ids)
 		if declared == nil || ev == nil {
 			break
 		}
@@ -1143,7 +1156,7 @@ func (r *EventResolver) DrainQueuesWithResult() (*QueueDrainResult, error) {
 	if err != nil {
 		return result, err
 	}
-	applyQueueDrainCounts(result, items)
+	applyQueueDrainCounts(result, items, ids)
 	return result, nil
 }
 
@@ -1151,6 +1164,16 @@ func (r *EventResolver) DrainQueuesWithResult() (*QueueDrainResult, error) {
 // dispatched by DrainQueuesWithResult without spawning processes or removing
 // queue files.
 func (r *EventResolver) PreviewDrainQueuesWithResult() (*QueueDrainResult, error) {
+	return r.previewDrainQueuesWithResult(nil)
+}
+
+// PreviewDrainQueuesWithResultForIDs reports which selected ready queue items
+// would be dispatched without spawning processes or removing queue files.
+func (r *EventResolver) PreviewDrainQueuesWithResultForIDs(ids []string) (*QueueDrainResult, error) {
+	return r.previewDrainQueuesWithResult(stringAllowSet(ids))
+}
+
+func (r *EventResolver) previewDrainQueuesWithResult(ids map[string]bool) (*QueueDrainResult, error) {
 	if err := r.loadPersistedQueue(); err != nil {
 		return nil, err
 	}
@@ -1177,6 +1200,9 @@ func (r *EventResolver) PreviewDrainQueuesWithResult() (*QueueDrainResult, error
 				if ev == nil {
 					continue
 				}
+				if !queueDrainIDAllowed(ids, ev.id) {
+					continue
+				}
 				if !ev.nextRetry.IsZero() && ev.nextRetry.After(now) {
 					continue
 				}
@@ -1191,15 +1217,18 @@ func (r *EventResolver) PreviewDrainQueuesWithResult() (*QueueDrainResult, error
 	if err != nil {
 		return result, err
 	}
-	applyQueueDrainCounts(result, items)
+	applyQueueDrainCounts(result, items, ids)
 	return result, nil
 }
 
-func applyQueueDrainCounts(result *QueueDrainResult, items []*QueueItem) {
+func applyQueueDrainCounts(result *QueueDrainResult, items []*QueueItem, ids map[string]bool) {
 	if result == nil {
 		return
 	}
 	for _, item := range items {
+		if item == nil || !queueDrainIDAllowed(ids, item.ID) {
+			continue
+		}
 		switch item.State {
 		case QueueStatePending:
 			result.Pending++
@@ -1209,7 +1238,11 @@ func applyQueueDrainCounts(result *QueueDrainResult, items []*QueueItem) {
 	}
 }
 
-func (r *EventResolver) nextDrainableQueuedEvent() (*topology.Instance, *queuedEvent) {
+func queueDrainIDAllowed(ids map[string]bool, id string) bool {
+	return ids == nil || ids[id]
+}
+
+func (r *EventResolver) nextDrainableQueuedEvent(ids map[string]bool) (*topology.Instance, *queuedEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.topo == nil {
@@ -1224,7 +1257,7 @@ func (r *EventResolver) nextDrainableQueuedEvent() (*topology.Instance, *queuedE
 		if !ok || tr.running >= inst.Replicas {
 			continue
 		}
-		ev, rest := popReadyQueuedEvent(tr.queue, now)
+		ev, rest := popReadyQueuedEvent(tr.queue, now, ids)
 		if ev == nil {
 			continue
 		}

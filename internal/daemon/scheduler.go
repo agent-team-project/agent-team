@@ -66,7 +66,16 @@ func (r *EventResolver) FireDueSchedulesWithResult(now time.Time) (*ScheduleFire
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	return r.fireDueSchedulesWithResult(now.UTC(), r.loadScheduleStates(), false)
+	return r.fireDueSchedulesWithResult(now.UTC(), r.loadScheduleStates(), false, nil)
+}
+
+// FireDueSchedulesWithResultForNames publishes due schedules whose names are
+// included in names and persists only those schedule clocks.
+func (r *EventResolver) FireDueSchedulesWithResultForNames(now time.Time, names []string) (*ScheduleFireResult, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return r.fireDueSchedulesWithResult(now.UTC(), r.loadScheduleStates(), false, stringAllowSet(names))
 }
 
 // PreviewDueSchedulesWithResult reports schedules that are due at now without
@@ -75,11 +84,20 @@ func (r *EventResolver) PreviewDueSchedulesWithResult(now time.Time) (*ScheduleF
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	return r.fireDueSchedulesWithResult(now.UTC(), r.loadScheduleStates(), true)
+	return r.fireDueSchedulesWithResult(now.UTC(), r.loadScheduleStates(), true, nil)
+}
+
+// PreviewDueSchedulesWithResultForNames reports due schedules whose names are
+// included in names without dispatching events or writing schedule clocks.
+func (r *EventResolver) PreviewDueSchedulesWithResultForNames(now time.Time, names []string) (*ScheduleFireResult, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return r.fireDueSchedulesWithResult(now.UTC(), r.loadScheduleStates(), true, stringAllowSet(names))
 }
 
 func (r *EventResolver) fireDueSchedules(now time.Time, state map[string]*ScheduleState) []string {
-	result, err := r.fireDueSchedulesWithResult(now, state, false)
+	result, err := r.fireDueSchedulesWithResult(now, state, false, nil)
 	if err != nil {
 		return nil
 	}
@@ -90,11 +108,12 @@ func (r *EventResolver) fireDueSchedules(now time.Time, state map[string]*Schedu
 	return fired
 }
 
-func (r *EventResolver) fireDueSchedulesWithResult(now time.Time, state map[string]*ScheduleState, dryRun bool) (*ScheduleFireResult, error) {
+func (r *EventResolver) fireDueSchedulesWithResult(now time.Time, state map[string]*ScheduleState, dryRun bool, names map[string]bool) (*ScheduleFireResult, error) {
 	result := &ScheduleFireResult{DryRun: dryRun, Schedules: []ScheduleFireItem{}}
+	scoped := names != nil
 	topo := r.Topology()
 	if topo == nil || len(topo.Schedules) == 0 {
-		if !dryRun {
+		if !dryRun && !scoped {
 			for name := range state {
 				delete(state, name)
 				_ = RemoveScheduleState(r.mgr.daemonRoot, name)
@@ -104,6 +123,9 @@ func (r *EventResolver) fireDueSchedulesWithResult(now time.Time, state map[stri
 	}
 	current := map[string]bool{}
 	for _, sched := range topo.SortedSchedules() {
+		if scoped && !names[sched.Name] {
+			continue
+		}
 		current[sched.Name] = true
 		clock, seen := state[sched.Name]
 		reason := ""
@@ -143,7 +165,7 @@ func (r *EventResolver) fireDueSchedulesWithResult(now time.Time, state map[stri
 		result.Fired++
 		result.Schedules = append(result.Schedules, item)
 	}
-	if !dryRun {
+	if !dryRun && !scoped {
 		for name := range state {
 			if !current[name] {
 				delete(state, name)
@@ -152,4 +174,14 @@ func (r *EventResolver) fireDueSchedulesWithResult(now time.Time, state map[stri
 		}
 	}
 	return result, nil
+}
+
+func stringAllowSet(values []string) map[string]bool {
+	out := make(map[string]bool, len(values))
+	for _, value := range values {
+		if value != "" {
+			out[value] = true
+		}
+	}
+	return out
 }

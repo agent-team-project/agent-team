@@ -869,10 +869,9 @@ func newTeamTickCmd() *cobra.Command {
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "tick <team>",
-		Short: "Preview one team's orchestration maintenance work.",
-		Long: "Preview one team's due schedules, drainable queue items, and ready pipeline steps. " +
-			"Scoped mutation is not available yet because the daemon scheduler and queue-drain endpoints still operate globally.",
-		Args: cobra.ExactArgs(1),
+		Short: "Run one team's orchestration maintenance work.",
+		Long:  "Run or preview one team's due schedules, drainable queue items, and ready pipeline steps.",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --format cannot be combined with --json.")
@@ -886,10 +885,6 @@ func newTeamTickCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --preview-routes requires --dry-run.")
 				return exitErr(2)
 			}
-			if !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: scoped mutation is not available yet; use --dry-run to preview team-owned work, or run `agent-team tick` for a global cycle.")
-				return exitErr(2)
-			}
 			tmpl, err := parseTeamTickFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team tick: %v\n", err)
@@ -899,14 +894,18 @@ func newTeamTickCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := runTeamTickPreview(cmd, teamDir, args[0], workspace, limit, tickOptions{
+			result, err := runTeamTick(cmd, teamDir, args[0], workspace, limit, tickOptions{
 				SkipSchedules: skipSchedules,
 				SkipDrain:     skipDrain,
 				SkipAdvance:   skipAdvance,
-				DryRun:        true,
+				DryRun:        dryRun,
 				PreviewRoutes: previewRoutes,
 			})
 			if err != nil {
+				if errors.Is(err, errDaemonNotRunning) {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: daemon is not running — start it with `agent-team start`, or use --dry-run.")
+					return exitErr(2)
+				}
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team tick: %v\n", err)
 				return exitErr(1)
 			}
@@ -915,10 +914,10 @@ func newTeamTickCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for advanced pipeline steps: auto, worktree, or repo.")
-	cmd.Flags().IntVar(&limit, "limit", 0, "Preview at most this many ready pipeline jobs; 0 means no limit.")
-	cmd.Flags().BoolVar(&skipSchedules, "skip-schedules", false, "Skip due schedule preview.")
-	cmd.Flags().BoolVar(&skipDrain, "skip-drain", false, "Skip queue drain preview.")
-	cmd.Flags().BoolVar(&skipAdvance, "skip-advance", false, "Skip pipeline advancement preview.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Advance at most this many ready pipeline jobs; 0 means no limit.")
+	cmd.Flags().BoolVar(&skipSchedules, "skip-schedules", false, "Skip due schedule work.")
+	cmd.Flags().BoolVar(&skipDrain, "skip-drain", false, "Skip queue drain work.")
+	cmd.Flags().BoolVar(&skipAdvance, "skip-advance", false, "Skip pipeline advancement work.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview team-owned maintenance work without mutating state.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include route and dispatch payload previews for ready pipeline steps.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
@@ -2598,7 +2597,7 @@ func parseTeamTickFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
-func runTeamTickPreview(cmd *cobra.Command, teamDir, name, workspace string, limit int, opts tickOptions) (*teamTickResult, error) {
+func runTeamTick(cmd *cobra.Command, teamDir, name, workspace string, limit int, opts tickOptions) (*teamTickResult, error) {
 	now := time.Now().UTC()
 	top, team, err := loadTopologyTeam(teamDir, name)
 	if err != nil {
@@ -2608,25 +2607,68 @@ func runTeamTickPreview(cmd *cobra.Command, teamDir, name, workspace string, lim
 		Team:      teamInfoFromTopology(team),
 		CheckedAt: now.Format(time.RFC3339),
 		Tick: tickResult{
-			DryRun: true,
+			DryRun: opts.DryRun,
 		},
 	}
-	if !opts.SkipSchedules {
-		schedule, err := previewTeamScheduleFire(teamDir, team, now)
+	var dc *daemonClient
+	daemonClient := func() (*daemonClient, error) {
+		if dc != nil {
+			return dc, nil
+		}
+		client, err := newDaemonClient(teamDir)
 		if err != nil {
 			return nil, err
 		}
-		result.Tick.Schedule = schedule
+		dc = client
+		return dc, nil
+	}
+	if !opts.SkipSchedules {
+		if opts.DryRun {
+			schedule, err := previewTeamScheduleFire(teamDir, team, now)
+			if err != nil {
+				return nil, err
+			}
+			result.Tick.Schedule = schedule
+		} else if len(team.Schedules) == 0 {
+			result.Tick.Schedule = &daemon.ScheduleFireResult{Schedules: []daemon.ScheduleFireItem{}}
+		} else {
+			client, err := daemonClient()
+			if err != nil {
+				return nil, err
+			}
+			schedule, err := client.ScheduleFireScoped(false, team.Schedules)
+			if err != nil {
+				return nil, err
+			}
+			result.Tick.Schedule = schedule
+		}
 	}
 	if !opts.SkipDrain {
-		queue, err := previewTeamQueueDrain(teamDir, top, team, now)
+		items, err := collectTeamQueueItemsForTopology(teamDir, top, team)
 		if err != nil {
 			return nil, err
 		}
-		result.Tick.Queue = queue
+		if opts.DryRun {
+			result.Tick.Queue = previewQueueDrainItems(top, items, now)
+		} else {
+			ids := queueItemIDsFromPointers(items)
+			if len(ids) == 0 {
+				result.Tick.Queue = &daemon.QueueDrainResult{Outcomes: []daemon.EventOutcome{}}
+			} else {
+				client, err := daemonClient()
+				if err != nil {
+					return nil, err
+				}
+				queue, err := client.QueueDrainScoped(false, ids)
+				if err != nil {
+					return nil, err
+				}
+				result.Tick.Queue = queue
+			}
+		}
 	}
 	if !opts.SkipAdvance {
-		advanced, err := advanceTeamReadyPipelineJobs(cmd, teamDir, team, workspace, limit, opts.PreviewRoutes)
+		advanced, err := advanceTeamReadyPipelineJobs(cmd, teamDir, team, workspace, limit, opts.DryRun, opts.PreviewRoutes)
 		if err != nil {
 			return nil, err
 		}
@@ -2659,6 +2701,14 @@ func previewTeamScheduleFire(teamDir string, team *topology.Team, now time.Time)
 }
 
 func previewTeamQueueDrain(teamDir string, top *topology.Topology, team *topology.Team, now time.Time) (*daemon.QueueDrainResult, error) {
+	ownedItems, err := collectTeamQueueItemsForTopology(teamDir, top, team)
+	if err != nil {
+		return nil, err
+	}
+	return previewQueueDrainItems(top, ownedItems, now), nil
+}
+
+func collectTeamQueueItemsForTopology(teamDir string, top *topology.Topology, team *topology.Team) ([]*daemon.QueueItem, error) {
 	jobs, err := job.List(teamDir)
 	if err != nil {
 		return nil, err
@@ -2669,10 +2719,20 @@ func previewTeamQueueDrain(teamDir string, top *topology.Topology, team *topolog
 	}
 	ownedJobs := teamJobs(top, team, jobs)
 	ownedItems := teamQueueItems(top, team, ownedJobs, items)
-	return previewQueueDrainItems(top, ownedItems, now), nil
+	return ownedItems, nil
 }
 
-func advanceTeamReadyPipelineJobs(cmd *cobra.Command, teamDir string, team *topology.Team, workspace string, limit int, previewRoutes bool) ([]pipelineAdvanceResult, error) {
+func queueItemIDsFromPointers(items []*daemon.QueueItem) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		if item != nil && strings.TrimSpace(item.ID) != "" {
+			ids = append(ids, item.ID)
+		}
+	}
+	return ids
+}
+
+func advanceTeamReadyPipelineJobs(cmd *cobra.Command, teamDir string, team *topology.Team, workspace string, limit int, dryRun bool, previewRoutes bool) ([]pipelineAdvanceResult, error) {
 	if team == nil || len(team.Pipelines) == 0 {
 		return []pipelineAdvanceResult{}, nil
 	}
@@ -2686,7 +2746,7 @@ func advanceTeamReadyPipelineJobs(cmd *cobra.Command, teamDir string, team *topo
 		if limit > 0 {
 			batchLimit = remaining
 		}
-		advanced, err := advanceReadyPipelineJobs(cmd, teamDir, pipeline, workspace, batchLimit, true, previewRoutes)
+		advanced, err := advanceReadyPipelineJobs(cmd, teamDir, pipeline, workspace, batchLimit, dryRun, previewRoutes)
 		if err != nil {
 			return nil, err
 		}
@@ -2719,7 +2779,7 @@ func renderTeamTickResult(w io.Writer, result *teamTickResult, jsonOut bool, tmp
 	if result.CheckedAt != "" {
 		fmt.Fprintf(w, "Checked: %s\n", result.CheckedAt)
 	}
-	fmt.Fprintln(w, "Dry run: true")
+	fmt.Fprintf(w, "Dry run: %t\n", result.Tick.DryRun)
 	fmt.Fprintln(w)
 	if result.Tick.Schedule != nil {
 		fmt.Fprintln(w, "Schedules:")

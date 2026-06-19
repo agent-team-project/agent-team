@@ -711,6 +711,69 @@ func TestEvent_DrainQueuesWithResultReportsOutcomes(t *testing.T) {
 	}
 }
 
+func TestEvent_DrainQueuesWithResultForIDsSkipsUnselectedItems(t *testing.T) {
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	now := time.Now().UTC()
+	for _, item := range []*QueueItem{
+		{
+			ID:         "queued-keep",
+			State:      QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-keep",
+			Payload:    map[string]any{"target": "worker", "name": "worker-keep", "ticket": "SQU-KEEP"},
+			QueuedAt:   now.Add(-time.Minute),
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+		{
+			ID:         "queued-selected",
+			State:      QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-selected",
+			Payload:    map[string]any{"target": "worker", "name": "worker-selected", "ticket": "SQU-SEL"},
+			QueuedAt:   now,
+			UpdatedAt:  now,
+		},
+	} {
+		if err := WriteQueueItem(root, item); err != nil {
+			t.Fatalf("WriteQueueItem %s: %v", item.ID, err)
+		}
+	}
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
+
+	preview, err := resolver.PreviewDrainQueuesWithResultForIDs([]string{"queued-selected"})
+	if err != nil {
+		t.Fatalf("PreviewDrainQueuesWithResultForIDs: %v", err)
+	}
+	if !preview.DryRun || preview.WouldDispatch != 1 || preview.Pending != 1 || len(preview.Outcomes) != 1 || preview.Outcomes[0].InstanceID != "worker-selected" {
+		t.Fatalf("preview = %+v", preview)
+	}
+	if fake.callCount() != 0 {
+		t.Fatalf("preview spawned %d processes", fake.callCount())
+	}
+
+	result, err := resolver.DrainQueuesWithResultForIDs([]string{"queued-selected"})
+	if err != nil {
+		t.Fatalf("DrainQueuesWithResultForIDs: %v", err)
+	}
+	if result.Attempted != 1 || result.Dispatched != 1 || result.Pending != 0 || len(result.Outcomes) != 1 || result.Outcomes[0].InstanceID != "worker-selected" {
+		t.Fatalf("drain result = %+v", result)
+	}
+	if _, err := ReadQueueItem(root, "queued-selected"); !os.IsNotExist(err) {
+		t.Fatalf("selected queue item should be removed, err=%v", err)
+	}
+	if _, err := ReadQueueItem(root, "queued-keep"); err != nil {
+		t.Fatalf("unselected queue item changed: %v", err)
+	}
+	if fake.callCount() != 1 {
+		t.Fatalf("spawn calls=%d, want 1", fake.callCount())
+	}
+}
+
 func TestEvent_PreviewDrainQueuesDoesNotDispatch(t *testing.T) {
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)
@@ -937,6 +1000,66 @@ payload.workspace = "repo"
 		t.Fatalf("read messages: %v", err)
 	}
 	if len(messages) != 1 || !strings.Contains(messages[0].Body, `"event":"schedule"`) || !strings.Contains(messages[0].Body, `"name":"nightly"`) {
+		t.Fatalf("messages = %+v", messages)
+	}
+}
+
+func TestEvent_ScheduleFireResultForNamesScopesStateAndMessages(t *testing.T) {
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	top, err := topology.Parse([]byte(`
+[instances.manager]
+agent = "manager"
+
+[[instances.manager.triggers]]
+event = "schedule"
+
+[schedules.delivery_due]
+every = "1s"
+run_on_start = true
+payload.team = "delivery"
+
+[schedules.platform_due]
+every = "1s"
+run_on_start = true
+payload.team = "platform"
+`))
+	if err != nil {
+		t.Fatalf("parse topology: %v", err)
+	}
+	m := NewInstanceManager(root, nil)
+	resolver := NewEventResolver(m, teamDir, top)
+	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+
+	preview, err := resolver.PreviewDueSchedulesWithResultForNames(now, []string{"delivery_due"})
+	if err != nil {
+		t.Fatalf("PreviewDueSchedulesWithResultForNames: %v", err)
+	}
+	if !preview.DryRun || preview.WouldFire != 1 || len(preview.Schedules) != 1 || preview.Schedules[0].Name != "delivery_due" {
+		t.Fatalf("preview = %+v", preview)
+	}
+	if _, err := ReadScheduleState(root, "delivery_due"); !os.IsNotExist(err) {
+		t.Fatalf("preview wrote delivery state, err=%v", err)
+	}
+
+	fired, err := resolver.FireDueSchedulesWithResultForNames(now, []string{"delivery_due"})
+	if err != nil {
+		t.Fatalf("FireDueSchedulesWithResultForNames: %v", err)
+	}
+	if fired.DryRun || fired.Fired != 1 || len(fired.Schedules) != 1 || fired.Schedules[0].Name != "delivery_due" {
+		t.Fatalf("fired = %+v", fired)
+	}
+	if _, err := ReadScheduleState(root, "delivery_due"); err != nil {
+		t.Fatalf("delivery schedule state missing: %v", err)
+	}
+	if _, err := ReadScheduleState(root, "platform_due"); !os.IsNotExist(err) {
+		t.Fatalf("platform schedule state changed, err=%v", err)
+	}
+	messages, err := ReadMessages(root, "manager")
+	if err != nil {
+		t.Fatalf("read messages: %v", err)
+	}
+	if len(messages) != 1 || !strings.Contains(messages[0].Body, `"name":"delivery_due"`) || strings.Contains(messages[0].Body, "platform_due") {
 		t.Fatalf("messages = %+v", messages)
 	}
 }
