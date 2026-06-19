@@ -190,6 +190,129 @@ payload.workspace = "repo"
 	}
 }
 
+func TestTopologySummaryReportsInventoryAndDoctorCounts(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := topoFixture + `
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[schedules.nightly]
+every = "1h"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+schedules = ["nightly"]
+`
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"topology", "summary", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("topology summary json: %v\nstderr=%s", err, stderr.String())
+	}
+	var summary topologySummary
+	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
+		t.Fatalf("decode topology summary: %v\nbody=%s", err, out.String())
+	}
+	if !summary.OK || summary.Instances != 2 || summary.Persistent != 1 || summary.Ephemeral != 1 || summary.Triggers != 2 || summary.Pipelines != 1 || summary.PipelineSteps != 1 || summary.Schedules != 1 || summary.Teams != 1 {
+		t.Fatalf("summary = %+v", summary)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"topology", "summary", "--target", root})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("topology summary text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"topology: ok", "instances: total=2 persistent=1 ephemeral=1 triggers=2", "pipelines: total=1 steps=1 problems=0 warnings=0", "teams: total=1 problems=0 warnings=1"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("summary text missing %q:\n%s", want, textOut.String())
+		}
+	}
+}
+
+func TestTopologySummaryReportsAttention(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.worker]
+agent = "worker"
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[instances.other]
+agent = "other"
+
+[[instances.other.triggers]]
+event = "agent.dispatch"
+match.target = "other"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "other"
+
+[teams.delivery]
+instances = ["worker"]
+pipelines = ["ticket_to_pr"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"topology", "summary", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("topology summary attention: %v\nstderr=%s", err, stderr.String())
+	}
+	var summary topologySummary
+	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
+		t.Fatalf("decode topology summary attention: %v\nbody=%s", err, out.String())
+	}
+	if summary.OK || summary.TeamProblems != 1 || summary.PipelineProblems != 0 {
+		t.Fatalf("summary = %+v", summary)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"topology", "summary", "--target", root})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("topology summary attention text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"topology: attention", "teams: total=1 problems=1 warnings=0"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("summary text missing %q:\n%s", want, textOut.String())
+		}
+	}
+}
+
 func TestEventPublishJSON(t *testing.T) {
 	target, err := os.MkdirTemp("/tmp", "agent-team-event-json-")
 	if err != nil {

@@ -24,6 +24,7 @@ func newTopologyCmd() *cobra.Command {
 		Short: "Show declared instances and triggers (reads .agent_team/instances.toml).",
 	}
 	cmd.AddCommand(newTopologyShowCmd())
+	cmd.AddCommand(newTopologySummaryCmd())
 	cmd.AddCommand(newTopologyReloadCmd())
 	return cmd
 }
@@ -47,6 +48,33 @@ func newTopologyShowCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	c.Flags().BoolVar(&asJSON, "json", false, "Emit raw JSON.")
+	return c
+}
+
+func newTopologySummaryCmd() *cobra.Command {
+	var (
+		target string
+		asJSON bool
+	)
+	cwd, _ := os.Getwd()
+	c := &cobra.Command{
+		Use:   "summary",
+		Short: "Summarize declared topology and workflow health.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			teamDir, err := resolveTeamDir(cmd, target)
+			if err != nil {
+				return err
+			}
+			summary, err := collectTopologySummary(teamDir)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team topology summary: %v\n", err)
+				return exitErr(1)
+			}
+			return renderTopologySummary(cmd.OutOrStdout(), summary, asJSON)
+		},
+	}
+	c.Flags().StringVar(&target, "target", cwd, "Repo root.")
+	c.Flags().BoolVar(&asJSON, "json", false, "Emit topology summary as JSON.")
 	return c
 }
 
@@ -113,6 +141,98 @@ func runTopologyShow(cmd *cobra.Command, teamDir string, asJSON bool) error {
 		return nil
 	}
 	printLocalTopology(cmd.OutOrStdout(), top)
+	return nil
+}
+
+type topologySummary struct {
+	OK               bool `json:"ok"`
+	Instances        int  `json:"instances"`
+	Persistent       int  `json:"persistent"`
+	Ephemeral        int  `json:"ephemeral"`
+	Triggers         int  `json:"triggers"`
+	Pipelines        int  `json:"pipelines"`
+	PipelineSteps    int  `json:"pipeline_steps"`
+	PipelineProblems int  `json:"pipeline_problems"`
+	PipelineWarnings int  `json:"pipeline_warnings"`
+	Schedules        int  `json:"schedules"`
+	Teams            int  `json:"teams"`
+	TeamProblems     int  `json:"team_problems"`
+	TeamWarnings     int  `json:"team_warnings"`
+}
+
+func collectTopologySummary(teamDir string) (*topologySummary, error) {
+	top, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	summary := &topologySummary{OK: true}
+	if top == nil {
+		return summary, nil
+	}
+	summary.Instances = len(top.Instances)
+	for _, inst := range top.SortedInstances() {
+		if inst == nil {
+			continue
+		}
+		if inst.Ephemeral {
+			summary.Ephemeral++
+		} else {
+			summary.Persistent++
+		}
+		summary.Triggers += len(inst.Triggers)
+	}
+	summary.Pipelines = len(top.Pipelines)
+	for _, pipeline := range top.SortedPipelines() {
+		if pipeline == nil {
+			continue
+		}
+		summary.PipelineSteps += len(pipeline.Steps)
+	}
+	summary.Schedules = len(top.Schedules)
+	summary.Teams = len(top.Teams)
+	if pipelineDoctor, err := collectPipelineDoctor(teamDir, ""); err != nil {
+		return nil, err
+	} else if pipelineDoctor != nil {
+		summary.PipelineProblems = len(pipelineDoctor.Problems)
+		summary.PipelineWarnings = countPipelineDoctorWarnings(pipelineDoctor)
+	}
+	if teamDoctor, err := collectAllTeamDoctor(teamDir); err != nil {
+		return nil, err
+	} else if teamDoctor != nil {
+		summary.TeamProblems = len(teamDoctor.Problems)
+		summary.TeamWarnings = countSnapshotTeamDoctorWarnings(teamDoctor.Warnings)
+	}
+	summary.OK = summary.PipelineProblems == 0 && summary.TeamProblems == 0
+	return summary, nil
+}
+
+func renderTopologySummary(w io.Writer, summary *topologySummary, asJSON bool) error {
+	if summary == nil {
+		summary = &topologySummary{OK: true}
+	}
+	if asJSON {
+		return json.NewEncoder(w).Encode(summary)
+	}
+	state := "ok"
+	if !summary.OK {
+		state = "attention"
+	}
+	fmt.Fprintf(w, "topology: %s\n", state)
+	fmt.Fprintf(w, "instances: total=%d persistent=%d ephemeral=%d triggers=%d\n",
+		summary.Instances,
+		summary.Persistent,
+		summary.Ephemeral,
+		summary.Triggers)
+	fmt.Fprintf(w, "pipelines: total=%d steps=%d problems=%d warnings=%d\n",
+		summary.Pipelines,
+		summary.PipelineSteps,
+		summary.PipelineProblems,
+		summary.PipelineWarnings)
+	fmt.Fprintf(w, "schedules: total=%d\n", summary.Schedules)
+	fmt.Fprintf(w, "teams: total=%d problems=%d warnings=%d\n",
+		summary.Teams,
+		summary.TeamProblems,
+		summary.TeamWarnings)
 	return nil
 }
 

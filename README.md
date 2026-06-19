@@ -133,6 +133,8 @@ agent-team restart [<instance>...] [-q] [--all] [--latest | --last N] [--agent m
                                                 # restart persistent or daemon-known instances
 agent-team reload [--format '{{len .Topology.Instances}} {{.Reconcile.Changed}}'] [--json]
                                                 # re-read instances.toml in the daemon and reconcile runtime metadata
+agent-team topology show [--json] | summary [--json] | reload
+                                                # inspect declared topology, summarize workflow/team route health, or reload the daemon view
 agent-team plan [--json] [--summary] [--stop-extras] [--format '{{.Instance}} {{.Action}}'] [--agent manager] [--instance manager] [--status running] [--phase idle] [--action start]
                                                 # preview desired instance state from topology and daemon metadata
 agent-team sync [-q] [--dry-run] [--stop-extras] [--agent manager] [--instance manager] [--status unknown] [--phase idle] [--action start] [--summary] [--format '{{.Instance}} {{.Action}}'] [--ready-timeout 3s] [--wait --timeout 30s] [--json]
