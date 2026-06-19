@@ -141,7 +141,7 @@ agent-team sync [-q] [--dry-run] [--stop-extras] [--agent manager] [--instance m
                                                 # reload topology, reconcile metadata, start/resume persistent instances, and optionally stop running extras
 agent-team tick [-w | --until-idle] [--interval 2s] [--max-cycles N] [--dry-run] [--preview-routes] [--skip-reconcile] [--skip-schedules] [--skip-drain] [--skip-advance] [--limit N] [--workspace auto|worktree|repo] [--format '{{.Queue.Dispatched}} {{len .Advance}}'] [--json]
                                                 # run one maintenance cycle, watch cycles, or tick until no immediate job-status/schedule/queue/pipeline work remains
-agent-team repair [--dry-run] [--preview-routes] [--jobs] [--skip-daemon] [--skip-queue] [--skip-tick] [--until-idle] [--limit N] [--workspace auto|worktree|repo] [--json]
+agent-team repair [--dry-run] [--preview-routes] [--jobs] [--skip-daemon] [--skip-queue] [--skip-tick] [--until-idle] [--limit N] [--workspace auto|worktree|repo] [--format '{{.Queue.Action}}'] [--json]
                                                 # recover common unhealthy orchestration state by starting/reconciling the daemon, retrying dead queue items, and ticking work
 agent-team overview [-w] [--no-clear] [--interval 2s] [--schedule-limit N] [--format '{{.State}}'] [--json]
                                                 # show a read-only operator overview with health, topology, jobs, queue, pipelines, schedules, and action hints

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,21 @@ func TestRepairDryRunPreviewsDeadQueueWithoutDaemon(t *testing.T) {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("repair text missing %q:\n%s", want, textOut.String())
 		}
+	}
+
+	formatted := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatted.SetOut(formatOut)
+	formatted.SetErr(formatErr)
+	formatted.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--skip-daemon", "--skip-tick", "--format", "{{.DryRun}} {{.Daemon.Action}} {{.Queue.Action}} {{len .Queue.Results}}"})
+	if err := formatted.Execute(); err != nil {
+		t.Fatalf("repair formatted dry-run: %v\nstderr=%s", err, formatErr.String())
+	}
+	if formatErr.Len() != 0 {
+		t.Fatalf("repair formatted stderr = %q", formatErr.String())
+	}
+	if got, want := formatOut.String(), "true skipped would_retry 1\n"; got != want {
+		t.Fatalf("repair formatted output = %q, want %q", got, want)
 	}
 }
 
@@ -340,6 +356,42 @@ func TestRepairRejectsInvalidFlagCombinations(t *testing.T) {
 	}
 	if !strings.Contains(previewRoutesErr.String(), "--preview-routes requires --dry-run") {
 		t.Fatalf("stderr = %q", previewRoutesErr.String())
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "format with json",
+			args: []string{"repair", "--format", "{{.DryRun}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "invalid format",
+			args: []string{"repair", "--format", "{{"},
+			want: "invalid --format template",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("repair invalid flags succeeded: stdout=%s", out.String())
+			}
+			var exit ExitCode
+			if !errors.As(err, &exit) || int(exit) != 2 {
+				t.Fatalf("repair err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 

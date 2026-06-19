@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"text/template"
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
@@ -22,6 +23,7 @@ func newRepairCmd() *cobra.Command {
 		dryRun        bool
 		previewRoutes bool
 		jsonOut       bool
+		format        string
 		skipDaemon    bool
 		skipQueue     bool
 		skipTick      bool
@@ -71,6 +73,15 @@ func newRepairCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --until-idle cannot be combined with --skip-tick.")
 				return exitErr(2)
 			}
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			formatTemplate, err := parseRepairFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team repair: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -94,7 +105,7 @@ func newRepairCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team repair: %v\n", err)
 				return exitErr(1)
 			}
-			return renderRepairResult(cmd.OutOrStdout(), result, jsonOut)
+			return renderRepairResult(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
@@ -103,6 +114,7 @@ func newRepairCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview repair actions without mutating state or starting the daemon.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include route and dispatch payload previews for ready pipeline steps.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the repair result with a Go template, e.g. '{{.DryRun}} {{.Queue.Action}}'.")
 	cmd.Flags().BoolVar(&skipDaemon, "skip-daemon", false, "Do not start or reconcile the daemon.")
 	cmd.Flags().BoolVar(&skipQueue, "skip-queue", false, "Do not retry dead-letter queue items.")
 	cmd.Flags().BoolVar(&skipTick, "skip-tick", false, "Do not run a maintenance tick after queue retry.")
@@ -347,12 +359,26 @@ func runRepairTickStep(cmd *cobra.Command, teamDir string, opts repairOptions) r
 	return repairTickStep{Action: action, Result: tick}
 }
 
-func renderRepairResult(w io.Writer, result *repairResult, jsonOut bool) error {
+func parseRepairFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("repair-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func renderRepairResult(w io.Writer, result *repairResult, jsonOut bool, tmpl *template.Template) error {
 	if result == nil {
 		result = &repairResult{}
 	}
 	if jsonOut {
 		return json.NewEncoder(w).Encode(result)
+	}
+	if tmpl != nil {
+		return renderRepairFormat(w, result, tmpl)
 	}
 	if result.DryRun {
 		fmt.Fprintln(w, "Repair dry-run: true")
@@ -377,6 +403,14 @@ func renderRepairResult(w io.Writer, result *repairResult, jsonOut bool) error {
 		fmt.Fprintf(w, "Health after: %s\n", repairHealthState(result.HealthAfter))
 	}
 	return nil
+}
+
+func renderRepairFormat(w io.Writer, result *repairResult, tmpl *template.Template) error {
+	if err := tmpl.Execute(w, result); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 func renderRepairHealthActions(w io.Writer, health *healthResult) {
