@@ -1316,6 +1316,7 @@ Flags:
       --github-verify-pr                      With --github-cleanup-merged, verify recorded GitHub PRs are merged with gh before cleanup.
       --linear-max-age duration               Maximum accepted Linear webhook age after signature verification. (default 1m0s)
       --linear-secret string                  Linear webhook signing secret. Defaults to LINEAR_WEBHOOK_SECRET when set.
+      --max-body-bytes int                    Maximum webhook request body size accepted by the intake server. (default 1048576)
       --preview-triggers                      With --dry-run, include local topology instance and pipeline matches.
       --prune-ok-older-than duration          Prune successful delivery history older than this duration after each request. Use 0 to disable. (default 168h0m0s)
       --prune-recovered-older-than duration   Prune recovered failed delivery history older than this duration after each request. Use 0 to disable. (default 168h0m0s)
@@ -1358,6 +1359,7 @@ Flags:
       --ingress-host string                   Kubernetes Ingress host to expose the generated Service; kubernetes output only.
       --linear-max-age duration               Maximum accepted Linear webhook age after signature verification. (default 1m0s)
       --linear-secret-env string              Environment variable name containing the Linear webhook secret; empty omits it. (default "LINEAR_WEBHOOK_SECRET")
+      --max-body-bytes int                    Maximum webhook request body size accepted by intake serve. (default 1048576)
       --name string                           Service unit name/comment stem. (default "agent-team-intake")
       --prune-ok-older-than duration          Prune successful delivery history older than this duration after each request. Use 0 to disable. (default 168h0m0s)
       --prune-recovered-older-than duration   Prune recovered failed delivery history older than this duration after each request. Use 0 to disable. (default 168h0m0s)

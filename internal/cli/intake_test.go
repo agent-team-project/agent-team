@@ -318,6 +318,7 @@ func TestIntakeServeRequiresSecrets(t *testing.T) {
 	}{
 		{[]string{"intake", "serve", "--require-linear-secret"}, "--require-linear-secret set but Linear webhook secret is empty"},
 		{[]string{"intake", "serve", "--require-github-secret"}, "--require-github-secret set but GitHub webhook secret is empty"},
+		{[]string{"intake", "serve", "--max-body-bytes", "0"}, "--max-body-bytes must be > 0"},
 	} {
 		cmd := NewRootCmd()
 		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -335,6 +336,19 @@ func TestIntakeServeRequiresSecrets(t *testing.T) {
 		if !strings.Contains(stderr.String(), tc.want) {
 			t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
 		}
+	}
+}
+
+func TestIntakeServeRejectsOversizedPayload(t *testing.T) {
+	handler := newIntakeServeHandler(t.TempDir(), intakeServeOptions{
+		DryRun:       true,
+		MaxBodyBytes: 8,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/linear", strings.NewReader(`{"too":"large"}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "payload too large") {
+		t.Fatalf("oversized status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -515,7 +529,7 @@ func TestIntakeServiceSystemd(t *testing.T) {
 		"Environment=LINEAR_SECRET=replace-me",
 		"Environment=GITHUB_SECRET=replace-me",
 		"ExecStartPre=/usr/local/bin/agent-team daemon start",
-		"ExecStart=/usr/local/bin/agent-team intake serve --addr 127.0.0.1:9999 --linear-max-age 2m0s --github-replay-window 24h0m0s --prune-ok-older-than 24h0m0s --prune-recovered-older-than 48h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr --require-linear-secret --require-github-secret",
+		"ExecStart=/usr/local/bin/agent-team intake serve --addr 127.0.0.1:9999 --linear-max-age 2m0s --github-replay-window 24h0m0s --max-body-bytes 1048576 --prune-ok-older-than 24h0m0s --prune-recovered-older-than 48h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr --require-linear-secret --require-github-secret",
 		"Restart=on-failure",
 		"WantedBy=multi-user.target",
 	} {
@@ -599,7 +613,7 @@ func TestIntakeServiceLaunchd(t *testing.T) {
 		"<key>GITHUB_SECRET</key>",
 		"<string>/bin/sh</string>",
 		"<string>-lc</string>",
-		"<string>&#39;/Applications/Agent Team/bin/agent-team&#39; daemon start &amp;&amp; exec &#39;/Applications/Agent Team/bin/agent-team&#39; intake serve --addr 127.0.0.1:9999 --linear-max-age 2m0s --github-replay-window 24h0m0s --prune-ok-older-than 24h0m0s --prune-recovered-older-than 48h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr</string>",
+		"<string>&#39;/Applications/Agent Team/bin/agent-team&#39; daemon start &amp;&amp; exec &#39;/Applications/Agent Team/bin/agent-team&#39; intake serve --addr 127.0.0.1:9999 --linear-max-age 2m0s --github-replay-window 24h0m0s --max-body-bytes 1048576 --prune-ok-older-than 24h0m0s --prune-recovered-older-than 48h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr</string>",
 		"<key>RunAtLoad</key>",
 		"<true/>",
 		"<key>KeepAlive</key>",
@@ -656,7 +670,7 @@ func TestIntakeServiceCompose(t *testing.T) {
 		`      "GITHUB_SECRET": "replace-me"`,
 		`      - "/bin/sh"`,
 		`      - "-lc"`,
-		`      - "agent-team daemon start && exec agent-team intake serve --addr 0.0.0.0:8787 --linear-max-age 1m0s --github-replay-window 24h0m0s --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr"`,
+		`      - "agent-team daemon start && exec agent-team intake serve --addr 0.0.0.0:8787 --linear-max-age 1m0s --github-replay-window 24h0m0s --max-body-bytes 1048576 --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr"`,
 		"    restart: unless-stopped",
 	} {
 		if !strings.Contains(body, want) {
@@ -749,7 +763,7 @@ func TestIntakeServiceKubernetes(t *testing.T) {
 		`          workingDir: "/workspace/repo"`,
 		`            - "/bin/sh"`,
 		`            - "-lc"`,
-		`            - "agent-team daemon start && exec agent-team intake serve --addr 0.0.0.0:8787 --linear-max-age 1m0s --github-replay-window 24h0m0s --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr"`,
+		`            - "agent-team daemon start && exec agent-team intake serve --addr 0.0.0.0:8787 --linear-max-age 1m0s --github-replay-window 24h0m0s --max-body-bytes 1048576 --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr"`,
 		"              containerPort: 8787",
 		`            - name: "LINEAR_SECRET"`,
 		`                  name: "agent-team-intake-secrets"`,
@@ -797,6 +811,7 @@ func TestIntakeServiceValidation(t *testing.T) {
 		{[]string{"intake", "service", "systemd", "--github-verify-pr"}, "--github-verify-pr requires --github-cleanup-merged"},
 		{[]string{"intake", "service", "systemd", "--github-cleanup-merged"}, "--github-cleanup-merged requires --github-reconcile-job"},
 		{[]string{"intake", "service", "systemd", "--github-replay-window", "-1s"}, "--github-replay-window must be >= 0"},
+		{[]string{"intake", "service", "systemd", "--max-body-bytes", "0"}, "--max-body-bytes must be > 0"},
 		{[]string{"intake", "service", "systemd", "--linear-secret-env=", "--require-linear-secret"}, "--require-linear-secret requires --linear-secret-env"},
 		{[]string{"intake", "service", "systemd", "--github-secret-env=", "--require-github-secret"}, "--require-github-secret requires --github-secret-env"},
 	}

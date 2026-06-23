@@ -76,6 +76,8 @@ Do not depend on network location alone for trust. Configure provider webhook se
 
 Signed GitHub webhooks also use `X-GitHub-Delivery` replay protection by default. The server rejects duplicate delivery IDs seen in the last 24 hours; tune this with `--github-replay-window`, or set it to `0` only for nonstandard test senders.
 
+Webhook request bodies are capped at 1 MiB by default. Tune this with `--max-body-bytes` for providers or proxies that legitimately send larger payloads, but keep it bounded for public endpoints.
+
 For exposed servers, pass `--require-linear-secret` and `--require-github-secret` so an empty environment variable fails startup instead of silently disabling signature verification.
 
 To inspect a duplicate or provider retry, filter delivery history by that request ID:
@@ -137,7 +139,7 @@ WorkingDirectory=/srv/agent-team/my-repo
 Environment=LINEAR_WEBHOOK_SECRET=replace-me
 Environment=GITHUB_WEBHOOK_SECRET=replace-me
 ExecStartPre=/usr/local/bin/agent-team daemon start
-ExecStart=/usr/local/bin/agent-team intake serve --addr 127.0.0.1:8787 --linear-max-age 1m0s --github-replay-window 24h0m0s --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr --require-linear-secret --require-github-secret
+ExecStart=/usr/local/bin/agent-team intake serve --addr 127.0.0.1:8787 --linear-max-age 1m0s --github-replay-window 24h0m0s --max-body-bytes 1048576 --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr --require-linear-secret --require-github-secret
 Restart=on-failure
 RestartSec=5s
 
@@ -185,7 +187,7 @@ The generated plist starts the repo daemon, then replaces the shell with the for
   <array>
     <string>/bin/sh</string>
     <string>-lc</string>
-    <string>/opt/homebrew/bin/agent-team daemon start &amp;&amp; exec /opt/homebrew/bin/agent-team intake serve --addr 127.0.0.1:8787 --linear-max-age 1m0s --github-replay-window 24h0m0s --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr</string>
+    <string>/opt/homebrew/bin/agent-team daemon start &amp;&amp; exec /opt/homebrew/bin/agent-team intake serve --addr 127.0.0.1:8787 --linear-max-age 1m0s --github-replay-window 24h0m0s --max-body-bytes 1048576 --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -250,7 +252,7 @@ services:
     command:
       - "/bin/sh"
       - "-lc"
-      - "agent-team daemon start && exec agent-team intake serve --addr 0.0.0.0:8787 --linear-max-age 1m0s --github-replay-window 24h0m0s --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr"
+      - "agent-team daemon start && exec agent-team intake serve --addr 0.0.0.0:8787 --linear-max-age 1m0s --github-replay-window 24h0m0s --max-body-bytes 1048576 --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr"
     restart: unless-stopped
 ```
 

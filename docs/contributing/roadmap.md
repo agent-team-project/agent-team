@@ -60,6 +60,7 @@ Built or substantially implemented:
 - systemd, launchd, and compose intake service generators
 - local Dockerfile for the compose intake service
 - env-file secret references for service generation
+- configurable intake request body limits
 - published generated CLI reference with CI drift check
 - GHCR container publish workflow for main and release tags
 - Kubernetes intake manifests with Secret, Deployment, Service, and workspace PVC reference

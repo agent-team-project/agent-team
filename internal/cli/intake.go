@@ -274,11 +274,13 @@ type intakeServiceOptions struct {
 	GitHubVerifyPR          bool
 	LinearMaxAge            time.Duration
 	GitHubReplayWindow      time.Duration
+	MaxBodyBytes            int64
 	PruneOKOlderThan        time.Duration
 	PruneRecoveredOlderThan time.Duration
 }
 
 const defaultGitHubReplayWindow = 24 * time.Hour
+const defaultIntakeMaxBodyBytes int64 = 1 << 20
 
 func newIntakeServiceCmd() *cobra.Command {
 	var opts intakeServiceOptions
@@ -293,6 +295,7 @@ func newIntakeServiceCmd() *cobra.Command {
 	opts.GitHubSecretEnv = "GITHUB_WEBHOOK_SECRET"
 	opts.LinearMaxAge = time.Minute
 	opts.GitHubReplayWindow = defaultGitHubReplayWindow
+	opts.MaxBodyBytes = defaultIntakeMaxBodyBytes
 	opts.PruneOKOlderThan = 7 * 24 * time.Hour
 	opts.PruneRecoveredOlderThan = 7 * 24 * time.Hour
 	cwd, _ := os.Getwd()
@@ -364,6 +367,7 @@ func newIntakeServiceCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.GitHubVerifyPR, "github-verify-pr", false, "Include --github-verify-pr in ExecStart; requires --github-cleanup-merged.")
 	cmd.Flags().DurationVar(&opts.LinearMaxAge, "linear-max-age", opts.LinearMaxAge, "Maximum accepted Linear webhook age after signature verification.")
 	cmd.Flags().DurationVar(&opts.GitHubReplayWindow, "github-replay-window", opts.GitHubReplayWindow, "Reject signed GitHub delivery IDs already seen within this duration. Use 0 to disable.")
+	cmd.Flags().Int64Var(&opts.MaxBodyBytes, "max-body-bytes", opts.MaxBodyBytes, "Maximum webhook request body size accepted by intake serve.")
 	cmd.Flags().DurationVar(&opts.PruneOKOlderThan, "prune-ok-older-than", opts.PruneOKOlderThan, "Prune successful delivery history older than this duration after each request. Use 0 to disable.")
 	cmd.Flags().DurationVar(&opts.PruneRecoveredOlderThan, "prune-recovered-older-than", opts.PruneRecoveredOlderThan, "Prune recovered failed delivery history older than this duration after each request. Use 0 to disable.")
 	return cmd
@@ -431,6 +435,9 @@ func validateIntakeServiceOptions(kind string, opts intakeServiceOptions) error 
 	}
 	if opts.GitHubReplayWindow < 0 {
 		return fmt.Errorf("--github-replay-window must be >= 0")
+	}
+	if opts.MaxBodyBytes <= 0 {
+		return fmt.Errorf("--max-body-bytes must be > 0")
 	}
 	if opts.RequireLinearSecret && strings.TrimSpace(opts.LinearSecretEnv) == "" {
 		return fmt.Errorf("--require-linear-secret requires --linear-secret-env")
@@ -752,6 +759,7 @@ func intakeServeArgs(opts intakeServiceOptions) []string {
 		"--addr", opts.Addr,
 		"--linear-max-age", opts.LinearMaxAge.String(),
 		"--github-replay-window", opts.GitHubReplayWindow.String(),
+		"--max-body-bytes", strconv.FormatInt(opts.MaxBodyBytes, 10),
 		"--prune-ok-older-than", opts.PruneOKOlderThan.String(),
 		"--prune-recovered-older-than", opts.PruneRecoveredOlderThan.String(),
 	}
@@ -782,6 +790,7 @@ func newIntakeServeCmd() *cobra.Command {
 	opts.PruneOKOlderThan = 7 * 24 * time.Hour
 	opts.PruneRecoveredOlderThan = 7 * 24 * time.Hour
 	opts.GitHubReplayWindow = defaultGitHubReplayWindow
+	opts.MaxBodyBytes = defaultIntakeMaxBodyBytes
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -806,6 +815,10 @@ func newIntakeServeCmd() *cobra.Command {
 			}
 			if opts.GitHubReplayWindow < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake serve: --github-replay-window must be >= 0.")
+				return exitErr(2)
+			}
+			if opts.MaxBodyBytes <= 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake serve: --max-body-bytes must be > 0.")
 				return exitErr(2)
 			}
 			if opts.PruneOKOlderThan < 0 {
@@ -874,6 +887,7 @@ func newIntakeServeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.RequireGitHubSecret, "require-github-secret", false, "Fail startup unless --github-secret or GITHUB_WEBHOOK_SECRET is set.")
 	cmd.Flags().DurationVar(&opts.LinearMaxAge, "linear-max-age", time.Minute, "Maximum accepted Linear webhook age after signature verification.")
 	cmd.Flags().DurationVar(&opts.GitHubReplayWindow, "github-replay-window", opts.GitHubReplayWindow, "Reject signed GitHub delivery IDs already seen within this duration. Use 0 to disable.")
+	cmd.Flags().Int64Var(&opts.MaxBodyBytes, "max-body-bytes", opts.MaxBodyBytes, "Maximum webhook request body size accepted by the intake server.")
 	cmd.Flags().DurationVar(&opts.PruneOKOlderThan, "prune-ok-older-than", opts.PruneOKOlderThan, "Prune successful delivery history older than this duration after each request. Use 0 to disable.")
 	cmd.Flags().DurationVar(&opts.PruneRecoveredOlderThan, "prune-recovered-older-than", opts.PruneRecoveredOlderThan, "Prune recovered failed delivery history older than this duration after each request. Use 0 to disable.")
 	return cmd
@@ -891,7 +905,7 @@ func validateIntakeRequiredSecrets(opts intakeServeOptions) error {
 
 func newIntakeServeHandler(teamDir string, opts intakeServeOptions) http.Handler {
 	if opts.MaxBodyBytes <= 0 {
-		opts.MaxBodyBytes = 1 << 20
+		opts.MaxBodyBytes = defaultIntakeMaxBodyBytes
 	}
 	if opts.LinearMaxAge == 0 {
 		opts.LinearMaxAge = time.Minute
