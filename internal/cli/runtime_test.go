@@ -129,6 +129,78 @@ func TestRuntimeCommand_FormatRejectsJSON(t *testing.T) {
 	}
 }
 
+func TestRuntimeLsJSONListsSupportedRuntimes(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		switch bin {
+		case "claude":
+			return "/usr/local/bin/claude", nil
+		case "codex":
+			return "", exec.ErrNotFound
+		default:
+			t.Fatalf("look path bin = %q", bin)
+			return "", exec.ErrNotFound
+		}
+	})
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "ls", "--target", t.TempDir(), "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime ls --json failed: %v\nstderr: %s", err, errOut.String())
+	}
+	var rows []runtimeInfo
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("json: %v\n%s", err, out.String())
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want claude and codex", rows)
+	}
+	byRuntime := map[string]runtimeInfo{}
+	for _, row := range rows {
+		byRuntime[row.Runtime] = row
+	}
+	if row := byRuntime["claude"]; !row.Selected || !row.Available || row.Path != "/usr/local/bin/claude" {
+		t.Fatalf("claude row = %+v, want selected available path", row)
+	}
+	if row := byRuntime["codex"]; row.Selected || row.Available || row.Binary != "codex" {
+		t.Fatalf("codex row = %+v, want unselected unavailable default", row)
+	}
+}
+
+func TestRuntimeLsUsesRepoSelectedBinary(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	appendRuntimeConfigForRuntimeTest(t, tmp, "codex", "codex-wrapper")
+	seen := map[string]bool{}
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		seen[bin] = true
+		return "/usr/local/bin/" + bin, nil
+	})
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "ls", "--target", tmp, "--format", "{{.Runtime}} {{.Selected}} {{.Binary}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime ls --format failed: %v\nstderr: %s", err, errOut.String())
+	}
+	for _, want := range []string{"claude false claude", "codex true codex-wrapper"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("runtime ls format missing %q:\n%s", want, out.String())
+		}
+	}
+	if !seen["claude"] || !seen["codex-wrapper"] || seen["codex"] {
+		t.Fatalf("looked up binaries = %+v, want claude and selected codex-wrapper only", seen)
+	}
+}
+
 func appendRuntimeConfigForRuntimeTest(t *testing.T, root, kind, binary string) {
 	t.Helper()
 	cfg := filepath.Join(root, ".agent_team", "config.toml")

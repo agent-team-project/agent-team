@@ -3391,6 +3391,36 @@ Inherited Flags:
       --repo string   Repo root for commands that read .agent_team; overrides legacy repo-root --target flags.
 ```
 
+Subcommands:
+
+- `agent-team runtime ls` - List supported runtime profiles.
+
+## `agent-team runtime ls`
+
+List supported runtime profiles.
+
+List supported runtime profiles, binary resolution, availability, and runtime capabilities. The selected row is the profile the current environment or repo config would use by default.
+
+```text
+agent-team runtime ls [flags]
+```
+
+Aliases: `list`
+
+Flags:
+
+```text
+      --format string   Render each runtime row with a Go template, e.g. '{{.Runtime}} {{.Available}}'.
+      --json            Emit machine-readable JSON.
+      --target string   Repo root or any path under a repo. (default "<repo>")
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root for commands that read .agent_team; overrides legacy repo-root --target flags.
+```
+
 ## `agent-team schedule`
 
 Inspect and run declared schedule events.

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 	texttemplate "text/template"
 
 	"github.com/jamesaud/agent-team/internal/loader"
@@ -72,11 +73,13 @@ func newRuntimeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "", "Render runtime info with a Go template, e.g. '{{.Runtime}} {{.Available}}'.")
 	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile to inspect for this invocation (claude or codex). Overrides env and repo config.")
 	cmd.Flags().StringVar(&runtimeBinary, "runtime-bin", "", "Runtime binary to inspect for this invocation. Overrides env and repo config.")
+	cmd.AddCommand(newRuntimeLsCmd())
 	return cmd
 }
 
 type runtimeInfo struct {
 	Runtime        string   `json:"runtime"`
+	Selected       bool     `json:"selected,omitempty"`
 	Binary         string   `json:"binary"`
 	Path           string   `json:"path,omitempty"`
 	Available      bool     `json:"available"`
@@ -95,6 +98,51 @@ type runtimeInfo struct {
 type runtimeSelection struct {
 	Kind   string
 	Binary string
+}
+
+func newRuntimeLsCmd() *cobra.Command {
+	var (
+		target  string
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:     "ls",
+		Aliases: []string{"list"},
+		Short:   "List supported runtime profiles.",
+		Long: "List supported runtime profiles, binary resolution, availability, and runtime capabilities. " +
+			"The selected row is the profile the current environment or repo config would use by default.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime ls: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseRuntimeFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime ls: %v\n", err)
+				return exitErr(2)
+			}
+			rows, err := collectRuntimeListForTarget(effectiveRepoTarget(cmd, target))
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime ls: %v\n", err)
+				return exitErr(2)
+			}
+			if jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(rows)
+			}
+			if tmpl != nil {
+				return renderRuntimeListFormat(cmd.OutOrStdout(), rows, tmpl)
+			}
+			renderRuntimeList(cmd.OutOrStdout(), rows)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&target, "target", cwd, "Repo root or any path under a repo.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each runtime row with a Go template, e.g. '{{.Runtime}} {{.Available}}'.")
+	return cmd
 }
 
 func runtimeFromConfigWithOverrides(configPath string, selection runtimeSelection) (runtimebin.Runtime, error) {
@@ -186,6 +234,36 @@ func collectRuntimeInfoForConfigWithSelection(configPath string, selection runti
 	return info, nil
 }
 
+func collectRuntimeListForTarget(target string) ([]runtimeInfo, error) {
+	return collectRuntimeListForConfig(runtimeConfigPathForTarget(target))
+}
+
+func collectRuntimeListForConfig(configPath string) ([]runtimeInfo, error) {
+	selected, err := runtimeFromConfigWithOverrides(configPath, runtimeSelection{})
+	if err != nil {
+		return nil, err
+	}
+	kinds := []runtimebin.Kind{runtimebin.KindClaude, runtimebin.KindCodex}
+	rows := make([]runtimeInfo, 0, len(kinds))
+	for _, kind := range kinds {
+		binary := runtimebin.DefaultBinaryForKind(kind)
+		isSelected := selected.Kind == kind
+		if isSelected {
+			binary = selected.Binary
+		}
+		info, err := collectRuntimeInfoForConfigWithSelection(configPath, runtimeSelection{
+			Kind:   string(kind),
+			Binary: binary,
+		})
+		if err != nil {
+			return nil, err
+		}
+		info.Selected = isSelected
+		rows = append(rows, info)
+	}
+	return rows, nil
+}
+
 func runtimeConfigPathForTarget(target string) string {
 	abs, err := filepath.Abs(target)
 	if err != nil {
@@ -236,6 +314,34 @@ func renderRuntimeInfo(w fmtWriter, info runtimeInfo) {
 	}
 }
 
+func renderRuntimeList(w fmtWriter, rows []runtimeInfo) {
+	if len(rows) == 0 {
+		fmt.Fprintln(w, "(no runtimes)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "RUNTIME\tSELECTED\tBINARY\tPATH\tAVAILABLE\tDIRECT\tDAEMON\tRESUME\tMANAGED\tSUBAGENTS")
+	for _, row := range rows {
+		path := row.Path
+		if path == "" {
+			path = "(not found)"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.Runtime,
+			runtimeYesNo(row.Selected),
+			row.Binary,
+			path,
+			runtimeYesNo(row.Available),
+			runtimeYesNo(row.DirectRun),
+			runtimeYesNo(row.DaemonDispatch),
+			runtimeYesNo(row.Resume),
+			runtimeYesNo(row.ManagedResume),
+			runtimeYesNo(row.Subagents),
+		)
+	}
+	_ = tw.Flush()
+}
+
 func parseRuntimeFormat(format string) (*texttemplate.Template, error) {
 	if strings.TrimSpace(format) == "" {
 		return nil, nil
@@ -245,6 +351,15 @@ func parseRuntimeFormat(format string) (*texttemplate.Template, error) {
 		return nil, fmt.Errorf("invalid --format template: %w", err)
 	}
 	return tmpl, nil
+}
+
+func renderRuntimeListFormat(w fmtWriter, rows []runtimeInfo, tmpl *texttemplate.Template) error {
+	for _, row := range rows {
+		if err := renderRuntimeFormat(w, row, tmpl); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func renderRuntimeFormat(w fmtWriter, info runtimeInfo, tmpl *texttemplate.Template) error {

@@ -208,8 +208,8 @@ agent-team health [-q] [-w] [--no-clear] [--wait --timeout 30s] [--latest | --la
                                                 # check daemon, declarations, crashes, stale status, queue dead letters/quarantine, job health, and optional topology drift
 agent-team monitor [-w] [--no-clear] [-a] [--summary [--resources]] [--plan [--stop-extras] [--action start]] [--jobs] [--schedules] [--latest | --last N] [--events N [--event-action stop] [--since 10m]] [--sort status|agent|phase|stale|unhealthy|started|stopped|exited|name] [--stats-sort cpu|mem|rss|status|agent|phase|stale|unhealthy|name] [--format '{{.Health.Healthy}} {{len .Instances}}'] [--json] [--interval 2s] [--strict-topology] [--agent manager] [--instance manager] [--status running] [--runtime codex] [--phase idle] [--stale] [--unhealthy]
                                                 # combined health, instance, resource, event-history, and job-status snapshot; uses local metadata if the daemon is down
-agent-team runtime [--runtime claude|codex] [--runtime-bin <path>] [--format '{{.Runtime}} {{.Available}}'] [--json]
-                                                # inspect selected LLM runtime profile, binary path, and supported capabilities
+agent-team runtime [--runtime claude|codex] [--runtime-bin <path>] [--format '{{.Runtime}} {{.Available}}'] [--json] | ls [--format '{{.Runtime}} {{.Selected}} {{.Available}}'] [--json]
+                                                # inspect selected LLM runtime profile, or list supported runtime profiles and availability
 agent-team docs cli [--output docs/reference/cli.generated.md | --check docs/reference/cli.generated.md]
                                                 # generate or check markdown CLI reference from the live command tree
 agent-team snapshot [--events N|-1] [--intake-deliveries N|-1] [--schedule-limit N] [--no-redact] [--json | --output snapshot.json]

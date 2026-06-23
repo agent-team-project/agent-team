@@ -34,6 +34,7 @@ as the output directory instead.
 | `agent-team daemon restart` | Restart daemon |
 | `agent-team daemon reconcile` | Refresh metadata from process table |
 | `agent-team runtime` | Show selected LLM runtime profile; use `--runtime` / `--runtime-bin` to preview one-off overrides |
+| `agent-team runtime ls` | List supported runtime profiles, availability, and capabilities |
 
 ## Instance Lifecycle
 
