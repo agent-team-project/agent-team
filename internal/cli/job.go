@@ -3165,6 +3165,7 @@ type jobSummary struct {
 	Failed       int            `json:"failed"`
 	Targets      map[string]int `json:"targets"`
 	Pipelines    map[string]int `json:"pipelines"`
+	Runtimes     map[string]int `json:"runtimes,omitempty"`
 	WithInstance int            `json:"with_instance"`
 	WithBranch   int            `json:"with_branch"`
 	WithWorktree int            `json:"with_worktree"`
@@ -3392,7 +3393,7 @@ func runJobSummary(w io.Writer, teamDir string, filters jobListFilters, jsonOut 
 	if err != nil {
 		return err
 	}
-	summary := summarizeJobs(filtered)
+	summary := summarizeJobsWithRuntime(teamDir, filtered)
 	if jsonOut {
 		return json.NewEncoder(w).Encode(summary)
 	}
@@ -3465,6 +3466,61 @@ func summarizeJobs(jobs []*job.Job) jobSummary {
 		}
 	}
 	return summary
+}
+
+func summarizeJobsWithRuntime(teamDir string, jobs []*job.Job) jobSummary {
+	summary := summarizeJobs(jobs)
+	summary.Runtimes = summarizeJobRuntimeCounts(teamDir, jobs)
+	return summary
+}
+
+func summarizeJobRuntimeCounts(teamDir string, jobs []*job.Job) map[string]int {
+	if strings.TrimSpace(teamDir) == "" || len(jobs) == 0 {
+		return nil
+	}
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return nil
+	}
+	runtimeByInstance := make(map[string]string, len(metas))
+	for _, meta := range metas {
+		if meta == nil || strings.TrimSpace(meta.Instance) == "" {
+			continue
+		}
+		runtimeByInstance[meta.Instance] = metadataRuntimeKey(meta)
+	}
+	if len(runtimeByInstance) == 0 {
+		return nil
+	}
+	counts := map[string]int{}
+	for _, j := range jobs {
+		if j == nil {
+			continue
+		}
+		seen := map[string]bool{}
+		add := func(instance string) {
+			instance = strings.TrimSpace(instance)
+			if instance == "" {
+				return
+			}
+			runtime, ok := runtimeByInstance[instance]
+			if !ok || runtime == "" {
+				return
+			}
+			seen[runtime] = true
+		}
+		add(j.Instance)
+		for _, step := range j.Steps {
+			add(step.Instance)
+		}
+		for runtime := range seen {
+			counts[runtime]++
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
 }
 
 func collectJobTriage(teamDir string, now time.Time, staleAfter time.Duration) (jobTriageSnapshot, error) {
@@ -3964,6 +4020,13 @@ func renderJobSummary(w io.Writer, summary jobSummary) {
 		fmt.Fprint(w, "pipelines:")
 		for _, key := range sortedCountKeys(summary.Pipelines) {
 			fmt.Fprintf(w, " %s=%d", key, summary.Pipelines[key])
+		}
+		fmt.Fprintln(w)
+	}
+	if len(summary.Runtimes) > 0 {
+		fmt.Fprint(w, "runtimes:")
+		for _, key := range sortedCountKeys(summary.Runtimes) {
+			fmt.Fprintf(w, " %s=%d", key, summary.Runtimes[key])
 		}
 		fmt.Fprintln(w)
 	}

@@ -2702,6 +2702,18 @@ func TestJobListSummary(t *testing.T) {
 			t.Fatalf("write %s: %v", j.ID, err)
 		}
 	}
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance:      "worker-squ-66",
+		Agent:         "worker",
+		Runtime:       string(runtimebin.KindCodex),
+		RuntimeBinary: "codex-dev",
+		Status:        daemon.StatusRunning,
+		PID:           os.Getpid(),
+		Workspace:     tmp,
+		StartedAt:     now,
+	}); err != nil {
+		t.Fatalf("write runtime metadata: %v", err)
+	}
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -2720,6 +2732,9 @@ func TestJobListSummary(t *testing.T) {
 	}
 	if summary.Targets["worker"] != 2 || summary.Pipelines["ticket_to_pr"] != 1 {
 		t.Fatalf("summary maps = %+v", summary)
+	}
+	if summary.Runtimes["codex"] != 1 {
+		t.Fatalf("summary runtimes = %+v", summary.Runtimes)
 	}
 	if summary.WithInstance != 1 || summary.WithBranch != 1 || summary.WithWorktree != 1 || summary.WithPR != 1 {
 		t.Fatalf("summary ownership = %+v", summary)
