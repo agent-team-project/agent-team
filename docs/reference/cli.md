@@ -80,7 +80,7 @@ Shortcuts:
 | Command | Purpose |
 | --- | --- |
 | `agent-team job create <ticket>` | Create a durable job |
-| `agent-team job ls` | List jobs |
+| `agent-team job ls` | List jobs; filter mixed-runtime ownership with `--runtime` |
 | `agent-team job show <job-id>` | Show job detail, queue, quarantine, status previews, and actions |
 | `agent-team job dispatch <job-id>` | Dispatch a job; use `--runtime` for one-off Claude/Codex selection |
 | `agent-team job send <job-id>` | Send message to job instance |

@@ -16,6 +16,7 @@ import (
 
 	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/jamesaud/agent-team/internal/job"
+	"github.com/jamesaud/agent-team/internal/runtimebin"
 )
 
 func mustNewJob(t *testing.T, ticket, target string) *job.Job {
@@ -2534,11 +2535,37 @@ func TestJobListFilters(t *testing.T) {
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	pipelineStep := &job.Job{
+		ID:        "squ-52",
+		Ticket:    "SQU-52",
+		Target:    "ticket-manager",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "triage", Target: "ticket-manager", Status: job.StatusDone},
+			{ID: "review", Target: "manager", Instance: "manager-review", Status: job.StatusRunning},
+		},
+	}
 	if err := job.Write(teamDir, first); err != nil {
 		t.Fatalf("write first: %v", err)
 	}
 	if err := job.Write(teamDir, second); err != nil {
 		t.Fatalf("write second: %v", err)
+	}
+	if err := job.Write(teamDir, pipelineStep); err != nil {
+		t.Fatalf("write pipeline step: %v", err)
+	}
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "worker-squ-50", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp, StartedAt: now},
+		{Instance: "manager", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp, StartedAt: now},
+		{Instance: "manager-review", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp, StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(daemonRoot, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
 	}
 
 	cmd := NewRootCmd()
@@ -2553,6 +2580,7 @@ func TestJobListFilters(t *testing.T) {
 		"--instance", "worker-squ-50",
 		"--branch", "worktree-worker-squ-50",
 		"--pr", "50",
+		"--runtime", "codex",
 		"--json",
 	})
 	if err := cmd.Execute(); err != nil {
@@ -2564,6 +2592,34 @@ func TestJobListFilters(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != "squ-50" {
 		t.Fatalf("filtered jobs = %+v", got)
+	}
+
+	claude := NewRootCmd()
+	claudeOut, claudeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	claude.SetOut(claudeOut)
+	claude.SetErr(claudeErr)
+	claude.SetArgs([]string{"job", "ls", "--repo", tmp, "--runtime", "claude", "--json"})
+	if err := claude.Execute(); err != nil {
+		t.Fatalf("job ls runtime filter: %v\nstderr=%s", err, claudeErr.String())
+	}
+	got = nil
+	if err := json.Unmarshal(claudeOut.Bytes(), &got); err != nil {
+		t.Fatalf("decode claude job ls json: %v\nbody=%s", err, claudeOut.String())
+	}
+	if len(got) != 2 || got[0].ID != "squ-51" || got[1].ID != "squ-52" {
+		t.Fatalf("claude runtime jobs = %+v", got)
+	}
+
+	invalid := NewRootCmd()
+	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalid.SetOut(invalidOut)
+	invalid.SetErr(invalidErr)
+	invalid.SetArgs([]string{"job", "ls", "--repo", tmp, "--runtime", "bad"})
+	if err := invalid.Execute(); err == nil {
+		t.Fatalf("job ls invalid runtime succeeded")
+	}
+	if !strings.Contains(invalidErr.String(), "unknown --runtime") {
+		t.Fatalf("invalid runtime stderr = %q", invalidErr.String())
 	}
 }
 

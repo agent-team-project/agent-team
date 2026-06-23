@@ -237,7 +237,7 @@ func newPipelineJobsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline jobs: %v\n", err)
 				return exitErr(2)
 			}
-			filters, err := newJobListFilters(status, "", "", args[0], "", "", "")
+			filters, err := newJobListFilters(status, "", "", args[0], "", "", "", nil)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline jobs: %v\n", err)
 				return exitErr(2)

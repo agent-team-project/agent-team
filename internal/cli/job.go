@@ -893,21 +893,22 @@ func jobStepsFromPipeline(p *topology.Pipeline) []job.Step {
 
 func newJobLsCmd() *cobra.Command {
 	var (
-		repo         string
-		statusFilter string
-		targetFilter string
-		instance     string
-		pipeline     string
-		ticket       string
-		branch       string
-		pr           string
-		watch        bool
-		noClear      bool
-		summary      bool
-		jsonOut      bool
-		format       string
-		sortBy       string
-		interval     time.Duration
+		repo           string
+		statusFilter   string
+		targetFilter   string
+		instance       string
+		pipeline       string
+		ticket         string
+		branch         string
+		pr             string
+		runtimeFilters []string
+		watch          bool
+		noClear        bool
+		summary        bool
+		jsonOut        bool
+		format         string
+		sortBy         string
+		interval       time.Duration
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -937,7 +938,7 @@ func newJobLsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job ls: %v\n", err)
 				return exitErr(2)
 			}
-			filters, err := newJobListFilters(statusFilter, targetFilter, instance, pipeline, ticket, branch, pr)
+			filters, err := newJobListFilters(statusFilter, targetFilter, instance, pipeline, ticket, branch, pr, runtimeFilters)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job ls: %v\n", err)
 				return exitErr(2)
@@ -969,6 +970,7 @@ func newJobLsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&ticket, "ticket", "", "Filter by ticket id or URL substring.")
 	cmd.Flags().StringVar(&branch, "branch", "", "Filter by branch.")
 	cmd.Flags().StringVar(&pr, "pr", "", "Filter by PR URL or number substring.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Filter by owning instance runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the job table until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate job counts instead of job rows.")
@@ -3083,6 +3085,7 @@ type jobListFilters struct {
 	Branch   string
 	PR       string
 	Sort     string
+	Runtimes map[string]bool
 }
 
 type jobRemoveOptions struct {
@@ -3286,7 +3289,7 @@ func (f jobTriageFilters) match(item jobTriageItem) bool {
 	return true
 }
 
-func newJobListFilters(status, target, instance, pipeline, ticket, branch, pr string) (jobListFilters, error) {
+func newJobListFilters(status, target, instance, pipeline, ticket, branch, pr string, runtimeFilters []string) (jobListFilters, error) {
 	f := jobListFilters{
 		Target:   strings.TrimSpace(target),
 		Instance: strings.TrimSpace(instance),
@@ -3302,6 +3305,11 @@ func newJobListFilters(status, target, instance, pipeline, ticket, branch, pr st
 		}
 		f.Status = parsed
 	}
+	runtimes, err := lifecycleRuntimeFilterSet(runtimeFilters)
+	if err != nil {
+		return f, err
+	}
+	f.Runtimes = runtimes
 	return f, nil
 }
 
@@ -4492,14 +4500,36 @@ func filteredJobs(teamDir string, filters jobListFilters) ([]*job.Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	runtimeByInstance, err := jobRuntimeIndex(teamDir, filters)
+	if err != nil {
+		return nil, err
+	}
 	filtered := make([]*job.Job, 0, len(jobs))
 	for _, j := range jobs {
-		if jobMatchesFilters(j, filters) {
+		if jobMatchesFilters(j, filters) && jobMatchesRuntimeFilter(j, filters, runtimeByInstance) {
 			filtered = append(filtered, j)
 		}
 	}
 	sortJobs(filtered, filters.Sort)
 	return filtered, nil
+}
+
+func jobRuntimeIndex(teamDir string, filters jobListFilters) (map[string]string, error) {
+	if len(filters.Runtimes) == 0 {
+		return nil, nil
+	}
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(metas))
+	for _, meta := range metas {
+		if meta == nil || strings.TrimSpace(meta.Instance) == "" {
+			continue
+		}
+		out[meta.Instance] = metadataRuntimeKey(meta)
+	}
+	return out, nil
 }
 
 func jobMatchesFilters(j *job.Job, filters jobListFilters) bool {
@@ -4525,6 +4555,32 @@ func jobMatchesFilters(j *job.Job, filters jobListFilters) bool {
 		return false
 	}
 	return true
+}
+
+func jobMatchesRuntimeFilter(j *job.Job, filters jobListFilters, runtimeByInstance map[string]string) bool {
+	if len(filters.Runtimes) == 0 {
+		return true
+	}
+	if j == nil {
+		return false
+	}
+	if jobInstanceMatchesRuntime(j.Instance, filters.Runtimes, runtimeByInstance) {
+		return true
+	}
+	for _, step := range j.Steps {
+		if jobInstanceMatchesRuntime(step.Instance, filters.Runtimes, runtimeByInstance) {
+			return true
+		}
+	}
+	return false
+}
+
+func jobInstanceMatchesRuntime(instance string, runtimes map[string]bool, runtimeByInstance map[string]string) bool {
+	instance = strings.TrimSpace(instance)
+	if instance == "" {
+		return false
+	}
+	return runtimes[runtimeByInstance[instance]]
 }
 
 func dispatchJobWithPrefix(cmd *cobra.Command, teamDir string, j *job.Job, source, workspace string, selection runtimeSelection, prefix string) (*jobDispatchResult, string, error) {

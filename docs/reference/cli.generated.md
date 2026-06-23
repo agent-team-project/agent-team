@@ -1671,6 +1671,7 @@ Flags:
       --pipeline string       Filter by pipeline name.
       --pr string             Filter by PR URL or number substring.
       --repo string           Repo root. (default "<repo>")
+      --runtime strings       Filter by owning instance runtime: claude or codex. Can repeat or comma-separate.
       --sort string           Sort rows by id, status, target, ticket, created, updated, instance, branch, or pr. (default "id")
       --status string         Filter by status: queued, running, blocked, done, or failed.
       --summary               Show aggregate job counts instead of job rows.
