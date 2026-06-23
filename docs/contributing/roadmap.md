@@ -59,6 +59,7 @@ Built or substantially implemented:
 - local Dockerfile for the compose intake service
 - env-file secret references for service generation
 - published generated CLI reference with CI drift check
+- GHCR container publish workflow for main and release tags
 
 ## What Still Needs Design Care
 
@@ -90,7 +91,7 @@ High-value follow-up work:
 
 - runtime resume/adopt flows for long-running agents
 - richer pipeline gates beyond manual approval
-- published container image and webhook deployment examples
+- published-image hardening, signing, and webhook deployment examples
 
 ## Anti-Patterns
 
