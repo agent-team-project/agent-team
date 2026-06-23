@@ -47,6 +47,7 @@ Built or substantially implemented:
 - topology gallery examples
 - local orchestration demo harness with fake runtime
 - repo-configurable health stale thresholds
+- pipeline graph visualization command
 
 ## What Still Needs Design Care
 
@@ -80,7 +81,6 @@ Use these when evaluating feature ideas:
 
 High-value follow-up work:
 
-- pipeline visualization in docs
 - template authoring smoke harness
 - `job cleanup` PR merge verification integration
 - intake server deployment guide

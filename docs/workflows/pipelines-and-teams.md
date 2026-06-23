@@ -44,6 +44,7 @@ It intentionally does not try to be a full DAG workflow engine yet.
 ```sh
 agent-team pipeline ls
 agent-team pipeline show ticket_to_pr
+agent-team pipeline graph ticket_to_pr --format mermaid --routes
 agent-team pipeline doctor --all
 agent-team pipeline run ticket_to_pr SQU-42 --dry-run --dispatch
 agent-team pipeline status

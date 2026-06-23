@@ -130,6 +130,7 @@ Shortcuts:
 | --- | --- |
 | `agent-team pipeline ls` | List pipeline declarations |
 | `agent-team pipeline show <pipeline>` | Show one declaration |
+| `agent-team pipeline graph <pipeline>` | Render text, Mermaid, DOT, or JSON step graphs |
 | `agent-team pipeline doctor --all` | Validate workflows |
 | `agent-team pipeline run <pipeline> <ticket>` | Create pipeline job |
 | `agent-team pipeline status` | Summarize pipeline jobs |

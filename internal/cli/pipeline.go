@@ -24,6 +24,7 @@ func newPipelineCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newPipelineLsCmd())
 	cmd.AddCommand(newPipelineShowCmd())
+	cmd.AddCommand(newPipelineGraphCmd())
 	cmd.AddCommand(newPipelineDoctorCmd())
 	cmd.AddCommand(newPipelineJobsCmd())
 	cmd.AddCommand(newPipelineStatusCmd())
@@ -108,6 +109,48 @@ func newPipelineShowCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the pipeline as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the pipeline with a Go template, e.g. '{{.Name}} {{len .Steps}}'.")
+	return cmd
+}
+
+func newPipelineGraphCmd() *cobra.Command {
+	var (
+		repo          string
+		graphFormat   string
+		includeRoutes bool
+		jsonOut       bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "graph <pipeline>",
+		Short: "Render a declared pipeline step graph.",
+		Long:  "Render a read-only graph of one declared pipeline in text, Mermaid, DOT, or JSON form.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if jsonOut && cmd.Flags().Changed("format") {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline graph: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			format, err := parsePipelineGraphFormat(graphFormat)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline graph: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			graph, err := collectPipelineGraph(teamDir, args[0], includeRoutes)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline graph: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineGraph(cmd.OutOrStdout(), graph, format, jsonOut)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&graphFormat, "format", "text", "Graph output format: text, mermaid, or dot.")
+	cmd.Flags().BoolVar(&includeRoutes, "routes", false, "Annotate step targets with matching agent.dispatch route instances.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit graph nodes and edges as JSON.")
 	return cmd
 }
 
@@ -561,6 +604,27 @@ type pipelineStepInfo struct {
 	After  []string `json:"after,omitempty"`
 }
 
+type pipelineGraph struct {
+	Name    string              `json:"name"`
+	Trigger map[string]any      `json:"trigger,omitempty"`
+	Summary string              `json:"summary"`
+	Nodes   []pipelineGraphNode `json:"nodes"`
+	Edges   []pipelineGraphEdge `json:"edges"`
+}
+
+type pipelineGraphNode struct {
+	ID      string   `json:"id"`
+	Target  string   `json:"target,omitempty"`
+	After   []string `json:"after,omitempty"`
+	Routes  []string `json:"routes,omitempty"`
+	Missing bool     `json:"missing,omitempty"`
+}
+
+type pipelineGraphEdge struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
 type pipelineStatusRow struct {
 	Pipeline     string   `json:"pipeline"`
 	Declared     bool     `json:"declared"`
@@ -653,6 +717,69 @@ func loadPipelineInfo(teamDir, name string) (pipelineInfo, error) {
 		return pipelineInfo{}, fmt.Errorf("pipeline %q not found", name)
 	}
 	return pipelineInfoFromTopology(top.Pipelines[name]), nil
+}
+
+func collectPipelineGraph(teamDir, name string, includeRoutes bool) (pipelineGraph, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return pipelineGraph{}, fmt.Errorf("pipeline name is required")
+	}
+	top, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil {
+		return pipelineGraph{}, err
+	}
+	if top == nil || top.Pipelines[name] == nil {
+		return pipelineGraph{}, fmt.Errorf("pipeline %q not found", name)
+	}
+	pipeline := top.Pipelines[name]
+	graph := pipelineGraph{
+		Name:    pipeline.Name,
+		Trigger: triggerAsMap(pipeline.Trigger),
+		Summary: summariseTriggerMap(triggerAsMap(pipeline.Trigger)),
+	}
+	seen := map[string]bool{}
+	for _, step := range pipeline.Steps {
+		if step == nil {
+			continue
+		}
+		id := strings.TrimSpace(step.ID)
+		if id == "" {
+			continue
+		}
+		node := pipelineGraphNode{
+			ID:     id,
+			Target: strings.TrimSpace(step.Target),
+			After:  trimStringSlice(step.After),
+		}
+		if includeRoutes && node.Target != "" {
+			node.Routes = pipelineDispatchRoutes(top, node.Target)
+		}
+		graph.Nodes = append(graph.Nodes, node)
+		seen[id] = true
+		if len(node.After) == 0 {
+			graph.Edges = append(graph.Edges, pipelineGraphEdge{From: "<trigger>", To: id})
+			continue
+		}
+		for _, dep := range node.After {
+			graph.Edges = append(graph.Edges, pipelineGraphEdge{From: dep, To: id})
+		}
+	}
+	missing := map[string]bool{}
+	for _, edge := range graph.Edges {
+		if edge.From == "<trigger>" || seen[edge.From] || missing[edge.From] {
+			continue
+		}
+		missing[edge.From] = true
+	}
+	missingIDs := make([]string, 0, len(missing))
+	for id := range missing {
+		missingIDs = append(missingIDs, id)
+	}
+	sort.Strings(missingIDs)
+	for _, id := range missingIDs {
+		graph.Nodes = append(graph.Nodes, pipelineGraphNode{ID: id, Target: "(missing)", Missing: true})
+	}
+	return graph, nil
 }
 
 func collectPipelineDoctor(teamDir, pipelineName string) (*pipelineDoctorResult, error) {
@@ -890,6 +1017,17 @@ func pipelineDependencyCycle(pipeline *topology.Pipeline) []string {
 		}
 	}
 	return nil
+}
+
+func trimStringSlice(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func pipelineInfoFromTopology(p *topology.Pipeline) pipelineInfo {
@@ -1183,6 +1321,158 @@ func renderPipelineDetail(w io.Writer, info pipelineInfo, jsonOut bool, tmpl *te
 		fmt.Fprintf(w, "  %s target=%s after=%s\n", step.ID, step.Target, after)
 	}
 	return nil
+}
+
+type pipelineGraphFormat string
+
+const (
+	pipelineGraphText    pipelineGraphFormat = "text"
+	pipelineGraphMermaid pipelineGraphFormat = "mermaid"
+	pipelineGraphDOT     pipelineGraphFormat = "dot"
+)
+
+func parsePipelineGraphFormat(raw string) (pipelineGraphFormat, error) {
+	format := pipelineGraphFormat(strings.ToLower(strings.TrimSpace(raw)))
+	if format == "" {
+		return pipelineGraphText, nil
+	}
+	switch format {
+	case pipelineGraphText, pipelineGraphMermaid, pipelineGraphDOT:
+		return format, nil
+	default:
+		return "", fmt.Errorf("--format must be text, mermaid, or dot")
+	}
+}
+
+func renderPipelineGraph(w io.Writer, graph pipelineGraph, format pipelineGraphFormat, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(graph)
+	}
+	switch format {
+	case pipelineGraphMermaid:
+		renderPipelineGraphMermaid(w, graph)
+	case pipelineGraphDOT:
+		renderPipelineGraphDOT(w, graph)
+	default:
+		renderPipelineGraphText(w, graph)
+	}
+	return nil
+}
+
+func renderPipelineGraphText(w io.Writer, graph pipelineGraph) {
+	fmt.Fprintf(w, "Pipeline: %s\n", graph.Name)
+	fmt.Fprintf(w, "Trigger:  %s\n", graph.Summary)
+	if len(graph.Nodes) == 0 {
+		fmt.Fprintln(w, "Steps:    -")
+		return
+	}
+	fmt.Fprintln(w, "Steps:")
+	for _, node := range graph.Nodes {
+		after := "-"
+		if len(node.After) > 0 {
+			after = strings.Join(node.After, ",")
+		}
+		routes := ""
+		if len(node.Routes) > 0 {
+			routes = " routes=" + strings.Join(node.Routes, ",")
+		}
+		missing := ""
+		if node.Missing {
+			missing = " missing=true"
+		}
+		fmt.Fprintf(w, "  %s target=%s after=%s%s%s\n", node.ID, node.Target, after, routes, missing)
+	}
+	if len(graph.Edges) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "Edges:")
+	for _, edge := range graph.Edges {
+		fmt.Fprintf(w, "  %s -> %s\n", edge.From, edge.To)
+	}
+}
+
+func renderPipelineGraphMermaid(w io.Writer, graph pipelineGraph) {
+	fmt.Fprintln(w, "flowchart TD")
+	fmt.Fprintf(w, "  trigger[%q]\n", pipelineMermaidLabel("trigger: "+graph.Summary))
+	nodeIDs := map[string]string{}
+	for i, node := range graph.Nodes {
+		id := pipelineGraphNodeMermaidID(node.ID, i)
+		nodeIDs[node.ID] = id
+		fmt.Fprintf(w, "  %s[%q]\n", id, pipelineMermaidLabel(pipelineGraphNodeLabel(node, "<br/>")))
+	}
+	for _, edge := range graph.Edges {
+		from := "trigger"
+		if edge.From != "<trigger>" {
+			from = nodeIDs[edge.From]
+			if from == "" {
+				from = pipelineGraphMermaidID(edge.From)
+			}
+		}
+		to := nodeIDs[edge.To]
+		if to == "" {
+			to = pipelineGraphMermaidID(edge.To)
+		}
+		fmt.Fprintf(w, "  %s --> %s\n", from, to)
+	}
+}
+
+func renderPipelineGraphDOT(w io.Writer, graph pipelineGraph) {
+	fmt.Fprintf(w, "digraph %q {\n", graph.Name)
+	fmt.Fprintln(w, "  rankdir=TB;")
+	fmt.Fprintf(w, "  %q [label=%q, shape=oval];\n", "trigger", "trigger: "+graph.Summary)
+	for _, node := range graph.Nodes {
+		fmt.Fprintf(w, "  %q [label=%q];\n", node.ID, pipelineGraphNodeLabel(node, "\n"))
+	}
+	for _, edge := range graph.Edges {
+		from := edge.From
+		if from == "<trigger>" {
+			from = "trigger"
+		}
+		fmt.Fprintf(w, "  %q -> %q;\n", from, edge.To)
+	}
+	fmt.Fprintln(w, "}")
+}
+
+func pipelineGraphNodeLabel(node pipelineGraphNode, sep string) string {
+	parts := []string{node.ID}
+	if node.Target != "" {
+		parts = append(parts, "target: "+node.Target)
+	}
+	if len(node.Routes) > 0 {
+		parts = append(parts, "routes: "+strings.Join(node.Routes, ","))
+	}
+	if node.Missing {
+		parts = append(parts, "missing dependency")
+	}
+	return strings.Join(parts, sep)
+}
+
+func pipelineGraphNodeMermaidID(id string, index int) string {
+	return fmt.Sprintf("step_%d_%s", index+1, pipelineGraphMermaidID(id))
+}
+
+func pipelineGraphMermaidID(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "node"
+	}
+	var b strings.Builder
+	for i, r := range raw {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' || (i > 0 && r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	out := strings.Trim(b.String(), "_")
+	if out == "" {
+		return "node"
+	}
+	return out
+}
+
+func pipelineMermaidLabel(label string) string {
+	return strings.ReplaceAll(label, `"`, "&quot;")
 }
 
 func parsePipelineInfoFormat(format string) (*template.Template, error) {

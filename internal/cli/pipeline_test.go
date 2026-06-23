@@ -105,6 +105,135 @@ after = ["implement"]
 	}
 }
 
+func TestPipelineGraphFormats(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[[instances.manager.triggers]]
+event        = "agent.dispatch"
+match.target = "manager"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+
+[[pipelines.ticket_to_pr.steps]]
+id = "announce"
+target = "manager"
+after = ["review"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"pipeline", "graph", "ticket_to_pr", "--repo", root, "--routes"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("pipeline graph text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{
+		"Pipeline: ticket_to_pr",
+		"Trigger:  ticket.created",
+		"implement target=worker after=- routes=worker",
+		"review target=manager after=implement routes=manager",
+		"<trigger> -> implement",
+		"implement -> review",
+		"review -> announce",
+	} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("pipeline graph text missing %q:\n%s", want, textOut.String())
+		}
+	}
+
+	mermaid := NewRootCmd()
+	mermaidOut, mermaidErr := &bytes.Buffer{}, &bytes.Buffer{}
+	mermaid.SetOut(mermaidOut)
+	mermaid.SetErr(mermaidErr)
+	mermaid.SetArgs([]string{"pipeline", "graph", "ticket_to_pr", "--repo", root, "--format", "mermaid"})
+	if err := mermaid.Execute(); err != nil {
+		t.Fatalf("pipeline graph mermaid: %v\nstderr=%s", err, mermaidErr.String())
+	}
+	for _, want := range []string{"flowchart TD", "trigger[\"trigger: ticket.created\"]", "step_1_implement", "--> step_2_review"} {
+		if !strings.Contains(mermaidOut.String(), want) {
+			t.Fatalf("pipeline graph mermaid missing %q:\n%s", want, mermaidOut.String())
+		}
+	}
+
+	dot := NewRootCmd()
+	dotOut, dotErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dot.SetOut(dotOut)
+	dot.SetErr(dotErr)
+	dot.SetArgs([]string{"pipeline", "graph", "ticket_to_pr", "--repo", root, "--format", "dot"})
+	if err := dot.Execute(); err != nil {
+		t.Fatalf("pipeline graph dot: %v\nstderr=%s", err, dotErr.String())
+	}
+	for _, want := range []string{`digraph "ticket_to_pr"`, `"trigger" -> "implement";`, `"implement" -> "review";`} {
+		if !strings.Contains(dotOut.String(), want) {
+			t.Fatalf("pipeline graph dot missing %q:\n%s", want, dotOut.String())
+		}
+	}
+
+	asJSON := NewRootCmd()
+	jsonOut, jsonErr := &bytes.Buffer{}, &bytes.Buffer{}
+	asJSON.SetOut(jsonOut)
+	asJSON.SetErr(jsonErr)
+	asJSON.SetArgs([]string{"pipeline", "graph", "ticket_to_pr", "--repo", root, "--routes", "--json"})
+	if err := asJSON.Execute(); err != nil {
+		t.Fatalf("pipeline graph json: %v\nstderr=%s", err, jsonErr.String())
+	}
+	var graph pipelineGraph
+	if err := json.Unmarshal(jsonOut.Bytes(), &graph); err != nil {
+		t.Fatalf("decode graph json: %v\nbody=%s", err, jsonOut.String())
+	}
+	if graph.Name != "ticket_to_pr" || len(graph.Nodes) != 3 || len(graph.Edges) != 3 || len(graph.Nodes[0].Routes) != 1 {
+		t.Fatalf("graph json = %+v", graph)
+	}
+}
+
+func TestPipelineGraphValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"pipeline", "graph", "ticket_to_pr", "--format", "svg"}, "--format must be text, mermaid, or dot"},
+		{[]string{"pipeline", "graph", "ticket_to_pr", "--format", "text", "--json"}, "--format cannot be combined with --json"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("%v: err = %v, want exit 2", tc.args, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v: validation wrote stdout: %q", tc.args, out.String())
+		}
+	}
+}
+
 func TestPipelineShowMissing(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
