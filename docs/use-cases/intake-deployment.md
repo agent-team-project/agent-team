@@ -130,6 +130,7 @@ WantedBy=multi-user.target
 ```
 
 Use your host's normal secret manager instead of literal `Environment=` values when possible.
+For systemd, pass `--env-file /etc/agent-team/intake.env` to generate an `EnvironmentFile=` reference instead of placeholder secret values.
 
 ## launchd Example
 
@@ -221,6 +222,7 @@ services:
 ```
 
 The included `Dockerfile` is an operational base image for the CLI and daemon. If your deployed topology needs an LLM runtime, `gh`, or cloud credentials, extend the image or mount those tools and secrets explicitly rather than baking private credentials into the image.
+For Compose, pass `--env-file ./intake.env` to generate an `env_file:` reference instead of placeholder secret values.
 
 ## Operations
 

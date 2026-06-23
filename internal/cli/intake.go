@@ -256,6 +256,7 @@ type intakeServiceOptions struct {
 	Image                   string
 	ContainerWorkdir        string
 	Publish                 string
+	EnvFile                 string
 	LinearSecretEnv         string
 	GitHubSecretEnv         string
 	GitHubReconcileJob      bool
@@ -324,6 +325,7 @@ func newIntakeServiceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Image, "image", opts.Image, "Container image used by compose service generation.")
 	cmd.Flags().StringVar(&opts.ContainerWorkdir, "container-workdir", opts.ContainerWorkdir, "Container working directory used by compose service generation.")
 	cmd.Flags().StringVar(&opts.Publish, "publish", opts.Publish, "Compose port publication host:container mapping; empty omits ports.")
+	cmd.Flags().StringVar(&opts.EnvFile, "env-file", "", "Secret environment file for systemd EnvironmentFile or compose env_file; launchd does not support this.")
 	cmd.Flags().StringVar(&opts.LinearSecretEnv, "linear-secret-env", opts.LinearSecretEnv, "Environment variable name containing the Linear webhook secret; empty omits it.")
 	cmd.Flags().StringVar(&opts.GitHubSecretEnv, "github-secret-env", opts.GitHubSecretEnv, "Environment variable name containing the GitHub webhook secret; empty omits it.")
 	cmd.Flags().BoolVar(&opts.GitHubReconcileJob, "github-reconcile-job", false, "Include --github-reconcile-job in ExecStart.")
@@ -356,6 +358,9 @@ func validateIntakeServiceOptions(kind string, opts intakeServiceOptions) error 
 	if strings.TrimSpace(opts.Addr) == "" {
 		return fmt.Errorf("--addr is required")
 	}
+	if kind == "launchd" && strings.TrimSpace(opts.EnvFile) != "" {
+		return fmt.Errorf("--env-file is not supported for launchd")
+	}
 	if opts.GitHubCleanupMerged && !opts.GitHubReconcileJob {
 		return fmt.Errorf("--github-cleanup-merged requires --github-reconcile-job")
 	}
@@ -384,11 +389,12 @@ func renderIntakeSystemdService(w io.Writer, repoRoot string, opts intakeService
 	fmt.Fprintln(w, "[Service]")
 	fmt.Fprintln(w, "Type=simple")
 	fmt.Fprintf(w, "WorkingDirectory=%s\n", repoRoot)
-	if env := strings.TrimSpace(opts.LinearSecretEnv); env != "" {
-		fmt.Fprintf(w, "Environment=%s=replace-me\n", env)
-	}
-	if env := strings.TrimSpace(opts.GitHubSecretEnv); env != "" {
-		fmt.Fprintf(w, "Environment=%s=replace-me\n", env)
+	if envFile := strings.TrimSpace(opts.EnvFile); envFile != "" {
+		fmt.Fprintf(w, "EnvironmentFile=%s\n", envFile)
+	} else {
+		for _, env := range serviceSecretEnvs(opts) {
+			fmt.Fprintf(w, "Environment=%s=replace-me\n", env)
+		}
 	}
 	fmt.Fprintf(w, "ExecStartPre=%s daemon start\n", opts.Bin)
 	fmt.Fprintf(w, "ExecStart=%s %s\n", opts.Bin, strings.Join(intakeServeArgs(opts), " "))
@@ -411,8 +417,10 @@ func renderIntakeComposeService(w io.Writer, repoRoot string, opts intakeService
 		fmt.Fprintln(w, "    ports:")
 		fmt.Fprintf(w, "      - %s\n", yamlQuote(publish))
 	}
-	envs := serviceSecretEnvs(opts)
-	if len(envs) > 0 {
+	if envFile := strings.TrimSpace(opts.EnvFile); envFile != "" {
+		fmt.Fprintln(w, "    env_file:")
+		fmt.Fprintf(w, "      - %s\n", yamlQuote(envFile))
+	} else if envs := serviceSecretEnvs(opts); len(envs) > 0 {
 		fmt.Fprintln(w, "    environment:")
 		for _, env := range envs {
 			fmt.Fprintf(w, "      %s: %s\n", yamlQuote(env), yamlQuote("replace-me"))

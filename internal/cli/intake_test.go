@@ -497,6 +497,34 @@ func TestIntakeServiceSystemd(t *testing.T) {
 	}
 }
 
+func TestIntakeServiceSystemdEnvFile(t *testing.T) {
+	target := t.TempDir()
+	initInto(t, target)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"intake", "service", "systemd",
+		"--repo", target,
+		"--env-file", "/etc/agent-team/intake.env",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake service systemd --env-file: %v\nstderr=%s", err, stderr.String())
+	}
+	body := out.String()
+	if !strings.Contains(body, "EnvironmentFile=/etc/agent-team/intake.env") {
+		t.Fatalf("systemd output missing EnvironmentFile:\n%s", body)
+	}
+	if strings.Contains(body, "Environment=LINEAR_WEBHOOK_SECRET=replace-me") || strings.Contains(body, "Environment=GITHUB_WEBHOOK_SECRET=replace-me") {
+		t.Fatalf("systemd output should not include placeholder secrets with --env-file:\n%s", body)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestIntakeServiceLaunchd(t *testing.T) {
 	target := t.TempDir()
 	initInto(t, target)
@@ -609,6 +637,39 @@ func TestIntakeServiceCompose(t *testing.T) {
 	}
 }
 
+func TestIntakeServiceComposeEnvFile(t *testing.T) {
+	target := t.TempDir()
+	initInto(t, target)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"intake", "service", "compose",
+		"--repo", target,
+		"--env-file", "./intake.env",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake service compose --env-file: %v\nstderr=%s", err, stderr.String())
+	}
+	body := out.String()
+	for _, want := range []string{
+		"    env_file:",
+		`      - "./intake.env"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("compose output missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `"LINEAR_WEBHOOK_SECRET": "replace-me"`) || strings.Contains(body, `"GITHUB_WEBHOOK_SECRET": "replace-me"`) {
+		t.Fatalf("compose output should not include placeholder secrets with --env-file:\n%s", body)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestIntakeServiceValidation(t *testing.T) {
 	cases := []struct {
 		args []string
@@ -616,6 +677,7 @@ func TestIntakeServiceValidation(t *testing.T) {
 	}{
 		{[]string{"intake", "service", "supervisord"}, "service kind must be one of: systemd, launchd, compose"},
 		{[]string{"intake", "service", "compose", "--image", ""}, "--image is required"},
+		{[]string{"intake", "service", "launchd", "--env-file", "./intake.env"}, "--env-file is not supported for launchd"},
 		{[]string{"intake", "service", "systemd", "--github-verify-pr"}, "--github-verify-pr requires --github-cleanup-merged"},
 		{[]string{"intake", "service", "systemd", "--github-cleanup-merged"}, "--github-cleanup-merged requires --github-reconcile-job"},
 	}

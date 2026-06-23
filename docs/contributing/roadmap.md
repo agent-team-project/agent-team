@@ -57,6 +57,7 @@ Built or substantially implemented:
 - manual pipeline gates and approval hints
 - systemd, launchd, and compose intake service generators
 - local Dockerfile for the compose intake service
+- env-file secret references for service generation
 
 ## What Still Needs Design Care
 
