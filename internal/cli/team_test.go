@@ -2103,10 +2103,10 @@ instances = ["other", "build-worker"]
 		}
 	}
 	for _, meta := range []*daemon.Metadata{
-		{Instance: "manager", Agent: "manager", Status: daemon.StatusExited, Workspace: root, StartedAt: now.Add(-4 * time.Hour), ExitedAt: now.Add(-3 * time.Hour)},
-		{Instance: "worker-squ-101", Agent: "worker", Status: daemon.StatusCrashed, Workspace: root, StartedAt: now.Add(-3 * time.Hour), ExitedAt: now.Add(-2 * time.Hour)},
-		{Instance: "build-worker-1", Agent: "worker", Status: daemon.StatusCrashed, Workspace: root, StartedAt: now.Add(-3 * time.Hour), ExitedAt: now.Add(-2 * time.Hour)},
-		{Instance: "other", Agent: "other", Status: daemon.StatusExited, Workspace: root, StartedAt: now.Add(-2 * time.Hour), ExitedAt: now.Add(-time.Hour)},
+		{Instance: "manager", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusExited, Workspace: root, StartedAt: now.Add(-4 * time.Hour), ExitedAt: now.Add(-3 * time.Hour)},
+		{Instance: "worker-squ-101", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusCrashed, Workspace: root, StartedAt: now.Add(-3 * time.Hour), ExitedAt: now.Add(-2 * time.Hour)},
+		{Instance: "build-worker-1", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusCrashed, Workspace: root, StartedAt: now.Add(-3 * time.Hour), ExitedAt: now.Add(-2 * time.Hour)},
+		{Instance: "other", Agent: "other", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusExited, Workspace: root, StartedAt: now.Add(-2 * time.Hour), ExitedAt: now.Add(-time.Hour)},
 	} {
 		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
 			t.Fatalf("write metadata %s: %v", meta.Instance, err)
@@ -2135,6 +2135,34 @@ instances = ["other", "build-worker"]
 	}
 	if _, err := daemon.ReadMetadata(daemon.DaemonRoot(teamDir), "worker-squ-101"); err != nil {
 		t.Fatalf("dry-run removed worker metadata: %v", err)
+	}
+
+	codexDry := NewRootCmd()
+	codexDryOut, codexDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	codexDry.SetOut(codexDryOut)
+	codexDry.SetErr(codexDryErr)
+	codexDry.SetArgs([]string{"team", "prune", "delivery", "--repo", root, "--runtime", "codex", "--dry-run", "--json"})
+	if err := codexDry.Execute(); err != nil {
+		t.Fatalf("team prune runtime dry-run: %v\nstderr=%s", err, codexDryErr.String())
+	}
+	preview = nil
+	if err := json.Unmarshal(codexDryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode team prune runtime dry-run: %v\nbody=%s", err, codexDryOut.String())
+	}
+	if got := instanceRmResultNames(preview); strings.Join(got, ",") != "worker-squ-101" {
+		t.Fatalf("team prune runtime preview names = %v", got)
+	}
+
+	badRuntime := NewRootCmd()
+	badRuntime.SetOut(&bytes.Buffer{})
+	badRuntimeErr := &bytes.Buffer{}
+	badRuntime.SetErr(badRuntimeErr)
+	badRuntime.SetArgs([]string{"team", "prune", "delivery", "--repo", root, "--runtime", "llama", "--dry-run"})
+	if err := badRuntime.Execute(); err == nil {
+		t.Fatal("team prune accepted unknown runtime")
+	}
+	if !strings.Contains(badRuntimeErr.String(), "unknown --runtime") {
+		t.Fatalf("bad runtime stderr = %q", badRuntimeErr.String())
 	}
 
 	prune := NewRootCmd()

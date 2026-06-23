@@ -2378,17 +2378,18 @@ func newTeamWaitCmd() *cobra.Command {
 
 func newTeamPruneCmd() *cobra.Command {
 	var (
-		repo          string
-		statusFilters []string
-		phaseFilters  []string
-		staleOnly     bool
-		unhealthyOnly bool
-		dryRun        bool
-		olderThan     time.Duration
-		quiet         bool
-		jsonOut       bool
-		summary       bool
-		format        string
+		repo           string
+		statusFilters  []string
+		runtimeFilters []string
+		phaseFilters   []string
+		staleOnly      bool
+		unhealthyOnly  bool
+		dryRun         bool
+		olderThan      time.Duration
+		quiet          bool
+		jsonOut        bool
+		summary        bool
+		format         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -2425,12 +2426,13 @@ func newTeamPruneCmd() *cobra.Command {
 				return err
 			}
 			names, err := collectTeamPruneTargets(teamDir, args[0], teamPruneTargetOptions{
-				StatusFilters: statusFilters,
-				PhaseFilters:  phaseFilters,
-				Stale:         staleOnly,
-				Unhealthy:     unhealthyOnly,
-				OlderThan:     olderThan,
-				OlderThanSet:  olderThanSet,
+				StatusFilters:  statusFilters,
+				RuntimeFilters: runtimeFilters,
+				PhaseFilters:   phaseFilters,
+				Stale:          staleOnly,
+				Unhealthy:      unhealthyOnly,
+				OlderThan:      olderThan,
+				OlderThanSet:   olderThanSet,
 			})
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team prune: %v\n", err)
@@ -2451,6 +2453,7 @@ func newTeamPruneCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only remove finished team-owned instances in this lifecycle status: exited or crashed. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only remove finished team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only remove finished team-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only remove finished team-owned instances whose non-idle work phase has stale status telemetry.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only remove finished team-owned instances that are crashed or stale.")
@@ -3879,12 +3882,13 @@ type teamRepairTickStep struct {
 }
 
 type teamPruneTargetOptions struct {
-	StatusFilters []string
-	PhaseFilters  []string
-	Stale         bool
-	Unhealthy     bool
-	OlderThan     time.Duration
-	OlderThanSet  bool
+	StatusFilters  []string
+	RuntimeFilters []string
+	PhaseFilters   []string
+	Stale          bool
+	Unhealthy      bool
+	OlderThan      time.Duration
+	OlderThanSet   bool
 }
 
 func loadTeamInfos(teamDir string) ([]teamInfo, error) {
@@ -6070,6 +6074,10 @@ func collectTeamPruneTargets(teamDir, name string, opts teamPruneTargetOptions) 
 	if err != nil {
 		return nil, err
 	}
+	runtimes, err := lifecycleRuntimeFilterSet(opts.RuntimeFilters)
+	if err != nil {
+		return nil, err
+	}
 	phases, err := lifecyclePhaseFilterSet(opts.PhaseFilters)
 	if err != nil {
 		return nil, err
@@ -6092,6 +6100,9 @@ func collectTeamPruneTargets(teamDir, name string, opts teamPruneTargetOptions) 
 	daemonByName := make(map[string]daemonInstanceInfo, len(teamMetas))
 	for _, meta := range teamMetas {
 		if meta == nil {
+			continue
+		}
+		if len(runtimes) > 0 && !runtimes[metadataRuntimeKey(meta)] {
 			continue
 		}
 		daemonByName[meta.Instance] = daemonInstanceInfo{

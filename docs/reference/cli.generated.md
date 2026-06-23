@@ -4228,6 +4228,7 @@ Flags:
       --phase strings         Only remove finished team-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
   -q, --quiet                 Suppress non-error output and use only the exit code.
       --repo string           Repo root. (default "<repo>")
+      --runtime strings       Only remove finished team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
       --stale                 Only remove finished team-owned instances whose non-idle work phase has stale status telemetry.
       --status strings        Only remove finished team-owned instances in this lifecycle status: exited or crashed. Can repeat or comma-separate.
       --summary               Show aggregate removal counts instead of per-instance rows.
