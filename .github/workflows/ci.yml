@@ -8,7 +8,7 @@ on:
 jobs:
   go:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -50,6 +50,9 @@ jobs:
 
       - name: CLI smoke test (init + template + doctor)
         run: python3 scripts/ci/smoke_init.py bin/agent-team
+
+      - name: Docker build
+        run: docker build -t agent-team:ci .
 
       - name: Shellcheck template scripts
         uses: ludeeus/action-shellcheck@2.0.0
