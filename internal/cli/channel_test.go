@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -237,6 +238,61 @@ func TestChannelCommandsUseLocalStoreWhenDaemonStopped(t *testing.T) {
 	}
 	if strings.TrimSpace(out.String()) != "(no channels)" {
 		t.Fatalf("list after rm = %q, want no channels", out.String())
+	}
+}
+
+func TestChannelCommandsRoundTripHashNameThroughDaemon(t *testing.T) {
+	tmp, err := os.MkdirTemp("/tmp", "agt-channel-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), nil)
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+
+	run := func(args ...string) (string, string, error) {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(args)
+		err := cmd.Execute()
+		return out.String(), stderr.String(), err
+	}
+
+	out, stderr, err := run("channel", "publish", "--target", tmp, "#standup", "Codex docs validation")
+	if err != nil {
+		t.Fatalf("publish daemon channel: %v\nstderr=%s", err, stderr)
+	}
+	if !strings.Contains(out, "published seq=1") {
+		t.Fatalf("publish output = %q, want seq=1", out)
+	}
+
+	out, stderr, err = run("channels", "--target", tmp)
+	if err != nil {
+		t.Fatalf("channels: %v\nstderr=%s", err, stderr)
+	}
+	if !strings.Contains(out, "#standup") || !strings.Contains(out, "1") {
+		t.Fatalf("channels output = %q, want #standup with one message", out)
+	}
+
+	out, stderr, err = run("channel", "show", "--target", tmp, "#standup")
+	if err != nil {
+		t.Fatalf("show daemon channel: %v\nstderr=%s", err, stderr)
+	}
+	if !strings.Contains(out, "channel:       #standup") || !strings.Contains(out, "Codex docs validation") {
+		t.Fatalf("show output = %q, want #standup message", out)
+	}
+
+	out, stderr, err = run("channel", "rm", "--target", tmp, "--force", "#standup")
+	if err != nil {
+		t.Fatalf("rm daemon channel: %v\nstderr=%s", err, stderr)
+	}
+	if !strings.Contains(out, "removed #standup") {
+		t.Fatalf("rm output = %q, want #standup removal", out)
 	}
 }
 

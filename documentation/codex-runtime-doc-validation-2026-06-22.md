@@ -419,6 +419,9 @@ Suggested improvement:
 
 Severity: low
 
+Status: fixed after validation. User-facing channel examples now use the
+required `#` prefix; plain names remain correctly rejected by validation.
+
 Docs currently show examples like:
 
 ```sh
@@ -445,6 +448,10 @@ Suggested improvement:
 ### 8. `channel show` cannot show a channel that `channels` lists
 
 Severity: medium
+
+Status: covered after validation. A daemon-backed CLI regression test now
+round-trips `channel publish '#standup'`, `channels`, `channel show '#standup'`,
+and `channel rm '#standup'`.
 
 Repro:
 
