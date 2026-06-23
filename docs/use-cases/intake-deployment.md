@@ -226,6 +226,25 @@ services:
 The included `Dockerfile` is an operational base image for the CLI and daemon. If your deployed topology needs an LLM runtime, `gh`, or cloud credentials, extend the image or mount those tools and secrets explicitly rather than baking private credentials into the image.
 For Compose, pass `--env-file ./intake.env` to generate an `env_file:` reference instead of placeholder secret values.
 
+## Kubernetes Example
+
+For a Kubernetes host, generate manifests that reference a workspace PVC containing this repo's `.agent_team/` directory:
+
+```sh
+agent-team intake service kubernetes \
+  --image ghcr.io/jamesaud/agent-team:latest \
+  --bin agent-team \
+  --name agent-team-intake-my-repo \
+  --secret-name agent-team-intake-secrets \
+  --workspace-claim agent-team-workspace \
+  --github-reconcile-job \
+  --github-cleanup-merged \
+  --github-verify-pr \
+  > kubernetes.agent-team-intake-my-repo.yaml
+```
+
+Kubernetes defaults the listener address to `0.0.0.0:8787` so the generated Service can reach the pod. The manifest includes a Secret with placeholder webhook values, a Deployment that starts the daemon before execing `intake serve`, and a Service on port 8787. The PVC named by `--workspace-claim` must already contain the repo state that should be served.
+
 ## Operations
 
 Check listener health:

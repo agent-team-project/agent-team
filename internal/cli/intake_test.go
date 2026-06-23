@@ -670,14 +670,83 @@ func TestIntakeServiceComposeEnvFile(t *testing.T) {
 	}
 }
 
+func TestIntakeServiceKubernetes(t *testing.T) {
+	target := t.TempDir()
+	initInto(t, target)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"intake", "service", "k8s",
+		"--repo", target,
+		"--bin", "agent-team",
+		"--name", "agent-team-intake-test",
+		"--image", "ghcr.io/acme/agent-team:test",
+		"--container-workdir", "/workspace/repo",
+		"--secret-name", "agent-team-intake-secrets",
+		"--workspace-claim", "agent-team-workspace",
+		"--linear-secret-env", "LINEAR_SECRET",
+		"--github-secret-env", "GITHUB_SECRET",
+		"--github-reconcile-job",
+		"--github-cleanup-merged",
+		"--github-verify-pr",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake service k8s: %v\nstderr=%s", err, stderr.String())
+	}
+	expectedTarget := target
+	if eval, err := filepath.EvalSymlinks(target); err == nil {
+		expectedTarget = eval
+	}
+	body := out.String()
+	for _, want := range []string{
+		"# Save as kubernetes.agent-team-intake-test.yaml",
+		"# Mount a workspace PVC containing " + expectedTarget + " at /workspace/repo.",
+		"kind: Secret",
+		`  name: "agent-team-intake-secrets"`,
+		`  "LINEAR_SECRET": "replace-me"`,
+		`  "GITHUB_SECRET": "replace-me"`,
+		"kind: Deployment",
+		`  name: "agent-team-intake-test"`,
+		`        app.kubernetes.io/name: "agent-team-intake-test"`,
+		`          image: "ghcr.io/acme/agent-team:test"`,
+		`          workingDir: "/workspace/repo"`,
+		`            - "/bin/sh"`,
+		`            - "-lc"`,
+		`            - "agent-team daemon start && exec agent-team intake serve --addr 0.0.0.0:8787 --linear-max-age 1m0s --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr"`,
+		"              containerPort: 8787",
+		`            - name: "LINEAR_SECRET"`,
+		`                  name: "agent-team-intake-secrets"`,
+		`                  key: "LINEAR_SECRET"`,
+		`              mountPath: "/workspace/repo"`,
+		`            claimName: "agent-team-workspace"`,
+		"kind: Service",
+		"      port: 8787",
+		"      targetPort: 8787",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("kubernetes output missing %q:\n%s", want, body)
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestIntakeServiceValidation(t *testing.T) {
 	cases := []struct {
 		args []string
 		want string
 	}{
-		{[]string{"intake", "service", "supervisord"}, "service kind must be one of: systemd, launchd, compose"},
+		{[]string{"intake", "service", "supervisord"}, "service kind must be one of: systemd, launchd, compose, kubernetes"},
 		{[]string{"intake", "service", "compose", "--image", ""}, "--image is required"},
 		{[]string{"intake", "service", "launchd", "--env-file", "./intake.env"}, "--env-file is not supported for launchd"},
+		{[]string{"intake", "service", "kubernetes", "--env-file", "./intake.env"}, "--env-file is not supported for kubernetes"},
+		{[]string{"intake", "service", "kubernetes", "--name", "BadName"}, "--name must be a Kubernetes DNS label"},
+		{[]string{"intake", "service", "kubernetes", "--secret-name", "bad_name"}, "--secret-name must be a Kubernetes DNS label"},
+		{[]string{"intake", "service", "kubernetes", "--addr", "8787"}, "--addr must include a host and port for kubernetes output"},
 		{[]string{"intake", "service", "systemd", "--github-verify-pr"}, "--github-verify-pr requires --github-cleanup-merged"},
 		{[]string{"intake", "service", "systemd", "--github-cleanup-merged"}, "--github-cleanup-merged requires --github-reconcile-job"},
 	}

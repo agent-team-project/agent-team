@@ -257,6 +257,8 @@ type intakeServiceOptions struct {
 	ContainerWorkdir        string
 	Publish                 string
 	EnvFile                 string
+	KubeSecretName          string
+	KubeWorkspaceClaim      string
 	LinearSecretEnv         string
 	GitHubSecretEnv         string
 	GitHubReconcileJob      bool
@@ -284,17 +286,20 @@ func newIntakeServiceCmd() *cobra.Command {
 	cwd, _ := os.Getwd()
 	opts.Target = cwd
 	cmd := &cobra.Command{
-		Use:   "service systemd|launchd|compose",
-		Short: "Print a service-manager config for intake serve.",
-		Long:  "Print a read-only service-manager configuration for running `agent-team intake serve` against this repo. The command does not install or write the service file.",
+		Use:   "service systemd|launchd|compose|kubernetes",
+		Short: "Print service or deployment config for intake serve.",
+		Long:  "Print a read-only service or deployment configuration for running `agent-team intake serve` against this repo. The command does not install, apply, or write the generated file.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kind := strings.ToLower(strings.TrimSpace(args[0]))
-			if kind != "systemd" && kind != "launchd" && kind != "compose" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake service: service kind must be one of: systemd, launchd, compose.")
+			if kind == "k8s" {
+				kind = "kubernetes"
+			}
+			if kind != "systemd" && kind != "launchd" && kind != "compose" && kind != "kubernetes" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake service: service kind must be one of: systemd, launchd, compose, kubernetes.")
 				return exitErr(2)
 			}
-			if kind == "compose" && !cmd.Flags().Changed("addr") {
+			if (kind == "compose" || kind == "kubernetes") && !cmd.Flags().Changed("addr") {
 				opts.Addr = "0.0.0.0:8787"
 			}
 			if err := validateIntakeServiceOptions(kind, opts); err != nil {
@@ -311,6 +316,13 @@ func newIntakeServiceCmd() *cobra.Command {
 				renderIntakeLaunchdService(cmd.OutOrStdout(), repoRoot, opts)
 			case "compose":
 				renderIntakeComposeService(cmd.OutOrStdout(), repoRoot, opts)
+			case "kubernetes":
+				port, err := intakeServicePort(opts.Addr)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake service: %v\n", err)
+					return exitErr(2)
+				}
+				renderIntakeKubernetesService(cmd.OutOrStdout(), repoRoot, opts, port)
 			default:
 				renderIntakeSystemdService(cmd.OutOrStdout(), repoRoot, opts)
 			}
@@ -326,6 +338,8 @@ func newIntakeServiceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.ContainerWorkdir, "container-workdir", opts.ContainerWorkdir, "Container working directory used by compose service generation.")
 	cmd.Flags().StringVar(&opts.Publish, "publish", opts.Publish, "Compose port publication host:container mapping; empty omits ports.")
 	cmd.Flags().StringVar(&opts.EnvFile, "env-file", "", "Secret environment file for systemd EnvironmentFile or compose env_file; launchd does not support this.")
+	cmd.Flags().StringVar(&opts.KubeSecretName, "secret-name", "", "Kubernetes Secret name used by kubernetes service generation; defaults to <name>-secrets.")
+	cmd.Flags().StringVar(&opts.KubeWorkspaceClaim, "workspace-claim", "", "Kubernetes PersistentVolumeClaim name mounted at --container-workdir; defaults to <name>-workspace.")
 	cmd.Flags().StringVar(&opts.LinearSecretEnv, "linear-secret-env", opts.LinearSecretEnv, "Environment variable name containing the Linear webhook secret; empty omits it.")
 	cmd.Flags().StringVar(&opts.GitHubSecretEnv, "github-secret-env", opts.GitHubSecretEnv, "Environment variable name containing the GitHub webhook secret; empty omits it.")
 	cmd.Flags().BoolVar(&opts.GitHubReconcileJob, "github-reconcile-job", false, "Include --github-reconcile-job in ExecStart.")
@@ -344,12 +358,26 @@ func validateIntakeServiceOptions(kind string, opts intakeServiceOptions) error 
 	if strings.TrimSpace(opts.Description) == "" {
 		return fmt.Errorf("--description is required")
 	}
-	if kind == "compose" {
+	if kind == "compose" || kind == "kubernetes" {
 		if strings.TrimSpace(opts.Image) == "" {
 			return fmt.Errorf("--image is required")
 		}
 		if strings.TrimSpace(opts.ContainerWorkdir) == "" {
 			return fmt.Errorf("--container-workdir is required")
+		}
+	}
+	if kind == "kubernetes" {
+		if !isKubernetesDNSLabel(opts.Name) {
+			return fmt.Errorf("--name must be a Kubernetes DNS label for kubernetes output")
+		}
+		if secretName := kubernetesSecretName(opts); !isKubernetesDNSLabel(secretName) {
+			return fmt.Errorf("--secret-name must be a Kubernetes DNS label")
+		}
+		if claimName := kubernetesWorkspaceClaim(opts); !isKubernetesDNSLabel(claimName) {
+			return fmt.Errorf("--workspace-claim must be a Kubernetes DNS label")
+		}
+		if _, err := intakeServicePort(opts.Addr); err != nil {
+			return err
 		}
 	}
 	if strings.TrimSpace(opts.Bin) == "" {
@@ -358,8 +386,8 @@ func validateIntakeServiceOptions(kind string, opts intakeServiceOptions) error 
 	if strings.TrimSpace(opts.Addr) == "" {
 		return fmt.Errorf("--addr is required")
 	}
-	if kind == "launchd" && strings.TrimSpace(opts.EnvFile) != "" {
-		return fmt.Errorf("--env-file is not supported for launchd")
+	if (kind == "launchd" || kind == "kubernetes") && strings.TrimSpace(opts.EnvFile) != "" {
+		return fmt.Errorf("--env-file is not supported for %s", kind)
 	}
 	if opts.GitHubCleanupMerged && !opts.GitHubReconcileJob {
 		return fmt.Errorf("--github-cleanup-merged requires --github-reconcile-job")
@@ -433,6 +461,79 @@ func renderIntakeComposeService(w io.Writer, repoRoot string, opts intakeService
 	fmt.Fprintln(w, "    restart: unless-stopped")
 }
 
+func renderIntakeKubernetesService(w io.Writer, repoRoot string, opts intakeServiceOptions, port int) {
+	envs := serviceSecretEnvs(opts)
+	secretName := kubernetesSecretName(opts)
+	fmt.Fprintf(w, "# Save as kubernetes.%s.yaml\n", opts.Name)
+	fmt.Fprintf(w, "# Mount a workspace PVC containing %s at %s.\n", repoRoot, opts.ContainerWorkdir)
+	if len(envs) > 0 {
+		fmt.Fprintln(w, "apiVersion: v1")
+		fmt.Fprintln(w, "kind: Secret")
+		fmt.Fprintln(w, "metadata:")
+		fmt.Fprintf(w, "  name: %s\n", yamlQuote(secretName))
+		fmt.Fprintln(w, "type: Opaque")
+		fmt.Fprintln(w, "stringData:")
+		for _, env := range envs {
+			fmt.Fprintf(w, "  %s: %s\n", yamlQuote(env), yamlQuote("replace-me"))
+		}
+		fmt.Fprintln(w, "---")
+	}
+	fmt.Fprintln(w, "apiVersion: apps/v1")
+	fmt.Fprintln(w, "kind: Deployment")
+	fmt.Fprintln(w, "metadata:")
+	fmt.Fprintf(w, "  name: %s\n", yamlQuote(opts.Name))
+	fmt.Fprintln(w, "spec:")
+	fmt.Fprintln(w, "  replicas: 1")
+	fmt.Fprintln(w, "  selector:")
+	fmt.Fprintln(w, "    matchLabels:")
+	fmt.Fprintf(w, "      app.kubernetes.io/name: %s\n", yamlQuote(opts.Name))
+	fmt.Fprintln(w, "  template:")
+	fmt.Fprintln(w, "    metadata:")
+	fmt.Fprintln(w, "      labels:")
+	fmt.Fprintf(w, "        app.kubernetes.io/name: %s\n", yamlQuote(opts.Name))
+	fmt.Fprintln(w, "    spec:")
+	fmt.Fprintln(w, "      containers:")
+	fmt.Fprintln(w, "        - name: \"intake\"")
+	fmt.Fprintf(w, "          image: %s\n", yamlQuote(opts.Image))
+	fmt.Fprintf(w, "          workingDir: %s\n", yamlQuote(opts.ContainerWorkdir))
+	fmt.Fprintln(w, "          command:")
+	for _, arg := range []string{"/bin/sh", "-lc", serviceShellCommand(opts)} {
+		fmt.Fprintf(w, "            - %s\n", yamlQuote(arg))
+	}
+	fmt.Fprintln(w, "          ports:")
+	fmt.Fprintln(w, "            - name: \"http\"")
+	fmt.Fprintf(w, "              containerPort: %d\n", port)
+	if len(envs) > 0 {
+		fmt.Fprintln(w, "          env:")
+		for _, env := range envs {
+			fmt.Fprintf(w, "            - name: %s\n", yamlQuote(env))
+			fmt.Fprintln(w, "              valueFrom:")
+			fmt.Fprintln(w, "                secretKeyRef:")
+			fmt.Fprintf(w, "                  name: %s\n", yamlQuote(secretName))
+			fmt.Fprintf(w, "                  key: %s\n", yamlQuote(env))
+		}
+	}
+	fmt.Fprintln(w, "          volumeMounts:")
+	fmt.Fprintln(w, "            - name: \"workspace\"")
+	fmt.Fprintf(w, "              mountPath: %s\n", yamlQuote(opts.ContainerWorkdir))
+	fmt.Fprintln(w, "      volumes:")
+	fmt.Fprintln(w, "        - name: \"workspace\"")
+	fmt.Fprintln(w, "          persistentVolumeClaim:")
+	fmt.Fprintf(w, "            claimName: %s\n", yamlQuote(kubernetesWorkspaceClaim(opts)))
+	fmt.Fprintln(w, "---")
+	fmt.Fprintln(w, "apiVersion: v1")
+	fmt.Fprintln(w, "kind: Service")
+	fmt.Fprintln(w, "metadata:")
+	fmt.Fprintf(w, "  name: %s\n", yamlQuote(opts.Name))
+	fmt.Fprintln(w, "spec:")
+	fmt.Fprintln(w, "  selector:")
+	fmt.Fprintf(w, "    app.kubernetes.io/name: %s\n", yamlQuote(opts.Name))
+	fmt.Fprintln(w, "  ports:")
+	fmt.Fprintln(w, "    - name: \"http\"")
+	fmt.Fprintf(w, "      port: %d\n", port)
+	fmt.Fprintf(w, "      targetPort: %d\n", port)
+}
+
 func renderIntakeLaunchdService(w io.Writer, repoRoot string, opts intakeServiceOptions) {
 	fmt.Fprintf(w, "# Save as ~/Library/LaunchAgents/%s.plist\n", opts.Name)
 	fmt.Fprintln(w, `<?xml version="1.0" encoding="UTF-8"?>`)
@@ -481,6 +582,48 @@ func serviceSecretEnvs(opts intakeServiceOptions) []string {
 		envs = append(envs, env)
 	}
 	return envs
+}
+
+func kubernetesSecretName(opts intakeServiceOptions) string {
+	if name := strings.TrimSpace(opts.KubeSecretName); name != "" {
+		return name
+	}
+	return strings.TrimSpace(opts.Name) + "-secrets"
+}
+
+func kubernetesWorkspaceClaim(opts intakeServiceOptions) string {
+	if name := strings.TrimSpace(opts.KubeWorkspaceClaim); name != "" {
+		return name
+	}
+	return strings.TrimSpace(opts.Name) + "-workspace"
+}
+
+func intakeServicePort(addr string) (int, error) {
+	_, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0, fmt.Errorf("--addr must include a host and port for kubernetes output")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("--addr port must be between 1 and 65535")
+	}
+	return port, nil
+}
+
+func isKubernetesDNSLabel(value string) bool {
+	if len(value) == 0 || len(value) > 63 {
+		return false
+	}
+	for i, r := range value {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '-' && i > 0 && i < len(value)-1 {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func shellQuoteArgs(args []string) []string {

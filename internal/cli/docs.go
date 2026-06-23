@@ -192,11 +192,30 @@ func renderFlagUsageReference(b *strings.Builder, title, usage string) {
 	if strings.TrimSpace(usage) == "" {
 		return
 	}
+	usage = normalizeGeneratedFlagUsage(usage)
 	fmt.Fprintf(b, "%s:\n\n", title)
 	b.WriteString("```text\n")
 	b.WriteString(usage)
 	b.WriteString("\n```\n")
 	b.WriteString("\n")
+}
+
+func normalizeGeneratedFlagUsage(usage string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return usage
+	}
+	candidates := []string{cwd}
+	if abs, err := filepath.Abs(cwd); err == nil && abs != cwd {
+		candidates = append(candidates, abs)
+	}
+	if eval, err := filepath.EvalSymlinks(cwd); err == nil && eval != cwd {
+		candidates = append(candidates, eval)
+	}
+	for _, candidate := range candidates {
+		usage = strings.ReplaceAll(usage, candidate, "<repo>")
+	}
+	return usage
 }
 
 func markdownProse(value string) string {

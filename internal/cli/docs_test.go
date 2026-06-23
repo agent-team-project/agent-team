@@ -27,11 +27,15 @@ func TestDocsCLIGeneratesMarkdown(t *testing.T) {
 		"## `agent-team job cleanup`",
 		"## `agent-team docs cli`",
 		"--repo string",
+		`(default "<repo>")`,
 		"--verify-pr",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("generated docs missing %q", want)
 		}
+	}
+	if cwd, err := os.Getwd(); err == nil && strings.Contains(body, cwd) {
+		t.Fatalf("generated docs leaked cwd %q", cwd)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("docs cli wrote stderr: %s", stderr.String())
