@@ -967,6 +967,96 @@ gate = "manual"
 	}
 }
 
+func TestPipelineApproveManualGate(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[[instances.manager.triggers]]
+event        = "agent.dispatch"
+match.target = "manager"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+gate = "manual"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{"pipeline", "run", "ticket_to_pr", "SQU-902", "manual gate approval", "--repo", root, "--json"})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("pipeline run: %v\nstderr=%s", err, createErr.String())
+	}
+	markDone := NewRootCmd()
+	markDoneOut, markDoneErr := &bytes.Buffer{}, &bytes.Buffer{}
+	markDone.SetOut(markDoneOut)
+	markDone.SetErr(markDoneErr)
+	markDone.SetArgs([]string{"job", "step", "squ-902", "implement", "--status", "done", "--repo", root, "--json"})
+	if err := markDone.Execute(); err != nil {
+		t.Fatalf("mark implement done: %v\nstderr=%s", err, markDoneErr.String())
+	}
+
+	dryRun := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryRun.SetOut(dryOut)
+	dryRun.SetErr(dryErr)
+	dryRun.SetArgs([]string{"pipeline", "approve", "ticket_to_pr", "--repo", root, "--dry-run", "--dispatch", "--preview-routes", "--json"})
+	if err := dryRun.Execute(); err != nil {
+		t.Fatalf("pipeline approve dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview []pipelineApproveResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode approve dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(preview) != 1 || preview[0].Action != "would_dispatch" || preview[0].StepID != "review" || preview[0].StepStatus != job.StatusQueued || preview[0].Preview == nil || preview[0].Preview.Dispatch == nil {
+		t.Fatalf("approve preview = %+v", preview)
+	}
+	if preview[0].Preview.Dispatch.RequestedName != "manager-squ-902-review" {
+		t.Fatalf("dispatch preview = %+v", preview[0].Preview.Dispatch)
+	}
+	unchanged, err := job.Read(teamDir, "squ-902")
+	if err != nil {
+		t.Fatalf("read unchanged job: %v", err)
+	}
+	if unchanged.Steps[1].Status != job.StatusBlocked {
+		t.Fatalf("dry-run mutated manual gate = %+v", unchanged.Steps[1])
+	}
+
+	approve := NewRootCmd()
+	approveOut, approveErr := &bytes.Buffer{}, &bytes.Buffer{}
+	approve.SetOut(approveOut)
+	approve.SetErr(approveErr)
+	approve.SetArgs([]string{"pipeline", "approve", "ticket_to_pr", "--repo", root, "--message", "manual review approved", "--format", "{{.JobID}} {{.Action}} {{.StepID}} {{.Message}}"})
+	if err := approve.Execute(); err != nil {
+		t.Fatalf("pipeline approve: %v\nstderr=%s", err, approveErr.String())
+	}
+	if got := approveOut.String(); got != "squ-902 approved review manual review approved\n" {
+		t.Fatalf("approve format = %q", got)
+	}
+	updated, err := job.Read(teamDir, "squ-902")
+	if err != nil {
+		t.Fatalf("read approved job: %v", err)
+	}
+	if updated.Status != job.StatusQueued || updated.Steps[1].Status != job.StatusQueued || updated.LastStatus != "manual review approved" {
+		t.Fatalf("approved job = %+v", updated)
+	}
+}
+
 func TestPipelinePRGateWaitsForJobPR(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

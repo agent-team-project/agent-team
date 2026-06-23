@@ -2459,6 +2459,7 @@ Inherited Flags:
 Subcommands:
 
 - `agent-team pipeline advance` - Dispatch ready pipeline steps.
+- `agent-team pipeline approve` - Approve blocked manual pipeline gates.
 - `agent-team pipeline doctor` - Validate pipeline workflow wiring.
 - `agent-team pipeline graph` - Render a declared pipeline step graph.
 - `agent-team pipeline jobs` - List jobs for one pipeline.
@@ -2490,6 +2491,32 @@ Flags:
       --preview-routes     With --dry-run, include local topology route and dispatch payload previews.
       --repo string        Repo root. (default "<repo>")
       --workspace string   Workspace mode for advanced steps: auto, worktree, or repo. (default "auto")
+```
+
+## `agent-team pipeline approve`
+
+Approve blocked manual pipeline gates.
+
+Approve blocked manual-gate steps for jobs in one pipeline, or all pipelines with --all. By default this marks matching manual gates queued; pass --step to target one stage, or --dispatch to immediately dispatch each approved step.
+
+```text
+agent-team pipeline approve <pipeline>|--all [flags]
+```
+
+Flags:
+
+```text
+      --all                Approve manual gates across all pipelines.
+      --dispatch           Dispatch each approved manual gate immediately.
+      --dry-run            Preview manual gate approvals and optional dispatches without writing job or daemon state.
+      --format string      Render each approval result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json               Emit approval results as JSON.
+      --limit int          Maximum manual gates to approve (0 = no limit).
+      --message string     Status message recorded on each approved job.
+      --preview-routes     With --dry-run --dispatch, include route and payload previews.
+      --repo string        Repo root. (default "<repo>")
+      --step string        Approve only manual gates whose next blocked step has this id.
+      --workspace string   Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team pipeline doctor`
@@ -3741,6 +3768,7 @@ Inherited Flags:
 Subcommands:
 
 - `agent-team team advance` - Dispatch ready pipeline steps owned by one team.
+- `agent-team team approve` - Approve manual pipeline gates owned by one team.
 - `agent-team team cleanup` - Clean up done jobs owned by one team.
 - `agent-team team doctor` - Validate one team&#39;s topology wiring.
 - `agent-team team down` - Stop a team&#39;s persistent instances and active ephemeral children.
@@ -3795,6 +3823,31 @@ Flags:
       --preview-routes     With --dry-run, include local topology route and dispatch payload previews.
       --repo string        Repo root. (default "<repo>")
       --workspace string   Workspace mode for advanced steps: auto, worktree, or repo. (default "auto")
+```
+
+## `agent-team team approve`
+
+Approve manual pipeline gates owned by one team.
+
+Approve or preview blocked manual-gate steps for jobs in one team&#39;s declared pipelines. Pass --step to target one stage, or --dispatch to immediately dispatch each approved step.
+
+```text
+agent-team team approve <team> [flags]
+```
+
+Flags:
+
+```text
+      --dispatch           Dispatch each approved manual gate immediately.
+      --dry-run            Preview manual gate approvals and optional dispatches without writing job or daemon state.
+      --format string      Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json               Emit approval results as JSON.
+      --limit int          Approve at most this many manual gates; 0 means no limit.
+      --message string     Status message recorded on each approved team job.
+      --preview-routes     With --dry-run --dispatch, include local topology route and dispatch payload previews.
+      --repo string        Repo root. (default "<repo>")
+      --step string        Approve only manual gates whose next blocked step has this id.
+      --workspace string   Workspace mode for approved dispatches: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team team cleanup`

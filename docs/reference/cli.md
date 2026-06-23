@@ -137,6 +137,8 @@ Shortcuts:
 | `agent-team pipeline status` | Summarize pipeline jobs |
 | `agent-team pipeline ready` | List ready steps |
 | `agent-team pipeline advance <pipeline>` | Advance ready work |
+| `agent-team pipeline approve <pipeline>` | Approve blocked manual gates |
+| `agent-team pipeline retry <pipeline>` | Retry failed steps |
 
 ## Teams
 
@@ -155,6 +157,8 @@ Shortcuts:
 | `agent-team team queue quarantine <team>` | Scoped quarantine list |
 | `agent-team team ready <team>` | Scoped ready pipeline steps |
 | `agent-team team advance <team>` | Scoped pipeline advance |
+| `agent-team team approve <team>` | Scoped manual-gate approval |
+| `agent-team team retry <team>` | Scoped failed-step retry |
 | `agent-team team cleanup <team>` | Scoped job cleanup, optionally verifying PRs with `gh` |
 | `agent-team team snapshot <team>` | Scoped diagnostic artifact |
 

@@ -30,6 +30,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineStatusCmd())
 	cmd.AddCommand(newPipelineReadyCmd())
 	cmd.AddCommand(newPipelineAdvanceCmd())
+	cmd.AddCommand(newPipelineApproveCmd())
 	cmd.AddCommand(newPipelineRetryCmd())
 	cmd.AddCommand(newPipelineRunCmd())
 	return cmd
@@ -444,6 +445,87 @@ func newPipelineAdvanceCmd() *cobra.Command {
 	return cmd
 }
 
+func newPipelineApproveCmd() *cobra.Command {
+	var (
+		repo          string
+		all           bool
+		limit         int
+		dispatchNow   bool
+		workspace     string
+		step          string
+		message       string
+		dryRun        bool
+		previewRoutes bool
+		jsonOut       bool
+		format        string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "approve <pipeline>|--all",
+		Short: "Approve blocked manual pipeline gates.",
+		Long: "Approve blocked manual-gate steps for jobs in one pipeline, or all pipelines with --all. " +
+			"By default this marks matching manual gates queued; pass --step to target one stage, or --dispatch to immediately dispatch each approved step.",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline approve: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline approve: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline approve: pass a pipeline name or --all.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline approve: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			if previewRoutes && (!dryRun || !dispatchNow) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline approve: --preview-routes requires --dry-run and --dispatch.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineApproveFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline approve: %v\n", err)
+				return exitErr(2)
+			}
+			pipelineName := ""
+			if len(args) == 1 {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if !all && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline approve: pipeline name is required.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			results, err := approvePipelineManualGates(cmd, teamDir, pipelineName, workspace, step, message, limit, dispatchNow, dryRun, previewRoutes)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline approve: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineApproveResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&all, "all", false, "Approve manual gates across all pipelines.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum manual gates to approve (0 = no limit).")
+	cmd.Flags().BoolVar(&dispatchNow, "dispatch", false, "Dispatch each approved manual gate immediately.")
+	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for --dispatch: auto, worktree, or repo.")
+	cmd.Flags().StringVar(&step, "step", "", "Approve only manual gates whose next blocked step has this id.")
+	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each approved job.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview manual gate approvals and optional dispatches without writing job or daemon state.")
+	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run --dispatch, include route and payload previews.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit approval results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each approval result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
+	return cmd
+}
+
 func newPipelineRetryCmd() *cobra.Command {
 	var (
 		repo          string
@@ -744,6 +826,24 @@ type pipelineAdvanceResult struct {
 	Step       *job.Step          `json:"step,omitempty"`
 	Event      *eventResponse     `json:"event,omitempty"`
 	Preview    *jobAdvancePreview `json:"preview,omitempty"`
+}
+
+type pipelineApproveResult struct {
+	JobID      string             `json:"job_id"`
+	Ticket     string             `json:"ticket"`
+	Pipeline   string             `json:"pipeline"`
+	StepID     string             `json:"step_id,omitempty"`
+	Target     string             `json:"target,omitempty"`
+	StepStatus job.Status         `json:"step_status,omitempty"`
+	Instance   string             `json:"instance,omitempty"`
+	Action     string             `json:"action"`
+	DryRun     bool               `json:"dry_run,omitempty"`
+	Message    string             `json:"message,omitempty"`
+	Job        *job.Job           `json:"job,omitempty"`
+	Step       *job.Step          `json:"step,omitempty"`
+	Event      *eventResponse     `json:"event,omitempty"`
+	Preview    *jobAdvancePreview `json:"preview,omitempty"`
+	WaitingFor []string           `json:"waiting_for,omitempty"`
 }
 
 type pipelineRetryResult struct {
@@ -1355,6 +1455,130 @@ func advanceReadyPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace s
 	return results, nil
 }
 
+func approvePipelineManualGates(cmd *cobra.Command, teamDir, pipeline, workspace, stepFilter, message string, limit int, dispatchNow, dryRun bool, previewRoutes bool) ([]pipelineApproveResult, error) {
+	rows, err := collectJobReadyRows(teamDir, pipeline, map[string]bool{"blocked": true})
+	if err != nil {
+		return nil, err
+	}
+	rows = filterPipelineApproveRows(rows, stepFilter)
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	results := make([]pipelineApproveResult, 0, len(rows))
+	for _, row := range rows {
+		j, err := job.Read(teamDir, row.JobID)
+		if err != nil {
+			return nil, err
+		}
+		result := pipelineApproveResult{
+			JobID:      j.ID,
+			Ticket:     j.Ticket,
+			Pipeline:   j.Pipeline,
+			StepID:     row.StepID,
+			Target:     row.Target,
+			StepStatus: row.StepStatus,
+			Instance:   row.Instance,
+			Action:     "would_approve",
+			DryRun:     dryRun,
+			Message:    row.Message,
+			WaitingFor: append([]string(nil), row.WaitingFor...),
+		}
+		if strings.TrimSpace(row.StepID) == "" {
+			result.Action = "skipped"
+			result.Message = "no blocked manual gate"
+			results = append(results, result)
+			continue
+		}
+		if len(row.WaitingFor) > 0 {
+			result.Action = "skipped"
+			result.Message = "waiting for " + strings.Join(row.WaitingFor, ",")
+			results = append(results, result)
+			continue
+		}
+		approvalMessage := strings.TrimSpace(message)
+		if approvalMessage == "" {
+			approvalMessage = "approved manual gate " + row.StepID
+		}
+		if err := updateJobStep(j, row.StepID, job.StatusQueued, jobStepUpdate{Message: approvalMessage}); err != nil {
+			return nil, err
+		}
+		result.Job = j
+		result.Message = j.LastStatus
+		if idx := jobStepIndex(j, row.StepID); idx >= 0 {
+			result.Step = cloneJobStep(&j.Steps[idx])
+			result.StepID = j.Steps[idx].ID
+			result.Target = j.Steps[idx].Target
+			result.StepStatus = j.Steps[idx].Status
+			result.Instance = j.Steps[idx].Instance
+		}
+		if dispatchNow {
+			result.Action = "would_dispatch"
+		}
+		if dryRun {
+			if dispatchNow {
+				preview, err := previewJobAdvanceDispatch(teamDir, j, workspace)
+				if err != nil {
+					return nil, err
+				}
+				result.Preview = preview
+				result.Message = preview.Message
+				if preview.Step != nil {
+					result.StepID = preview.Step.ID
+					result.Target = preview.Step.Target
+					result.StepStatus = preview.Step.Status
+					result.Instance = preview.Step.Instance
+					result.Step = preview.Step
+				}
+			}
+			results = append(results, result)
+			continue
+		}
+		if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"step": row.StepID}); err != nil {
+			return nil, err
+		}
+		result.Action = "approved"
+		result.DryRun = false
+		if dispatchNow {
+			advanced, err := advanceJob(cmd, teamDir, j, workspace)
+			if err != nil {
+				return nil, err
+			}
+			result.Action = pipelineApproveDispatchAction(advanced)
+			result.Job = advanced.Job
+			result.Step = advanced.Step
+			result.Event = advanced.Event
+			result.Message = advanced.Message
+			if advanced.Job != nil {
+				result.Ticket = advanced.Job.Ticket
+				result.Pipeline = advanced.Job.Pipeline
+			}
+			if advanced.Step != nil {
+				result.StepID = advanced.Step.ID
+				result.Target = advanced.Step.Target
+				result.StepStatus = advanced.Step.Status
+				result.Instance = advanced.Step.Instance
+			}
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func filterPipelineApproveRows(rows []jobReadyRow, stepFilter string) []jobReadyRow {
+	stepFilter = strings.TrimSpace(stepFilter)
+	out := rows[:0]
+	for _, row := range rows {
+		if row.Gate != job.StepGateManual {
+			continue
+		}
+		if stepFilter != "" && row.StepID != stepFilter {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 func retryPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace, stepFilter, message string, limit int, dispatchNow, dryRun bool, previewRoutes bool) ([]pipelineRetryResult, error) {
 	rows, err := collectJobReadyRows(teamDir, pipeline, map[string]bool{"failed": true})
 	if err != nil {
@@ -1502,6 +1726,13 @@ func pipelineRetryDispatchAction(result *jobAdvanceResult) string {
 		return "dispatched"
 	}
 	return "retried"
+}
+
+func pipelineApproveDispatchAction(result *jobAdvanceResult) string {
+	if pipelineAdvanceAction(result) == "advanced" {
+		return "dispatched"
+	}
+	return "approved"
 }
 
 func renderPipelineList(w io.Writer, pipelines []pipelineInfo, jsonOut bool, tmpl *template.Template) error {
@@ -1835,6 +2066,17 @@ func parsePipelineAdvanceFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
+func parsePipelineApproveFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("pipeline-approve-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
 func parsePipelineRetryFormat(format string) (*template.Template, error) {
 	if strings.TrimSpace(format) == "" {
 		return nil, nil
@@ -1968,6 +2210,83 @@ func renderPipelineAdvanceTable(w io.Writer, results []pipelineAdvanceResult) {
 }
 
 func renderPipelineAdvanceRoutePreviews(w io.Writer, results []pipelineAdvanceResult) error {
+	wroteHeader := false
+	for _, result := range results {
+		if result.Preview == nil {
+			continue
+		}
+		if !wroteHeader {
+			fmt.Fprintln(w, "Routes:")
+			wroteHeader = true
+		}
+		requestedName := ""
+		if result.Preview.Dispatch != nil {
+			requestedName = result.Preview.Dispatch.RequestedName
+		}
+		fmt.Fprintf(w, "%s step=%s target=%s instance=%s\n",
+			result.JobID,
+			emptyDash(result.StepID),
+			emptyDash(result.Target),
+			emptyDash(requestedName),
+		)
+		if result.Preview.Dispatch == nil || result.Preview.Dispatch.Preview == nil || !eventPublishPreviewHasRoutes(result.Preview.Dispatch.Preview) {
+			fmt.Fprintln(w, "(no triggers matched)")
+			continue
+		}
+		if err := renderEventPublishRoutePreview(w, result.Preview.Dispatch.Preview); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderPipelineApproveResults(w io.Writer, results []pipelineApproveResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := tmpl.Execute(w, result); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	renderPipelineApproveTable(w, results)
+	return renderPipelineApproveRoutePreviews(w, results)
+}
+
+func renderPipelineApproveTable(w io.Writer, results []pipelineApproveResult) {
+	if len(results) == 0 {
+		fmt.Fprintln(w, "(no blocked manual pipeline gates)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "JOB\tPIPELINE\tSTEP\tTARGET\tACTION\tSTATUS\tINSTANCE\tWAITING_FOR\tMESSAGE")
+	for _, result := range results {
+		waiting := "-"
+		if len(result.WaitingFor) > 0 {
+			waiting = strings.Join(result.WaitingFor, ",")
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			result.JobID,
+			emptyDash(result.Pipeline),
+			emptyDash(result.StepID),
+			emptyDash(result.Target),
+			result.Action,
+			emptyDash(string(result.StepStatus)),
+			emptyDash(result.Instance),
+			waiting,
+			emptyDash(result.Message),
+		)
+	}
+	_ = tw.Flush()
+}
+
+func renderPipelineApproveRoutePreviews(w io.Writer, results []pipelineApproveResult) error {
 	wroteHeader := false
 	for _, result := range results {
 		if result.Preview == nil {

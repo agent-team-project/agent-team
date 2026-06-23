@@ -44,6 +44,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamTriageCmd())
 	cmd.AddCommand(newTeamCleanupCmd())
 	cmd.AddCommand(newTeamAdvanceCmd())
+	cmd.AddCommand(newTeamApproveCmd())
 	cmd.AddCommand(newTeamRetryCmd())
 	cmd.AddCommand(newTeamQueueCmd())
 	cmd.AddCommand(newTeamLogsCmd())
@@ -944,6 +945,78 @@ func newTeamAdvanceCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview ready steps without dispatching them.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include local topology route and dispatch payload previews.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit advance results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
+	return cmd
+}
+
+func newTeamApproveCmd() *cobra.Command {
+	var (
+		repo          string
+		workspace     string
+		limit         int
+		dispatchNow   bool
+		step          string
+		message       string
+		dryRun        bool
+		previewRoutes bool
+		jsonOut       bool
+		format        string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "approve <team>",
+		Short: "Approve manual pipeline gates owned by one team.",
+		Long: "Approve or preview blocked manual-gate steps for jobs in one team's declared pipelines. " +
+			"Pass --step to target one stage, or --dispatch to immediately dispatch each approved step.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team approve: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team approve: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			if previewRoutes && (!dryRun || !dispatchNow) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team approve: --preview-routes requires --dry-run and --dispatch.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineApproveFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team approve: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			_, team, err := loadTopologyTeam(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team approve: %v\n", err)
+				return exitErr(1)
+			}
+			results, err := approveTeamPipelineManualGates(cmd, teamDir, team, workspace, step, message, limit, dispatchNow, dryRun, previewRoutes)
+			if err != nil {
+				if errors.Is(err, errDaemonNotRunning) {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team approve: daemon is not running — start it with `agent-team start`, or use --dry-run without --dispatch.")
+					return exitErr(2)
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team approve: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineApproveResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for approved dispatches: auto, worktree, or repo.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Approve at most this many manual gates; 0 means no limit.")
+	cmd.Flags().BoolVar(&dispatchNow, "dispatch", false, "Dispatch each approved manual gate immediately.")
+	cmd.Flags().StringVar(&step, "step", "", "Approve only manual gates whose next blocked step has this id.")
+	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each approved team job.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview manual gate approvals and optional dispatches without writing job or daemon state.")
+	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run --dispatch, include local topology route and dispatch payload previews.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit approval results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd
 }
@@ -5505,6 +5578,32 @@ func advanceTeamReadyPipelineJobs(cmd *cobra.Command, teamDir string, team *topo
 		results = append(results, advanced...)
 		if limit > 0 {
 			remaining -= len(advanced)
+		}
+	}
+	return results, nil
+}
+
+func approveTeamPipelineManualGates(cmd *cobra.Command, teamDir string, team *topology.Team, workspace string, stepFilter string, message string, limit int, dispatchNow bool, dryRun bool, previewRoutes bool) ([]pipelineApproveResult, error) {
+	if team == nil || len(team.Pipelines) == 0 {
+		return []pipelineApproveResult{}, nil
+	}
+	results := []pipelineApproveResult{}
+	remaining := limit
+	for _, pipeline := range team.Pipelines {
+		if limit > 0 && remaining <= 0 {
+			break
+		}
+		batchLimit := 0
+		if limit > 0 {
+			batchLimit = remaining
+		}
+		approved, err := approvePipelineManualGates(cmd, teamDir, pipeline, workspace, stepFilter, message, batchLimit, dispatchNow, dryRun, previewRoutes)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, approved...)
+		if limit > 0 {
+			remaining -= len(approved)
 		}
 	}
 	return results, nil
