@@ -2801,6 +2801,7 @@ Flags:
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --phase strings       Only show work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
   -q, --quiet               Only print matching instance names.
+      --runtime strings     Only show instances for this runtime: claude or codex. Can repeat or comma-separate.
       --sort string         Sort rows by name, status, agent, phase, stale, unhealthy, started, stopped, or exited. (default "name")
       --stale               Only show instances whose status.toml is stale.
       --status strings      Only show lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.

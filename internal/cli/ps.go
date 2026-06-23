@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/spf13/cobra"
 )
 
@@ -45,6 +46,7 @@ func newPsCmd() *cobra.Command {
 		sortBy          string
 		interval        time.Duration
 		statusFilters   []string
+		runtimeFilters  []string
 		agentFilters    []string
 		phaseFilters    []string
 		instanceFilters []string
@@ -74,7 +76,7 @@ func newPsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team ps: choose one of --latest or --last.")
 				return exitErr(2)
 			}
-			opts, err := newPsOptionsWithInstancesAndUnhealthy(statusFilters, agentFilters, phaseFilters, instanceFilters, staleOnly, unhealthyOnly)
+			opts, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(statusFilters, runtimeFilters, agentFilters, phaseFilters, instanceFilters, staleOnly, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team ps: %v\n", err)
 				return exitErr(2)
@@ -160,6 +162,7 @@ func newPsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort rows by name, status, agent, phase, stale, unhealthy, started, stopped, or exited.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&agentFilters, "agent", nil, "Only show instances for this agent. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only show instances with this name. Can repeat or comma-separate.")
@@ -420,6 +423,7 @@ type psOptions struct {
 	SortSet   bool
 	Limit     int
 	statuses  map[string]bool
+	runtimes  map[string]bool
 	agents    map[string]bool
 	phases    map[string]bool
 	instances map[string]bool
@@ -471,10 +475,14 @@ func newPsOptions(statusFilters, agentFilters, phaseFilters []string, staleOnly 
 }
 
 func newPsOptionsWithInstances(statusFilters, agentFilters, phaseFilters, instanceFilters []string, staleOnly bool) (psOptions, error) {
-	return newPsOptionsWithInstancesAndUnhealthy(statusFilters, agentFilters, phaseFilters, instanceFilters, staleOnly, false)
+	return newPsOptionsWithRuntimeInstancesAndUnhealthy(statusFilters, nil, agentFilters, phaseFilters, instanceFilters, staleOnly, false)
 }
 
 func newPsOptionsWithInstancesAndUnhealthy(statusFilters, agentFilters, phaseFilters, instanceFilters []string, staleOnly, unhealthyOnly bool) (psOptions, error) {
+	return newPsOptionsWithRuntimeInstancesAndUnhealthy(statusFilters, nil, agentFilters, phaseFilters, instanceFilters, staleOnly, unhealthyOnly)
+}
+
+func newPsOptionsWithRuntimeInstancesAndUnhealthy(statusFilters, runtimeFilters, agentFilters, phaseFilters, instanceFilters []string, staleOnly, unhealthyOnly bool) (psOptions, error) {
 	opts := psOptions{stale: staleOnly, unhealthy: unhealthyOnly}
 	if len(statusFilters) > 0 {
 		opts.statuses = map[string]bool{}
@@ -492,6 +500,22 @@ func newPsOptionsWithInstancesAndUnhealthy(statusFilters, agentFilters, phaseFil
 		}
 		if len(opts.statuses) == 0 {
 			return opts, errors.New("--status requires at least one non-empty status")
+		}
+	}
+	if len(runtimeFilters) > 0 {
+		opts.runtimes = map[string]bool{}
+		for _, raw := range splitFilterValues(runtimeFilters) {
+			if strings.TrimSpace(raw) == "" {
+				continue
+			}
+			kind, err := runtimebin.ParseKind(raw)
+			if err != nil {
+				return opts, fmt.Errorf("unknown --runtime %q (want claude or codex)", raw)
+			}
+			opts.runtimes[string(kind)] = true
+		}
+		if len(opts.runtimes) == 0 {
+			return opts, errors.New("--runtime requires at least one non-empty runtime")
 		}
 	}
 	if len(phaseFilters) > 0 {
@@ -566,7 +590,7 @@ func splitFilterValues(raw []string) []string {
 }
 
 func filterPsRows(rows []instanceRow, opts psOptions) []instanceRow {
-	if len(opts.statuses) == 0 && len(opts.agents) == 0 && len(opts.phases) == 0 && len(opts.instances) == 0 && !opts.stale && !opts.unhealthy {
+	if len(opts.statuses) == 0 && len(opts.runtimes) == 0 && len(opts.agents) == 0 && len(opts.phases) == 0 && len(opts.instances) == 0 && !opts.stale && !opts.unhealthy {
 		return rows
 	}
 	out := make([]instanceRow, 0, len(rows))
@@ -581,6 +605,9 @@ func filterPsRows(rows []instanceRow, opts psOptions) []instanceRow {
 			continue
 		}
 		if len(opts.statuses) > 0 && !opts.statuses[psStatusKey(r)] {
+			continue
+		}
+		if len(opts.runtimes) > 0 && !opts.runtimes[psRuntimeKey(r)] {
 			continue
 		}
 		if len(opts.agents) > 0 && !opts.agents[r.Agent] {
@@ -701,6 +728,14 @@ func psPhaseKey(r instanceRow) string {
 	default:
 		return phase
 	}
+}
+
+func psRuntimeKey(r instanceRow) string {
+	runtime := strings.ToLower(strings.TrimSpace(r.Runtime))
+	if runtime == "" {
+		return "unknown"
+	}
+	return runtime
 }
 
 func collectPsRows(teamDir string, now time.Time) ([]instanceRow, error) {

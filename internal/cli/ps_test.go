@@ -642,19 +642,21 @@ func TestPsOptionsRejectEmptyFilters(t *testing.T) {
 	cases := []struct {
 		name      string
 		statuses  []string
+		runtimes  []string
 		agents    []string
 		phases    []string
 		instances []string
 		want      string
 	}{
 		{name: "status", statuses: []string{"  "}, want: "non-empty status"},
+		{name: "runtime", runtimes: []string{"  "}, want: "non-empty runtime"},
 		{name: "agent", agents: []string{"  "}, want: "non-empty agent"},
 		{name: "phase", phases: []string{"  "}, want: "non-empty phase"},
 		{name: "instance", instances: []string{"  "}, want: "non-empty instance"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := newPsOptionsWithInstances(tc.statuses, tc.agents, tc.phases, tc.instances, false)
+			_, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(tc.statuses, tc.runtimes, tc.agents, tc.phases, tc.instances, false, false)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
@@ -666,6 +668,29 @@ func TestPsOptionsRejectUnknownPhase(t *testing.T) {
 	_, err := newPsOptions(nil, nil, []string{"reviewing"}, false)
 	if err == nil || !strings.Contains(err.Error(), "unknown --phase") {
 		t.Fatalf("err = %v, want unknown phase", err)
+	}
+}
+
+func TestPsOptionsRejectUnknownRuntime(t *testing.T) {
+	_, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(nil, []string{"llama"}, nil, nil, nil, false, false)
+	if err == nil || !strings.Contains(err.Error(), "unknown --runtime") {
+		t.Fatalf("err = %v, want unknown runtime", err)
+	}
+}
+
+func TestPsFiltersRowsByRuntime(t *testing.T) {
+	opts, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(nil, []string{"codex"}, nil, nil, nil, false, false)
+	if err != nil {
+		t.Fatalf("newPsOptionsWithRuntimeInstancesAndUnhealthy: %v", err)
+	}
+	rows := []instanceRow{
+		{Instance: "manager", Agent: "manager", Runtime: "claude"},
+		{Instance: "worker-squ-42", Agent: "worker", Runtime: "codex"},
+		{Instance: "legacy", Agent: "worker"},
+	}
+	got := filterPsRows(rows, opts)
+	if len(got) != 1 || got[0].Instance != "worker-squ-42" {
+		t.Fatalf("rows = %+v, want codex worker", got)
 	}
 }
 
