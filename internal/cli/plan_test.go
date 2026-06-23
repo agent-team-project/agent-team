@@ -118,6 +118,38 @@ func TestPlanMarksStoppedCodexMetadataUnsupported(t *testing.T) {
 	}
 }
 
+func TestPlanFiltersRowsByRuntime(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp},
+		{Instance: "ticket-manager", Agent: "ticket-manager", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp},
+	} {
+		if err := daemon.WriteMetadata(daemonRoot, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--json", "--runtime", "codex", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan --runtime codex: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body planResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode plan json: %v\nbody=%s", err, out.String())
+	}
+	if body.Summary.Total != 1 || len(body.Instances) != 1 || body.Instances[0].Instance != "ticket-manager" {
+		t.Fatalf("runtime-filtered plan = %+v", body)
+	}
+}
+
 func TestPlanSummaryJSONShowsAggregateCounts(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

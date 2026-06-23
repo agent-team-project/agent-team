@@ -5179,11 +5179,11 @@ instances = ["other", "build-worker"]
 	}
 	now := time.Now().UTC()
 	for _, meta := range []*daemon.Metadata{
-		{Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
-		{Instance: "worker-squ-101", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
-		{Instance: "build-worker-1", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
-		{Instance: "adhoc-worker", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
-		{Instance: "other", Agent: "other", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "manager", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "worker-squ-101", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "build-worker-1", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "adhoc-worker", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "other", Agent: "other", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
 	} {
 		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
 			t.Fatalf("write metadata %s: %v", meta.Instance, err)
@@ -5239,6 +5239,30 @@ func TestTeamPlanScopesRowsAndStopExtras(t *testing.T) {
 	}
 	if _, ok := planRowsByInstance(noExtrasSnapshot.Plan.Instances)["adhoc-worker"]; ok {
 		t.Fatalf("team plan without --stop-extras included adhoc-worker: %+v", noExtrasSnapshot.Plan.Instances)
+	}
+
+	runtimeOnly := NewRootCmd()
+	runtimeOut, runtimeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeOnly.SetOut(runtimeOut)
+	runtimeOnly.SetErr(runtimeErr)
+	runtimeOnly.SetArgs([]string{"team", "plan", "delivery", "--repo", root, "--runtime", "codex", "--stop-extras", "--json"})
+	if err := runtimeOnly.Execute(); err != nil {
+		t.Fatalf("team plan runtime: %v\nstderr=%s", err, runtimeErr.String())
+	}
+	var runtimeSnapshot teamPlanSnapshot
+	if err := json.Unmarshal(runtimeOut.Bytes(), &runtimeSnapshot); err != nil {
+		t.Fatalf("decode team plan runtime: %v\nbody=%s", err, runtimeOut.String())
+	}
+	runtimeRows := planRowsByInstance(runtimeSnapshot.Plan.Instances)
+	for _, want := range []string{"worker-squ-101", "adhoc-worker"} {
+		if _, ok := runtimeRows[want]; !ok {
+			t.Fatalf("team plan runtime rows = %+v, missing %s", runtimeSnapshot.Plan.Instances, want)
+		}
+	}
+	for _, unwanted := range []string{"manager", "ticket-manager", "worker", "build-worker-1", "other"} {
+		if _, ok := runtimeRows[unwanted]; ok {
+			t.Fatalf("team plan runtime rows = %+v, included %s", runtimeSnapshot.Plan.Instances, unwanted)
+		}
 	}
 
 	startOnly := NewRootCmd()
@@ -5321,6 +5345,30 @@ func TestTeamSyncDryRunScopesRowsAndFilters(t *testing.T) {
 	}
 	if rows["adhoc-worker"].Action != "stop" || rows["adhoc-worker"].Kind != "extra" {
 		t.Fatalf("adhoc-worker row = %+v, want stop extra", rows["adhoc-worker"])
+	}
+
+	runtimeOnly := NewRootCmd()
+	runtimeOut, runtimeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeOnly.SetOut(runtimeOut)
+	runtimeOnly.SetErr(runtimeErr)
+	runtimeOnly.SetArgs([]string{"team", "sync", "delivery", "--repo", root, "--dry-run", "--stop-extras", "--runtime", "codex", "--json"})
+	if err := runtimeOnly.Execute(); err != nil {
+		t.Fatalf("team sync runtime dry-run: %v\nstderr=%s", err, runtimeErr.String())
+	}
+	var runtimeSnapshot teamPlanSnapshot
+	if err := json.Unmarshal(runtimeOut.Bytes(), &runtimeSnapshot); err != nil {
+		t.Fatalf("decode team sync runtime dry-run: %v\nbody=%s", err, runtimeOut.String())
+	}
+	runtimeRows := planRowsByInstance(runtimeSnapshot.Plan.Instances)
+	for _, want := range []string{"worker-squ-101", "adhoc-worker"} {
+		if _, ok := runtimeRows[want]; !ok {
+			t.Fatalf("team sync runtime rows = %+v, missing %s", runtimeSnapshot.Plan.Instances, want)
+		}
+	}
+	for _, unwanted := range []string{"manager", "ticket-manager", "worker", "build-worker-1", "other"} {
+		if _, ok := runtimeRows[unwanted]; ok {
+			t.Fatalf("team sync runtime rows = %+v, included %s", runtimeSnapshot.Plan.Instances, unwanted)
+		}
 	}
 
 	startOnly := NewRootCmd()

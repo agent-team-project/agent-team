@@ -29,6 +29,7 @@ func newSyncCmd() *cobra.Command {
 		jsonOut      bool
 		format       string
 		statuses     []string
+		runtimes     []string
 		agents       []string
 		phases       []string
 		instances    []string
@@ -67,7 +68,7 @@ func newSyncCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team sync: --format cannot be combined with --quiet, --json, or --summary.")
 				return exitErr(2)
 			}
-			filters, err := newPsOptionsWithInstances(statuses, agents, phases, instances, false)
+			filters, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(statuses, runtimes, agents, phases, instances, false, false)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team sync: %v\n", err)
 				return exitErr(2)
@@ -108,6 +109,7 @@ func newSyncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each sync action with a Go template, e.g. '{{.Instance}} {{.Action}}'.")
 	cmd.Flags().StringSliceVar(&statuses, "status", nil, "Only sync plan rows with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Only sync daemon-known plan rows for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&agents, "agent", nil, "Only sync plan rows for this agent. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phases, "phase", nil, "Only sync plan rows in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&instances, "instance", nil, "Only sync plan rows with this name. Can repeat or comma-separate.")
@@ -238,6 +240,7 @@ func filterSyncPlan(result *planResult, filters psOptions, actions map[string]bo
 
 func syncFiltersSet(filters psOptions, actions map[string]bool) bool {
 	return len(filters.statuses) > 0 ||
+		len(filters.runtimes) > 0 ||
 		len(filters.agents) > 0 ||
 		len(filters.phases) > 0 ||
 		len(filters.instances) > 0 ||
@@ -546,6 +549,9 @@ func syncMetadataMatchesFilters(meta *daemon.Metadata, filters psOptions, phaseB
 	}
 	status := metadataStatusKey(meta)
 	if len(filters.statuses) > 0 && !filters.statuses[status] {
+		return false
+	}
+	if len(filters.runtimes) > 0 && !filters.runtimes[metadataRuntimeKey(meta)] {
 		return false
 	}
 	if len(filters.phases) > 0 && !filters.phases[planPhaseKey(phaseByInstance[meta.Instance])] {

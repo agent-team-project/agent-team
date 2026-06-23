@@ -258,7 +258,7 @@ func collectTeamSnapshot(teamDir, repoRoot, name string, opts snapshotOptions) (
 	} else {
 		out.Health = health.Health
 	}
-	if plan, err := collectTeamPlan(teamDir, name, false, nil); err != nil {
+	if plan, err := collectTeamPlan(teamDir, name, false, psOptions{}, nil); err != nil {
 		out.addError("plan", err)
 	} else {
 		out.Plan = plan.Plan

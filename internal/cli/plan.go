@@ -23,6 +23,7 @@ func newPlanCmd() *cobra.Command {
 		summary         bool
 		stopExtras      bool
 		statusFilters   []string
+		runtimeFilters  []string
 		agentFilters    []string
 		phaseFilters    []string
 		instanceFilters []string
@@ -47,7 +48,7 @@ func newPlanCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team plan: %v\n", err)
 				return exitErr(2)
 			}
-			opts, err := newPsOptionsWithInstances(statusFilters, agentFilters, phaseFilters, instanceFilters, false)
+			opts, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(statusFilters, runtimeFilters, agentFilters, phaseFilters, instanceFilters, false, false)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team plan: %v\n", err)
 				return exitErr(2)
@@ -94,6 +95,7 @@ func newPlanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate action counts instead of per-instance rows.")
 	cmd.Flags().BoolVar(&stopExtras, "stop-extras", false, "Preview running topology extras as stop actions, matching sync --stop-extras.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show daemon-known plan rows for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&agentFilters, "agent", nil, "Only show plan rows for this agent. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show plan rows in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only show plan rows with this name. Can repeat or comma-separate.")
@@ -127,6 +129,7 @@ type planSummary struct {
 type planRow struct {
 	Instance string `json:"instance"`
 	Agent    string `json:"agent,omitempty"`
+	Runtime  string `json:"-"`
 	Kind     string `json:"kind"`
 	Status   string `json:"status"`
 	Phase    string `json:"phase"`
@@ -219,6 +222,7 @@ func planDeclaredRow(inst *topology.Instance, meta *daemon.Metadata, daemonRunni
 	}
 	if meta != nil {
 		row.Status = planStatus(meta)
+		row.Runtime = metadataRuntimeKey(meta)
 		row.PID = meta.PID
 		if row.Agent == "" {
 			row.Agent = meta.Agent
@@ -271,6 +275,7 @@ func planEphemeralChildRow(owner *topology.Instance, meta *daemon.Metadata, daem
 	row := planRow{
 		Instance: meta.Instance,
 		Agent:    agent,
+		Runtime:  metadataRuntimeKey(meta),
 		Kind:     "ephemeral",
 		Status:   status,
 		Action:   "keep",
@@ -293,6 +298,7 @@ func planExtraRow(meta *daemon.Metadata, daemonRunning bool) planRow {
 	row := planRow{
 		Instance: meta.Instance,
 		Agent:    meta.Agent,
+		Runtime:  metadataRuntimeKey(meta),
 		Kind:     "extra",
 		Status:   planStatus(meta),
 		Action:   "extra",

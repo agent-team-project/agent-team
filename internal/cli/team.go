@@ -3383,17 +3383,18 @@ func newTeamRestartCmd() *cobra.Command {
 
 func newTeamSyncCmd() *cobra.Command {
 	var (
-		repo         string
-		dryRun       bool
-		wait         bool
-		stopExtras   bool
-		timeout      time.Duration
-		readyTimeout time.Duration
-		summary      bool
-		quiet        bool
-		jsonOut      bool
-		format       string
-		actions      []string
+		repo           string
+		dryRun         bool
+		wait           bool
+		stopExtras     bool
+		timeout        time.Duration
+		readyTimeout   time.Duration
+		summary        bool
+		quiet          bool
+		jsonOut        bool
+		format         string
+		runtimeFilters []string
+		actions        []string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -3432,6 +3433,11 @@ func newTeamSyncCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team sync: %v\n", err)
 				return exitErr(2)
 			}
+			filters, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(nil, runtimeFilters, nil, nil, nil, false, false)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team sync: %v\n", err)
+				return exitErr(2)
+			}
 			formatTemplate, err := parseLifecycleActionFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team sync: %v\n", err)
@@ -3447,6 +3453,7 @@ func newTeamSyncCmd() *cobra.Command {
 				Quiet:        quiet,
 				JSON:         jsonOut,
 				Format:       formatTemplate,
+				Filters:      filters,
 				Actions:      actionFilters,
 			})
 		},
@@ -3461,18 +3468,20 @@ func newTeamSyncCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each sync action with a Go template, e.g. '{{.Instance}} {{.Action}}'.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only sync team-owned daemon-known plan rows for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actions, "action", nil, "Only sync plan rows with this action: start, resume, keep, unsupported, on-demand, stop, or extra. Can repeat or comma-separate.")
 	return cmd
 }
 
 func newTeamPlanCmd() *cobra.Command {
 	var (
-		repo          string
-		jsonOut       bool
-		summary       bool
-		stopExtras    bool
-		actionFilters []string
-		format        string
+		repo           string
+		jsonOut        bool
+		summary        bool
+		stopExtras     bool
+		runtimeFilters []string
+		actionFilters  []string
+		format         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -3494,11 +3503,16 @@ func newTeamPlanCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team plan: %v\n", err)
 				return exitErr(2)
 			}
+			filters, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(nil, runtimeFilters, nil, nil, nil, false, false)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team plan: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
 			}
-			snapshot, err := collectTeamPlan(teamDir, args[0], stopExtras, actions)
+			snapshot, err := collectTeamPlan(teamDir, args[0], stopExtras, filters, actions)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team plan: %v\n", err)
 				return exitErr(1)
@@ -3526,6 +3540,7 @@ func newTeamPlanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team plan as JSON.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate action counts instead of per-instance rows.")
 	cmd.Flags().BoolVar(&stopExtras, "stop-extras", false, "Preview running team-agent topology extras as stop actions.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show team-owned daemon-known plan rows for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only show plan rows with this action: start, resume, keep, unsupported, on-demand, stop, or extra. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan row with a Go template, e.g. '{{.Instance}} {{.Action}}'.")
 	return cmd
@@ -4027,7 +4042,7 @@ func collectTeamStatusWithOptions(teamDir, name string, now time.Time, opts psOp
 	return snapshot, nil
 }
 
-func collectTeamPlan(teamDir, name string, stopExtras bool, actions map[string]bool) (*teamPlanSnapshot, error) {
+func collectTeamPlan(teamDir, name string, stopExtras bool, filters psOptions, actions map[string]bool) (*teamPlanSnapshot, error) {
 	top, team, err := loadTopologyTeam(teamDir, name)
 	if err != nil {
 		return nil, err
@@ -4040,7 +4055,7 @@ func collectTeamPlan(teamDir, name string, stopExtras bool, actions map[string]b
 		markPlanStopExtras(result)
 	}
 	result.Instances = teamPlanRows(top, team, result.Instances, stopExtras)
-	result.Instances = filterPlanRowsWithActions(result.Instances, psOptions{}, actions)
+	result.Instances = filterPlanRowsWithActions(result.Instances, filters, actions)
 	result.Summary = summarizePlanRows(result.Instances)
 	return &teamPlanSnapshot{
 		Team: teamInfoFromTopology(team),
@@ -4059,7 +4074,7 @@ func runTeamSync(cmd *cobra.Command, repo, name string, opts syncOptions) error 
 		return exitErr(1)
 	}
 	if opts.DryRun {
-		snapshot, err := collectTeamPlan(teamDir, name, opts.StopExtras, opts.Actions)
+		snapshot, err := collectTeamPlan(teamDir, name, opts.StopExtras, opts.Filters, opts.Actions)
 		if err != nil {
 			return err
 		}
@@ -4087,7 +4102,7 @@ func runTeamSync(cmd *cobra.Command, repo, name string, opts syncOptions) error 
 	if opts.StopExtras {
 		return runTeamSyncWithStopExtras(cmd, repo, teamDir, dc, top, team, opts)
 	}
-	names, err := teamSyncTargetNamesFromCurrentPlan(teamDir, top, team, opts.Actions)
+	names, err := teamSyncTargetNamesFromCurrentPlan(teamDir, top, team, opts.Filters, opts.Actions)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team sync: %v\n", err)
 		return exitErr(1)
@@ -4133,13 +4148,13 @@ func renderTeamSyncDryRun(w io.Writer, snapshot *teamPlanSnapshot, opts syncOpti
 	return nil
 }
 
-func teamSyncTargetNamesFromCurrentPlan(teamDir string, top *topology.Topology, team *topology.Team, actions map[string]bool) ([]string, error) {
+func teamSyncTargetNamesFromCurrentPlan(teamDir string, top *topology.Topology, team *topology.Team, filters psOptions, actions map[string]bool) ([]string, error) {
 	result, err := collectPlan(teamDir)
 	if err != nil {
 		return nil, err
 	}
 	rows := teamPlanRows(top, team, result.Instances, false)
-	rows = filterPlanRowsWithActions(rows, psOptions{}, actions)
+	rows = filterPlanRowsWithActions(rows, filters, actions)
 	names := make([]string, 0, len(rows))
 	for _, row := range rows {
 		switch row.Action {
@@ -4165,7 +4180,7 @@ func runTeamSyncWithStopExtras(cmd *cobra.Command, repo, teamDir string, dc *dae
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team sync: %v\n", err)
 		return exitErr(1)
 	}
-	names, err := teamSyncTargetNamesFromCurrentPlan(teamDir, top, team, opts.Actions)
+	names, err := teamSyncTargetNamesFromCurrentPlan(teamDir, top, team, opts.Filters, opts.Actions)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team sync: %v\n", err)
 		return exitErr(1)
@@ -4260,6 +4275,9 @@ func teamSyncStopExtraResults(w io.Writer, dc *daemonClient, top *topology.Topol
 			continue
 		}
 		if !agents[meta.Agent] {
+			continue
+		}
+		if !syncMetadataMatchesFilters(meta, opts.Filters, nil) {
 			continue
 		}
 		extras = append(extras, meta)

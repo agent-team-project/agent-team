@@ -1223,7 +1223,7 @@ func collectMonitorEvents(ctx context.Context, client eventsClient, tail int, fi
 }
 
 func filterPlanRows(rows []planRow, opts psOptions) []planRow {
-	if len(opts.statuses) == 0 && len(opts.agents) == 0 && len(opts.phases) == 0 && len(opts.instances) == 0 {
+	if len(opts.statuses) == 0 && len(opts.runtimes) == 0 && len(opts.agents) == 0 && len(opts.phases) == 0 && len(opts.instances) == 0 {
 		return rows
 	}
 	out := make([]planRow, 0, len(rows))
@@ -1232,7 +1232,14 @@ func filterPlanRows(rows []planRow, opts psOptions) []planRow {
 		if status == "" {
 			status = "unknown"
 		}
+		runtime := strings.ToLower(strings.TrimSpace(row.Runtime))
+		if runtime == "" {
+			runtime = "unknown"
+		}
 		if len(opts.statuses) > 0 && !opts.statuses[status] {
+			continue
+		}
+		if len(opts.runtimes) > 0 && !opts.runtimes[runtime] {
 			continue
 		}
 		if len(opts.agents) > 0 && !opts.agents[row.Agent] {

@@ -175,6 +175,54 @@ description = "ready"
 	}
 }
 
+func TestSyncDryRunFiltersPlanRowsByRuntime(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp},
+		{Instance: "ticket-manager", Agent: "ticket-manager", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp},
+	} {
+		if err := daemon.WriteMetadata(daemonRoot, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"sync",
+		"--dry-run",
+		"--format", "{{.Instance}}:{{.Action}}:{{.Runtime}}",
+		"--runtime", "codex",
+		"--target", tmp,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("sync --dry-run --runtime codex: %v\nstderr: %s", err, stderr.String())
+	}
+	if got, want := strings.TrimSpace(out.String()), "ticket-manager:keep:codex"; got != want {
+		t.Fatalf("sync --dry-run --runtime codex = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(daemon.PidPath(teamDir)); !os.IsNotExist(err) {
+		t.Fatalf("runtime-filtered dry-run should not create daemon pidfile, stat err=%v", err)
+	}
+
+	invalid := NewRootCmd()
+	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalid.SetOut(invalidOut)
+	invalid.SetErr(invalidErr)
+	invalid.SetArgs([]string{"sync", "--dry-run", "--runtime", "llama", "--target", tmp})
+	if err := invalid.Execute(); err == nil {
+		t.Fatalf("sync --runtime llama succeeded\nstdout=%s\nstderr=%s", invalidOut.String(), invalidErr.String())
+	}
+	if !strings.Contains(invalidErr.String(), "unknown --runtime") {
+		t.Fatalf("invalid runtime stderr = %q", invalidErr.String())
+	}
+}
+
 func TestSyncDryRunFiltersPlanRowsByAction(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

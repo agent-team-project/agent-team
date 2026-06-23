@@ -2738,6 +2738,7 @@ Flags:
       --instance strings   Only show plan rows with this name. Can repeat or comma-separate.
       --json               Emit machine-readable JSON.
       --phase strings      Only show plan rows in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
+      --runtime strings    Only show daemon-known plan rows for this runtime: claude or codex. Can repeat or comma-separate.
       --status strings     Only show lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --stop-extras        Preview running topology extras as stop actions, matching sync --stop-extras.
       --summary            Show aggregate action counts instead of per-instance rows.
@@ -3777,6 +3778,7 @@ Flags:
       --phase strings            Only sync plan rows in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
   -q, --quiet                    Suppress non-error output and use only the exit code.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
+      --runtime strings          Only sync daemon-known plan rows for this runtime: claude or codex. Can repeat or comma-separate.
       --status strings           Only sync plan rows with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --stop-extras              Also stop running daemon-known instances not declared in instances.toml.
       --summary                  Show aggregate action counts instead of per-instance rows.
@@ -4209,12 +4211,13 @@ agent-team team plan <team> [flags]
 Flags:
 
 ```text
-      --action strings   Only show plan rows with this action: start, resume, keep, unsupported, on-demand, stop, or extra. Can repeat or comma-separate.
-      --format string    Render each plan row with a Go template, e.g. '{{.Instance}} {{.Action}}'.
-      --json             Emit team plan as JSON.
-      --repo string      Repo root. (default "<repo>")
-      --stop-extras      Preview running team-agent topology extras as stop actions.
-      --summary          Show aggregate action counts instead of per-instance rows.
+      --action strings    Only show plan rows with this action: start, resume, keep, unsupported, on-demand, stop, or extra. Can repeat or comma-separate.
+      --format string     Render each plan row with a Go template, e.g. '{{.Instance}} {{.Action}}'.
+      --json              Emit team plan as JSON.
+      --repo string       Repo root. (default "<repo>")
+      --runtime strings   Only show team-owned daemon-known plan rows for this runtime: claude or codex. Can repeat or comma-separate.
+      --stop-extras       Preview running team-agent topology extras as stop actions.
+      --summary           Show aggregate action counts instead of per-instance rows.
 ```
 
 ## `agent-team team prune`
@@ -4747,6 +4750,7 @@ Flags:
   -q, --quiet                    Suppress non-error output and use only the exit code.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
       --repo string              Repo root. (default "<repo>")
+      --runtime strings          Only sync team-owned daemon-known plan rows for this runtime: claude or codex. Can repeat or comma-separate.
       --stop-extras              Also stop running daemon-known extras for this team's agents.
       --summary                  Show aggregate action counts instead of per-instance rows.
       --timeout duration         Maximum time to wait with --wait (0 = no timeout).
