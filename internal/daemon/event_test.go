@@ -45,6 +45,15 @@ func mustParseTopo(t *testing.T) *topology.Topology {
 	return top
 }
 
+func mustParseCustomTopo(t *testing.T, body string) *topology.Topology {
+	t.Helper()
+	top, err := topology.Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("parse custom topology: %v", err)
+	}
+	return top
+}
+
 func fixtureTeamDir(t *testing.T) string {
 	t.Helper()
 	repoRoot := t.TempDir()
@@ -133,6 +142,90 @@ func TestEvent_PersistentMessages(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `\"event\":\"user_invocation\"`) {
 		t.Errorf("mailbox missing event: %s", string(body))
+	}
+}
+
+func TestEvent_PersistentAgentDispatchQueuesWhenStopped(t *testing.T) {
+	root := t.TempDir()
+	m := NewInstanceManager(root, nil)
+	top := mustParseCustomTopo(t, `
+[instances.manager]
+agent = "manager"
+ephemeral = false
+
+[[instances.manager.triggers]]
+event = "agent.dispatch"
+match.target = "manager"
+`)
+	resolver := NewEventResolver(m, root, top)
+	srv := httptest.NewServer(Handler(m, nil, resolver, root))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event", `{"type":"agent.dispatch","payload":{"target":"manager","ticket":"SQU-301"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var got struct {
+		Queued   []string `json:"queued"`
+		Messaged []string `json:"messaged"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Queued) != 1 || got.Queued[0] != "manager" || len(got.Messaged) != 0 {
+		t.Fatalf("outcome = %+v, want queued manager", got)
+	}
+	messages, err := ReadMessages(root, "manager")
+	if err != nil {
+		t.Fatalf("read messages: %v", err)
+	}
+	if len(messages) != 1 || !strings.Contains(messages[0].Body, `"target":"manager"`) {
+		t.Fatalf("messages = %+v", messages)
+	}
+}
+
+func TestEvent_PersistentAgentDispatchMessagesWhenRunning(t *testing.T) {
+	root := t.TempDir()
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	if _, err := m.Dispatch(DispatchInput{
+		Agent:     "manager",
+		Name:      "manager",
+		Prompt:    "idle",
+		Workspace: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("dispatch manager: %v", err)
+	}
+	top := mustParseCustomTopo(t, `
+[instances.manager]
+agent = "manager"
+ephemeral = false
+
+[[instances.manager.triggers]]
+event = "agent.dispatch"
+match.target = "manager"
+`)
+	resolver := NewEventResolver(m, root, top)
+	srv := httptest.NewServer(Handler(m, nil, resolver, root))
+	defer srv.Close()
+	t.Cleanup(func() {
+		_, _ = m.Stop("manager")
+		_ = m.WaitForReaper("manager", 5*time.Second)
+	})
+
+	resp := mustPost(t, srv.URL+"/v1/event", `{"type":"agent.dispatch","payload":{"target":"manager","ticket":"SQU-302"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var got struct {
+		Queued   []string `json:"queued"`
+		Messaged []string `json:"messaged"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Messaged) != 1 || got.Messaged[0] != "manager" || len(got.Queued) != 0 {
+		t.Fatalf("outcome = %+v, want messaged manager", got)
 	}
 }
 
@@ -1150,12 +1243,13 @@ target = "manager"
 	}
 	var got struct {
 		Event    map[string]any `json:"event"`
+		Queued   []string       `json:"queued"`
 		Messaged []string       `json:"messaged"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.Event["type"] != "ticket.created" || len(got.Messaged) != 1 || got.Messaged[0] != "manager" {
+	if got.Event["type"] != "ticket.created" || len(got.Queued) != 1 || got.Queued[0] != "manager" || len(got.Messaged) != 0 {
 		t.Fatalf("response = %+v", got)
 	}
 	if _, err := jobstore.Read(teamDir, "squ-93"); err != nil {

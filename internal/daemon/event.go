@@ -381,6 +381,9 @@ func (r *EventResolver) actuatePersistent(inst *topology.Instance, eventType str
 	if err := AppendMessage(r.mgr.daemonRoot, inst.Name, msg); err != nil {
 		return EventOutcome{Instance: inst.Name, Action: "rejected", Reason: err.Error()}
 	}
+	if eventType == topology.EventAgentDispatch && !r.mgr.isRunning(inst.Name) {
+		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: inst.Name}
+	}
 	return EventOutcome{Instance: inst.Name, Action: "messaged", InstanceID: inst.Name}
 }
 

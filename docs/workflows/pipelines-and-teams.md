@@ -75,6 +75,12 @@ Common states:
 
 `job triage`, `pipeline status`, `pipeline ready`, and `team triage` all read the same job state.
 
+When a ready step targets a persistent instance that is not currently running,
+advancement writes the mailbox message and leaves the step `queued` with the
+persistent instance name. Once that instance is started, it can drain its
+mailbox and report progress. Steps are marked `running` only when dispatch
+starts an ephemeral worker or messages a live persistent instance.
+
 ## Teams
 
 Teams group resources:

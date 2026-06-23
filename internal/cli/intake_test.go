@@ -40,7 +40,7 @@ func TestIntakeLinearCreatesPipelineJob(t *testing.T) {
 	if result.Event.Type != "ticket.created" {
 		t.Fatalf("event = %+v", result.Event)
 	}
-	if len(result.Outcome.Messaged) != 1 || result.Outcome.Messaged[0] != "manager" {
+	if len(result.Outcome.Queued) != 1 || result.Outcome.Queued[0] != "manager" || len(result.Outcome.Messaged) != 0 {
 		t.Fatalf("outcome = %+v", result.Outcome)
 	}
 	j, err := job.Read(filepath.Join(target, ".agent_team"), "squ-101")
@@ -244,7 +244,7 @@ func TestIntakeServeLinearPublishes(t *testing.T) {
 	if result.Event == nil || result.Event.Type != "ticket.created" {
 		t.Fatalf("event = %+v", result.Event)
 	}
-	if result.Outcome == nil || len(result.Outcome.Messaged) != 1 || result.Outcome.Messaged[0] != "manager" {
+	if result.Outcome == nil || len(result.Outcome.Queued) != 1 || result.Outcome.Queued[0] != "manager" || len(result.Outcome.Messaged) != 0 {
 		t.Fatalf("outcome = %+v", result.Outcome)
 	}
 	j, err := job.Read(teamDir, "squ-202")
@@ -1066,7 +1066,7 @@ func TestIntakeReplayPublishesDelivery(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("decode replay publish: %v\nbody=%s", err, out.String())
 	}
-	if result.Outcome == nil || len(result.Outcome.Messaged) != 1 || result.Outcome.Messaged[0] != "manager" {
+	if result.Outcome == nil || len(result.Outcome.Queued) != 1 || result.Outcome.Queued[0] != "manager" || len(result.Outcome.Messaged) != 0 {
 		t.Fatalf("replay outcome = %+v", result.Outcome)
 	}
 	j, err := job.Read(teamDir, "squ-207")
@@ -1232,7 +1232,7 @@ func TestIntakeReplayAllPublishesDeliveries(t *testing.T) {
 		t.Fatalf("batch = %+v", batch)
 	}
 	for _, result := range batch.Results {
-		if !result.OK || result.Outcome == nil || len(result.Outcome.Messaged) != 1 || result.Outcome.Messaged[0] != "manager" {
+		if !result.OK || result.Outcome == nil || len(result.Outcome.Queued) != 1 || result.Outcome.Queued[0] != "manager" || len(result.Outcome.Messaged) != 0 {
 			t.Fatalf("result = %+v", result)
 		}
 	}

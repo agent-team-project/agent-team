@@ -2031,7 +2031,7 @@ func TestJobCreateDispatchesImmediately(t *testing.T) {
 	}
 }
 
-func TestJobCreateDispatchMarksMessagedPersistentInstanceRunning(t *testing.T) {
+func TestJobCreateDispatchQueuesStoppedPersistentInstance(t *testing.T) {
 	target, _, cleanup := setupIntakePipelineRepo(t)
 	defer cleanup()
 
@@ -2047,14 +2047,14 @@ func TestJobCreateDispatchMarksMessagedPersistentInstanceRunning(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("decode persistent dispatch json: %v\nbody=%s", err, out.String())
 	}
-	if result.Job == nil || result.Job.Status != job.StatusRunning || result.Job.Instance != "manager" || result.Job.LastEvent != "messaged" {
+	if result.Job == nil || result.Job.Status != job.StatusQueued || result.Job.Instance != "manager" || result.Job.LastEvent != "queued" {
 		t.Fatalf("persistent dispatch result = %+v", result)
 	}
 	updated, err := job.Read(filepath.Join(target, ".agent_team"), "squ-218")
 	if err != nil {
 		t.Fatalf("read persistent dispatch job: %v", err)
 	}
-	if updated.Status != job.StatusRunning || updated.Instance != "manager" || updated.LastEvent != "messaged" {
+	if updated.Status != job.StatusQueued || updated.Instance != "manager" || updated.LastEvent != "queued" {
 		t.Fatalf("updated persistent job = %+v", updated)
 	}
 }
@@ -2720,14 +2720,14 @@ func TestJobRetryDispatchResetsFailedPipelineStep(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("decode retry pipeline json: %v\nbody=%s", err, out.String())
 	}
-	if result.Step == nil || result.Step.ID != "review" || result.Step.Status != job.StatusRunning || result.Step.Instance != "manager" {
+	if result.Step == nil || result.Step.ID != "review" || result.Step.Status != job.StatusQueued || result.Step.Instance != "manager" {
 		t.Fatalf("result = %+v", result)
 	}
 	updated, err := job.Read(teamDir, "squ-81")
 	if err != nil {
 		t.Fatalf("read updated job: %v", err)
 	}
-	if updated.Status != job.StatusRunning || updated.Steps[1].Status != job.StatusRunning || updated.Steps[1].Instance != "manager" {
+	if updated.Status != job.StatusQueued || updated.Steps[1].Status != job.StatusQueued || updated.Steps[1].Instance != "manager" {
 		t.Fatalf("updated = %+v", updated)
 	}
 	if updated.Steps[1].FinishedAt.IsZero() == false {
@@ -4708,14 +4708,14 @@ func TestJobAdvanceDispatchesNextReadyStep(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("decode advance json: %v\nbody=%s", err, out.String())
 	}
-	if result.Step == nil || result.Step.ID != "review" || result.Step.Status != job.StatusRunning || result.Step.Instance != "manager" {
+	if result.Step == nil || result.Step.ID != "review" || result.Step.Status != job.StatusQueued || result.Step.Instance != "manager" {
 		t.Fatalf("result = %+v", result)
 	}
 	updated, err := job.Read(teamDir, "squ-201")
 	if err != nil {
 		t.Fatalf("read job: %v", err)
 	}
-	if updated.Steps[1].Status != job.StatusRunning || updated.LastEvent != "advance_messaged" {
+	if updated.Steps[1].Status != job.StatusQueued || updated.LastEvent != "advance_queued" {
 		t.Fatalf("updated = %+v", updated)
 	}
 	messages, err := daemon.ReadMessages(daemon.DaemonRoot(teamDir), "manager")
@@ -4751,14 +4751,14 @@ func TestJobAdvanceDispatchesNextReadyStep(t *testing.T) {
 	if err := formatCmd.Execute(); err != nil {
 		t.Fatalf("job advance format: %v\nstderr=%s", err, formatErr.String())
 	}
-	if got := formatOut.String(); got != "squ-201-format review running manager\n" {
+	if got := formatOut.String(); got != "squ-201-format review queued manager\n" {
 		t.Fatalf("job advance format = %q", got)
 	}
 	formattedUpdated, err := job.Read(teamDir, "squ-201-format")
 	if err != nil {
 		t.Fatalf("read formatted job: %v", err)
 	}
-	if formattedUpdated.Steps[1].Status != job.StatusRunning || formattedUpdated.LastEvent != "advance_messaged" {
+	if formattedUpdated.Steps[1].Status != job.StatusQueued || formattedUpdated.LastEvent != "advance_queued" {
 		t.Fatalf("formatted updated job = %+v", formattedUpdated)
 	}
 }
@@ -4882,14 +4882,14 @@ func TestJobStepDoneAdvanceDispatchesNextStep(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("decode step advance json: %v\nbody=%s", err, out.String())
 	}
-	if result.Step == nil || result.Step.ID != "review" || result.Step.Status != job.StatusRunning {
+	if result.Step == nil || result.Step.ID != "review" || result.Step.Status != job.StatusQueued {
 		t.Fatalf("result = %+v", result)
 	}
 	updated, err := job.Read(teamDir, "squ-202")
 	if err != nil {
 		t.Fatalf("read job: %v", err)
 	}
-	if updated.Steps[0].Status != job.StatusDone || updated.Steps[1].Status != job.StatusRunning {
+	if updated.Steps[0].Status != job.StatusDone || updated.Steps[1].Status != job.StatusQueued {
 		t.Fatalf("updated steps = %+v", updated.Steps)
 	}
 

@@ -650,7 +650,11 @@ func eventResponseMap(outcomes []EventOutcome) map[string]any {
 				"instance_id": oc.InstanceID,
 			})
 		case "queued":
-			queued = append(queued, oc.Instance)
+			if oc.InstanceID != "" {
+				queued = append(queued, oc.InstanceID)
+			} else {
+				queued = append(queued, oc.Instance)
+			}
 		case "messaged":
 			messaged = append(messaged, oc.Instance)
 		case "rejected":

@@ -1040,7 +1040,7 @@ func TestPipelineAdvanceDryRunAndDispatch(t *testing.T) {
 	if err := json.Unmarshal(runOut.Bytes(), &advanced); err != nil {
 		t.Fatalf("decode advance json: %v\nbody=%s", err, runOut.String())
 	}
-	if len(advanced) != 1 || advanced[0].JobID != "squ-401" || advanced[0].Action != "advanced" || advanced[0].StepStatus != job.StatusRunning || advanced[0].Instance != "manager" {
+	if len(advanced) != 1 || advanced[0].JobID != "squ-401" || advanced[0].Action != "advanced" || advanced[0].StepStatus != job.StatusQueued || advanced[0].Instance != "manager" {
 		t.Fatalf("advanced = %+v", advanced)
 	}
 	first, err := job.Read(teamDir, "squ-401")
@@ -1051,7 +1051,7 @@ func TestPipelineAdvanceDryRunAndDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read second job: %v", err)
 	}
-	if first.Steps[1].Status != job.StatusRunning || second.Steps[1].Status != job.StatusBlocked {
+	if first.Steps[1].Status != job.StatusQueued || second.Steps[1].Status != job.StatusBlocked {
 		t.Fatalf("jobs after advance first=%+v second=%+v", first, second)
 	}
 }

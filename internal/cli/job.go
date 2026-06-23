@@ -4937,7 +4937,9 @@ func applyDispatchResponseToJob(j *job.Job, requestedName string, res *eventResp
 		}
 	}
 	if len(res.Queued) > 0 {
-		if strings.TrimSpace(j.Instance) == "" {
+		if queued := strings.TrimSpace(res.Queued[0]); queued != "" {
+			j.Instance = queued
+		} else if strings.TrimSpace(j.Instance) == "" {
 			j.Instance = requestedName
 		}
 		j.Status = job.StatusQueued
@@ -5186,6 +5188,9 @@ func applyAdvanceResponseToJobStep(j *job.Job, stepID, requestedName string, res
 	}
 	if len(res.Queued) > 0 {
 		status = job.StatusQueued
+		if queued := strings.TrimSpace(res.Queued[0]); queued != "" {
+			instance = queued
+		}
 		lastEvent = "advance_queued"
 		lastStatus = "queued " + stepID
 		goto done
