@@ -240,6 +240,8 @@ type intakeServeOptions struct {
 	GitHubVerifyPR          bool
 	LinearSecret            string
 	GitHubSecret            string
+	RequireLinearSecret     bool
+	RequireGitHubSecret     bool
 	LinearMaxAge            time.Duration
 	GitHubReplayWindow      time.Duration
 	PruneOKOlderThan        time.Duration
@@ -265,6 +267,8 @@ type intakeServiceOptions struct {
 	KubeTLSSecret           string
 	LinearSecretEnv         string
 	GitHubSecretEnv         string
+	RequireLinearSecret     bool
+	RequireGitHubSecret     bool
 	GitHubReconcileJob      bool
 	GitHubCleanupMerged     bool
 	GitHubVerifyPR          bool
@@ -353,6 +357,8 @@ func newIntakeServiceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.KubeTLSSecret, "tls-secret", "", "Kubernetes TLS Secret name for --ingress-host; kubernetes output only.")
 	cmd.Flags().StringVar(&opts.LinearSecretEnv, "linear-secret-env", opts.LinearSecretEnv, "Environment variable name containing the Linear webhook secret; empty omits it.")
 	cmd.Flags().StringVar(&opts.GitHubSecretEnv, "github-secret-env", opts.GitHubSecretEnv, "Environment variable name containing the GitHub webhook secret; empty omits it.")
+	cmd.Flags().BoolVar(&opts.RequireLinearSecret, "require-linear-secret", false, "Include --require-linear-secret in ExecStart.")
+	cmd.Flags().BoolVar(&opts.RequireGitHubSecret, "require-github-secret", false, "Include --require-github-secret in ExecStart.")
 	cmd.Flags().BoolVar(&opts.GitHubReconcileJob, "github-reconcile-job", false, "Include --github-reconcile-job in ExecStart.")
 	cmd.Flags().BoolVar(&opts.GitHubCleanupMerged, "github-cleanup-merged", false, "Include --github-cleanup-merged in ExecStart; requires --github-reconcile-job.")
 	cmd.Flags().BoolVar(&opts.GitHubVerifyPR, "github-verify-pr", false, "Include --github-verify-pr in ExecStart; requires --github-cleanup-merged.")
@@ -425,6 +431,12 @@ func validateIntakeServiceOptions(kind string, opts intakeServiceOptions) error 
 	}
 	if opts.GitHubReplayWindow < 0 {
 		return fmt.Errorf("--github-replay-window must be >= 0")
+	}
+	if opts.RequireLinearSecret && strings.TrimSpace(opts.LinearSecretEnv) == "" {
+		return fmt.Errorf("--require-linear-secret requires --linear-secret-env")
+	}
+	if opts.RequireGitHubSecret && strings.TrimSpace(opts.GitHubSecretEnv) == "" {
+		return fmt.Errorf("--require-github-secret requires --github-secret-env")
 	}
 	if opts.PruneOKOlderThan < 0 {
 		return fmt.Errorf("--prune-ok-older-than must be >= 0")
@@ -752,6 +764,12 @@ func intakeServeArgs(opts intakeServiceOptions) []string {
 	if opts.GitHubVerifyPR {
 		args = append(args, "--github-verify-pr")
 	}
+	if opts.RequireLinearSecret {
+		args = append(args, "--require-linear-secret")
+	}
+	if opts.RequireGitHubSecret {
+		args = append(args, "--require-github-secret")
+	}
 	return args
 }
 
@@ -800,6 +818,10 @@ func newIntakeServeCmd() *cobra.Command {
 			}
 			opts.LinearSecret = firstNonEmpty(opts.LinearSecret, os.Getenv("LINEAR_WEBHOOK_SECRET"))
 			opts.GitHubSecret = firstNonEmpty(opts.GitHubSecret, os.Getenv("GITHUB_WEBHOOK_SECRET"))
+			if err := validateIntakeRequiredSecrets(opts); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake serve: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -848,11 +870,23 @@ func newIntakeServeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.GitHubVerifyPR, "github-verify-pr", false, "With --github-cleanup-merged, verify recorded GitHub PRs are merged with gh before cleanup.")
 	cmd.Flags().StringVar(&opts.LinearSecret, "linear-secret", "", "Linear webhook signing secret. Defaults to LINEAR_WEBHOOK_SECRET when set.")
 	cmd.Flags().StringVar(&opts.GitHubSecret, "github-secret", "", "GitHub webhook secret. Defaults to GITHUB_WEBHOOK_SECRET when set.")
+	cmd.Flags().BoolVar(&opts.RequireLinearSecret, "require-linear-secret", false, "Fail startup unless --linear-secret or LINEAR_WEBHOOK_SECRET is set.")
+	cmd.Flags().BoolVar(&opts.RequireGitHubSecret, "require-github-secret", false, "Fail startup unless --github-secret or GITHUB_WEBHOOK_SECRET is set.")
 	cmd.Flags().DurationVar(&opts.LinearMaxAge, "linear-max-age", time.Minute, "Maximum accepted Linear webhook age after signature verification.")
 	cmd.Flags().DurationVar(&opts.GitHubReplayWindow, "github-replay-window", opts.GitHubReplayWindow, "Reject signed GitHub delivery IDs already seen within this duration. Use 0 to disable.")
 	cmd.Flags().DurationVar(&opts.PruneOKOlderThan, "prune-ok-older-than", opts.PruneOKOlderThan, "Prune successful delivery history older than this duration after each request. Use 0 to disable.")
 	cmd.Flags().DurationVar(&opts.PruneRecoveredOlderThan, "prune-recovered-older-than", opts.PruneRecoveredOlderThan, "Prune recovered failed delivery history older than this duration after each request. Use 0 to disable.")
 	return cmd
+}
+
+func validateIntakeRequiredSecrets(opts intakeServeOptions) error {
+	if opts.RequireLinearSecret && strings.TrimSpace(opts.LinearSecret) == "" {
+		return errors.New("--require-linear-secret set but Linear webhook secret is empty; pass --linear-secret or set LINEAR_WEBHOOK_SECRET")
+	}
+	if opts.RequireGitHubSecret && strings.TrimSpace(opts.GitHubSecret) == "" {
+		return errors.New("--require-github-secret set but GitHub webhook secret is empty; pass --github-secret or set GITHUB_WEBHOOK_SECRET")
+	}
+	return nil
 }
 
 func newIntakeServeHandler(teamDir string, opts intakeServeOptions) http.Handler {

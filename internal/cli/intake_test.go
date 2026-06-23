@@ -309,6 +309,35 @@ func TestIntakeServeErrors(t *testing.T) {
 	}
 }
 
+func TestIntakeServeRequiresSecrets(t *testing.T) {
+	t.Setenv("LINEAR_WEBHOOK_SECRET", "")
+	t.Setenv("GITHUB_WEBHOOK_SECRET", "")
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"intake", "serve", "--require-linear-secret"}, "--require-linear-secret set but Linear webhook secret is empty"},
+		{[]string{"intake", "serve", "--require-github-secret"}, "--require-github-secret set but GitHub webhook secret is empty"},
+	} {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v succeeded", tc.args)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("err = %v, want exit 2", err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+		}
+	}
+}
+
 func TestIntakeServePrunesRetainedDeliveries(t *testing.T) {
 	target := t.TempDir()
 	teamDir := filepath.Join(target, ".agent_team")
@@ -465,6 +494,8 @@ func TestIntakeServiceSystemd(t *testing.T) {
 		"--linear-max-age", "2m",
 		"--prune-ok-older-than", "24h",
 		"--prune-recovered-older-than", "48h",
+		"--require-linear-secret",
+		"--require-github-secret",
 		"--github-reconcile-job",
 		"--github-cleanup-merged",
 		"--github-verify-pr",
@@ -484,7 +515,7 @@ func TestIntakeServiceSystemd(t *testing.T) {
 		"Environment=LINEAR_SECRET=replace-me",
 		"Environment=GITHUB_SECRET=replace-me",
 		"ExecStartPre=/usr/local/bin/agent-team daemon start",
-		"ExecStart=/usr/local/bin/agent-team intake serve --addr 127.0.0.1:9999 --linear-max-age 2m0s --github-replay-window 24h0m0s --prune-ok-older-than 24h0m0s --prune-recovered-older-than 48h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr",
+		"ExecStart=/usr/local/bin/agent-team intake serve --addr 127.0.0.1:9999 --linear-max-age 2m0s --github-replay-window 24h0m0s --prune-ok-older-than 24h0m0s --prune-recovered-older-than 48h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr --require-linear-secret --require-github-secret",
 		"Restart=on-failure",
 		"WantedBy=multi-user.target",
 	} {
@@ -766,6 +797,8 @@ func TestIntakeServiceValidation(t *testing.T) {
 		{[]string{"intake", "service", "systemd", "--github-verify-pr"}, "--github-verify-pr requires --github-cleanup-merged"},
 		{[]string{"intake", "service", "systemd", "--github-cleanup-merged"}, "--github-cleanup-merged requires --github-reconcile-job"},
 		{[]string{"intake", "service", "systemd", "--github-replay-window", "-1s"}, "--github-replay-window must be >= 0"},
+		{[]string{"intake", "service", "systemd", "--linear-secret-env=", "--require-linear-secret"}, "--require-linear-secret requires --linear-secret-env"},
+		{[]string{"intake", "service", "systemd", "--github-secret-env=", "--require-github-secret"}, "--require-github-secret requires --github-secret-env"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

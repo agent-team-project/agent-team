@@ -1318,6 +1318,8 @@ Flags:
       --preview-triggers                      With --dry-run, include local topology instance and pipeline matches.
       --prune-ok-older-than duration          Prune successful delivery history older than this duration after each request. Use 0 to disable. (default 168h0m0s)
       --prune-recovered-older-than duration   Prune recovered failed delivery history older than this duration after each request. Use 0 to disable. (default 168h0m0s)
+      --require-github-secret                 Fail startup unless --github-secret or GITHUB_WEBHOOK_SECRET is set.
+      --require-linear-secret                 Fail startup unless --linear-secret or LINEAR_WEBHOOK_SECRET is set.
       --target string                         Repo root. (default "<repo>")
 ```
 
@@ -1359,6 +1361,8 @@ Flags:
       --prune-ok-older-than duration          Prune successful delivery history older than this duration after each request. Use 0 to disable. (default 168h0m0s)
       --prune-recovered-older-than duration   Prune recovered failed delivery history older than this duration after each request. Use 0 to disable. (default 168h0m0s)
       --publish string                        Compose port publication host:container mapping; empty omits ports. (default "127.0.0.1:8787:8787")
+      --require-github-secret                 Include --require-github-secret in ExecStart.
+      --require-linear-secret                 Include --require-linear-secret in ExecStart.
       --secret-name string                    Kubernetes Secret name used by kubernetes service generation; defaults to <name>-secrets.
       --target string                         Repo root. (default "<repo>")
       --tls-secret string                     Kubernetes TLS Secret name for --ingress-host; kubernetes output only.
