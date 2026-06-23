@@ -4079,11 +4079,12 @@ agent-team team jobs <team> [flags]
 Flags:
 
 ```text
-      --format string   Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.
-      --json            Emit team jobs as JSON.
-      --repo string     Repo root. (default "<repo>")
-      --sort string     Sort jobs by id, status, target, ticket, created, updated, instance, branch, or pr. (default "id")
-      --status string   Filter by job status: queued, running, blocked, done, or failed.
+      --format string     Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.
+      --json              Emit team jobs as JSON.
+      --repo string       Repo root. (default "<repo>")
+      --runtime strings   Only show team-owned jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.
+      --sort string       Sort jobs by id, status, target, ticket, created, updated, instance, branch, or pr. (default "id")
+      --status string     Filter by job status: queued, running, blocked, done, or failed.
 ```
 
 ## `agent-team team logs`
