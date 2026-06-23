@@ -2464,6 +2464,7 @@ Subcommands:
 - `agent-team pipeline jobs` - List jobs for one pipeline.
 - `agent-team pipeline ls` - List declared pipelines.
 - `agent-team pipeline ready` - List ready pipeline jobs.
+- `agent-team pipeline retry` - Reset failed pipeline steps for another attempt.
 - `agent-team pipeline run` - Create a durable job from a pipeline declaration.
 - `agent-team pipeline show` - Show one declared pipeline.
 - `agent-team pipeline status` - Summarize pipeline jobs and next steps.
@@ -2578,6 +2579,30 @@ Flags:
       --json            Emit ready rows as JSON.
       --repo string     Repo root. (default "<repo>")
       --state strings   Next-step state to include: ready, queued, running, blocked, failed, done, none, or all. Can repeat or comma-separate.
+```
+
+## `agent-team pipeline retry`
+
+Reset failed pipeline steps for another attempt.
+
+Reset failed pipeline steps for jobs in one pipeline, or all pipelines with --all. By default this makes failed steps ready for the next pipeline advance; pass --dispatch to immediately dispatch each retry.
+
+```text
+agent-team pipeline retry <pipeline>|--all [flags]
+```
+
+Flags:
+
+```text
+      --all                Retry failed steps across all pipelines.
+      --dispatch           Dispatch each reset failed step immediately.
+      --dry-run            Preview failed-step resets and optional dispatches without writing job or daemon state.
+      --format string      Render each retry result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json               Emit retry results as JSON.
+      --limit int          Maximum failed jobs to retry (0 = no limit).
+      --preview-routes     With --dry-run --dispatch, include route and payload previews.
+      --repo string        Repo root. (default "<repo>")
+      --workspace string   Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team pipeline run`

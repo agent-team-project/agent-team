@@ -35,6 +35,7 @@ The current engine supports:
 - job-file step state
 - ready-step inspection
 - dry-run route previews
+- failed-step retry
 - team-scoped advancement
 
 It intentionally does not try to be a full DAG workflow engine yet.
@@ -50,6 +51,8 @@ agent-team pipeline run ticket_to_pr SQU-42 --dry-run --dispatch
 agent-team pipeline status
 agent-team pipeline ready
 agent-team pipeline advance ticket_to_pr --dry-run --preview-routes
+agent-team pipeline retry ticket_to_pr --dry-run
+agent-team pipeline retry ticket_to_pr --dispatch --dry-run --preview-routes
 ```
 
 Job-level equivalents:
@@ -77,6 +80,7 @@ Common states:
 
 `job triage`, `pipeline status`, `pipeline ready`, and `team triage` all read the same job state.
 When an operator intentionally bypasses a stage, `agent-team job step <job-id> <step-id> --skip` records that step as `done` with `skipped = true`, so dependency checks can continue while `job show` still reports the bypass.
+When a step fails, `agent-team pipeline retry <pipeline>` resets retryable failed steps to a blocked-but-ready state so the next `pipeline advance`, `team advance`, or `tick` can dispatch another attempt. Add `--dispatch` to retry and dispatch in one command, and use `--dry-run --preview-routes` before a batch retry to inspect the resolved routes and payloads.
 
 Supported gates:
 

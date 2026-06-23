@@ -58,6 +58,7 @@ Built or substantially implemented:
 - manual pipeline gates and approval hints
 - PR metadata pipeline gates
 - skipped pipeline step metadata
+- pipeline failed-step batch retry
 - systemd, launchd, and compose intake service generators
 - local Dockerfile for the compose intake service
 - env-file secret references for service generation

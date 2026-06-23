@@ -30,6 +30,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineStatusCmd())
 	cmd.AddCommand(newPipelineReadyCmd())
 	cmd.AddCommand(newPipelineAdvanceCmd())
+	cmd.AddCommand(newPipelineRetryCmd())
 	cmd.AddCommand(newPipelineRunCmd())
 	return cmd
 }
@@ -443,6 +444,83 @@ func newPipelineAdvanceCmd() *cobra.Command {
 	return cmd
 }
 
+func newPipelineRetryCmd() *cobra.Command {
+	var (
+		repo          string
+		all           bool
+		limit         int
+		dispatchNow   bool
+		workspace     string
+		dryRun        bool
+		previewRoutes bool
+		jsonOut       bool
+		format        string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "retry <pipeline>|--all",
+		Short: "Reset failed pipeline steps for another attempt.",
+		Long: "Reset failed pipeline steps for jobs in one pipeline, or all pipelines with --all. " +
+			"By default this makes failed steps ready for the next pipeline advance; pass --dispatch to immediately dispatch each retry.",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: pass a pipeline name or --all.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			if previewRoutes && (!dryRun || !dispatchNow) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --preview-routes requires --dry-run and --dispatch.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineRetryFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline retry: %v\n", err)
+				return exitErr(2)
+			}
+			pipelineName := ""
+			if len(args) == 1 {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if !all && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: pipeline name is required.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			results, err := retryPipelineJobs(cmd, teamDir, pipelineName, workspace, limit, dispatchNow, dryRun, previewRoutes)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline retry: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineRetryResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&all, "all", false, "Retry failed steps across all pipelines.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum failed jobs to retry (0 = no limit).")
+	cmd.Flags().BoolVar(&dispatchNow, "dispatch", false, "Dispatch each reset failed step immediately.")
+	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for --dispatch: auto, worktree, or repo.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview failed-step resets and optional dispatches without writing job or daemon state.")
+	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run --dispatch, include route and payload previews.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit retry results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each retry result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
+	return cmd
+}
+
 func newPipelineRunCmd() *cobra.Command {
 	var (
 		repo        string
@@ -648,6 +726,23 @@ type pipelineStatusRow struct {
 }
 
 type pipelineAdvanceResult struct {
+	JobID      string             `json:"job_id"`
+	Ticket     string             `json:"ticket"`
+	Pipeline   string             `json:"pipeline"`
+	StepID     string             `json:"step_id,omitempty"`
+	Target     string             `json:"target,omitempty"`
+	StepStatus job.Status         `json:"step_status,omitempty"`
+	Instance   string             `json:"instance,omitempty"`
+	Action     string             `json:"action"`
+	DryRun     bool               `json:"dry_run,omitempty"`
+	Message    string             `json:"message,omitempty"`
+	Job        *job.Job           `json:"job,omitempty"`
+	Step       *job.Step          `json:"step,omitempty"`
+	Event      *eventResponse     `json:"event,omitempty"`
+	Preview    *jobAdvancePreview `json:"preview,omitempty"`
+}
+
+type pipelineRetryResult struct {
 	JobID      string             `json:"job_id"`
 	Ticket     string             `json:"ticket"`
 	Pipeline   string             `json:"pipeline"`
@@ -1254,6 +1349,106 @@ func advanceReadyPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace s
 	return results, nil
 }
 
+func retryPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace string, limit int, dispatchNow, dryRun bool, previewRoutes bool) ([]pipelineRetryResult, error) {
+	rows, err := collectJobReadyRows(teamDir, pipeline, map[string]bool{"failed": true})
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	results := make([]pipelineRetryResult, 0, len(rows))
+	for _, row := range rows {
+		j, err := job.Read(teamDir, row.JobID)
+		if err != nil {
+			return nil, err
+		}
+		result := pipelineRetryResult{
+			JobID:      j.ID,
+			Ticket:     j.Ticket,
+			Pipeline:   j.Pipeline,
+			StepID:     row.StepID,
+			Target:     row.Target,
+			StepStatus: row.StepStatus,
+			Instance:   row.Instance,
+			Action:     "would_retry",
+			DryRun:     dryRun,
+			Message:    row.Message,
+		}
+		stepID := resetFailedPipelineStepForRetry(j)
+		if stepID == "" {
+			result.Action = "skipped"
+			result.Message = "no retryable failed step"
+			results = append(results, result)
+			continue
+		}
+		now := time.Now().UTC()
+		j.Status = job.StatusQueued
+		j.LastEvent = "reopened"
+		j.LastStatus = "reopened step " + stepID + " for retry"
+		j.UpdatedAt = now
+		result.StepID = stepID
+		if idx := jobStepIndex(j, stepID); idx >= 0 {
+			result.Step = cloneJobStep(&j.Steps[idx])
+			result.Target = j.Steps[idx].Target
+			result.StepStatus = j.Steps[idx].Status
+			result.Instance = j.Steps[idx].Instance
+		}
+		result.Job = j
+		result.Message = j.LastStatus
+		if dispatchNow {
+			result.Action = "would_dispatch"
+		}
+		if dryRun {
+			if dispatchNow {
+				preview, err := previewJobAdvanceDispatch(teamDir, j, workspace)
+				if err != nil {
+					return nil, err
+				}
+				result.Preview = preview
+				result.Message = preview.Message
+				if preview.Step != nil {
+					result.StepID = preview.Step.ID
+					result.Target = preview.Step.Target
+					result.StepStatus = preview.Step.Status
+					result.Instance = preview.Step.Instance
+					result.Step = preview.Step
+				}
+			}
+			results = append(results, result)
+			continue
+		}
+		if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"step": stepID}); err != nil {
+			return nil, err
+		}
+		result.Action = "retried"
+		result.DryRun = false
+		if dispatchNow {
+			advanced, err := advanceJob(cmd, teamDir, j, workspace)
+			if err != nil {
+				return nil, err
+			}
+			result.Action = pipelineRetryDispatchAction(advanced)
+			result.Job = advanced.Job
+			result.Step = advanced.Step
+			result.Event = advanced.Event
+			result.Message = advanced.Message
+			if advanced.Job != nil {
+				result.Ticket = advanced.Job.Ticket
+				result.Pipeline = advanced.Job.Pipeline
+			}
+			if advanced.Step != nil {
+				result.StepID = advanced.Step.ID
+				result.Target = advanced.Step.Target
+				result.StepStatus = advanced.Step.Status
+				result.Instance = advanced.Step.Instance
+			}
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
 func filterAdvanceablePipelineRows(rows []jobReadyRow) []jobReadyRow {
 	out := rows[:0]
 	for _, row := range rows {
@@ -1276,6 +1471,13 @@ func pipelineAdvanceAction(result *jobAdvanceResult) string {
 		return "skipped"
 	}
 	return "advanced"
+}
+
+func pipelineRetryDispatchAction(result *jobAdvanceResult) string {
+	if pipelineAdvanceAction(result) == "advanced" {
+		return "dispatched"
+	}
+	return "retried"
 }
 
 func renderPipelineList(w io.Writer, pipelines []pipelineInfo, jsonOut bool, tmpl *template.Template) error {
@@ -1609,6 +1811,17 @@ func parsePipelineAdvanceFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
+func parsePipelineRetryFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("pipeline-retry-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
 func parsePipelineStatusFormat(format string) (*template.Template, error) {
 	if strings.TrimSpace(format) == "" {
 		return nil, nil
@@ -1731,6 +1944,78 @@ func renderPipelineAdvanceTable(w io.Writer, results []pipelineAdvanceResult) {
 }
 
 func renderPipelineAdvanceRoutePreviews(w io.Writer, results []pipelineAdvanceResult) error {
+	wroteHeader := false
+	for _, result := range results {
+		if result.Preview == nil {
+			continue
+		}
+		if !wroteHeader {
+			fmt.Fprintln(w, "Routes:")
+			wroteHeader = true
+		}
+		requestedName := ""
+		if result.Preview.Dispatch != nil {
+			requestedName = result.Preview.Dispatch.RequestedName
+		}
+		fmt.Fprintf(w, "%s step=%s target=%s instance=%s\n",
+			result.JobID,
+			emptyDash(result.StepID),
+			emptyDash(result.Target),
+			emptyDash(requestedName),
+		)
+		if result.Preview.Dispatch == nil || result.Preview.Dispatch.Preview == nil || !eventPublishPreviewHasRoutes(result.Preview.Dispatch.Preview) {
+			fmt.Fprintln(w, "(no triggers matched)")
+			continue
+		}
+		if err := renderEventPublishRoutePreview(w, result.Preview.Dispatch.Preview); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderPipelineRetryResults(w io.Writer, results []pipelineRetryResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := tmpl.Execute(w, result); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	renderPipelineRetryTable(w, results)
+	return renderPipelineRetryRoutePreviews(w, results)
+}
+
+func renderPipelineRetryTable(w io.Writer, results []pipelineRetryResult) {
+	if len(results) == 0 {
+		fmt.Fprintln(w, "(no failed pipeline jobs)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "JOB\tPIPELINE\tSTEP\tTARGET\tACTION\tSTATUS\tINSTANCE\tMESSAGE")
+	for _, result := range results {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			result.JobID,
+			emptyDash(result.Pipeline),
+			emptyDash(result.StepID),
+			emptyDash(result.Target),
+			result.Action,
+			emptyDash(string(result.StepStatus)),
+			emptyDash(result.Instance),
+			emptyDash(result.Message),
+		)
+	}
+	_ = tw.Flush()
+}
+
+func renderPipelineRetryRoutePreviews(w io.Writer, results []pipelineRetryResult) error {
 	wroteHeader := false
 	for _, result := range results {
 		if result.Preview == nil {

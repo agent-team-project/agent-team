@@ -1526,6 +1526,187 @@ func TestPipelineAdvanceAllDryRun(t *testing.T) {
 	}
 }
 
+func TestPipelineRetryFailedSteps(t *testing.T) {
+	target, _, cleanup := setupIntakePipelineRepo(t)
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:         "squ-601",
+			Ticket:     "SQU-601",
+			Target:     "manager",
+			Kickoff:    "retry triage",
+			Pipeline:   "ticket_triage",
+			Status:     job.StatusFailed,
+			LastEvent:  "step_failed",
+			LastStatus: "triage failed",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+			Steps: []job.Step{
+				{ID: "triage", Target: "manager", Status: job.StatusFailed, Instance: "manager-old", StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+			},
+		},
+		{
+			ID:         "squ-602",
+			Ticket:     "SQU-602",
+			Target:     "manager",
+			Kickoff:    "retry and dispatch triage",
+			Pipeline:   "ticket_triage",
+			Status:     job.StatusFailed,
+			LastEvent:  "step_failed",
+			LastStatus: "triage failed",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+			Steps: []job.Step{
+				{ID: "triage", Target: "manager", Status: job.StatusFailed, Instance: "manager-old", StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"pipeline", "retry", "ticket_triage", "--repo", target, "--limit", "1", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("pipeline retry dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryRows []pipelineRetryResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryRows); err != nil {
+		t.Fatalf("decode retry dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(dryRows) != 1 || dryRows[0].JobID != "squ-601" || dryRows[0].Action != "would_retry" || dryRows[0].Step == nil || dryRows[0].Step.Status != job.StatusBlocked {
+		t.Fatalf("dry rows = %+v", dryRows)
+	}
+	unchanged, err := job.Read(teamDir, "squ-601")
+	if err != nil {
+		t.Fatalf("read unchanged: %v", err)
+	}
+	if unchanged.Status != job.StatusFailed || unchanged.Steps[0].Status != job.StatusFailed || unchanged.Steps[0].Instance != "manager-old" || unchanged.Steps[0].FinishedAt.IsZero() {
+		t.Fatalf("dry-run mutated job = %+v", unchanged)
+	}
+
+	preview := NewRootCmd()
+	previewOut, previewErr := &bytes.Buffer{}, &bytes.Buffer{}
+	preview.SetOut(previewOut)
+	preview.SetErr(previewErr)
+	preview.SetArgs([]string{"pipeline", "retry", "ticket_triage", "--repo", target, "--limit", "1", "--dispatch", "--workspace", "repo", "--dry-run", "--preview-routes", "--json"})
+	if err := preview.Execute(); err != nil {
+		t.Fatalf("pipeline retry dispatch preview: %v\nstderr=%s", err, previewErr.String())
+	}
+	var previewRows []pipelineRetryResult
+	if err := json.Unmarshal(previewOut.Bytes(), &previewRows); err != nil {
+		t.Fatalf("decode retry dispatch preview: %v\nbody=%s", err, previewOut.String())
+	}
+	if len(previewRows) != 1 || previewRows[0].Action != "would_dispatch" || previewRows[0].Preview == nil || previewRows[0].Preview.Dispatch == nil {
+		t.Fatalf("preview rows = %+v", previewRows)
+	}
+	if previewRows[0].Preview.Dispatch.RequestedName != "manager-squ-601-triage" {
+		t.Fatalf("requested name = %q", previewRows[0].Preview.Dispatch.RequestedName)
+	}
+	payload := previewRows[0].Preview.Dispatch.Preview.Payload
+	if payload["pipeline"] != "ticket_triage" || payload["pipeline_step"] != "triage" || payload["job_id"] != "squ-601" || payload["workspace"] != "repo" {
+		t.Fatalf("preview payload = %+v", payload)
+	}
+
+	format := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	format.SetOut(formatOut)
+	format.SetErr(formatErr)
+	format.SetArgs([]string{"pipeline", "retry", "ticket_triage", "--repo", target, "--limit", "1", "--dry-run", "--format", "{{.JobID}} {{.Action}} {{.StepStatus}}"})
+	if err := format.Execute(); err != nil {
+		t.Fatalf("pipeline retry format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if got := formatOut.String(); got != "squ-601 would_retry blocked\n" {
+		t.Fatalf("retry format = %q", got)
+	}
+
+	run := NewRootCmd()
+	runOut, runErr := &bytes.Buffer{}, &bytes.Buffer{}
+	run.SetOut(runOut)
+	run.SetErr(runErr)
+	run.SetArgs([]string{"pipeline", "retry", "ticket_triage", "--repo", target, "--limit", "1", "--json"})
+	if err := run.Execute(); err != nil {
+		t.Fatalf("pipeline retry: %v\nstderr=%s", err, runErr.String())
+	}
+	var runRows []pipelineRetryResult
+	if err := json.Unmarshal(runOut.Bytes(), &runRows); err != nil {
+		t.Fatalf("decode retry: %v\nbody=%s", err, runOut.String())
+	}
+	if len(runRows) != 1 || runRows[0].Action != "retried" || runRows[0].StepStatus != job.StatusBlocked || runRows[0].Instance != "" {
+		t.Fatalf("run rows = %+v", runRows)
+	}
+	retried, err := job.Read(teamDir, "squ-601")
+	if err != nil {
+		t.Fatalf("read retried: %v", err)
+	}
+	if retried.Status != job.StatusQueued || retried.LastEvent != "reopened" || retried.Steps[0].Status != job.StatusBlocked || retried.Steps[0].Instance != "" || !retried.Steps[0].FinishedAt.IsZero() {
+		t.Fatalf("retried job = %+v", retried)
+	}
+	events, err := job.ListEvents(teamDir, "squ-601")
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "reopened" || events[0].Data["step"] != "triage" {
+		t.Fatalf("events = %+v", events)
+	}
+
+	dispatch := NewRootCmd()
+	dispatchOut, dispatchErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dispatch.SetOut(dispatchOut)
+	dispatch.SetErr(dispatchErr)
+	dispatch.SetArgs([]string{"pipeline", "retry", "ticket_triage", "--repo", target, "--dispatch", "--workspace", "repo", "--json"})
+	if err := dispatch.Execute(); err != nil {
+		t.Fatalf("pipeline retry dispatch: %v\nstderr=%s", err, dispatchErr.String())
+	}
+	var dispatchRows []pipelineRetryResult
+	if err := json.Unmarshal(dispatchOut.Bytes(), &dispatchRows); err != nil {
+		t.Fatalf("decode retry dispatch: %v\nbody=%s", err, dispatchOut.String())
+	}
+	if len(dispatchRows) != 1 || dispatchRows[0].JobID != "squ-602" || dispatchRows[0].Action != "dispatched" || dispatchRows[0].StepStatus != job.StatusQueued || dispatchRows[0].Instance != "manager" {
+		t.Fatalf("dispatch rows = %+v", dispatchRows)
+	}
+	dispatched, err := job.Read(teamDir, "squ-602")
+	if err != nil {
+		t.Fatalf("read dispatched: %v", err)
+	}
+	if dispatched.Status != job.StatusQueued || dispatched.Steps[0].Status != job.StatusQueued || dispatched.Steps[0].Instance != "manager" {
+		t.Fatalf("dispatched job = %+v", dispatched)
+	}
+}
+
+func TestPipelineRetryValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"pipeline", "retry"}, "pipeline name is required"},
+		{[]string{"pipeline", "retry", "ticket_triage", "--all"}, "--all cannot be combined"},
+		{[]string{"pipeline", "retry", "ticket_triage", "--limit", "-1"}, "--limit must be >= 0"},
+		{[]string{"pipeline", "retry", "ticket_triage", "--preview-routes", "--dry-run"}, "--preview-routes requires --dry-run and --dispatch"},
+		{[]string{"pipeline", "retry", "ticket_triage", "--format", "{{.JobID}}", "--json"}, "--format cannot be combined with --json"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+	}
+}
+
 func hasPipelineDoctorFinding(findings []pipelineDoctorFinding, code string) bool {
 	for _, finding := range findings {
 		if finding.Code == code {
