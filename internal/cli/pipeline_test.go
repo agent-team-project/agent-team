@@ -602,6 +602,19 @@ target = "manager"
 			},
 		},
 		{
+			ID:        "squ-614",
+			Ticket:    "SQU-614",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusBlocked,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusDone},
+				{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"implement"}, Gate: job.StepGateManual},
+			},
+		},
+		{
 			ID:        "squ-612",
 			Ticket:    "SQU-612",
 			Target:    "manager",
@@ -648,10 +661,11 @@ target = "manager"
 		t.Fatalf("status rows = %+v", rows)
 	}
 	ticket := byName["ticket_to_pr"]
-	if !ticket.Declared || ticket.Steps != 2 || ticket.Jobs != 2 || ticket.Running != 1 || ticket.Failed != 1 || ticket.ReadySteps != 1 || ticket.FailedSteps != 1 {
+	if !ticket.Declared || ticket.Steps != 2 || ticket.Jobs != 3 || ticket.Running != 1 || ticket.Blocked != 1 || ticket.Failed != 1 || ticket.ReadySteps != 1 || ticket.ManualGates != 1 || ticket.FailedSteps != 1 {
 		t.Fatalf("ticket status = %+v", ticket)
 	}
 	if !containsString(ticket.Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") ||
+		!containsString(ticket.Actions, "agent-team pipeline approve ticket_to_pr --dry-run --dispatch --preview-routes") ||
 		!containsString(ticket.Actions, "agent-team pipeline retry ticket_to_pr --dry-run --dispatch --preview-routes") ||
 		!containsString(ticket.Actions, "agent-team repair --retry-pipelines --dry-run --preview-routes") ||
 		!containsString(ticket.Actions, "agent-team pipeline ready ticket_to_pr --state failed") {
@@ -677,7 +691,7 @@ target = "manager"
 	if err := one.Execute(); err != nil {
 		t.Fatalf("pipeline status one format: %v\nstderr=%s", err, oneErr.String())
 	}
-	if got := strings.TrimSpace(oneOut.String()); got != "ticket_to_pr 2 1 1" {
+	if got := strings.TrimSpace(oneOut.String()); got != "ticket_to_pr 3 1 1" {
 		t.Fatalf("formatted pipeline status = %q", got)
 	}
 
@@ -689,7 +703,7 @@ target = "manager"
 	if err := text.Execute(); err != nil {
 		t.Fatalf("pipeline status text: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"PIPELINE", "ACTION", "ticket_to_pr", "yes", "running=1,failed=1", "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes", "agent-team repair --retry-pipelines --dry-run --preview-routes", "ad_hoc", "no"} {
+	for _, want := range []string{"PIPELINE", "MANUAL_GATES", "ACTION", "ticket_to_pr", "yes", "running=1,blocked=1,failed=1", "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes", "agent-team pipeline approve ticket_to_pr --dry-run --dispatch --preview-routes", "agent-team repair --retry-pipelines --dry-run --preview-routes", "ad_hoc", "no"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("pipeline status text missing %q:\n%s", want, textOut.String())
 		}

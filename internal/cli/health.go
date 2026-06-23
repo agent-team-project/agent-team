@@ -989,10 +989,11 @@ func renderHealth(w io.Writer, result *healthResult) {
 		)
 	}
 	if result.PipelineStatus != nil {
-		fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d failed_steps=%d\n",
+		fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d manual_gates=%d failed_steps=%d\n",
 			len(result.PipelineStatus),
 			countPipelineStatusJobs(result.PipelineStatus),
 			countPipelineStatusReadySteps(result.PipelineStatus),
+			countPipelineStatusManualGates(result.PipelineStatus),
 			countPipelineStatusFailedSteps(result.PipelineStatus),
 		)
 	}

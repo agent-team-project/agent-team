@@ -6368,6 +6368,9 @@ func teamPipelineActions(teamName string, row pipelineStatusRow) []string {
 		actions = append(actions, fmt.Sprintf("agent-team team repair %s --retry-pipelines --dry-run --preview-routes", teamName))
 		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state failed", teamName))
 	}
+	if row.ManualGates > 0 {
+		actions = append(actions, fmt.Sprintf("agent-team team approve %s --dry-run --dispatch --preview-routes", teamName))
+	}
 	if row.BlockedSteps > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state blocked", teamName))
 	}
@@ -6528,10 +6531,11 @@ func renderTeamStatus(w io.Writer, snapshot *teamStatusSnapshot, jsonOut bool, t
 	renderJobSummary(w, snapshot.JobSummary)
 	fmt.Fprintln(w, queueSummaryLine(snapshot.Queue))
 	if snapshot.PipelineStatus != nil {
-		fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d failed_steps=%d\n",
+		fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d manual_gates=%d failed_steps=%d\n",
 			len(snapshot.PipelineStatus),
 			countPipelineStatusJobs(snapshot.PipelineStatus),
 			countPipelineStatusReadySteps(snapshot.PipelineStatus),
+			countPipelineStatusManualGates(snapshot.PipelineStatus),
 			countPipelineStatusFailedSteps(snapshot.PipelineStatus),
 		)
 	}

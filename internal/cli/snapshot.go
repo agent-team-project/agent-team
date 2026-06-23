@@ -648,10 +648,11 @@ func renderSnapshotSummary(w io.Writer, snapshot *snapshotResult) {
 		fmt.Fprintf(w, "job status: previews=%d changes=%d\n", len(snapshot.JobStatus), countChangedJobStatusPreviews(snapshot.JobStatus))
 	}
 	if snapshot.PipelineStatus != nil {
-		fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d failed_steps=%d\n",
+		fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d manual_gates=%d failed_steps=%d\n",
 			len(snapshot.PipelineStatus),
 			countPipelineStatusJobs(snapshot.PipelineStatus),
 			countPipelineStatusReadySteps(snapshot.PipelineStatus),
+			countPipelineStatusManualGates(snapshot.PipelineStatus),
 			countPipelineStatusFailedSteps(snapshot.PipelineStatus))
 	}
 	if snapshot.PipelineAdvance != nil {
@@ -705,6 +706,14 @@ func countPipelineStatusReadySteps(rows []pipelineStatusRow) int {
 	count := 0
 	for _, row := range rows {
 		count += row.ReadySteps
+	}
+	return count
+}
+
+func countPipelineStatusManualGates(rows []pipelineStatusRow) int {
+	count := 0
+	for _, row := range rows {
+		count += row.ManualGates
 	}
 	return count
 }

@@ -183,6 +183,7 @@ type overviewPipelineSummary struct {
 	QueuedSteps  int `json:"queued_steps"`
 	RunningSteps int `json:"running_steps"`
 	BlockedSteps int `json:"blocked_steps"`
+	ManualGates  int `json:"manual_gates"`
 	FailedSteps  int `json:"failed_steps"`
 	DoneSteps    int `json:"done_steps"`
 }
@@ -431,6 +432,7 @@ func overviewPipelinesFromRows(rows []pipelineStatusRow) overviewPipelineSummary
 		out.QueuedSteps += row.QueuedSteps
 		out.RunningSteps += row.RunningSteps
 		out.BlockedSteps += row.BlockedSteps
+		out.ManualGates += row.ManualGates
 		out.FailedSteps += row.FailedSteps
 		out.DoneSteps += row.DoneSteps
 	}
@@ -541,6 +543,13 @@ func overviewActionsForScope(out *overviewResult, health *healthResult, teamName
 			add(fmt.Sprintf("agent-team team advance %s --dry-run --preview-routes", teamName))
 		} else {
 			add("agent-team pipeline advance --all --dry-run --preview-routes")
+		}
+	}
+	if out.Pipelines.ManualGates > 0 {
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team approve %s --dry-run --dispatch --preview-routes", teamName))
+		} else {
+			add("agent-team pipeline approve --all --dry-run --dispatch --preview-routes")
 		}
 	}
 	if out.Schedules.Due > 0 {

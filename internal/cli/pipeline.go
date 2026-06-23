@@ -805,6 +805,7 @@ type pipelineStatusRow struct {
 	QueuedSteps  int      `json:"queued_steps"`
 	RunningSteps int      `json:"running_steps"`
 	BlockedSteps int      `json:"blocked_steps"`
+	ManualGates  int      `json:"manual_gates"`
 	FailedSteps  int      `json:"failed_steps"`
 	DoneSteps    int      `json:"done_steps"`
 	NoStep       int      `json:"no_step"`
@@ -1350,6 +1351,9 @@ func applyPipelineStatusJob(row *pipelineStatusRow, j *job.Job) {
 		row.RunningSteps++
 	case "blocked":
 		row.BlockedSteps++
+		if next.Step != nil && next.Step.Gate == job.StepGateManual && len(next.WaitingFor) == 0 {
+			row.ManualGates++
+		}
 	case "failed":
 		row.FailedSteps++
 	case "done":
@@ -1371,6 +1375,9 @@ func finalizePipelineStatusRow(row *pipelineStatusRow) {
 		actions = append(actions, fmt.Sprintf("agent-team pipeline retry %s --dry-run --dispatch --preview-routes", row.Pipeline))
 		actions = append(actions, "agent-team repair --retry-pipelines --dry-run --preview-routes")
 		actions = append(actions, fmt.Sprintf("agent-team pipeline ready %s --state failed", row.Pipeline))
+	}
+	if row.ManualGates > 0 {
+		actions = append(actions, fmt.Sprintf("agent-team pipeline approve %s --dry-run --dispatch --preview-routes", row.Pipeline))
 	}
 	if row.BlockedSteps > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team pipeline ready %s --state blocked", row.Pipeline))
@@ -2124,9 +2131,9 @@ func renderPipelineStatusTable(w io.Writer, rows []pipelineStatusRow) {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "PIPELINE\tDECLARED\tSTEPS\tJOBS\tJOB_STATUS\tREADY\tQUEUED\tRUNNING\tBLOCKED\tFAILED\tDONE\tNONE\tACTION")
+	fmt.Fprintln(tw, "PIPELINE\tDECLARED\tSTEPS\tJOBS\tJOB_STATUS\tREADY\tQUEUED\tRUNNING\tBLOCKED\tMANUAL_GATES\tFAILED\tDONE\tNONE\tACTION")
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
 			row.Pipeline,
 			yesNo(row.Declared),
 			row.Steps,
@@ -2136,6 +2143,7 @@ func renderPipelineStatusTable(w io.Writer, rows []pipelineStatusRow) {
 			row.QueuedSteps,
 			row.RunningSteps,
 			row.BlockedSteps,
+			row.ManualGates,
 			row.FailedSteps,
 			row.DoneSteps,
 			row.NoStep,

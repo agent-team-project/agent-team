@@ -814,6 +814,22 @@ pipelines = ["ticket_to_pr"]
 		t.Fatalf("team approve leaked foreign job:\n%s", dryOut.String())
 	}
 
+	status := NewRootCmd()
+	statusOut, statusErr := &bytes.Buffer{}, &bytes.Buffer{}
+	status.SetOut(statusOut)
+	status.SetErr(statusErr)
+	status.SetArgs([]string{"team", "pipelines", "delivery", "--repo", root, "--json"})
+	if err := status.Execute(); err != nil {
+		t.Fatalf("team pipelines: %v\nstderr=%s", err, statusErr.String())
+	}
+	var statusRows []pipelineStatusRow
+	if err := json.Unmarshal(statusOut.Bytes(), &statusRows); err != nil {
+		t.Fatalf("decode team pipelines: %v\nbody=%s", err, statusOut.String())
+	}
+	if len(statusRows) != 1 || statusRows[0].Pipeline != "ticket_to_pr" || statusRows[0].ManualGates != 1 || !containsString(statusRows[0].Actions, "agent-team team approve delivery --dry-run --dispatch --preview-routes") {
+		t.Fatalf("team pipeline status = %+v", statusRows)
+	}
+
 	run := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	run.SetOut(out)
