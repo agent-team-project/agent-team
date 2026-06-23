@@ -160,6 +160,7 @@ func newQueueDropCmd() *cobra.Command {
 		instances   []string
 		eventTypes  []string
 		jobs        []string
+		runtimes    []string
 		readyOnly   bool
 		limit       int
 	)
@@ -199,7 +200,7 @@ func newQueueDropCmd() *cobra.Command {
 						effectiveState = daemon.QueueStatePending
 					}
 				}
-				filters, err := parseQueueListFilters(effectiveState, instances, eventTypes, jobs, readyOnly, time.Now().UTC())
+				filters, err := parseQueueListFiltersWithRuntime(effectiveState, instances, eventTypes, jobs, runtimes, readyOnly, time.Now().UTC())
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue drop: %v\n", err)
 					return exitErr(2)
@@ -210,8 +211,8 @@ func newQueueDropCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue drop: requires one id unless --all is set.")
 				return exitErr(2)
 			}
-			if stateFilter != "" || len(instances) > 0 || len(eventTypes) > 0 || len(jobs) > 0 || readyOnly || limit > 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue drop: --state, --instance, --event-type, --job, --ready, and --limit require --all.")
+			if stateFilter != "" || len(instances) > 0 || len(eventTypes) > 0 || len(jobs) > 0 || len(runtimes) > 0 || readyOnly || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue drop: --state, --instance, --event-type, --job, --runtime, --ready, and --limit require --all.")
 				return exitErr(2)
 			}
 			id := args[0]
@@ -277,6 +278,7 @@ func newQueueDropCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&instances, "instance", nil, "With --all, filter by target instance name; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "With --all, filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&readyOnly, "ready", false, "With --all, only drop pending queue items whose next retry is due now.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, drop at most this many matching queue items; 0 means no limit.")
 	return cmd
@@ -293,6 +295,7 @@ func newQueueRetryCmd() *cobra.Command {
 		instances   []string
 		eventTypes  []string
 		jobs        []string
+		runtimes    []string
 		readyOnly   bool
 		limit       int
 	)
@@ -332,7 +335,7 @@ func newQueueRetryCmd() *cobra.Command {
 						effectiveState = daemon.QueueStatePending
 					}
 				}
-				filters, err := parseQueueListFilters(effectiveState, instances, eventTypes, jobs, readyOnly, time.Now().UTC())
+				filters, err := parseQueueListFiltersWithRuntime(effectiveState, instances, eventTypes, jobs, runtimes, readyOnly, time.Now().UTC())
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue retry: %v\n", err)
 					return exitErr(2)
@@ -343,8 +346,8 @@ func newQueueRetryCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue retry: requires one id unless --all is set.")
 				return exitErr(2)
 			}
-			if stateFilter != "" || len(instances) > 0 || len(eventTypes) > 0 || len(jobs) > 0 || readyOnly || limit > 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue retry: --state, --instance, --event-type, --job, --ready, and --limit require --all.")
+			if stateFilter != "" || len(instances) > 0 || len(eventTypes) > 0 || len(jobs) > 0 || len(runtimes) > 0 || readyOnly || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue retry: --state, --instance, --event-type, --job, --runtime, --ready, and --limit require --all.")
 				return exitErr(2)
 			}
 			id := args[0]
@@ -432,6 +435,7 @@ func newQueueRetryCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&instances, "instance", nil, "With --all, filter by target instance name; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "With --all, filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&readyOnly, "ready", false, "With --all, only retry pending queue items whose next retry is due now.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, retry at most this many matching queue items; 0 means no limit.")
 	return cmd

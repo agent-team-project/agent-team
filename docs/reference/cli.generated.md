@@ -2930,6 +2930,7 @@ Flags:
       --json                 Emit machine-readable JSON.
       --limit int            With --all, drop at most this many matching queue items; 0 means no limit.
       --ready                With --all, only drop pending queue items whose next retry is due now.
+      --runtime strings      With --all, filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.
       --state string         With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.
       --target string        Repo root. (default "<repo>")
 ```
@@ -3158,6 +3159,7 @@ Flags:
       --json                 Emit machine-readable JSON.
       --limit int            With --all, retry at most this many matching queue items; 0 means no limit.
       --ready                With --all, only retry pending queue items whose next retry is due now.
+      --runtime strings      With --all, filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.
       --state string         With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.
       --target string        Repo root. (default "<repo>")
 ```

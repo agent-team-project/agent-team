@@ -1340,7 +1340,7 @@ func TestQueueDropAllLocal(t *testing.T) {
 			EventType:      "agent.dispatch",
 			Instance:       "worker",
 			InstanceID:     "worker-squ-104",
-			Payload:        map[string]any{"target": "worker", "ticket": "SQU-104"},
+			Payload:        map[string]any{"target": "worker", "ticket": "SQU-104", "runtime": "codex"},
 			Attempts:       daemon.MaxQueueAttempts,
 			LastError:      "spawn failed",
 			QueuedAt:       now.Add(-3 * time.Hour),
@@ -1353,7 +1353,7 @@ func TestQueueDropAllLocal(t *testing.T) {
 			EventType:      "agent.dispatch",
 			Instance:       "manager",
 			InstanceID:     "manager-squ-105",
-			Payload:        map[string]any{"target": "manager", "ticket": "SQU-105"},
+			Payload:        map[string]any{"target": "manager", "ticket": "SQU-105", "runtime": "claude"},
 			Attempts:       daemon.MaxQueueAttempts,
 			LastError:      "spawn failed",
 			QueuedAt:       now.Add(-3 * time.Hour),
@@ -1366,7 +1366,7 @@ func TestQueueDropAllLocal(t *testing.T) {
 			EventType:  "agent.dispatch",
 			Instance:   "worker",
 			InstanceID: "worker-squ-106",
-			Payload:    map[string]any{"target": "worker", "ticket": "SQU-106"},
+			Payload:    map[string]any{"target": "worker", "ticket": "SQU-106", "runtime": "codex"},
 			NextRetry:  now.Add(-time.Minute),
 			QueuedAt:   now.Add(-time.Hour),
 			UpdatedAt:  now,
@@ -1377,7 +1377,7 @@ func TestQueueDropAllLocal(t *testing.T) {
 			EventType:  "agent.dispatch",
 			Instance:   "worker",
 			InstanceID: "worker-squ-107",
-			Payload:    map[string]any{"target": "worker", "ticket": "SQU-107"},
+			Payload:    map[string]any{"target": "worker", "ticket": "SQU-107", "runtime": "claude"},
 			NextRetry:  now.Add(time.Hour),
 			QueuedAt:   now.Add(-time.Hour),
 			UpdatedAt:  now,
@@ -1400,6 +1400,7 @@ func TestQueueDropAllLocal(t *testing.T) {
 		"--instance", "worker",
 		"--event-type", "agent.dispatch",
 		"--job", "SQU-104",
+		"--runtime", "codex",
 		"--dry-run",
 		"--json",
 	})
@@ -1417,6 +1418,29 @@ func TestQueueDropAllLocal(t *testing.T) {
 		t.Fatalf("dry-run removed worker item: %v", err)
 	}
 
+	runtimeDry := NewRootCmd()
+	runtimeDryOut, runtimeDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeDry.SetOut(runtimeDryOut)
+	runtimeDry.SetErr(runtimeDryErr)
+	runtimeDry.SetArgs([]string{
+		"queue", "drop",
+		"--target", tmp,
+		"--all",
+		"--runtime", "codex",
+		"--dry-run",
+		"--json",
+	})
+	if err := runtimeDry.Execute(); err != nil {
+		t.Fatalf("queue drop --all runtime dry-run: %v\nstderr=%s", err, runtimeDryErr.String())
+	}
+	var runtimeDryResults []queueDropResult
+	if err := json.Unmarshal(runtimeDryOut.Bytes(), &runtimeDryResults); err != nil {
+		t.Fatalf("decode runtime dry drop json: %v\nbody=%s", err, runtimeDryOut.String())
+	}
+	if len(runtimeDryResults) != 1 || runtimeDryResults[0].ID != "q-drop-worker" {
+		t.Fatalf("runtime dry results = %+v", runtimeDryResults)
+	}
+
 	dryFormat := NewRootCmd()
 	dryFormatOut, dryFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dryFormat.SetOut(dryFormatOut)
@@ -1428,6 +1452,7 @@ func TestQueueDropAllLocal(t *testing.T) {
 		"--instance", "worker",
 		"--event-type", "agent.dispatch",
 		"--job", "SQU-104",
+		"--runtime", "codex",
 		"--dry-run",
 		"--format", "{{.ID}} {{.Action}} {{.DryRun}}",
 	})
@@ -1442,7 +1467,7 @@ func TestQueueDropAllLocal(t *testing.T) {
 	readyOut, readyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	ready.SetOut(readyOut)
 	ready.SetErr(readyErr)
-	ready.SetArgs([]string{"queue", "drop", "--target", tmp, "--all", "--ready", "--dry-run", "--json"})
+	ready.SetArgs([]string{"queue", "drop", "--target", tmp, "--all", "--ready", "--runtime", "codex", "--dry-run", "--json"})
 	if err := ready.Execute(); err != nil {
 		t.Fatalf("queue drop --all ready dry-run: %v\nstderr=%s", err, readyErr.String())
 	}
@@ -1462,9 +1487,7 @@ func TestQueueDropAllLocal(t *testing.T) {
 		"queue", "drop",
 		"--target", tmp,
 		"--all",
-		"--instance", "worker",
-		"--event-type", "agent.dispatch",
-		"--job", "SQU-104",
+		"--runtime", "codex",
 		"--json",
 	})
 	if err := apply.Execute(); err != nil {
@@ -1497,7 +1520,7 @@ func TestQueueRetryAllLocal(t *testing.T) {
 			EventType:      "agent.dispatch",
 			Instance:       "worker",
 			InstanceID:     "worker-squ-100",
-			Payload:        map[string]any{"target": "worker", "ticket": "SQU-100"},
+			Payload:        map[string]any{"target": "worker", "ticket": "SQU-100", "runtime": "codex"},
 			Attempts:       daemon.MaxQueueAttempts,
 			LastError:      "spawn failed",
 			QueuedAt:       now.Add(-3 * time.Hour),
@@ -1510,7 +1533,7 @@ func TestQueueRetryAllLocal(t *testing.T) {
 			EventType:      "agent.dispatch",
 			Instance:       "manager",
 			InstanceID:     "manager-squ-101",
-			Payload:        map[string]any{"target": "manager", "ticket": "SQU-101"},
+			Payload:        map[string]any{"target": "manager", "ticket": "SQU-101", "runtime": "claude"},
 			Attempts:       daemon.MaxQueueAttempts,
 			LastError:      "spawn failed",
 			QueuedAt:       now.Add(-3 * time.Hour),
@@ -1523,7 +1546,7 @@ func TestQueueRetryAllLocal(t *testing.T) {
 			EventType:  "agent.dispatch",
 			Instance:   "worker",
 			InstanceID: "worker-squ-102",
-			Payload:    map[string]any{"target": "worker", "ticket": "SQU-102"},
+			Payload:    map[string]any{"target": "worker", "ticket": "SQU-102", "runtime": "codex"},
 			NextRetry:  now.Add(-time.Minute),
 			QueuedAt:   now.Add(-time.Hour),
 			UpdatedAt:  now,
@@ -1534,7 +1557,7 @@ func TestQueueRetryAllLocal(t *testing.T) {
 			EventType:  "agent.dispatch",
 			Instance:   "worker",
 			InstanceID: "worker-squ-103",
-			Payload:    map[string]any{"target": "worker", "ticket": "SQU-103"},
+			Payload:    map[string]any{"target": "worker", "ticket": "SQU-103", "runtime": "claude"},
 			NextRetry:  now.Add(time.Hour),
 			QueuedAt:   now.Add(-time.Hour),
 			UpdatedAt:  now,
@@ -1557,6 +1580,7 @@ func TestQueueRetryAllLocal(t *testing.T) {
 		"--instance", "worker",
 		"--event-type", "agent.dispatch",
 		"--job", "SQU-100",
+		"--runtime", "codex",
 		"--dry-run",
 		"--json",
 	})
@@ -1574,6 +1598,29 @@ func TestQueueRetryAllLocal(t *testing.T) {
 		t.Fatalf("dry-run changed item=%+v err=%v", item, err)
 	}
 
+	runtimeDry := NewRootCmd()
+	runtimeDryOut, runtimeDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeDry.SetOut(runtimeDryOut)
+	runtimeDry.SetErr(runtimeDryErr)
+	runtimeDry.SetArgs([]string{
+		"queue", "retry",
+		"--target", tmp,
+		"--all",
+		"--runtime", "codex",
+		"--dry-run",
+		"--json",
+	})
+	if err := runtimeDry.Execute(); err != nil {
+		t.Fatalf("queue retry --all runtime dry-run: %v\nstderr=%s", err, runtimeDryErr.String())
+	}
+	var runtimeDryResults []queueRetryResult
+	if err := json.Unmarshal(runtimeDryOut.Bytes(), &runtimeDryResults); err != nil {
+		t.Fatalf("decode runtime dry retry json: %v\nbody=%s", err, runtimeDryOut.String())
+	}
+	if len(runtimeDryResults) != 1 || runtimeDryResults[0].ID != "q-retry-worker" {
+		t.Fatalf("runtime dry results = %+v", runtimeDryResults)
+	}
+
 	dryFormat := NewRootCmd()
 	dryFormatOut, dryFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dryFormat.SetOut(dryFormatOut)
@@ -1585,6 +1632,7 @@ func TestQueueRetryAllLocal(t *testing.T) {
 		"--instance", "worker",
 		"--event-type", "agent.dispatch",
 		"--job", "SQU-100",
+		"--runtime", "codex",
 		"--dry-run",
 		"--format", "{{.ID}} {{.Action}} {{.DryRun}}",
 	})
@@ -1599,7 +1647,7 @@ func TestQueueRetryAllLocal(t *testing.T) {
 	readyOut, readyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	ready.SetOut(readyOut)
 	ready.SetErr(readyErr)
-	ready.SetArgs([]string{"queue", "retry", "--target", tmp, "--all", "--ready", "--dry-run", "--json"})
+	ready.SetArgs([]string{"queue", "retry", "--target", tmp, "--all", "--ready", "--runtime", "codex", "--dry-run", "--json"})
 	if err := ready.Execute(); err != nil {
 		t.Fatalf("queue retry --all ready dry-run: %v\nstderr=%s", err, readyErr.String())
 	}
@@ -1619,9 +1667,7 @@ func TestQueueRetryAllLocal(t *testing.T) {
 		"queue", "retry",
 		"--target", tmp,
 		"--all",
-		"--instance", "worker",
-		"--event-type", "agent.dispatch",
-		"--job", "SQU-100",
+		"--runtime", "codex",
 		"--json",
 	})
 	if err := apply.Execute(); err != nil {

@@ -117,8 +117,9 @@ Shortcuts:
 | `agent-team queue show <id>` | Inspect one active queue item |
 | `agent-team queue drain` | Dispatch ready pending entries |
 | `agent-team queue retry <id>` | Retry one entry |
-| `agent-team queue retry --all` | Retry matching entries |
+| `agent-team queue retry --all` | Retry matching entries; filter batch actions with `--runtime` |
 | `agent-team queue drop <id>` | Drop one entry |
+| `agent-team queue drop --all` | Drop matching entries; filter batch actions with `--runtime` |
 | `agent-team queue prune` | Age-prune entries |
 | `agent-team queue doctor` | Validate queue files |
 | `agent-team queue quarantine ls` | List quarantined queue files |

@@ -71,6 +71,7 @@ Preview retries:
 
 ```sh
 agent-team queue retry --all --dry-run
+agent-team queue retry --all --runtime codex --dry-run
 agent-team job queue retry squ-42 --all --dry-run
 agent-team team queue retry delivery --all --job SQU-42 --dry-run
 ```
@@ -93,6 +94,7 @@ Batch drops default to dead-letter entries:
 
 ```sh
 agent-team queue drop --all --state dead --older-than 24h --dry-run
+agent-team queue drop --all --runtime codex --dry-run
 ```
 
 ## Queue Doctor
