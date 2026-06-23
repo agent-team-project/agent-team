@@ -48,6 +48,7 @@ Built or substantially implemented:
 - local orchestration demo harness with fake runtime
 - repo-configurable health stale thresholds
 - pipeline graph visualization command
+- template smoke validation command
 
 ## What Still Needs Design Care
 
@@ -81,7 +82,6 @@ Use these when evaluating feature ideas:
 
 High-value follow-up work:
 
-- template authoring smoke harness
 - `job cleanup` PR merge verification integration
 - intake server deployment guide
 - runtime profile docs for non-primary runtimes

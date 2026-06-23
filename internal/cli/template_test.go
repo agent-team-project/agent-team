@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"os"
@@ -73,6 +74,87 @@ func TestTemplateRm_RejectsBundled(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "cannot rm the bundled template") {
 		t.Errorf("missing rejection message: %s", errOut.String())
+	}
+}
+
+func TestTemplateSmokeBundledJSONCleansTempRepo(t *testing.T) {
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{
+		"template", "smoke",
+		"--set", "linear.team_id=test-team-uuid",
+		"--set", "linear.ticket_prefix=TST",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("template smoke: %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
+	}
+	var result templateSmokeResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode smoke result: %v\nbody=%s", err, out.String())
+	}
+	if !result.OK || result.Ref != "bundled" || result.Kept || len(result.Steps) != 4 {
+		t.Fatalf("smoke result = %+v", result)
+	}
+	if result.Doctor == nil || !result.Doctor.OK || result.PipelineDoctor == nil || !result.PipelineDoctor.OK || result.TeamDoctor == nil || !result.TeamDoctor.OK {
+		t.Fatalf("smoke validation summaries = doctor:%+v pipeline:%+v team:%+v", result.Doctor, result.PipelineDoctor, result.TeamDoctor)
+	}
+	if _, err := os.Stat(filepath.FromSlash(result.Target)); !os.IsNotExist(err) {
+		t.Fatalf("target should be removed after smoke, stat err=%v target=%s", err, result.Target)
+	}
+}
+
+func TestTemplateSmokeKeepPreservesTempRepo(t *testing.T) {
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{
+		"template", "smoke",
+		"--set", "linear.team_id=test-team-uuid",
+		"--set", "linear.ticket_prefix=TST",
+		"--keep",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("template smoke --keep: %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
+	}
+	var result templateSmokeResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode smoke keep result: %v\nbody=%s", err, out.String())
+	}
+	if !result.OK || !result.Kept {
+		t.Fatalf("smoke keep result = %+v", result)
+	}
+	target := filepath.FromSlash(result.Target)
+	defer os.RemoveAll(target)
+	if st, err := os.Stat(filepath.Join(target, ".agent_team", "config.toml")); err != nil || st.IsDir() {
+		t.Fatalf("kept target missing config.toml: st=%v err=%v target=%s", st, err, target)
+	}
+}
+
+func TestTemplateSmokeMissingRequiredParameters(t *testing.T) {
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"template", "smoke", "--json"})
+	err := cmd.Execute()
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("err = %v, want exit 1\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
+	}
+	var result templateSmokeResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode failed smoke result: %v\nbody=%s", err, out.String())
+	}
+	if result.OK || len(result.Steps) != 1 || result.Steps[0].OK || !strings.Contains(result.Steps[0].Error, "required parameters are missing") {
+		t.Fatalf("failed smoke result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.FromSlash(result.Target)); !os.IsNotExist(err) {
+		t.Fatalf("failed smoke target should be removed, stat err=%v target=%s", err, result.Target)
 	}
 }
 

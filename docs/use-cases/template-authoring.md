@@ -64,12 +64,13 @@ match.target = "worker"
 
 ```sh
 go build -o bin/agent-team ./cmd/agent-team
-bin/agent-team init ./my-template \
-  --target /tmp/my-template-smoke \
+bin/agent-team template smoke ./my-template \
   --set tracker.project=DEMO
-
-bin/agent-team doctor --target /tmp/my-template-smoke
 ```
+
+Use `--keep` when you want to inspect the rendered temp repo after the smoke
+run. The smoke command runs `init`, `doctor`, `pipeline doctor`, and `team
+doctor`; it exits non-zero if any step fails.
 
 ## Authoring Checklist
 
@@ -79,8 +80,7 @@ bin/agent-team doctor --target /tmp/my-template-smoke
 - No repo-specific UUIDs are hardcoded in prompts.
 - Agents have simple frontmatter.
 - Shared skills are referenced by agent config.
-- Topology validates with `doctor`.
-- Init works in a temp directory.
+- `template smoke` passes with representative parameters.
 - One-shot `template run` works when relevant.
 
 ## Promotion Path

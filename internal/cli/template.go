@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -46,6 +48,7 @@ func newTemplateCmd() *cobra.Command {
 	cmd.AddCommand(newTemplateShowCmd())
 	cmd.AddCommand(newTemplatePullCmd())
 	cmd.AddCommand(newTemplateRmCmd())
+	cmd.AddCommand(newTemplateSmokeCmd())
 	cmd.AddCommand(newTemplateRunCmd())
 	return cmd
 }
@@ -152,6 +155,236 @@ func newTemplateShowCmd() *cobra.Command {
 		},
 	}
 	return c
+}
+
+func newTemplateSmokeCmd() *cobra.Command {
+	var (
+		setFlags       []string
+		keep           bool
+		jsonOut        bool
+		strictDaemon   bool
+		strictRuntime  bool
+		strictTemplate bool
+	)
+	c := &cobra.Command{
+		Use:   "smoke [ref]",
+		Short: "Render a template into a temp repo and validate it.",
+		Long:  "Render a template into a temporary repo with init --no-input semantics, then run doctor, pipeline doctor, and team doctor. Pass --set for required parameters.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ref := ""
+			if len(args) == 1 {
+				ref = args[0]
+			}
+			result, err := runTemplateSmoke(cmd, ref, setFlags, templateSmokeOptions{
+				Keep:           keep,
+				StrictDaemon:   strictDaemon,
+				StrictRuntime:  strictRuntime,
+				StrictTemplate: strictTemplate,
+			})
+			if err != nil {
+				return err
+			}
+			if err := renderTemplateSmoke(cmd.OutOrStdout(), result, jsonOut); err != nil {
+				return err
+			}
+			if !result.OK {
+				return exitErr(1)
+			}
+			return nil
+		},
+	}
+	c.Flags().StringArrayVar(&setFlags, "set", nil, "Set a template parameter, e.g. --set linear.team_id=<uuid>. Repeatable.")
+	c.Flags().BoolVar(&keep, "keep", false, "Keep the temporary rendered repo for inspection.")
+	c.Flags().BoolVar(&jsonOut, "json", false, "Emit smoke results as JSON.")
+	c.Flags().BoolVar(&strictDaemon, "strict-daemon", false, "Fail doctor when the companion agent-teamd binary is not discoverable.")
+	c.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail doctor when the selected LLM runtime binary is not discoverable.")
+	c.Flags().BoolVar(&strictTemplate, "strict-template", false, "Fail doctor when rendered template provenance does not resolve cleanly.")
+	return c
+}
+
+type templateSmokeOptions struct {
+	Keep           bool
+	StrictDaemon   bool
+	StrictRuntime  bool
+	StrictTemplate bool
+}
+
+type templateSmokeResult struct {
+	OK             bool                  `json:"ok"`
+	Ref            string                `json:"ref"`
+	Target         string                `json:"target"`
+	Kept           bool                  `json:"kept"`
+	Steps          []templateSmokeStep   `json:"steps"`
+	Doctor         *doctorResult         `json:"doctor,omitempty"`
+	PipelineDoctor *pipelineDoctorResult `json:"pipeline_doctor,omitempty"`
+	TeamDoctor     *allTeamDoctorResult  `json:"team_doctor,omitempty"`
+}
+
+type templateSmokeStep struct {
+	Name  string `json:"name"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+func runTemplateSmoke(cmd *cobra.Command, ref string, sets []string, opts templateSmokeOptions) (templateSmokeResult, error) {
+	displayRef := strings.TrimSpace(ref)
+	if displayRef == "" {
+		displayRef = template.BundledRef
+	}
+	target, err := os.MkdirTemp("", "agent-team-template-smoke-")
+	if err != nil {
+		return templateSmokeResult{}, err
+	}
+	result := templateSmokeResult{
+		OK:     true,
+		Ref:    displayRef,
+		Target: filepath.ToSlash(target),
+		Kept:   opts.Keep,
+	}
+	defer func() {
+		if !opts.Keep {
+			_ = os.RemoveAll(target)
+		}
+	}()
+
+	initStep := runTemplateSmokeInit(ref, target, sets)
+	result.addStep(initStep)
+	if !initStep.OK {
+		result.OK = false
+		return result, nil
+	}
+
+	teamDir := filepath.Join(target, teamDirName)
+	doctor, doctorStep := runTemplateSmokeDoctor(target, opts)
+	result.Doctor = doctor
+	result.addStep(doctorStep)
+
+	pipelineDoctor, pipelineStep := runTemplateSmokePipelineDoctor(teamDir)
+	result.PipelineDoctor = pipelineDoctor
+	result.addStep(pipelineStep)
+
+	teamDoctor, teamStep := runTemplateSmokeTeamDoctor(teamDir)
+	result.TeamDoctor = teamDoctor
+	result.addStep(teamStep)
+
+	for _, step := range result.Steps {
+		if !step.OK {
+			result.OK = false
+			break
+		}
+	}
+	return result, nil
+}
+
+func runTemplateSmokeInit(ref, target string, sets []string) templateSmokeStep {
+	smokeCmd := &cobra.Command{}
+	var out, stderr bytes.Buffer
+	smokeCmd.SetOut(&out)
+	smokeCmd.SetErr(&stderr)
+	err := runInit(smokeCmd, initConfig{
+		target:     target,
+		kind:       "default",
+		ref:        ref,
+		setStrings: append([]string(nil), sets...),
+		noInput:    true,
+	})
+	return templateSmokeStep{Name: "init", OK: err == nil, Error: smokeStepError(err, stderr.String())}
+}
+
+func runTemplateSmokeDoctor(target string, opts templateSmokeOptions) (*doctorResult, templateSmokeStep) {
+	smokeCmd := &cobra.Command{}
+	var out, stderr bytes.Buffer
+	smokeCmd.SetOut(&out)
+	smokeCmd.SetErr(&stderr)
+	err := runDoctor(smokeCmd, target, opts.StrictDaemon, opts.StrictRuntime, opts.StrictTemplate, true, nil)
+	var result doctorResult
+	if out.Len() > 0 {
+		_ = json.Unmarshal(out.Bytes(), &result)
+	}
+	return &result, templateSmokeStep{Name: "doctor", OK: err == nil && result.OK, Error: smokeStepError(err, firstDoctorProblem(result.Problems, stderr.String()))}
+}
+
+func runTemplateSmokePipelineDoctor(teamDir string) (*pipelineDoctorResult, templateSmokeStep) {
+	result, err := collectPipelineDoctor(teamDir, "")
+	ok := err == nil && result != nil && result.OK
+	return result, templateSmokeStep{Name: "pipeline doctor", OK: ok, Error: smokeStepError(err, firstPipelineProblem(result))}
+}
+
+func runTemplateSmokeTeamDoctor(teamDir string) (*allTeamDoctorResult, templateSmokeStep) {
+	result, err := collectAllTeamDoctor(teamDir)
+	ok := err == nil && result != nil && result.OK
+	return result, templateSmokeStep{Name: "team doctor", OK: ok, Error: smokeStepError(err, firstTeamProblem(result))}
+}
+
+func (r *templateSmokeResult) addStep(step templateSmokeStep) {
+	r.Steps = append(r.Steps, step)
+}
+
+func smokeStepError(err error, detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail != "" {
+		return detail
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+func firstDoctorProblem(problems []string, fallback string) string {
+	if len(problems) > 0 {
+		return problems[0]
+	}
+	return fallback
+}
+
+func firstPipelineProblem(result *pipelineDoctorResult) string {
+	if result == nil {
+		return "pipeline doctor returned no result"
+	}
+	if len(result.Problems) > 0 {
+		return result.Problems[0].Message
+	}
+	return ""
+}
+
+func firstTeamProblem(result *allTeamDoctorResult) string {
+	if result == nil {
+		return "team doctor returned no result"
+	}
+	if len(result.Problems) > 0 {
+		return result.Problems[0].Message
+	}
+	return ""
+}
+
+func renderTemplateSmoke(w fmtWriter, result templateSmokeResult, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(result)
+	}
+	state := "OK"
+	if !result.OK {
+		state = "failed"
+	}
+	fmt.Fprintf(w, "agent-team template smoke: %s\n", state)
+	fmt.Fprintf(w, "ref: %s\n", result.Ref)
+	fmt.Fprintf(w, "target: %s\n", result.Target)
+	if !result.Kept {
+		fmt.Fprintln(w, "target removed after smoke")
+	}
+	fmt.Fprintln(w, "steps:")
+	for _, step := range result.Steps {
+		status := "OK"
+		if !step.OK {
+			status = "failed"
+		}
+		fmt.Fprintf(w, "  %s: %s\n", step.Name, status)
+		if step.Error != "" {
+			fmt.Fprintf(w, "    %s\n", step.Error)
+		}
+	}
+	return nil
 }
 
 func printManifest(cmd *cobra.Command, rt *template.ResolvedTemplate) error {
