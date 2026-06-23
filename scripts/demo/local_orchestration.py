@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""Run a local end-to-end orchestration demo with a fake Claude runtime.
+
+Usage:
+    python3 scripts/demo/local_orchestration.py [bin/agent-team] [--keep]
+
+The demo creates a temporary repo, initializes the bundled team, configures a
+small fake Claude-compatible runtime, starts persistent instances, creates and
+advances a pipeline job, then captures operator views. It never calls a real
+LLM service.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
+import time
+from pathlib import Path
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("binary", nargs="?", default="bin/agent-team", help="Path to the agent-team binary.")
+    parser.add_argument("--keep", action="store_true", help="Keep the temporary demo repo for inspection.")
+    args = parser.parse_args(argv[1:])
+
+    binary = Path(args.binary).resolve()
+    if not binary.is_file():
+        print(f"agent-team binary not found: {binary}", file=sys.stderr)
+        print("Build it first: go build -o bin/agent-team ./cmd/agent-team", file=sys.stderr)
+        return 2
+    daemon = binary.parent / "agent-teamd"
+    if not daemon.is_file():
+        print(f"agent-teamd sibling binary not found: {daemon}", file=sys.stderr)
+        print("Build it first: go build -o bin/agent-teamd ./cmd/agent-teamd", file=sys.stderr)
+        return 2
+
+    root = Path(tempfile.mkdtemp(prefix="agent-team-demo-", dir="/tmp"))
+    fake_runtime = root / "fake-bin" / "claude"
+    repo = root / "repo"
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_runtime.parent}:{env.get('PATH', '')}"
+    try:
+        fake_runtime.parent.mkdir(parents=True, exist_ok=True)
+        write_fake_runtime(fake_runtime)
+        repo.mkdir(parents=True, exist_ok=True)
+
+        step("init bundled team")
+        run(binary, "init", "--target", repo, "--set", "linear.team_id=demo-team", "--set", "linear.ticket_prefix=DEMO")
+        configure_fake_runtime(repo, fake_runtime)
+
+        step("validate topology and runtime")
+        run(binary, "runtime", "--repo", repo, "--json", env=env, parse_json=True)
+        run(binary, "topology", "summary", "--target", repo, "--json", parse_json=True)
+        run(binary, "pipeline", "doctor", "--all", "--repo", repo, "--json", parse_json=True)
+        run(binary, "team", "doctor", "--all", "--repo", repo, "--json", parse_json=True)
+
+        step("start daemon and persistent instances")
+        run(binary, "daemon", "start", "--target", repo, "--ready-timeout", "5s", "--json", env=env, parse_json=True)
+        start = run(binary, "start", "--target", repo, "--wait", "--timeout", "5s", "--json", env=env, parse_json=True)
+        started = [row.get("instance") for row in start.get("actions", []) if row.get("action") in {"start", "skip"}]
+        print(f"persistent instances: {', '.join(started) or '(none)'}")
+
+        step("create and preview a pipeline job")
+        created = run(
+            binary,
+            "pipeline",
+            "run",
+            "ticket_to_pr",
+            "DEMO-1",
+            "Implement the local demo scenario",
+            "--repo",
+            repo,
+            "--json",
+            parse_json=True,
+        )
+        job_id = field(created, "id", "ID")
+        print(f"job created: {job_id} pipeline={field(created, 'pipeline', 'Pipeline')} target={field(created, 'target', 'Target')}")
+        preview = run(
+            binary,
+            "pipeline",
+            "advance",
+            "ticket_to_pr",
+            "--repo",
+            repo,
+            "--dry-run",
+            "--preview-routes",
+            "--json",
+            parse_json=True,
+        )
+        if not preview:
+            raise DemoError("pipeline advance preview returned no ready work")
+        first = preview[0]
+        print(f"preview: job={first['job_id']} step={first.get('step_id')} action={first['action']}")
+
+        step("advance the pipeline through daemon dispatch")
+        advanced = run(
+            binary,
+            "pipeline",
+            "advance",
+            "ticket_to_pr",
+            "--repo",
+            repo,
+            "--workspace",
+            "repo",
+            "--json",
+            env=env,
+            parse_json=True,
+        )
+        if not advanced:
+            raise DemoError("pipeline advance returned no work")
+        worker = advanced[0].get("instance") or "worker-demo-1-implement"
+        print(f"worker dispatched: {worker} status={advanced[0].get('step_status')}")
+
+        step("wait for fake worker exit and reconcile")
+        run(binary, "wait", worker, "--target", repo, "--until", "terminal", "--timeout", "10s", "--json", parse_json=True)
+        run(binary, "tick", "--target", repo, "--skip-schedules", "--skip-drain", "--skip-advance", "--json", parse_json=True)
+
+        step("inspect operator views")
+        job_detail = run(binary, "job", "show", "demo-1", "--repo", repo, "--json", parse_json=True)
+        print(f"job status: {field(job_detail, 'status', 'Status')} last={field(job_detail, 'last_status', 'LastStatus')}")
+        overview = run(binary, "team", "overview", "delivery", "--repo", repo, "--json", parse_json=True)
+        print(f"team overview state: {overview.get('state', 'unknown')}")
+        snapshot = run(binary, "snapshot", "--target", repo, "--events", "20", "--json", parse_json=True)
+        print(f"snapshot sections: jobs={len(snapshot.get('jobs') or [])} events={len(snapshot.get('events') or [])}")
+
+        print(f"\nDemo complete. Repo: {repo}")
+        if args.keep:
+            print("Kept temporary files because --keep was set.")
+        return 0
+    except DemoError as exc:
+        print(f"demo failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        subprocess.run([str(binary), "stop", "--all", "--target", str(repo), "--timeout", "2s"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([str(binary), "daemon", "stop", "--target", str(repo), "--timeout", "2s"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if args.keep:
+            print(f"Preserved demo root: {root}")
+        else:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+class DemoError(RuntimeError):
+    pass
+
+
+def step(message: str) -> None:
+    print(f"\n==> {message}")
+
+
+def run(binary: Path, *args: object, env: dict[str, str] | None = None, parse_json: bool = False):
+    cmd = [str(binary), *(str(arg) for arg in args)]
+    print("+", " ".join(cmd))
+    result = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    if result.returncode != 0:
+        raise DemoError(f"{' '.join(cmd)} failed with {result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}")
+    if parse_json:
+        try:
+            return json.loads(result.stdout or "null")
+        except json.JSONDecodeError as exc:
+            raise DemoError(f"{' '.join(cmd)} did not return JSON: {exc}\nstdout={result.stdout}\nstderr={result.stderr}") from exc
+    if result.stdout.strip():
+        print(result.stdout.rstrip())
+    if result.stderr.strip():
+        print(result.stderr.rstrip(), file=sys.stderr)
+    return result.stdout
+
+
+def field(data: dict, *names: str) -> object:
+    for name in names:
+        if name in data:
+            return data[name]
+    return ""
+
+
+def configure_fake_runtime(repo: Path, fake_runtime: Path) -> None:
+    cfg = repo / ".agent_team" / "config.toml"
+    with cfg.open("a", encoding="utf-8") as f:
+        f.write("\n[runtime]\n")
+        f.write('kind = "claude"\n')
+        f.write(f'binary = "{toml_string(str(fake_runtime))}"\n')
+
+
+def write_fake_runtime(path: Path) -> None:
+    path.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            from __future__ import annotations
+
+            import json
+            import os
+            import sys
+            import time
+            from pathlib import Path
+
+            instance = os.environ.get("AGENT_TEAM_INSTANCE", "unknown")
+            state_dir = Path(os.environ.get("AGENT_TEAM_STATE_DIR", "."))
+            state_dir.mkdir(parents=True, exist_ok=True)
+
+            def toml(value: str) -> str:
+                return json.dumps(value or "")
+
+            def write_status(phase: str, description: str) -> None:
+                body = [
+                    "[status]",
+                    f"phase = {toml(phase)}",
+                    f"description = {toml(description)}",
+                    "",
+                    "[work]",
+                    f"job = {toml(os.environ.get('AGENT_TEAM_JOB_ID', ''))}",
+                    f"ticket = {toml(os.environ.get('AGENT_TEAM_TICKET', ''))}",
+                    f"branch = {toml(os.environ.get('AGENT_TEAM_BRANCH', ''))}",
+                    f"worktree = {toml(os.environ.get('AGENT_TEAM_WORKTREE', ''))}",
+                    "",
+                ]
+                (state_dir / "status.toml").write_text("\\n".join(body), encoding="utf-8")
+
+            print(f"fake claude instance={instance} args={' '.join(sys.argv[1:])}", flush=True)
+            if instance.startswith("worker-") or "-worker-" in instance:
+                write_status("implementing", "fake worker running")
+                time.sleep(0.2)
+                write_status("done", "fake worker completed")
+                print(f"fake worker complete: {instance}", flush=True)
+                raise SystemExit(0)
+
+            write_status("idle", "fake persistent runtime ready")
+            while True:
+                time.sleep(1)
+            """
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def toml_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

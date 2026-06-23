@@ -45,6 +45,7 @@ Built or substantially implemented:
 - VitePress developer docs site
 - generated CLI reference command and check mode
 - topology gallery examples
+- local orchestration demo harness with fake runtime
 
 ## What Still Needs Design Care
 
@@ -78,7 +79,6 @@ Use these when evaluating feature ideas:
 
 High-value follow-up work:
 
-- realistic local demo repo with fake spawner
 - richer health policy configuration
 - pipeline visualization in docs
 - template authoring smoke harness

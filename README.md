@@ -83,6 +83,15 @@ agent-team docs cli --output docs/reference/cli.generated.md
 agent-team docs cli --check docs/reference/cli.generated.md
 ```
 
+For a no-LLM local orchestration walkthrough, build both binaries and run the
+fake-runtime demo:
+
+```sh
+go build -o bin/agent-team ./cmd/agent-team
+go build -o bin/agent-teamd ./cmd/agent-teamd
+python3 scripts/demo/local_orchestration.py bin/agent-team
+```
+
 The site covers architecture, templates, agents and skills, topology, daemon runtime, jobs, queues, teams, intake, diagnostics, file formats, CLI groups, testing, and use cases.
 
 ## Quickstart
