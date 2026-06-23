@@ -445,6 +445,90 @@ func TestIntakeServeGitHubVerifyPRRequiresCleanupMerged(t *testing.T) {
 	}
 }
 
+func TestIntakeServiceSystemd(t *testing.T) {
+	target := t.TempDir()
+	initInto(t, target)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"intake", "service", "systemd",
+		"--repo", target,
+		"--bin", "/usr/local/bin/agent-team",
+		"--name", "agent-team-intake-test",
+		"--description", "agent-team intake for tests",
+		"--addr", "127.0.0.1:9999",
+		"--linear-secret-env", "LINEAR_SECRET",
+		"--github-secret-env", "GITHUB_SECRET",
+		"--linear-max-age", "2m",
+		"--prune-ok-older-than", "24h",
+		"--prune-recovered-older-than", "48h",
+		"--github-reconcile-job",
+		"--github-cleanup-merged",
+		"--github-verify-pr",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake service systemd: %v\nstderr=%s", err, stderr.String())
+	}
+	expectedTarget := target
+	if eval, err := filepath.EvalSymlinks(target); err == nil {
+		expectedTarget = eval
+	}
+	body := out.String()
+	for _, want := range []string{
+		"# Save as /etc/systemd/system/agent-team-intake-test.service",
+		"Description=agent-team intake for tests",
+		"WorkingDirectory=" + expectedTarget,
+		"Environment=LINEAR_SECRET=replace-me",
+		"Environment=GITHUB_SECRET=replace-me",
+		"ExecStartPre=/usr/local/bin/agent-team daemon start",
+		"ExecStart=/usr/local/bin/agent-team intake serve --addr 127.0.0.1:9999 --linear-max-age 2m0s --prune-ok-older-than 24h0m0s --prune-recovered-older-than 48h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr",
+		"Restart=on-failure",
+		"WantedBy=multi-user.target",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("systemd output missing %q:\n%s", want, body)
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestIntakeServiceValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"intake", "service", "launchd"}, "service kind must be systemd"},
+		{[]string{"intake", "service", "systemd", "--github-verify-pr"}, "--github-verify-pr requires --github-cleanup-merged"},
+		{[]string{"intake", "service", "systemd", "--github-cleanup-merged"}, "--github-cleanup-merged requires --github-reconcile-job"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v succeeded unexpectedly", tc.args)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("%v err = %v, want exit 2", tc.args, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v wrote stdout: %q", tc.args, out.String())
+		}
+	}
+}
+
 func TestIntakeDeliveriesFiltersAndFormat(t *testing.T) {
 	target := t.TempDir()
 	teamDir := filepath.Join(target, ".agent_team")

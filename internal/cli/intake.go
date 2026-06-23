@@ -36,6 +36,7 @@ func newIntakeCmd() *cobra.Command {
 	cmd.AddCommand(newIntakeLinearCmd())
 	cmd.AddCommand(newIntakeGitHubCmd())
 	cmd.AddCommand(newIntakeScheduleCmd())
+	cmd.AddCommand(newIntakeServiceCmd())
 	cmd.AddCommand(newIntakeServeCmd())
 	cmd.AddCommand(newIntakeSummaryCmd())
 	cmd.AddCommand(newIntakeDoctorCmd())
@@ -243,6 +244,151 @@ type intakeServeOptions struct {
 	PruneRecoveredOlderThan time.Duration
 	Now                     func() time.Time
 	MaxBodyBytes            int64
+}
+
+type intakeServiceOptions struct {
+	Target                  string
+	Addr                    string
+	Bin                     string
+	Name                    string
+	Description             string
+	LinearSecretEnv         string
+	GitHubSecretEnv         string
+	GitHubReconcileJob      bool
+	GitHubCleanupMerged     bool
+	GitHubVerifyPR          bool
+	LinearMaxAge            time.Duration
+	PruneOKOlderThan        time.Duration
+	PruneRecoveredOlderThan time.Duration
+}
+
+func newIntakeServiceCmd() *cobra.Command {
+	var opts intakeServiceOptions
+	opts.Addr = "127.0.0.1:8787"
+	opts.Bin = "agent-team"
+	opts.Name = "agent-team-intake"
+	opts.Description = "agent-team intake server"
+	opts.LinearSecretEnv = "LINEAR_WEBHOOK_SECRET"
+	opts.GitHubSecretEnv = "GITHUB_WEBHOOK_SECRET"
+	opts.LinearMaxAge = time.Minute
+	opts.PruneOKOlderThan = 7 * 24 * time.Hour
+	opts.PruneRecoveredOlderThan = 7 * 24 * time.Hour
+	cwd, _ := os.Getwd()
+	opts.Target = cwd
+	cmd := &cobra.Command{
+		Use:   "service systemd",
+		Short: "Print a service-manager config for intake serve.",
+		Long:  "Print a read-only service-manager configuration for running `agent-team intake serve` against this repo. The command does not install or write the service file.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kind := strings.ToLower(strings.TrimSpace(args[0]))
+			if kind != "systemd" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake service: service kind must be systemd.")
+				return exitErr(2)
+			}
+			if err := validateIntakeServiceOptions(opts); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake service: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, opts.Target)
+			if err != nil {
+				return err
+			}
+			repoRoot := filepath.Dir(teamDir)
+			renderIntakeSystemdService(cmd.OutOrStdout(), repoRoot, opts)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&opts.Target, "target", cwd, "Repo root.")
+	cmd.Flags().StringVar(&opts.Addr, "addr", opts.Addr, "Address for the webhook listener.")
+	cmd.Flags().StringVar(&opts.Bin, "bin", opts.Bin, "agent-team binary path used in the service.")
+	cmd.Flags().StringVar(&opts.Name, "name", opts.Name, "Systemd unit name/comment stem.")
+	cmd.Flags().StringVar(&opts.Description, "description", opts.Description, "Systemd unit description.")
+	cmd.Flags().StringVar(&opts.LinearSecretEnv, "linear-secret-env", opts.LinearSecretEnv, "Environment variable name containing the Linear webhook secret; empty omits it.")
+	cmd.Flags().StringVar(&opts.GitHubSecretEnv, "github-secret-env", opts.GitHubSecretEnv, "Environment variable name containing the GitHub webhook secret; empty omits it.")
+	cmd.Flags().BoolVar(&opts.GitHubReconcileJob, "github-reconcile-job", false, "Include --github-reconcile-job in ExecStart.")
+	cmd.Flags().BoolVar(&opts.GitHubCleanupMerged, "github-cleanup-merged", false, "Include --github-cleanup-merged in ExecStart; requires --github-reconcile-job.")
+	cmd.Flags().BoolVar(&opts.GitHubVerifyPR, "github-verify-pr", false, "Include --github-verify-pr in ExecStart; requires --github-cleanup-merged.")
+	cmd.Flags().DurationVar(&opts.LinearMaxAge, "linear-max-age", opts.LinearMaxAge, "Maximum accepted Linear webhook age after signature verification.")
+	cmd.Flags().DurationVar(&opts.PruneOKOlderThan, "prune-ok-older-than", opts.PruneOKOlderThan, "Prune successful delivery history older than this duration after each request. Use 0 to disable.")
+	cmd.Flags().DurationVar(&opts.PruneRecoveredOlderThan, "prune-recovered-older-than", opts.PruneRecoveredOlderThan, "Prune recovered failed delivery history older than this duration after each request. Use 0 to disable.")
+	return cmd
+}
+
+func validateIntakeServiceOptions(opts intakeServiceOptions) error {
+	if strings.TrimSpace(opts.Name) == "" {
+		return fmt.Errorf("--name is required")
+	}
+	if strings.TrimSpace(opts.Description) == "" {
+		return fmt.Errorf("--description is required")
+	}
+	if strings.TrimSpace(opts.Bin) == "" {
+		return fmt.Errorf("--bin is required")
+	}
+	if strings.TrimSpace(opts.Addr) == "" {
+		return fmt.Errorf("--addr is required")
+	}
+	if opts.GitHubCleanupMerged && !opts.GitHubReconcileJob {
+		return fmt.Errorf("--github-cleanup-merged requires --github-reconcile-job")
+	}
+	if opts.GitHubVerifyPR && !opts.GitHubCleanupMerged {
+		return fmt.Errorf("--github-verify-pr requires --github-cleanup-merged")
+	}
+	if opts.LinearMaxAge <= 0 {
+		return fmt.Errorf("--linear-max-age must be > 0")
+	}
+	if opts.PruneOKOlderThan < 0 {
+		return fmt.Errorf("--prune-ok-older-than must be >= 0")
+	}
+	if opts.PruneRecoveredOlderThan < 0 {
+		return fmt.Errorf("--prune-recovered-older-than must be >= 0")
+	}
+	return nil
+}
+
+func renderIntakeSystemdService(w io.Writer, repoRoot string, opts intakeServiceOptions) {
+	fmt.Fprintf(w, "# Save as /etc/systemd/system/%s.service\n", opts.Name)
+	fmt.Fprintln(w, "[Unit]")
+	fmt.Fprintf(w, "Description=%s\n", opts.Description)
+	fmt.Fprintln(w, "After=network-online.target")
+	fmt.Fprintln(w, "Wants=network-online.target")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "[Service]")
+	fmt.Fprintln(w, "Type=simple")
+	fmt.Fprintf(w, "WorkingDirectory=%s\n", repoRoot)
+	if env := strings.TrimSpace(opts.LinearSecretEnv); env != "" {
+		fmt.Fprintf(w, "Environment=%s=replace-me\n", env)
+	}
+	if env := strings.TrimSpace(opts.GitHubSecretEnv); env != "" {
+		fmt.Fprintf(w, "Environment=%s=replace-me\n", env)
+	}
+	fmt.Fprintf(w, "ExecStartPre=%s daemon start\n", opts.Bin)
+	fmt.Fprintf(w, "ExecStart=%s %s\n", opts.Bin, strings.Join(intakeServeArgs(opts), " "))
+	fmt.Fprintln(w, "Restart=on-failure")
+	fmt.Fprintln(w, "RestartSec=5s")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "[Install]")
+	fmt.Fprintln(w, "WantedBy=multi-user.target")
+}
+
+func intakeServeArgs(opts intakeServiceOptions) []string {
+	args := []string{
+		"intake", "serve",
+		"--addr", opts.Addr,
+		"--linear-max-age", opts.LinearMaxAge.String(),
+		"--prune-ok-older-than", opts.PruneOKOlderThan.String(),
+		"--prune-recovered-older-than", opts.PruneRecoveredOlderThan.String(),
+	}
+	if opts.GitHubReconcileJob {
+		args = append(args, "--github-reconcile-job")
+	}
+	if opts.GitHubCleanupMerged {
+		args = append(args, "--github-cleanup-merged")
+	}
+	if opts.GitHubVerifyPR {
+		args = append(args, "--github-verify-pr")
+	}
+	return args
 }
 
 func newIntakeServeCmd() *cobra.Command {

@@ -94,7 +94,22 @@ If `gh` is unavailable, omit `--github-verify-pr` and keep cleanup manual with `
 
 Use the service manager to keep `intake serve` in the foreground. Let `agent-team daemon start` prepare the repo daemon before the listener starts.
 
+Generate a unit from the repo where `.agent_team/` lives:
+
+```sh
+agent-team intake service systemd \
+  --bin /usr/local/bin/agent-team \
+  --name agent-team-intake-my-repo \
+  --github-reconcile-job \
+  --github-cleanup-merged \
+  --github-verify-pr \
+  > agent-team-intake-my-repo.service
+```
+
+The generated unit has this shape:
+
 ```ini
+# Save as /etc/systemd/system/agent-team-intake-my-repo.service
 [Unit]
 Description=agent-team intake server
 After=network-online.target
@@ -106,7 +121,7 @@ WorkingDirectory=/srv/agent-team/my-repo
 Environment=LINEAR_WEBHOOK_SECRET=replace-me
 Environment=GITHUB_WEBHOOK_SECRET=replace-me
 ExecStartPre=/usr/local/bin/agent-team daemon start
-ExecStart=/usr/local/bin/agent-team intake serve --addr 127.0.0.1:8787 --github-reconcile-job --github-cleanup-merged --github-verify-pr
+ExecStart=/usr/local/bin/agent-team intake serve --addr 127.0.0.1:8787 --linear-max-age 1m0s --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr
 Restart=on-failure
 RestartSec=5s
 
