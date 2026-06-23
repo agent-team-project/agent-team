@@ -152,7 +152,7 @@ Shortcuts:
 | `agent-team team status <team>` | Scoped status |
 | `agent-team team monitor <team>` | Scoped dashboard |
 | `agent-team team run <team> <ticket>` | Create a team-owned job; `--dispatch` accepts runtime overrides |
-| `agent-team team jobs <team>` | Scoped job list; filter mixed-runtime ownership with `--runtime` |
+| `agent-team team jobs <team>` | Scoped job list or summary; filter mixed-runtime ownership with `--runtime` |
 | `agent-team team tick <team>` | Scoped maintenance cycle |
 | `agent-team team repair <team>` | Scoped repair loop |
 | `agent-team team queue <team>` | Scoped queue list |

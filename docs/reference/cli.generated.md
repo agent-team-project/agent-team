@@ -4085,6 +4085,7 @@ Flags:
       --runtime strings   Only show team-owned jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.
       --sort string       Sort jobs by id, status, target, ticket, created, updated, instance, branch, or pr. (default "id")
       --status string     Filter by job status: queued, running, blocked, done, or failed.
+      --summary           Show aggregate team job counts instead of job rows.
 ```
 
 ## `agent-team team logs`

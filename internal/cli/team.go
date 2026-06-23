@@ -648,6 +648,7 @@ func newTeamJobsCmd() *cobra.Command {
 		status         string
 		sortBy         string
 		runtimeFilters []string
+		summary        bool
 		jsonOut        bool
 		format         string
 	)
@@ -659,6 +660,10 @@ func newTeamJobsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if format != "" && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --format cannot be combined with --summary.")
 				return exitErr(2)
 			}
 			tmpl, err := parseJobFormat(format)
@@ -693,6 +698,14 @@ func newTeamJobsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team jobs: %v\n", err)
 				return exitErr(1)
 			}
+			if summary {
+				s := summarizeJobsWithRuntime(teamDir, jobs)
+				if jsonOut {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(s)
+				}
+				renderJobSummary(cmd.OutOrStdout(), s)
+				return nil
+			}
 			return renderTeamJobs(cmd.OutOrStdout(), jobs, jsonOut, tmpl)
 		},
 	}
@@ -700,6 +713,7 @@ func newTeamJobsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&status, "status", "", "Filter by job status: queued, running, blocked, done, or failed.")
 	cmd.Flags().StringVar(&sortBy, "sort", "id", "Sort jobs by id, status, target, ticket, created, updated, instance, branch, or pr.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show team-owned jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate team job counts instead of job rows.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team jobs as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd

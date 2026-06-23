@@ -558,6 +558,22 @@ instances = ["platform-worker"]
 		t.Fatalf("team jobs runtime = %+v", jobs)
 	}
 
+	summaryCmd := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryCmd.SetOut(summaryOut)
+	summaryCmd.SetErr(summaryErr)
+	summaryCmd.SetArgs([]string{"team", "jobs", "delivery", "--repo", root, "--runtime", "codex", "--summary", "--json"})
+	if err := summaryCmd.Execute(); err != nil {
+		t.Fatalf("team jobs summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var summary jobSummary
+	if err := json.Unmarshal(summaryOut.Bytes(), &summary); err != nil {
+		t.Fatalf("decode team jobs summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if summary.Total != 1 || summary.Runtimes["codex"] != 1 || summary.Targets["worker"] != 1 {
+		t.Fatalf("team jobs summary = %+v", summary)
+	}
+
 	claude := NewRootCmd()
 	claudeOut, claudeErr := &bytes.Buffer{}, &bytes.Buffer{}
 	claude.SetOut(claudeOut)
@@ -584,6 +600,18 @@ instances = ["platform-worker"]
 	}
 	if !strings.Contains(invalidErr.String(), "unknown --runtime") {
 		t.Fatalf("invalid runtime stderr = %q", invalidErr.String())
+	}
+
+	badFormat := NewRootCmd()
+	badFormatOut, badFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	badFormat.SetOut(badFormatOut)
+	badFormat.SetErr(badFormatErr)
+	badFormat.SetArgs([]string{"team", "jobs", "delivery", "--repo", root, "--summary", "--format", "{{.ID}}"})
+	if err := badFormat.Execute(); err == nil {
+		t.Fatalf("team jobs accepted --summary with --format")
+	}
+	if !strings.Contains(badFormatErr.String(), "--format cannot be combined with --summary") {
+		t.Fatalf("summary format stderr = %q", badFormatErr.String())
 	}
 }
 
