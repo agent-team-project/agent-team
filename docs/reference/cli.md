@@ -98,6 +98,7 @@ Shortcuts:
 | Command | Purpose |
 | --- | --- |
 | `agent-team job queue <job-id>` | List active queue entries owned by a job; filter queued dispatches with `--runtime` |
+| `agent-team job queue show <job-id> <id>` | Inspect one active queue item owned by a job |
 | `agent-team job queue retry <job-id> <id>` | Retry one job-owned queue item |
 | `agent-team job queue retry <job-id> --all` | Retry matching job-owned queue items; filter batch actions with `--runtime` |
 | `agent-team job queue drop <job-id> <id>` | Drop one job-owned queue item |
@@ -159,6 +160,7 @@ Shortcuts:
 | `agent-team team tick <team>` | Scoped maintenance cycle |
 | `agent-team team repair <team>` | Scoped repair loop |
 | `agent-team team queue <team>` | Scoped queue list; filter queued dispatches with `--runtime` |
+| `agent-team team queue show <team> <id>` | Inspect one active queue item owned by a team |
 | `agent-team team queue retry <team> --all` | Retry matching team-owned entries; filter batch actions with `--runtime` |
 | `agent-team team queue drop <team> --all` | Drop matching team-owned entries; filter batch actions with `--runtime` |
 | `agent-team team queue prune <team>` | Age-prune team-owned entries; filter prune candidates with `--runtime` |

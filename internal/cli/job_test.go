@@ -796,6 +796,32 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 		t.Fatalf("job queue runtime ids = %s", got)
 	}
 
+	showText := NewRootCmd()
+	showTextOut, showTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showText.SetOut(showTextOut)
+	showText.SetErr(showTextErr)
+	showText.SetArgs([]string{"job", "queue", "show", "SQU-120", "q-job-dead", "--repo", tmp})
+	if err := showText.Execute(); err != nil {
+		t.Fatalf("job queue show text: %v\nstderr=%s", err, showTextErr.String())
+	}
+	for _, want := range []string{"Runtime:     codex", "agent-team job queue retry squ-120 q-job-dead", "agent-team job queue drop squ-120 q-job-dead"} {
+		if !strings.Contains(showTextOut.String(), want) {
+			t.Fatalf("job queue show missing %q:\n%s", want, showTextOut.String())
+		}
+	}
+
+	showOther := NewRootCmd()
+	showOtherOut, showOtherErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showOther.SetOut(showOtherOut)
+	showOther.SetErr(showOtherErr)
+	showOther.SetArgs([]string{"job", "queue", "show", "SQU-120", "q-other", "--repo", tmp, "--json"})
+	if err := showOther.Execute(); err == nil {
+		t.Fatalf("job queue show unrelated item unexpectedly succeeded: stdout=%s", showOtherOut.String())
+	}
+	if !strings.Contains(showOtherErr.String(), "not owned by job") {
+		t.Fatalf("job queue show unrelated stderr = %q", showOtherErr.String())
+	}
+
 	ready := NewRootCmd()
 	readyOut, readyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	ready.SetOut(readyOut)

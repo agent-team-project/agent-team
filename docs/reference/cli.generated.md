@@ -1745,6 +1745,7 @@ Subcommands:
 - `agent-team job queue prune` - Prune queue items owned by one job.
 - `agent-team job queue quarantine` - List quarantined queue files owned by one job.
 - `agent-team job queue retry` - Retry queue items owned by one job.
+- `agent-team job queue show` - Show one queue item owned by one job.
 
 ## `agent-team job queue drop`
 
@@ -1908,6 +1909,22 @@ Flags:
       --repo string          Repo root. (default "<repo>")
       --runtime strings      With --all, filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.
       --state string         With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.
+```
+
+## `agent-team job queue show`
+
+Show one queue item owned by one job.
+
+```text
+agent-team job queue show <job-id> <id> [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --json            Emit the queue item as JSON.
+      --repo string     Repo root. (default "<repo>")
 ```
 
 ## `agent-team job ready`
@@ -4345,6 +4362,7 @@ Subcommands:
 - `agent-team team queue prune` - Prune team-owned queue items.
 - `agent-team team queue quarantine` - List quarantined queue files scoped to one team.
 - `agent-team team queue retry` - Retry team-owned queue items.
+- `agent-team team queue show` - Show one queue item owned by one team.
 
 ## `agent-team team queue drop`
 
@@ -4511,6 +4529,22 @@ Flags:
       --repo string          Repo root. (default "<repo>")
       --runtime strings      With --all, filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.
       --state string         With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.
+```
+
+## `agent-team team queue show`
+
+Show one queue item owned by one team.
+
+```text
+agent-team team queue show <team> <id> [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --json            Emit the queue item as JSON.
+      --repo string     Repo root. (default "<repo>")
 ```
 
 ## `agent-team team ready`

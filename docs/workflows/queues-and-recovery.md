@@ -58,6 +58,7 @@ agent-team job queue squ-42
 agent-team job queue squ-42 --summary
 agent-team job queue squ-42 --runtime codex
 agent-team job queue squ-42 --summary --runtime codex
+agent-team job queue show squ-42 <id>
 ```
 
 Team-scoped:
@@ -67,6 +68,7 @@ agent-team team queue delivery --state dead
 agent-team team queue delivery --summary
 agent-team team queue delivery --runtime codex
 agent-team team queue delivery --summary --runtime codex
+agent-team team queue show delivery <id>
 ```
 
 ## Retry and Drop

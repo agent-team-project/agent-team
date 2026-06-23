@@ -3386,6 +3386,32 @@ instances = ["other"]
 		t.Fatalf("team queue runtime-filtered ids = %v", got)
 	}
 
+	showText := NewRootCmd()
+	showTextOut, showTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showText.SetOut(showTextOut)
+	showText.SetErr(showTextErr)
+	showText.SetArgs([]string{"team", "queue", "show", "delivery", "q-team-claude", "--repo", root})
+	if err := showText.Execute(); err != nil {
+		t.Fatalf("team queue show text: %v\nstderr=%s", err, showTextErr.String())
+	}
+	for _, want := range []string{"Runtime:     claude", "agent-team queue retry q-team-claude", "agent-team queue drop q-team-claude"} {
+		if !strings.Contains(showTextOut.String(), want) {
+			t.Fatalf("team queue show missing %q:\n%s", want, showTextOut.String())
+		}
+	}
+
+	showOther := NewRootCmd()
+	showOtherOut, showOtherErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showOther.SetOut(showOtherOut)
+	showOther.SetErr(showOtherErr)
+	showOther.SetArgs([]string{"team", "queue", "show", "delivery", "q-other-target", "--repo", root, "--json"})
+	if err := showOther.Execute(); err == nil {
+		t.Fatalf("team queue show unrelated item unexpectedly succeeded: stdout=%s", showOtherOut.String())
+	}
+	if !strings.Contains(showOtherErr.String(), "not owned by team") {
+		t.Fatalf("team queue show unrelated stderr = %q", showOtherErr.String())
+	}
+
 	summary := NewRootCmd()
 	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	summary.SetOut(summaryOut)

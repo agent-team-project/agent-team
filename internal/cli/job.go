@@ -111,10 +111,49 @@ func newJobQueueCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate queue counts instead of queue rows.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
+	cmd.AddCommand(newJobQueueShowCmd())
 	cmd.AddCommand(newJobQueueQuarantineCmd())
 	cmd.AddCommand(newJobQueueRetryCmd())
 	cmd.AddCommand(newJobQueueDropCmd())
 	cmd.AddCommand(newJobQueuePruneCmd())
+	return cmd
+}
+
+func newJobQueueShowCmd() *cobra.Command {
+	var (
+		repo    string
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "show <job-id> <id>",
+		Short: "Show one queue item owned by one job.",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue show: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseQueueFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job queue show: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
+			if err != nil {
+				return err
+			}
+			item, err := readJobQueueItem(cmd.ErrOrStderr(), teamDir, j, args[1], "show")
+			if err != nil {
+				return err
+			}
+			return renderQueueItemResult(cmd.OutOrStdout(), item, jsonOut, tmpl, queueRuntimeMap(teamDir))
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the queue item as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
 
