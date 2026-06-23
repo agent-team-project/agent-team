@@ -768,7 +768,7 @@ func addJobHealth(result *healthResult, teamDir string, now time.Time) error {
 	if result == nil {
 		return nil
 	}
-	snapshot, err := collectJobTriage(teamDir, now.UTC(), defaultJobTriageStaleAfter)
+	snapshot, err := collectJobTriageWithPolicy(teamDir, now.UTC())
 	if err != nil {
 		return err
 	}

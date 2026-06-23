@@ -14,6 +14,13 @@ local_dir = ".agent_team"
 # kind = "claude" # or "codex"
 # binary = "claude"
 
+[health]
+# Non-idle/non-done status.toml files older than this are shown as stale.
+status_stale_after = "10m"
+
+# Queued or running jobs with no update after this duration appear in triage.
+job_stale_after = "24h"
+
 [linear]
 # UUID of the Linear team this repo's tickets belong to. Find it via:
 #   query { teams(first: 50) { nodes { id key name } } }

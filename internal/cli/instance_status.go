@@ -68,16 +68,16 @@ type instanceRow struct {
 	ExitedAt  time.Time
 }
 
-// staleAfter is the threshold past which a non-idle/non-done instance is
-// flagged `(stale)` in the ps output. Documented in orchestrator.md.
-const staleAfter = 10 * time.Minute
-
 // loadInstanceRows walks <teamDir>/state/*/ and produces one row per
 // directory. Reading-side errors on individual instances are degraded into
 // placeholder rows (with the parse error in the SUMMARY column) rather than
 // failing the whole `ps` — one corrupt status.toml shouldn't blind the
 // operator to every other instance.
 func loadInstanceRows(teamDir string, agentNames map[string]bool, now time.Time) []instanceRow {
+	return loadInstanceRowsWithStatusStaleAfter(teamDir, agentNames, now, defaultStatusStaleAfter)
+}
+
+func loadInstanceRowsWithStatusStaleAfter(teamDir string, agentNames map[string]bool, now time.Time, statusStaleAfter time.Duration) []instanceRow {
 	stateRoot := filepath.Join(teamDir, "state")
 	entries, err := os.ReadDir(stateRoot)
 	if err != nil {
@@ -88,7 +88,7 @@ func loadInstanceRows(teamDir string, agentNames map[string]bool, now time.Time)
 		if !e.IsDir() {
 			continue
 		}
-		rows = append(rows, instanceRowFor(stateRoot, e.Name(), agentNames, now))
+		rows = append(rows, instanceRowFor(stateRoot, e.Name(), agentNames, now, statusStaleAfter))
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Instance < rows[j].Instance })
 	return rows
@@ -103,7 +103,7 @@ func statusPhaseByInstance(teamDir string, now time.Time) map[string]string {
 	return out
 }
 
-func instanceRowFor(stateRoot, instance string, agentNames map[string]bool, now time.Time) instanceRow {
+func instanceRowFor(stateRoot, instance string, agentNames map[string]bool, now time.Time, statusStaleAfter time.Duration) instanceRow {
 	row := instanceRow{
 		Instance: instance,
 		Agent:    guessAgentName(instance, agentNames),
@@ -140,7 +140,7 @@ func instanceRowFor(stateRoot, instance string, agentNames map[string]bool, now 
 	}
 
 	if sf.Status.Phase != "idle" && sf.Status.Phase != "done" {
-		if now.Sub(st.ModTime()) > staleAfter {
+		if statusStaleAfter > 0 && now.Sub(st.ModTime()) > statusStaleAfter {
 			row.Stale = true
 		}
 	}
@@ -209,8 +209,8 @@ func newInstancePsCmd() *cobra.Command {
 		Long: "Walks .agent_team/state/*/status.toml and renders one row per " +
 			"instance. Instances with a state dir but no status.toml render " +
 			"with `—` placeholders so they remain visible. Non-idle/non-done " +
-			"rows whose status.toml is older than 10 minutes are flagged " +
-			"`(stale)`.",
+			"rows whose status.toml is older than the configured health policy " +
+			"threshold are flagged `(stale)`.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {

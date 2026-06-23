@@ -705,7 +705,11 @@ func psPhaseKey(r instanceRow) string {
 
 func collectPsRows(teamDir string, now time.Time) ([]instanceRow, error) {
 	agentNames := loadAgentNames(teamDir)
-	rows := loadInstanceRows(teamDir, agentNames, now)
+	policy, err := loadHealthPolicy(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	rows := loadInstanceRowsWithStatusStaleAfter(teamDir, agentNames, now, policy.StatusStaleAfter)
 
 	// Try the daemon. errDaemonNotRunning → fall back silently to the
 	// persisted metadata view. Other errors are surfaced (something is broken

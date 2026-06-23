@@ -360,7 +360,9 @@ ask_to = "manager"              # instance name or role this instance is asking
 
 **Atomicity.** The skill writes to `status.toml.tmp` and `rename`s over `status.toml`. The reader never sees a partial write.
 
-**Staleness.** `last_action` is a human string, not a timestamp. The reader uses the file's mtime to judge freshness: if mtime is older than 10 minutes for a non-`idle`/non-`done` instance, the row is annotated `(stale)` to flag a likely-hung agent.
+**Staleness.** `last_action` is a human string, not a timestamp. The reader uses the file's mtime to judge freshness. By default, a non-`idle`/non-`done` instance is annotated `(stale)` after 10 minutes; repos can override this with `[health].status_stale_after` in `.agent_team/config.toml`, or set it to `"0"` to disable status staleness.
+
+Queued/running job triage uses `[health].job_stale_after` from `.agent_team/config.toml` when `--stale-after` is not passed. The bundled default is `"24h"`; set it to `"0"` to disable job staleness.
 
 ### Writer surface
 

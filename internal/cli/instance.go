@@ -137,7 +137,7 @@ func collectInstanceInspect(cmd *cobra.Command, target, name string, now time.Ti
 		Runtime: inspectRuntimeJSONFromMeta(teamDir, meta),
 	}
 	if stateExists {
-		status, statusErr := inspectStatusJSONFor(stateDir, now)
+		status, statusErr := inspectStatusJSONFor(teamDir, stateDir, now)
 		info.Status = status
 		info.StatusError = statusErr
 		files, err := inspectFiles(stateDir)
@@ -338,11 +338,15 @@ func inspectRuntimeJSONFromMeta(teamDir string, meta *daemon.Metadata) *inspectR
 	return out
 }
 
-func inspectStatusJSONFor(stateDir string, now time.Time) (*inspectStatusJSON, string) {
+func inspectStatusJSONFor(teamDir, stateDir string, now time.Time) (*inspectStatusJSON, string) {
 	path := filepath.Join(stateDir, "status.toml")
 	st, err := os.Stat(path)
 	if err != nil {
 		return nil, ""
+	}
+	policy, err := loadHealthPolicy(teamDir)
+	if err != nil {
+		return nil, err.Error()
 	}
 	var sf statusFile
 	if _, err := toml.DecodeFile(path, &sf); err != nil {
@@ -355,7 +359,7 @@ func inspectStatusJSONFor(stateDir string, now time.Time) (*inspectStatusJSON, s
 		LastAction:  sf.Status.LastAction,
 		Age:         formatAge(now.Sub(st.ModTime())),
 	}
-	if sf.Status.Phase != "idle" && sf.Status.Phase != "done" && now.Sub(st.ModTime()) > staleAfter {
+	if sf.Status.Phase != "idle" && sf.Status.Phase != "done" && policy.StatusStaleAfter > 0 && now.Sub(st.ModTime()) > policy.StatusStaleAfter {
 		out.Stale = true
 	}
 	if sf.Work != nil {
@@ -2233,7 +2237,11 @@ func filterLifecycleTargetsByPhase(targets []lifecycleTarget, phases map[string]
 }
 
 func staleInstanceSet(teamDir string, now time.Time) map[string]bool {
-	rows := loadInstanceRows(teamDir, loadAgentNames(teamDir), now)
+	statusStaleAfter := defaultStatusStaleAfter
+	if policy, err := loadHealthPolicy(teamDir); err == nil {
+		statusStaleAfter = policy.StatusStaleAfter
+	}
+	rows := loadInstanceRowsWithStatusStaleAfter(teamDir, loadAgentNames(teamDir), now, statusStaleAfter)
 	out := make(map[string]bool, len(rows))
 	for _, row := range rows {
 		if row.Stale {

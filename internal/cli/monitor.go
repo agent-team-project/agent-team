@@ -513,7 +513,7 @@ func collectMonitorSummarySnapshot(teamDir string, now time.Time, opts monitorOp
 		snapshot.Plan = &lifecycleActionSummaryResult{Summary: summary}
 	}
 	if opts.IncludeJobs {
-		jobs, err := collectJobTriage(teamDir, now, defaultJobTriageStaleAfter)
+		jobs, err := collectJobTriageWithPolicy(teamDir, now)
 		if err != nil {
 			return nil, err
 		}
@@ -806,7 +806,7 @@ func collectMonitorSnapshot(teamDir string, now time.Time, probe processStatsPro
 		snapshot.Plan = plan
 	}
 	if opts.IncludeJobs {
-		jobs, err := collectJobTriage(teamDir, now, defaultJobTriageStaleAfter)
+		jobs, err := collectJobTriageWithPolicy(teamDir, now)
 		if err != nil {
 			return nil, err
 		}

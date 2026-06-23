@@ -10,9 +10,18 @@ Resolved template parameters.
 [linear]
 team_id = "00000000-0000-0000-0000-000000000000"
 ticket_prefix = "SQU"
+
+[health]
+status_stale_after = "10m"
+job_stale_after = "24h"
 ```
 
 Read by skills and the CLI.
+
+`[health]` is optional. `status_stale_after` controls when non-idle/non-done
+instance `status.toml` files are marked stale in `ps`, `health`, `monitor`, and
+related views. `job_stale_after` controls stale queued/running job triage. Set
+either value to `"0"` to disable that stale check.
 
 ## `.agent_team/.template.lock`
 

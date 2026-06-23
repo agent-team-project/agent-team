@@ -750,10 +750,6 @@ func newTeamTriageCmd() *cobra.Command {
 			"persisted daemon queue items, status-file update previews, and ready pipeline steps.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if staleAfter < 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --stale-after must be >= 0.")
-				return exitErr(2)
-			}
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --interval must be >= 0.")
 				return exitErr(2)
@@ -776,6 +772,18 @@ func newTeamTriageCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if !cmd.Flags().Changed("stale-after") {
+				configured, err := configuredJobTriageStaleAfter(teamDir)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team triage: %v\n", err)
+					return exitErr(2)
+				}
+				staleAfter = configured
+			}
+			if staleAfter < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --stale-after must be >= 0.")
+				return exitErr(2)
+			}
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
@@ -790,7 +798,7 @@ func newTeamTriageCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
-	cmd.Flags().DurationVar(&staleAfter, "stale-after", defaultJobTriageStaleAfter, "Flag queued or running jobs with no update after this duration (0 disables stale checks).")
+	cmd.Flags().DurationVar(&staleAfter, "stale-after", defaultJobTriageStaleAfter, "Flag queued or running jobs with no update after this duration (default: [health].job_stale_after or 24h; 0 disables stale checks).")
 	cmd.Flags().StringVar(&minSeverity, "min-severity", "", "Only show attention rows at least this severe: critical, warning, or info.")
 	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show attention rows with this reason. Can repeat or comma-separate.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the team triage view until interrupted.")
@@ -4378,7 +4386,7 @@ func addTeamJobHealth(result *healthResult, teamDir string, top *topology.Topolo
 		return nil
 	}
 	ownedIDs := jobIDSet(ownedJobs)
-	triage, err := collectJobTriage(teamDir, now.UTC(), defaultJobTriageStaleAfter)
+	triage, err := collectJobTriageWithPolicy(teamDir, now.UTC())
 	if err != nil {
 		return err
 	}

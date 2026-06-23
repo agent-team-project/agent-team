@@ -46,6 +46,7 @@ Built or substantially implemented:
 - generated CLI reference command and check mode
 - topology gallery examples
 - local orchestration demo harness with fake runtime
+- repo-configurable health stale thresholds
 
 ## What Still Needs Design Care
 
@@ -79,7 +80,6 @@ Use these when evaluating feature ideas:
 
 High-value follow-up work:
 
-- richer health policy configuration
 - pipeline visualization in docs
 - template authoring smoke harness
 - `job cleanup` PR merge verification integration

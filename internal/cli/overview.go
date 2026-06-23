@@ -233,7 +233,7 @@ func collectOverview(teamDir string, now time.Time, scheduleLimit int) *overview
 	}
 
 	if out.Jobs.Summary.Total == 0 && out.Jobs.Attention == 0 && out.Jobs.ReadySteps == 0 {
-		if triage, err := collectJobTriage(teamDir, now, defaultJobTriageStaleAfter); err != nil {
+		if triage, err := collectJobTriageWithPolicy(teamDir, now); err != nil {
 			out.addError("jobs", err)
 		} else {
 			out.Jobs = overviewJobsFromTriage(triage)
@@ -312,7 +312,7 @@ func collectTeamOverview(teamDir, name string, now time.Time, scheduleLimit int)
 	}
 
 	if out.Jobs.Summary.Total == 0 && out.Jobs.Attention == 0 && out.Jobs.ReadySteps == 0 {
-		if triage, err := collectTeamTriage(teamDir, team.Name, now, defaultJobTriageStaleAfter, jobTriageFilters{}); err != nil {
+		if triage, err := collectTeamTriageWithPolicy(teamDir, team.Name, now, jobTriageFilters{}); err != nil {
 			out.addError("jobs", err)
 		} else {
 			out.Jobs = overviewJobsFromTriage(triage)

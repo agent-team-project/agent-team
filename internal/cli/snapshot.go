@@ -167,7 +167,7 @@ func collectSnapshot(teamDir, repoRoot string, opts snapshotOptions) *snapshotRe
 	} else {
 		out.Jobs = jobs
 	}
-	if triage, err := collectJobTriage(teamDir, now, defaultJobTriageStaleAfter); err != nil {
+	if triage, err := collectJobTriageWithPolicy(teamDir, now); err != nil {
 		out.addError("job_triage", err)
 	} else {
 		out.JobTriage = &triage
@@ -295,7 +295,7 @@ func collectTeamSnapshot(teamDir, repoRoot, name string, opts snapshotOptions) (
 		out.QueueQuarantine = teamQuarantine
 		applyQueueQuarantineSummary(ensureSnapshotQueueSummary(out, now), teamQuarantine)
 	}
-	if triage, err := collectJobTriage(teamDir, now, defaultJobTriageStaleAfter); err != nil {
+	if triage, err := collectJobTriageWithPolicy(teamDir, now); err != nil {
 		out.addError("job_triage", err)
 	} else {
 		triage.Summary = summarizeJobs(ownedJobs)

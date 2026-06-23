@@ -40,3 +40,15 @@ key         = "team.pm_tool"
 type        = "string"
 default     = "linear"
 description = "Which PM tool the team talks to. v1 only supports linear."
+
+[[parameter]]
+key         = "health.status_stale_after"
+type        = "string"
+default     = "10m"
+description = "How old a non-idle/non-done status.toml can be before instance views mark it stale. Set to 0 to disable status staleness."
+
+[[parameter]]
+key         = "health.job_stale_after"
+type        = "string"
+default     = "24h"
+description = "How old a queued or running job update can be before triage marks it stale. Set to 0 to disable job staleness."

@@ -323,6 +323,14 @@ kind = "codex"   # or "claude"
 binary = "codex" # optional wrapper/binary override
 ```
 
+Health thresholds are repo-configurable too:
+
+```toml
+[health]
+status_stale_after = "10m"
+job_stale_after = "24h"
+```
+
 Environment variables take precedence:
 
 - `AGENT_TEAM_RUNTIME=claude` (default) enables the full daemon, resume, subagent registry, and queue/event dispatch path.
