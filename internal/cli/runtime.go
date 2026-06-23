@@ -40,7 +40,7 @@ func newRuntimeCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime: %v\n", err)
 				return exitErr(2)
 			}
-			info, err := collectRuntimeInfoForTarget(target)
+			info, err := collectRuntimeInfoForTarget(effectiveRepoTarget(cmd, target))
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime: %v\n", err)
 				return exitErr(2)

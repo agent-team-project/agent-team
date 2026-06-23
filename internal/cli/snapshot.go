@@ -56,7 +56,7 @@ func newSnapshotCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			repoRoot, err := filepath.Abs(target)
+			repoRoot, err := filepath.Abs(effectiveRepoTarget(cmd, target))
 			if err != nil {
 				return err
 			}

@@ -134,7 +134,7 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		return exitErr(2)
 	}
 
-	target, err := filepath.Abs(cfg.target)
+	target, err := filepath.Abs(effectiveRepoTarget(cmd, cfg.target))
 	if err != nil {
 		return exitErr(2)
 	}

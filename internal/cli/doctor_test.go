@@ -69,6 +69,36 @@ func TestDoctor_PassesWithFilledLinearKeys(t *testing.T) {
 	}
 }
 
+func TestDoctor_RepoFlagOverridesTarget(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "claude" {
+			t.Fatalf("look path bin = %q, want claude", bin)
+		}
+		return "/usr/local/bin/claude", nil
+	})
+
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	badTarget := t.TempDir()
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"--repo", tmp, "doctor", "--target", badTarget})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("doctor with --repo override: %v\nstderr: %s", err, errOut.String())
+	}
+	if !strings.Contains(out.String(), "agent-team doctor: OK") {
+		t.Fatalf("expected OK output, got: %s", out.String())
+	}
+	if strings.Contains(errOut.String(), badTarget) {
+		t.Fatalf("doctor inspected legacy --target despite --repo override: %s", errOut.String())
+	}
+}
+
 func TestDoctor_WarnsWhenAgentTeamdMissing(t *testing.T) {
 	oldFind := findAgentTeamd
 	findAgentTeamd = func() (string, error) {

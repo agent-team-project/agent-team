@@ -70,6 +70,12 @@ and `tick` do not advance them.
    `channel`, `instance`, and top-level lifecycle commands use `--target`.
    This caused real operator mistakes during validation.
 
+   Status after follow-up on 2026-06-23: the global `--repo` selector is now a
+   supported override for repo-scoped commands that still expose legacy
+   repo-root `--target`, including `run`, `doctor`, `runtime`, and `snapshot`.
+   The remaining work is command-shape cleanup and help-text consistency, not a
+   functional repo-selection blocker.
+
 2. **Roadmap command shape is not exactly current CLI shape.**
    The roadmap example `agent-team job create <ticket> --target worker` is
    valid for target agent selection, but when combined with commands that use
@@ -183,8 +189,8 @@ and `tick` do not advance them.
 
 ## Suggested Next Fixes
 
-1. Standardize repo-root flags on `--repo` and keep `--target` for agent/event
-   target semantics.
+1. Finish standardizing help text and examples around global `--repo`; keep
+   command-local `--target` for destination, agent, or event target semantics.
 2. Fix `pipeline advance` / `team advance` / `tick` so fresh queued first steps
    advance the same way `job advance` previews.
 3. Preserve post-mortem metadata/logs for job-owned ephemeral workers, and

@@ -2,6 +2,12 @@
 
 This is a developer-oriented command map. Run `agent-team <command> --help` for exact flag help from the current binary.
 
+Most commands that read an existing `.agent_team/` tree accept the global
+`--repo <dir>` selector. Older commands may still expose `--target <dir>` for
+the repo root; when both are present, `--repo` wins. Commands that create or
+render into a destination, such as `init` and `template run`, keep `--target`
+as the output directory instead.
+
 ## Project Setup
 
 | Command | Purpose |

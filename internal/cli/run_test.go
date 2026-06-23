@@ -235,6 +235,37 @@ func TestRun_ExecsClaudeWithExpectedArgs(t *testing.T) {
 	}
 }
 
+func TestRun_RepoFlagOverridesTarget(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	badTarget := t.TempDir()
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--repo", tmp, "run", "manager", "--target", badTarget, "--prompt", "kickoff message", "--no-daemon"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run with --repo override: %v", err)
+	}
+
+	wantRoot := tmp
+	if eval, err := filepath.EvalSymlinks(wantRoot); err == nil {
+		wantRoot = eval
+	}
+	if cap.cwd != wantRoot {
+		t.Fatalf("cwd = %q, want repo root %q", cap.cwd, wantRoot)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".agent_team", "state", "manager")); err != nil {
+		t.Fatalf("expected state in --repo target: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(badTarget, ".agent_team", "state", "manager")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected state in legacy --target: %v", err)
+	}
+}
+
 func TestRun_CodexRuntimeBuildsDirectExecArgs(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindCodex))
 	tmp := t.TempDir()

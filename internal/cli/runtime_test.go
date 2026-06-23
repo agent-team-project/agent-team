@@ -126,23 +126,28 @@ func TestRuntimeCommand_FormatRejectsJSON(t *testing.T) {
 	}
 }
 
-func TestRuntimeCommand_RepoConfigCodexJSON(t *testing.T) {
-	t.Setenv(runtimebin.EnvRuntime, "")
-	t.Setenv(runtimebin.EnvBinary, "")
-	tmp := t.TempDir()
-	initInto(t, tmp)
-	cfg := filepath.Join(tmp, ".agent_team", "config.toml")
+func appendRuntimeConfigForRuntimeTest(t *testing.T, root, kind, binary string) {
+	t.Helper()
+	cfg := filepath.Join(root, ".agent_team", "config.toml")
 	f, err := os.OpenFile(cfg, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatalf("open config: %v", err)
 	}
-	if _, err := f.WriteString("\n[runtime]\nkind = \"codex\"\nbinary = \"codex-wrapper\"\n"); err != nil {
+	if _, err := f.WriteString("\n[runtime]\nkind = \"" + kind + "\"\nbinary = \"" + binary + "\"\n"); err != nil {
 		_ = f.Close()
 		t.Fatalf("write config: %v", err)
 	}
 	if err := f.Close(); err != nil {
 		t.Fatalf("close config: %v", err)
 	}
+}
+
+func TestRuntimeCommand_RepoConfigCodexJSON(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	appendRuntimeConfigForRuntimeTest(t, tmp, "codex", "codex-wrapper")
 	withRuntimeLookPath(t, func(bin string) (string, error) {
 		if bin != "codex-wrapper" {
 			t.Fatalf("look path bin = %q, want codex-wrapper", bin)
@@ -164,6 +169,42 @@ func TestRuntimeCommand_RepoConfigCodexJSON(t *testing.T) {
 	}
 	if info.Runtime != "codex" || info.Binary != "codex-wrapper" || info.ConfigPath == "" {
 		t.Fatalf("info = %+v, want config-backed codex", info)
+	}
+}
+
+func TestRuntimeCommand_RepoFlagOverridesTarget(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	appendRuntimeConfigForRuntimeTest(t, tmp, "codex", "codex-wrapper")
+	badTarget := t.TempDir()
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "codex-wrapper" {
+			t.Fatalf("look path bin = %q, want codex-wrapper", bin)
+		}
+		return "/usr/local/bin/codex-wrapper", nil
+	})
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"--repo", tmp, "runtime", "--target", badTarget, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime with --repo override: %v\nstderr: %s", err, errOut.String())
+	}
+	var info runtimeInfo
+	if err := json.Unmarshal(out.Bytes(), &info); err != nil {
+		t.Fatalf("json: %v\n%s", err, out.String())
+	}
+	wantRoot := tmp
+	if eval, err := filepath.EvalSymlinks(wantRoot); err == nil {
+		wantRoot = eval
+	}
+	wantConfig := filepath.ToSlash(filepath.Join(wantRoot, ".agent_team", "config.toml"))
+	if info.Binary != "codex-wrapper" || info.ConfigPath != wantConfig {
+		t.Fatalf("info = %+v, want config from --repo %s", info, wantConfig)
 	}
 }
 

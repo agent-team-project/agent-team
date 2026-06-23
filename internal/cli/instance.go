@@ -3053,11 +3053,7 @@ func flattenForPrint(t map[string]any, prefix string) map[string]any {
 // emitting a stderr message and ExitCode(2) if missing — matches the Python
 // helper of the same name.
 func resolveTeamDir(cmd *cobra.Command, target string) (string, error) {
-	if cmd != nil {
-		if flag := cmd.Root().PersistentFlags().Lookup(rootRepoFlagName); flag != nil && flag.Changed {
-			target = strings.TrimSpace(flag.Value.String())
-		}
-	}
+	target = effectiveRepoTarget(cmd, target)
 	abs, err := filepath.Abs(target)
 	if err != nil {
 		return "", exitErr(2)
@@ -3072,6 +3068,17 @@ func resolveTeamDir(cmd *cobra.Command, target string) (string, error) {
 		return "", exitErr(2)
 	}
 	return teamDir, nil
+}
+
+func effectiveRepoTarget(cmd *cobra.Command, target string) string {
+	if cmd != nil {
+		if flag := cmd.Root().PersistentFlags().Lookup(rootRepoFlagName); flag != nil && flag.Changed {
+			if value := strings.TrimSpace(flag.Value.String()); value != "" {
+				return value
+			}
+		}
+	}
+	return target
 }
 
 // confirm reads a yes/no answer from cmd.InOrStdin(). Returns true on y/yes
