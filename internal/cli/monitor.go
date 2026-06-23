@@ -43,6 +43,7 @@ func newMonitorCmd() *cobra.Command {
 		eventSince      string
 		interval        time.Duration
 		statusFilters   []string
+		runtimeFilters  []string
 		agentFilters    []string
 		phaseFilters    []string
 		instanceFilters []string
@@ -102,7 +103,7 @@ func newMonitorCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team monitor: %v\n", err)
 				return exitErr(2)
 			}
-			opts, err := newMonitorOptionsWithInstancesPhasesStaleAndUnhealthy(all, statusFilters, agentFilters, phaseFilters, instanceFilters, staleOnly, unhealthyOnly)
+			opts, err := newMonitorOptionsWithRuntimeInstancesPhasesStaleAndUnhealthy(all, statusFilters, runtimeFilters, agentFilters, phaseFilters, instanceFilters, staleOnly, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team monitor: %v\n", err)
 				return exitErr(2)
@@ -201,6 +202,7 @@ func newMonitorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&eventSince, "since", "", "With --events, only show lifecycle events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show lifecycle status in instance, stats, and plan sections: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show instances and stats for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&agentFilters, "agent", nil, "Only show instances, stats, and plan rows for this agent. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show instances and stats in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only show instances, stats, and plan rows with this name. Can repeat or comma-separate.")
@@ -240,11 +242,15 @@ func newMonitorOptionsWithInstancesPhasesAndStale(all bool, statusFilters, agent
 }
 
 func newMonitorOptionsWithInstancesPhasesStaleAndUnhealthy(all bool, statusFilters, agentFilters, phaseFilters, instanceFilters []string, staleOnly, unhealthyOnly bool) (monitorOptions, error) {
-	psOpts, err := newPsOptionsWithInstancesAndUnhealthy(statusFilters, agentFilters, phaseFilters, instanceFilters, staleOnly, unhealthyOnly)
+	return newMonitorOptionsWithRuntimeInstancesPhasesStaleAndUnhealthy(all, statusFilters, nil, agentFilters, phaseFilters, instanceFilters, staleOnly, unhealthyOnly)
+}
+
+func newMonitorOptionsWithRuntimeInstancesPhasesStaleAndUnhealthy(all bool, statusFilters, runtimeFilters, agentFilters, phaseFilters, instanceFilters []string, staleOnly, unhealthyOnly bool) (monitorOptions, error) {
+	psOpts, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(statusFilters, runtimeFilters, agentFilters, phaseFilters, instanceFilters, staleOnly, unhealthyOnly)
 	if err != nil {
 		return monitorOptions{}, err
 	}
-	statsOpts, err := newStatsOptionsWithInstancesAndPhases(all, statusFilters, agentFilters, phaseFilters, instanceFilters)
+	statsOpts, err := newStatsOptionsWithRuntimeInstancesPhasesAndUnhealthy(all, statusFilters, runtimeFilters, agentFilters, phaseFilters, instanceFilters, false)
 	if err != nil {
 		return monitorOptions{}, err
 	}
@@ -651,7 +657,7 @@ func summarizeMonitorEvents(events []daemon.LifecycleEvent) eventSummaryJSON {
 }
 
 func monitorSummarySelectedInstanceSet(teamDir string, now time.Time, opts psOptions) (map[string]bool, error) {
-	if opts.Limit <= 0 && len(opts.phases) == 0 && !opts.stale && !opts.unhealthy {
+	if opts.Limit <= 0 && len(opts.runtimes) == 0 && len(opts.phases) == 0 && !opts.stale && !opts.unhealthy {
 		return nil, nil
 	}
 	rows, err := collectPsRows(teamDir, now)
@@ -1046,7 +1052,7 @@ func teamMonitorEventFilters(teamDir, name string, opts monitorOptions, selected
 }
 
 func monitorSelectedInstanceSet(rows []instanceRow, opts psOptions) map[string]bool {
-	if opts.Limit <= 0 && len(opts.phases) == 0 && !opts.stale && !opts.unhealthy {
+	if opts.Limit <= 0 && len(opts.runtimes) == 0 && len(opts.phases) == 0 && !opts.stale && !opts.unhealthy {
 		return nil
 	}
 	out := make(map[string]bool, len(rows))

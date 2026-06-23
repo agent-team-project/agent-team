@@ -830,6 +830,42 @@ description = "waiting"
 	}
 }
 
+func TestCollectMonitorSnapshotFiltersRuntimeRows(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "codex-worker", Agent: "worker", Runtime: "codex", RuntimeBinary: "codex-dev", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-5 * time.Minute)},
+		{Instance: "claude-manager", Agent: "manager", Runtime: "claude", RuntimeBinary: "claude-code", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-3 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	opts, err := newMonitorOptionsWithRuntimeInstancesPhasesStaleAndUnhealthy(false, nil, []string{"codex"}, nil, nil, nil, false, false)
+	if err != nil {
+		t.Fatalf("newMonitorOptionsWithRuntimeInstancesPhasesStaleAndUnhealthy: %v", err)
+	}
+
+	snapshot, err := collectMonitorSnapshot(teamDir, now, func(pid int) (processStats, error) {
+		return processStats{CPUPercent: 1.0, MemoryPercent: 0.5, RSSKiB: 1024}, nil
+	}, opts)
+	if err != nil {
+		t.Fatalf("collect monitor with runtime filter: %v", err)
+	}
+	if len(snapshot.Instances) != 1 || snapshot.Instances[0].Instance != "codex-worker" || snapshot.Instances[0].Runtime != "codex" || snapshot.Instances[0].RuntimeBinary != "codex-dev" {
+		t.Fatalf("instances = %+v, want codex worker only", snapshot.Instances)
+	}
+	if snapshot.Health == nil || snapshot.Health.Summary.Total != 1 {
+		t.Fatalf("health should be filtered to the codex row: %+v", snapshot.Health)
+	}
+	if len(snapshot.Stats) != 1 || snapshot.Stats[0].Instance != "codex-worker" || snapshot.Stats[0].Runtime != "codex" || snapshot.Stats[0].RuntimeBinary != "codex-dev" {
+		t.Fatalf("stats = %+v, want codex worker only", snapshot.Stats)
+	}
+}
+
 func TestCollectMonitorSnapshotSortsInstanceRows(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -1780,6 +1816,21 @@ func TestMonitorRejectsUnknownStatus(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "unknown --status") {
 		t.Fatalf("stderr = %q, want status validation", stderr.String())
+	}
+}
+
+func TestMonitorRejectsUnknownRuntime(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--runtime", "llama"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected runtime validation error")
+	}
+	if !strings.Contains(stderr.String(), "unknown --runtime") {
+		t.Fatalf("stderr = %q, want runtime validation", stderr.String())
 	}
 }
 
