@@ -755,6 +755,7 @@ Flags:
   -n, --last int           Show events for the N most recently started daemon-known instances after other filters (0 = all).
       --latest             Show events for the most recently started daemon-known instance after other filters.
       --phase strings      Only show events for instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
+      --runtime strings    Only show events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
       --since string       Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --stale              Only show events for instances whose status.toml is currently stale.
       --status strings     Only show events with this lifecycle status. Can repeat or comma-separate.

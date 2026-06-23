@@ -585,6 +585,80 @@ func TestEventsLatestUsesLocalNewestMetadataWhenDaemonStopped(t *testing.T) {
 	}
 }
 
+func TestEventsRuntimeFilterUsesLocalMetadataWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "worker-old", Agent: "worker", Runtime: "codex", Status: daemon.StatusStopped, StartedAt: now.Add(-2 * time.Hour)},
+		{Instance: "manager-new", Agent: "manager", Runtime: "claude", Status: daemon.StatusStopped, StartedAt: now.Add(-1 * time.Minute)},
+		{Instance: "worker-new", Agent: "worker", Runtime: "codex", Status: daemon.StatusStopped, StartedAt: now.Add(-5 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+		if err := daemon.AppendLifecycleEvent(root, &daemon.LifecycleEvent{
+			TS:       now.Add(time.Duration(len(meta.Instance)) * time.Second),
+			Action:   "dispatch",
+			Instance: meta.Instance,
+			Agent:    meta.Agent,
+			Status:   meta.Status,
+			Message:  meta.Instance,
+		}); err != nil {
+			t.Fatalf("append event %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{
+		"events",
+		"--runtime", "codex",
+		"--format", "{{.Instance}}",
+		"--target", tmp,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("events --runtime fallback: %v\nstderr=%s", err, stderr.String())
+	}
+	if got, want := stdout.String(), "worker-old\nworker-new\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+
+	latest := NewRootCmd()
+	var latestOut, latestErr bytes.Buffer
+	latest.SetOut(&latestOut)
+	latest.SetErr(&latestErr)
+	latest.SetArgs([]string{
+		"events",
+		"--runtime", "codex",
+		"--latest",
+		"--format", "{{.Instance}}",
+		"--target", tmp,
+	})
+	if err := latest.Execute(); err != nil {
+		t.Fatalf("events --runtime --latest fallback: %v\nstderr=%s", err, latestErr.String())
+	}
+	if got, want := latestOut.String(), "worker-new\n"; got != want {
+		t.Fatalf("latest stdout = %q, want %q", got, want)
+	}
+
+	bad := NewRootCmd()
+	bad.SetOut(&bytes.Buffer{})
+	var badErr bytes.Buffer
+	bad.SetErr(&badErr)
+	bad.SetArgs([]string{"events", "--runtime", "llama", "--target", tmp})
+	if err := bad.Execute(); err == nil {
+		t.Fatal("events accepted unknown runtime")
+	}
+	if !strings.Contains(badErr.String(), "unknown --runtime") {
+		t.Fatalf("bad runtime stderr = %q", badErr.String())
+	}
+}
+
 func TestEventsPhaseFilterUsesLocalStatusWhenDaemonStopped(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

@@ -34,6 +34,7 @@ func newEventsCmd() *cobra.Command {
 		instanceFilters []string
 		agentFilters    []string
 		statusFilters   []string
+		runtimeFilters  []string
 		phaseFilters    []string
 		staleOnly       bool
 		unhealthyOnly   bool
@@ -96,6 +97,11 @@ func newEventsCmd() *cobra.Command {
 			} else {
 				client = daemonClientForFilters
 			}
+			filters, err = applyEventRuntimeFilter(teamDir, daemonClientForFilters, filters, runtimeFilters)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team events: %v\n", err)
+				return exitErr(2)
+			}
 			if len(phases) > 0 || staleOnly || unhealthyOnly {
 				filters, err = applyCurrentEventInstanceFilter(teamDir, filters, phases, staleOnly, unhealthyOnly, time.Now())
 				if err != nil {
@@ -126,6 +132,7 @@ func newEventsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only show events for this instance. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&agentFilters, "agent", nil, "Only show events for this agent. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show events with this lifecycle status. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show events for instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show events for instances whose status.toml is currently stale.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show events for instances that are currently crashed or stale.")
@@ -335,6 +342,39 @@ func eventFilterMetadata(teamDir string, dc *daemonClient) ([]*daemon.Metadata, 
 		return dc.Instances()
 	}
 	return daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+}
+
+func applyEventRuntimeFilter(teamDir string, dc *daemonClient, filters eventFilters, runtimeFilters []string) (eventFilters, error) {
+	if len(runtimeFilters) == 0 {
+		return filters, nil
+	}
+	runtimes, err := lifecycleRuntimeFilterSet(runtimeFilters)
+	if err != nil {
+		return filters, err
+	}
+	metas, err := eventFilterMetadata(teamDir, dc)
+	if err != nil {
+		return filters, err
+	}
+	instances := make(map[string]bool, len(metas))
+	for _, meta := range metas {
+		if meta == nil {
+			continue
+		}
+		if eventFiltersHaveInstanceScope(filters) && !eventFilterMatchesInstance(filters, meta.Instance) {
+			continue
+		}
+		if !runtimes[metadataRuntimeKey(meta)] {
+			continue
+		}
+		instances[meta.Instance] = true
+	}
+	if len(instances) == 0 {
+		instances[""] = false
+	}
+	filters.instances = instances
+	filters.instancePrefixes = nil
+	return filters, nil
 }
 
 func eventLatestLimit(latest bool, limit int) int {
