@@ -2297,6 +2297,7 @@ Flags:
       --phase strings           Force-stop daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
   -q, --quiet                   Suppress non-error output and use only the exit code.
       --rm                      Remove selected instance state and daemon metadata after killing.
+      --runtime strings         Only force-stop running daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
       --stale                   Only force-stop instances whose status.toml is stale.
       --status strings          Force-stop daemon-known instances currently in this lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary                 Show aggregate action counts instead of per-instance rows.
@@ -3271,6 +3272,7 @@ Flags:
       --prompt string            Override the default kickoff prompt for instances started fresh.
   -q, --quiet                    Suppress non-error output and use only the exit code.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
+      --runtime strings          Only restart or resume daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
       --stale                    Only restart or resume instances whose status.toml is stale.
       --status strings           Only restart or resume instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary                  Show aggregate action counts instead of per-instance rows.
@@ -3609,6 +3611,7 @@ Flags:
       --prompt string            Override the default kickoff prompt.
   -q, --quiet                    Suppress non-error output and use only the exit code.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
+      --runtime strings          Only start or resume daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
       --stale                    Only start or resume instances whose status.toml is stale.
       --status strings           Only start or resume instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary                  Show aggregate action counts instead of per-instance rows.
@@ -3735,6 +3738,7 @@ Flags:
       --phase strings           Stop daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
   -q, --quiet                   Suppress non-error output and use only the exit code.
       --rm                      Remove selected instance state and daemon metadata after stopping.
+      --runtime strings         Only stop running daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
       --stale                   Only stop instances whose status.toml is stale.
       --status strings          Stop daemon-known instances currently in this lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary                 Show aggregate action counts instead of per-instance rows.

@@ -166,13 +166,13 @@ Most repo-scoped commands accept the global `--repo <dir>` selector. Legacy repo
 ```sh
 agent-team init [<ref>] [--set k=v]... [--no-input] [--force]
                                                 # instantiate a template into the current repo
-agent-team start [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status stopped] [--phase idle] [--stale] [--unhealthy] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--ready-timeout 3s] [--wait --timeout 30s] [--attach --tail N|all] [--json]
+agent-team start [<instance>...] [-q] [--all] [--latest | --last N] [--runtime codex] [--agent manager] [--status stopped] [--phase idle] [--stale] [--unhealthy] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--ready-timeout 3s] [--wait --timeout 30s] [--attach --tail N|all] [--json]
                                                 # start daemon, then start/resume persistent or daemon-known instances
-agent-team stop [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [-f] [--rm] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--wait --wait-timeout 30s] [--timeout 10s] [--json]
+agent-team stop [<instance>...] [-q] [--all] [--latest | --last N] [--runtime codex] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [-f] [--rm] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--wait --wait-timeout 30s] [--timeout 10s] [--json]
                                                 # stop persistent instances, or all daemon-managed instances
-agent-team kill [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--rm] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--timeout 2s] [--wait --wait-timeout 30s] [--json]
+agent-team kill [<instance>...] [-q] [--all] [--latest | --last N] [--runtime codex] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--rm] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--timeout 2s] [--wait --wait-timeout 30s] [--json]
                                                 # force-stop persistent instances, or all daemon-managed instances
-agent-team restart [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [-f] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--ready-timeout 3s] [--timeout 30s] [--wait --wait-timeout 30s] [--attach --tail N|all] [--json]
+agent-team restart [<instance>...] [-q] [--all] [--latest | --last N] [--runtime codex] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [-f] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--ready-timeout 3s] [--timeout 30s] [--wait --wait-timeout 30s] [--attach --tail N|all] [--json]
                                                 # restart persistent or daemon-known instances
 agent-team reload [--format '{{len .Topology.Instances}} {{.Reconcile.Changed}}'] [--json]
                                                 # re-read instances.toml in the daemon and reconcile runtime metadata

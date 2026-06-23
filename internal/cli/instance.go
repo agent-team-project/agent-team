@@ -1296,25 +1296,26 @@ func runInstanceUp(cmd *cobra.Command, target, prompt string, names []string) er
 }
 
 type instanceUpOptions struct {
-	All           bool
-	Latest        bool
-	Limit         int
-	AgentFilters  []string
-	StatusFilters []string
-	PhaseFilters  []string
-	Stale         bool
-	Unhealthy     bool
-	Wait          bool
-	Timeout       time.Duration
-	DryRun        bool
-	Summary       bool
-	Attach        bool
-	AttachTail    int
-	AttachTailSet bool
-	Quiet         bool
-	JSON          bool
-	Format        *template.Template
-	Health        healthOptions
+	All            bool
+	Latest         bool
+	Limit          int
+	AgentFilters   []string
+	RuntimeFilters []string
+	StatusFilters  []string
+	PhaseFilters   []string
+	Stale          bool
+	Unhealthy      bool
+	Wait           bool
+	Timeout        time.Duration
+	DryRun         bool
+	Summary        bool
+	Attach         bool
+	AttachTail     int
+	AttachTailSet  bool
+	Quiet          bool
+	JSON           bool
+	Format         *template.Template
+	Health         healthOptions
 }
 
 type lifecycleActionResult struct {
@@ -1372,6 +1373,10 @@ func runInstanceUpWithOptions(cmd *cobra.Command, target, prompt string, names [
 	}
 	if len(opts.AgentFilters) > 0 && len(names) > 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --agent cannot be combined with instance names.")
+		return exitErr(2)
+	}
+	if len(opts.RuntimeFilters) > 0 && len(names) > 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --runtime cannot be combined with instance names.")
 		return exitErr(2)
 	}
 	if len(opts.StatusFilters) > 0 && len(names) > 0 {
@@ -1446,6 +1451,11 @@ func runInstanceUpWithOptions(cmd *cobra.Command, target, prompt string, names [
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --tail requires --attach.")
 		return exitErr(2)
 	}
+	runtimes, err := lifecycleRuntimeFilterSet(opts.RuntimeFilters)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
+		return exitErr(2)
+	}
 	statuses, err := lifecycleStatusFilterSet(opts.StatusFilters)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
@@ -1476,7 +1486,7 @@ func runInstanceUpWithOptions(cmd *cobra.Command, target, prompt string, names [
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 		return exitErr(1)
 	}
-	if topo == nil && len(names) == 0 && !opts.All && !opts.Latest && opts.Limit == 0 && len(opts.AgentFilters) == 0 && len(statuses) == 0 && len(phases) == 0 && !opts.Stale && !opts.Unhealthy {
+	if topo == nil && len(names) == 0 && !opts.All && !opts.Latest && opts.Limit == 0 && len(opts.AgentFilters) == 0 && len(runtimes) == 0 && len(statuses) == 0 && len(phases) == 0 && !opts.Stale && !opts.Unhealthy {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: no instances.toml — nothing to bring up.")
 		return exitErr(2)
 	}
@@ -1503,7 +1513,7 @@ func runInstanceUpWithOptions(cmd *cobra.Command, target, prompt string, names [
 	var targets []lifecycleTarget
 	if len(opts.AgentFilters) > 0 {
 		targets, err = selectAgentLifecycleTargets(topo, metas, opts.AgentFilters)
-	} else if opts.All || opts.Latest || opts.Limit > 0 || len(statuses) > 0 || len(phases) > 0 || opts.Stale || opts.Unhealthy {
+	} else if opts.All || opts.Latest || opts.Limit > 0 || len(runtimes) > 0 || len(statuses) > 0 || len(phases) > 0 || opts.Stale || opts.Unhealthy {
 		targets, err = selectAllLifecycleTargets(topo, metas)
 	} else {
 		targets, err = selectLifecycleTargets(topo, metas, names)
@@ -1512,6 +1522,7 @@ func runInstanceUpWithOptions(cmd *cobra.Command, target, prompt string, names [
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 		return exitErr(2)
 	}
+	targets = filterLifecycleTargetsByRuntime(targets, runtimes)
 	targets = filterLifecycleTargetsByStatus(targets, statuses)
 	targets = filterLifecycleTargetsByPhase(targets, phases, phaseByInstance)
 	targets = filterLifecycleTargetsByStale(targets, opts.Stale, staleInstances)
@@ -1934,12 +1945,13 @@ func healthOptionsConfigured(opts healthOptions) bool {
 }
 
 func instanceUpSelectionScoped(names []string, opts instanceUpOptions) bool {
-	return lifecycleSelectionScoped(names, opts.AgentFilters, opts.StatusFilters, opts.PhaseFilters, opts.Latest, opts.Limit, opts.Stale, opts.Unhealthy)
+	return lifecycleSelectionScoped(names, opts.AgentFilters, opts.RuntimeFilters, opts.StatusFilters, opts.PhaseFilters, opts.Latest, opts.Limit, opts.Stale, opts.Unhealthy)
 }
 
-func lifecycleSelectionScoped(names, agentFilters, statusFilters, phaseFilters []string, latest bool, limit int, stale bool, unhealthy bool) bool {
+func lifecycleSelectionScoped(names, agentFilters, runtimeFilters, statusFilters, phaseFilters []string, latest bool, limit int, stale bool, unhealthy bool) bool {
 	return len(names) > 0 ||
 		len(agentFilters) > 0 ||
+		len(runtimeFilters) > 0 ||
 		len(statusFilters) > 0 ||
 		len(phaseFilters) > 0 ||
 		latest ||
@@ -2264,6 +2276,19 @@ func filterLifecycleTargetsByStatus(targets []lifecycleTarget, statuses map[stri
 	return out
 }
 
+func filterLifecycleTargetsByRuntime(targets []lifecycleTarget, runtimes map[string]bool) []lifecycleTarget {
+	if len(runtimes) == 0 {
+		return targets
+	}
+	out := make([]lifecycleTarget, 0, len(targets))
+	for _, target := range targets {
+		if runtimes[metadataRuntimeKey(target.meta)] {
+			out = append(out, target)
+		}
+	}
+	return out
+}
+
 func filterLifecycleTargetsByPhase(targets []lifecycleTarget, phases map[string]bool, phaseByInstance map[string]string) []lifecycleTarget {
 	if len(phases) == 0 {
 		return targets
@@ -2480,6 +2505,7 @@ type instanceDownOptions struct {
 	Latest         bool
 	Limit          int
 	AgentFilters   []string
+	RuntimeFilters []string
 	StatusFilters  []string
 	PhaseFilters   []string
 	Stale          bool
@@ -2537,6 +2563,10 @@ func runInstanceDownWithOptions(cmd *cobra.Command, target string, names []strin
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --agent cannot be combined with instance names.")
 		return exitErr(2)
 	}
+	if len(opts.RuntimeFilters) > 0 && len(names) > 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --runtime cannot be combined with instance names.")
+		return exitErr(2)
+	}
 	if len(opts.StatusFilters) > 0 && len(names) > 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --status cannot be combined with instance names.")
 		return exitErr(2)
@@ -2583,6 +2613,11 @@ func runInstanceDownWithOptions(cmd *cobra.Command, target string, names []strin
 	}
 	if opts.Format != nil && opts.Summary {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --format cannot be combined with --summary.")
+		return exitErr(2)
+	}
+	runtimes, err := lifecycleRuntimeFilterSet(opts.RuntimeFilters)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 		return exitErr(2)
 	}
 	statuses, err := lifecycleStatusFilterSet(opts.StatusFilters)
@@ -2636,6 +2671,7 @@ func runInstanceDownWithOptions(cmd *cobra.Command, target string, names []strin
 	targets, err := selectDownTargetsWithOptions(teamDir, running, metas, names, opts.All || opts.Latest || opts.Limit > 0, opts.AgentFilters, statuses, phases, phaseByInstance, downTargetOptions{
 		Stale:          opts.Stale,
 		Unhealthy:      opts.Unhealthy,
+		Runtimes:       runtimes,
 		StaleInstances: staleInstances,
 	})
 	if err != nil {
@@ -2963,6 +2999,7 @@ func downAction(opts instanceDownOptions) string {
 type downTargetOptions struct {
 	Stale          bool
 	Unhealthy      bool
+	Runtimes       map[string]bool
 	StaleInstances map[string]bool
 }
 
@@ -2976,9 +3013,9 @@ func selectDownTargets(teamDir string, running map[string]bool, metas []*daemon.
 }
 
 func selectDownTargetsWithOptions(teamDir string, running map[string]bool, metas []*daemon.Metadata, names []string, all bool, agentFilters []string, statuses, phases map[string]bool, phaseByInstance map[string]string, opts downTargetOptions) ([]string, error) {
-	if len(agentFilters) > 0 || len(statuses) > 0 || len(phases) > 0 || opts.Stale || opts.Unhealthy {
+	if len(agentFilters) > 0 || len(opts.Runtimes) > 0 || len(statuses) > 0 || len(phases) > 0 || opts.Stale || opts.Unhealthy {
 		if len(names) > 0 {
-			return nil, errors.New("--agent, --status, --phase, --stale, and --unhealthy cannot be combined with instance names")
+			return nil, errors.New("--agent, --runtime, --status, --phase, --stale, and --unhealthy cannot be combined with instance names")
 		}
 		agents, err := downAgentFilterSet(agentFilters)
 		if err != nil {
@@ -2990,6 +3027,9 @@ func selectDownTargetsWithOptions(teamDir string, running map[string]bool, metas
 				continue
 			}
 			if len(agents) > 0 && !agents[meta.Agent] {
+				continue
+			}
+			if len(opts.Runtimes) > 0 && !opts.Runtimes[metadataRuntimeKey(meta)] {
 				continue
 			}
 			if len(statuses) > 0 && !statuses[metadataStatusKey(meta)] {

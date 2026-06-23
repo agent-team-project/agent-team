@@ -183,6 +183,138 @@ func TestStartRejectsInvalidLatestLastBeforeStartingDaemon(t *testing.T) {
 	}
 }
 
+func TestStartRejectsInvalidRuntimeBeforeStartingDaemon(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "runtime-with-name", args: []string{"start", "manager", "--runtime", "codex"}, want: "--runtime cannot be combined with instance names"},
+		{name: "unknown-runtime", args: []string{"start", "--runtime", "llama"}, want: "unknown --runtime"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			stderr := &bytes.Buffer{}
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(stderr)
+			args := append([]string{}, tc.args...)
+			args = append(args, "--target", tmp)
+			cmd.SetArgs(args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("expected validation error")
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+			if _, err := os.Stat(daemon.PidPath(teamDir)); !os.IsNotExist(err) {
+				t.Fatalf("invalid runtime selector should not start daemon, pidfile stat err=%v", err)
+			}
+		})
+	}
+}
+
+func TestStartAndRestartRuntimeDryRunUseLocalMetadataWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "codex-stopped", Agent: "worker", Runtime: "codex", Status: daemon.StatusStopped, StartedAt: now.Add(-time.Minute)},
+		{Instance: "claude-stopped", Agent: "manager", Runtime: "claude", Status: daemon.StatusStopped, StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	for _, tc := range []struct {
+		command string
+		action  string
+	}{
+		{command: "start", action: lifecycleActionUnsupported},
+		{command: "restart", action: "restart"},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs([]string{tc.command, "--runtime", "codex", "--dry-run", "--json", "--target", tmp})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("%s --runtime codex --dry-run: %v\nstderr=%s", tc.command, err, stderr.String())
+			}
+			var rows []lifecycleActionResult
+			if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+				t.Fatalf("decode %s runtime json: %v\nbody=%s", tc.command, err, out.String())
+			}
+			if len(rows) != 1 || rows[0].Instance != "codex-stopped" || rows[0].Action != tc.action || !rows[0].DryRun {
+				t.Fatalf("%s rows = %+v, want codex-stopped %s dry-run", tc.command, rows, tc.action)
+			}
+		})
+	}
+}
+
+func TestStopAndKillRuntimeDryRunUseLocalMetadataWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "codex-running", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-time.Minute)},
+		{Instance: "codex-stopped", Agent: "worker", Runtime: "codex", Status: daemon.StatusStopped, StartedAt: now},
+		{Instance: "claude-running", Agent: "manager", Runtime: "claude", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	for _, tc := range []struct {
+		command string
+		action  string
+	}{
+		{command: "stop", action: "stop"},
+		{command: "kill", action: "kill"},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs([]string{tc.command, "--runtime", "codex", "--dry-run", "--json", "--target", tmp})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("%s --runtime codex --dry-run: %v\nstderr=%s", tc.command, err, stderr.String())
+			}
+			var rows []instanceDownResult
+			if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+				t.Fatalf("decode %s runtime json: %v\nbody=%s", tc.command, err, out.String())
+			}
+			if len(rows) != 1 || rows[0].Instance != "codex-running" || rows[0].Action != tc.action || !rows[0].DryRun {
+				t.Fatalf("%s rows = %+v, want codex-running %s dry-run", tc.command, rows, tc.action)
+			}
+		})
+	}
+
+	bad := NewRootCmd()
+	bad.SetOut(&bytes.Buffer{})
+	var badErr bytes.Buffer
+	bad.SetErr(&badErr)
+	bad.SetArgs([]string{"stop", "--runtime", "llama", "--dry-run", "--target", tmp})
+	if err := bad.Execute(); err == nil {
+		t.Fatal("stop accepted unknown runtime")
+	}
+	if !strings.Contains(badErr.String(), "unknown --runtime") {
+		t.Fatalf("bad runtime stderr = %q", badErr.String())
+	}
+}
+
 func TestStartUnknownStatusFailsFast(t *testing.T) {
 	cmd := NewRootCmd()
 	stderr := &bytes.Buffer{}

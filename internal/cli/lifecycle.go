@@ -22,26 +22,27 @@ import (
 
 func newStartCmd() *cobra.Command {
 	var (
-		target        string
-		prompt        string
-		all           bool
-		latest        bool
-		last          int
-		agents        []string
-		statusFilters []string
-		phaseFilters  []string
-		staleOnly     bool
-		unhealthyOnly bool
-		wait          bool
-		timeout       time.Duration
-		readyTimeout  time.Duration
-		dryRun        bool
-		summary       bool
-		attach        bool
-		tail          string
-		quiet         bool
-		jsonOut       bool
-		format        string
+		target         string
+		prompt         string
+		all            bool
+		latest         bool
+		last           int
+		agents         []string
+		runtimeFilters []string
+		statusFilters  []string
+		phaseFilters   []string
+		staleOnly      bool
+		unhealthyOnly  bool
+		wait           bool
+		timeout        time.Duration
+		readyTimeout   time.Duration
+		dryRun         bool
+		summary        bool
+		attach         bool
+		tail           string
+		quiet          bool
+		jsonOut        bool
+		format         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -74,6 +75,10 @@ func newStartCmd() *cobra.Command {
 			}
 			if len(agents) > 0 && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --agent cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if len(runtimeFilters) > 0 && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --runtime cannot be combined with instance names.")
 				return exitErr(2)
 			}
 			if len(statusFilters) > 0 && len(args) > 0 {
@@ -154,6 +159,10 @@ func newStartCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 				return exitErr(2)
 			}
+			if _, err := lifecycleRuntimeFilterSet(runtimeFilters); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
+				return exitErr(2)
+			}
 			if _, err := lifecyclePhaseFilterSet(phaseFilters); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 				return exitErr(2)
@@ -164,24 +173,25 @@ func newStartCmd() *cobra.Command {
 				}
 			}
 			return runInstanceUpWithOptions(cmd, target, prompt, args, instanceUpOptions{
-				All:           all,
-				Latest:        latest,
-				Limit:         last,
-				AgentFilters:  agents,
-				StatusFilters: statusFilters,
-				PhaseFilters:  phaseFilters,
-				Stale:         staleOnly,
-				Unhealthy:     unhealthyOnly,
-				Wait:          wait,
-				Timeout:       timeout,
-				DryRun:        dryRun,
-				Summary:       summary,
-				Attach:        attach,
-				AttachTail:    tailLines,
-				AttachTailSet: cmd.Flags().Changed("tail"),
-				Quiet:         quiet,
-				JSON:          jsonOut,
-				Format:        formatTemplate,
+				All:            all,
+				Latest:         latest,
+				Limit:          last,
+				AgentFilters:   agents,
+				RuntimeFilters: runtimeFilters,
+				StatusFilters:  statusFilters,
+				PhaseFilters:   phaseFilters,
+				Stale:          staleOnly,
+				Unhealthy:      unhealthyOnly,
+				Wait:           wait,
+				Timeout:        timeout,
+				DryRun:         dryRun,
+				Summary:        summary,
+				Attach:         attach,
+				AttachTail:     tailLines,
+				AttachTailSet:  cmd.Flags().Changed("tail"),
+				Quiet:          quiet,
+				JSON:           jsonOut,
+				Format:         formatTemplate,
 			})
 		},
 	}
@@ -191,6 +201,7 @@ func newStartCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&latest, "latest", false, "Start or resume the most recently started instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Start or resume the N most recently started instances after other filters (0 = all).")
 	cmd.Flags().StringSliceVar(&agents, "agent", nil, "Start or resume every declared persistent and daemon-known instance for this agent. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only start or resume daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only start or resume instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only start or resume instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only start or resume instances whose status.toml is stale.")
@@ -210,25 +221,26 @@ func newStartCmd() *cobra.Command {
 
 func newStopCmd() *cobra.Command {
 	var (
-		target        string
-		all           bool
-		latest        bool
-		last          int
-		agents        []string
-		statusFilters []string
-		phaseFilters  []string
-		staleOnly     bool
-		unhealthyOnly bool
-		force         bool
-		wait          bool
-		timeout       time.Duration
-		waitTimeout   time.Duration
-		dryRun        bool
-		remove        bool
-		summary       bool
-		quiet         bool
-		jsonOut       bool
-		format        string
+		target         string
+		all            bool
+		latest         bool
+		last           int
+		agents         []string
+		runtimeFilters []string
+		statusFilters  []string
+		phaseFilters   []string
+		staleOnly      bool
+		unhealthyOnly  bool
+		force          bool
+		wait           bool
+		timeout        time.Duration
+		waitTimeout    time.Duration
+		dryRun         bool
+		remove         bool
+		summary        bool
+		quiet          bool
+		jsonOut        bool
+		format         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -260,6 +272,7 @@ func newStopCmd() *cobra.Command {
 				Latest:         latest,
 				Limit:          last,
 				AgentFilters:   agents,
+				RuntimeFilters: runtimeFilters,
 				StatusFilters:  statusFilters,
 				PhaseFilters:   phaseFilters,
 				Stale:          staleOnly,
@@ -283,6 +296,7 @@ func newStopCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&latest, "latest", false, "Stop the most recently started running instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Stop the N most recently started running instances after other filters (0 = all).")
 	cmd.Flags().StringSliceVar(&agents, "agent", nil, "Stop every running instance for this agent. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only stop running daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Stop daemon-known instances currently in this lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Stop daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only stop instances whose status.toml is stale.")
@@ -302,24 +316,25 @@ func newStopCmd() *cobra.Command {
 
 func newKillCmd() *cobra.Command {
 	var (
-		target        string
-		all           bool
-		latest        bool
-		last          int
-		agents        []string
-		statusFilters []string
-		phaseFilters  []string
-		staleOnly     bool
-		unhealthyOnly bool
-		timeout       time.Duration
-		wait          bool
-		waitTimeout   time.Duration
-		dryRun        bool
-		remove        bool
-		summary       bool
-		quiet         bool
-		jsonOut       bool
-		format        string
+		target         string
+		all            bool
+		latest         bool
+		last           int
+		agents         []string
+		runtimeFilters []string
+		statusFilters  []string
+		phaseFilters   []string
+		staleOnly      bool
+		unhealthyOnly  bool
+		timeout        time.Duration
+		wait           bool
+		waitTimeout    time.Duration
+		dryRun         bool
+		remove         bool
+		summary        bool
+		quiet          bool
+		jsonOut        bool
+		format         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -350,6 +365,7 @@ func newKillCmd() *cobra.Command {
 				Latest:         latest,
 				Limit:          last,
 				AgentFilters:   agents,
+				RuntimeFilters: runtimeFilters,
 				StatusFilters:  statusFilters,
 				PhaseFilters:   phaseFilters,
 				Stale:          staleOnly,
@@ -374,6 +390,7 @@ func newKillCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&latest, "latest", false, "Force-stop the most recently started running instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Force-stop the N most recently started running instances after other filters (0 = all).")
 	cmd.Flags().StringSliceVar(&agents, "agent", nil, "Force-stop every running instance for this agent. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only force-stop running daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Force-stop daemon-known instances currently in this lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Force-stop daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only force-stop instances whose status.toml is stale.")
@@ -392,28 +409,29 @@ func newKillCmd() *cobra.Command {
 
 func newRestartCmd() *cobra.Command {
 	var (
-		target        string
-		prompt        string
-		all           bool
-		latest        bool
-		last          int
-		agents        []string
-		statusFilters []string
-		phaseFilters  []string
-		staleOnly     bool
-		unhealthyOnly bool
-		timeout       time.Duration
-		readyTimeout  time.Duration
-		wait          bool
-		waitTimeout   time.Duration
-		force         bool
-		dryRun        bool
-		summary       bool
-		attach        bool
-		tail          string
-		quiet         bool
-		jsonOut       bool
-		format        string
+		target         string
+		prompt         string
+		all            bool
+		latest         bool
+		last           int
+		agents         []string
+		runtimeFilters []string
+		statusFilters  []string
+		phaseFilters   []string
+		staleOnly      bool
+		unhealthyOnly  bool
+		timeout        time.Duration
+		readyTimeout   time.Duration
+		wait           bool
+		waitTimeout    time.Duration
+		force          bool
+		dryRun         bool
+		summary        bool
+		attach         bool
+		tail           string
+		quiet          bool
+		jsonOut        bool
+		format         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -445,6 +463,10 @@ func newRestartCmd() *cobra.Command {
 			}
 			if len(agents) > 0 && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --agent cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if len(runtimeFilters) > 0 && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --runtime cannot be combined with instance names.")
 				return exitErr(2)
 			}
 			if len(statusFilters) > 0 && len(args) > 0 {
@@ -529,6 +551,10 @@ func newRestartCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 				return exitErr(2)
 			}
+			if _, err := lifecycleRuntimeFilterSet(runtimeFilters); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
+				return exitErr(2)
+			}
 			if _, err := lifecyclePhaseFilterSet(phaseFilters); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 				return exitErr(2)
@@ -539,26 +565,27 @@ func newRestartCmd() *cobra.Command {
 				}
 			}
 			return runInstanceRestart(cmd, target, prompt, args, instanceRestartOptions{
-				All:           all,
-				Latest:        latest,
-				Limit:         last,
-				AgentFilters:  agents,
-				StatusFilters: statusFilters,
-				PhaseFilters:  phaseFilters,
-				Stale:         staleOnly,
-				Unhealthy:     unhealthyOnly,
-				Timeout:       timeout,
-				Wait:          wait,
-				WaitTimeout:   waitTimeout,
-				Force:         force,
-				DryRun:        dryRun,
-				Summary:       summary,
-				Attach:        attach,
-				AttachTail:    tailLines,
-				AttachTailSet: cmd.Flags().Changed("tail"),
-				Quiet:         quiet,
-				JSON:          jsonOut,
-				Format:        formatTemplate,
+				All:            all,
+				Latest:         latest,
+				Limit:          last,
+				AgentFilters:   agents,
+				RuntimeFilters: runtimeFilters,
+				StatusFilters:  statusFilters,
+				PhaseFilters:   phaseFilters,
+				Stale:          staleOnly,
+				Unhealthy:      unhealthyOnly,
+				Timeout:        timeout,
+				Wait:           wait,
+				WaitTimeout:    waitTimeout,
+				Force:          force,
+				DryRun:         dryRun,
+				Summary:        summary,
+				Attach:         attach,
+				AttachTail:     tailLines,
+				AttachTailSet:  cmd.Flags().Changed("tail"),
+				Quiet:          quiet,
+				JSON:           jsonOut,
+				Format:         formatTemplate,
 			})
 		},
 	}
@@ -568,6 +595,7 @@ func newRestartCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&latest, "latest", false, "Restart or resume the most recently started instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Restart or resume the N most recently started instances after other filters (0 = all).")
 	cmd.Flags().StringSliceVar(&agents, "agent", nil, "Restart or resume every declared persistent and daemon-known instance for this agent. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only restart or resume daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only restart or resume instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only restart or resume instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only restart or resume instances whose status.toml is stale.")
@@ -2381,26 +2409,27 @@ func waitTerminalMeta(meta *daemon.Metadata) bool {
 }
 
 type instanceRestartOptions struct {
-	All           bool
-	Latest        bool
-	Limit         int
-	AgentFilters  []string
-	StatusFilters []string
-	PhaseFilters  []string
-	Stale         bool
-	Unhealthy     bool
-	Timeout       time.Duration
-	Wait          bool
-	WaitTimeout   time.Duration
-	Force         bool
-	DryRun        bool
-	Summary       bool
-	Attach        bool
-	AttachTail    int
-	AttachTailSet bool
-	Quiet         bool
-	JSON          bool
-	Format        *template.Template
+	All            bool
+	Latest         bool
+	Limit          int
+	AgentFilters   []string
+	RuntimeFilters []string
+	StatusFilters  []string
+	PhaseFilters   []string
+	Stale          bool
+	Unhealthy      bool
+	Timeout        time.Duration
+	Wait           bool
+	WaitTimeout    time.Duration
+	Force          bool
+	DryRun         bool
+	Summary        bool
+	Attach         bool
+	AttachTail     int
+	AttachTailSet  bool
+	Quiet          bool
+	JSON           bool
+	Format         *template.Template
 }
 
 func runInstanceRestart(cmd *cobra.Command, target, prompt string, names []string, opts ...instanceRestartOptions) error {
@@ -2430,6 +2459,10 @@ func runInstanceRestart(cmd *cobra.Command, target, prompt string, names []strin
 	}
 	if len(cfg.AgentFilters) > 0 && len(names) > 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --agent cannot be combined with instance names.")
+		return exitErr(2)
+	}
+	if len(cfg.RuntimeFilters) > 0 && len(names) > 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --runtime cannot be combined with instance names.")
 		return exitErr(2)
 	}
 	if len(cfg.StatusFilters) > 0 && len(names) > 0 {
@@ -2508,6 +2541,11 @@ func runInstanceRestart(cmd *cobra.Command, target, prompt string, names []strin
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --tail requires --attach.")
 		return exitErr(2)
 	}
+	runtimes, err := lifecycleRuntimeFilterSet(cfg.RuntimeFilters)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
+		return exitErr(2)
+	}
 	statuses, err := lifecycleStatusFilterSet(cfg.StatusFilters)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
@@ -2538,7 +2576,7 @@ func runInstanceRestart(cmd *cobra.Command, target, prompt string, names []strin
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 		return exitErr(1)
 	}
-	if topo == nil && len(names) == 0 && !cfg.All && !cfg.Latest && cfg.Limit == 0 && len(cfg.AgentFilters) == 0 && len(statuses) == 0 && len(phases) == 0 && !cfg.Stale && !cfg.Unhealthy {
+	if topo == nil && len(names) == 0 && !cfg.All && !cfg.Latest && cfg.Limit == 0 && len(cfg.AgentFilters) == 0 && len(runtimes) == 0 && len(statuses) == 0 && len(phases) == 0 && !cfg.Stale && !cfg.Unhealthy {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: no instances.toml — nothing to restart.")
 		return exitErr(2)
 	}
@@ -2564,7 +2602,7 @@ func runInstanceRestart(cmd *cobra.Command, target, prompt string, names []strin
 	var targets []lifecycleTarget
 	if len(cfg.AgentFilters) > 0 {
 		targets, err = selectAgentLifecycleTargets(topo, metas, cfg.AgentFilters)
-	} else if cfg.All || cfg.Latest || cfg.Limit > 0 || len(statuses) > 0 || len(phases) > 0 || cfg.Stale || cfg.Unhealthy {
+	} else if cfg.All || cfg.Latest || cfg.Limit > 0 || len(runtimes) > 0 || len(statuses) > 0 || len(phases) > 0 || cfg.Stale || cfg.Unhealthy {
 		targets, err = selectAllLifecycleTargets(topo, metas)
 	} else {
 		targets, err = selectLifecycleTargets(topo, metas, names)
@@ -2573,6 +2611,7 @@ func runInstanceRestart(cmd *cobra.Command, target, prompt string, names []strin
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 		return exitErr(2)
 	}
+	targets = filterLifecycleTargetsByRuntime(targets, runtimes)
 	targets = filterLifecycleTargetsByStatus(targets, statuses)
 	targets = filterLifecycleTargetsByPhase(targets, phases, phaseByInstance)
 	targets = filterLifecycleTargetsByStale(targets, cfg.Stale, staleInstances)
@@ -2587,7 +2626,7 @@ func runInstanceRestart(cmd *cobra.Command, target, prompt string, names []strin
 		return exitErr(2)
 	}
 	waitHealth := healthOptions{}
-	if cfg.Wait && lifecycleSelectionScoped(names, cfg.AgentFilters, cfg.StatusFilters, cfg.PhaseFilters, cfg.Latest, cfg.Limit, cfg.Stale, cfg.Unhealthy) {
+	if cfg.Wait && lifecycleSelectionScoped(names, cfg.AgentFilters, cfg.RuntimeFilters, cfg.StatusFilters, cfg.PhaseFilters, cfg.Latest, cfg.Limit, cfg.Stale, cfg.Unhealthy) {
 		waitHealth = lifecycleWaitHealthOptionsForTargets(targets)
 	}
 	if len(targets) == 0 {
