@@ -49,10 +49,13 @@ See [Runtime Profiles](./profiles.md) for the Claude/Codex capability matrix.
 
 ```sh
 agent-team attach manager
+agent-team attach manager --dry-run
 agent-team attach manager --no-resume
 ```
 
 The daemon stops supervising the child, the CLI execs the runtime in the terminal, and the daemon resumes supervision afterward unless `--no-resume` is provided.
+Use `--dry-run` to preview the session id, runtime binary, stop behavior, and daemon resume step without changing daemon state.
+Interactive daemon attach requires a managed-resume-capable runtime; Codex-managed daemon runs should be inspected with `logs --follow` or `logs --last-message`.
 
 Ephemeral workers are not a good attach target. Use logs and job commands for those.
 

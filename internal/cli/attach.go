@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
@@ -33,6 +35,7 @@ func newAttachCmd() *cobra.Command {
 	var (
 		target    string
 		noResume  bool
+		dryRun    bool
 		all       bool
 		latest    bool
 		last      int
@@ -65,6 +68,10 @@ func newAttachCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logMode := attachUsesLogMode(args, all, latest, last, statuses, agents, phases, staleOnly, unhealthy, noFollow, cmd.Flags().Changed("tail"), since, grep)
 			if logMode {
+				if dryRun {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team attach: --dry-run requires an instance name and cannot be combined with log-follow attach options.")
+					return exitErr(2)
+				}
 				if noResume {
 					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team attach: --no-resume cannot be combined with log-follow attach options.")
 					return exitErr(2)
@@ -89,11 +96,12 @@ func newAttachCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team attach: instance is required.")
 				return exitErr(2)
 			}
-			return runAttach(cmd, target, args[0], noResume)
+			return runAttach(cmd, target, args[0], noResume, dryRun)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&noResume, "no-resume", false, "Leave the instance in stopped state when the runtime exits (default: re-dispatch via the daemon).")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the interactive handoff without stopping or resuming the daemon child.")
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "Log compatibility mode: attach to every daemon-known instance, prefixed by instance name.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Log compatibility mode: attach to the most recently started instance.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Log compatibility mode: attach to the N most recently started instances (0 = disabled).")
@@ -225,7 +233,7 @@ func runAttachLogMode(cmd *cobra.Command, target string, args []string, opts att
 	})
 }
 
-func runAttach(cmd *cobra.Command, target, instance string, noResume bool) error {
+func runAttach(cmd *cobra.Command, target, instance string, noResume bool, dryRun bool) error {
 	teamDir, err := resolveTeamDir(cmd, target)
 	if err != nil {
 		return err
@@ -263,6 +271,16 @@ func runAttach(cmd *cobra.Command, target, instance string, noResume bool) error
 		return exitErr(2)
 	}
 
+	bin, err := resolveAttachRuntimeBinary(cmd, teamDir, meta)
+	if err != nil {
+		return err
+	}
+
+	if dryRun {
+		renderAttachDryRun(cmd.OutOrStdout(), instance, meta, bin, noResume)
+		return nil
+	}
+
 	// Stop the running child (if any). An already-stopped instance is a no-op
 	// on the daemon side — we proceed straight to runtime resume.
 	if meta.Status == daemon.StatusRunning {
@@ -274,7 +292,7 @@ func runAttach(cmd *cobra.Command, target, instance string, noResume bool) error
 	fmt.Fprintf(cmd.OutOrStdout(),
 		"agent-team: attaching to %s (session=%s)...\n", instance, meta.SessionID)
 
-	resumeErr := execClaudeAttach(cmd, []string{"--resume", meta.SessionID}, target)
+	resumeErr := execClaudeAttach(cmd, bin, []string{"--resume", meta.SessionID}, target)
 
 	if noResume {
 		fmt.Fprintf(cmd.OutOrStdout(),
@@ -297,6 +315,46 @@ func runAttach(cmd *cobra.Command, target, instance string, noResume bool) error
 	return resumeErr
 }
 
+func resolveAttachRuntimeBinary(cmd *cobra.Command, teamDir string, meta *daemon.Metadata) (string, error) {
+	if !lifecycleMetadataSupportsManagedResume(meta) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team attach: %s\n", lifecycleUnsupportedResumeDetail(meta))
+		return "", exitErr(2)
+	}
+	if bin := strings.TrimSpace(meta.RuntimeBinary); bin != "" {
+		return bin, nil
+	}
+	rt, err := runtimebin.CurrentFromConfig(filepath.Join(teamDir, "config.toml"))
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team attach: %v\n", err)
+		return "", exitErr(2)
+	}
+	if rt.Kind != runtimebin.KindClaude {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team attach: runtime %q does not support managed resume; create a new run instead\n", rt.Kind)
+		return "", exitErr(2)
+	}
+	return rt.Binary, nil
+}
+
+func renderAttachDryRun(w fmtWriter, instance string, meta *daemon.Metadata, bin string, noResume bool) {
+	wouldStop := meta.Status == daemon.StatusRunning
+	runtimeKind := lifecycleMetadataRuntimeKind(meta)
+	fmt.Fprintf(w, "instance:             %s\n", instance)
+	fmt.Fprintf(w, "runtime:              %s\n", runtimeKind)
+	fmt.Fprintf(w, "runtime_binary:       %s\n", bin)
+	fmt.Fprintf(w, "status:               %s\n", meta.Status)
+	fmt.Fprintf(w, "session_id:           %s\n", meta.SessionID)
+	fmt.Fprintf(w, "would_stop:           %s\n", attachYesNo(wouldStop))
+	fmt.Fprintf(w, "command:              %s --resume %s\n", bin, meta.SessionID)
+	fmt.Fprintf(w, "would_resume_daemon:  %s\n", attachYesNo(!noResume))
+}
+
+func attachYesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
+}
+
 // lookupInstanceMeta fetches the daemon's metadata for one instance. Returns a
 // helpful error when the daemon doesn't know the instance, so the CLI message
 // is friendlier than a raw "not found".
@@ -316,12 +374,7 @@ func lookupInstanceMeta(dc *daemonClient, instance string) (*daemon.Metadata, er
 // execClaudeAttach is split out so tests can intercept the exec without
 // requiring a real Claude-compatible binary. The default wires stdin/stdout/stderr
 // to the user's terminal so the runtime TUI is fully interactive.
-var execClaudeAttach = func(cmd *cobra.Command, args []string, cwd string) error {
-	bin, err := runtimebin.ClaudeCompatibleBinary()
-	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team attach: %v\n", err)
-		return exitErr(2)
-	}
+var execClaudeAttach = func(cmd *cobra.Command, bin string, args []string, cwd string) error {
 	c := exec.Command(bin, args...)
 	c.Dir = cwd
 	c.Stdin = os.Stdin

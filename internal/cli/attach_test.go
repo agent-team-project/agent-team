@@ -6,12 +6,14 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/spf13/cobra"
 )
 
@@ -95,6 +97,7 @@ func (e *attachTestEnv) dispatchOne(t *testing.T, instance string) *daemon.Metad
 // claude exits.
 type attachCapture struct {
 	called bool
+	bin    string
 	args   []string
 	cwd    string
 	rc     error
@@ -104,8 +107,9 @@ func captureAttachExec(t *testing.T, rc error) (*attachCapture, func()) {
 	t.Helper()
 	cap := &attachCapture{rc: rc}
 	prev := execClaudeAttach
-	execClaudeAttach = func(cmd *cobra.Command, args []string, cwd string) error {
+	execClaudeAttach = func(cmd *cobra.Command, bin string, args []string, cwd string) error {
 		cap.called = true
+		cap.bin = bin
 		cap.args = args
 		cap.cwd = cwd
 		return cap.rc
@@ -134,6 +138,9 @@ func TestAttach_StopsAndResumes(t *testing.T) {
 	}
 	if len(cap.args) != 2 || cap.args[0] != "--resume" || cap.args[1] != meta.SessionID {
 		t.Errorf("expected [--resume %s], got %v", meta.SessionID, cap.args)
+	}
+	if cap.bin != meta.RuntimeBinary {
+		t.Errorf("runtime binary: got %q want %q", cap.bin, meta.RuntimeBinary)
 	}
 
 	// After the simulated claude exit, the daemon should have re-Started the
@@ -332,6 +339,147 @@ func TestAttach_AlreadyStoppedSkipsStop(t *testing.T) {
 	}
 }
 
+func TestAttach_DryRunDoesNotStopOrExec(t *testing.T) {
+	env := newAttachTestEnv(t)
+	meta := env.dispatchOne(t, "manager")
+	defer stopAndWaitForTest(t, env.dmn.Manager(), "manager")
+
+	cap, restore := captureAttachExec(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"attach", "manager", "--target", env.target, "--dry-run"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("attach --dry-run: %v\nstderr=%s", err, errOut.String())
+	}
+	if cap.called {
+		t.Fatal("execClaudeAttach should not run during dry-run")
+	}
+	if err := env.dmn.Manager().WaitForReaper("manager", 20*time.Millisecond); err == nil {
+		t.Fatal("dry-run stopped the running daemon child")
+	}
+	body := out.String()
+	for _, want := range []string{
+		"instance:             manager",
+		"runtime:              claude",
+		"runtime_binary:       " + meta.RuntimeBinary,
+		"session_id:           " + meta.SessionID,
+		"would_stop:           yes",
+		"command:              " + meta.RuntimeBinary + " --resume " + meta.SessionID,
+		"would_resume_daemon:  yes",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestAttach_DryRunNoResumePreview(t *testing.T) {
+	env := newAttachTestEnv(t)
+	env.dispatchOne(t, "manager")
+	defer stopAndWaitForTest(t, env.dmn.Manager(), "manager")
+
+	cap, restore := captureAttachExec(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"attach", "manager", "--target", env.target, "--dry-run", "--no-resume"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("attach --dry-run --no-resume: %v\nstderr=%s", err, errOut.String())
+	}
+	if cap.called {
+		t.Fatal("execClaudeAttach should not run during dry-run")
+	}
+	if !strings.Contains(out.String(), "would_resume_daemon:  no") {
+		t.Fatalf("dry-run output = %q, want no daemon resume", out.String())
+	}
+}
+
+func TestAttach_DryRunRequiresDirectAttachMode(t *testing.T) {
+	cmd := NewRootCmd()
+	errOut := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"attach", "--dry-run"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected dry-run without instance to fail")
+	}
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 2 {
+		t.Fatalf("expected exit 2, got %v", err)
+	}
+	if !strings.Contains(errOut.String(), "--dry-run requires an instance name") {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+}
+
+func TestAttach_RejectsUnsupportedRuntimeBeforeStop(t *testing.T) {
+	env := newAttachTestEnv(t)
+	sleep := exec.Command("sleep", "30")
+	if err := sleep.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sleep.Process.Kill()
+		_, _ = sleep.Process.Wait()
+	})
+
+	meta := &daemon.Metadata{
+		Instance:      "codex-worker",
+		Agent:         "worker",
+		Runtime:       string(runtimebin.KindCodex),
+		RuntimeBinary: runtimebin.DefaultBinaryForKind(runtimebin.KindCodex),
+		Workspace:     env.target,
+		PID:           sleep.Process.Pid,
+		SessionID:     "legacy-session",
+		StartedAt:     time.Now().UTC(),
+		Status:        daemon.StatusRunning,
+	}
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(env.teamDir), meta); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	if err := env.dmn.Manager().LoadFromDisk(); err != nil {
+		t.Fatalf("load metadata: %v", err)
+	}
+
+	cap, restore := captureAttachExec(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	errOut := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"attach", "codex-worker", "--target", env.target})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected unsupported runtime error")
+	}
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 2 {
+		t.Fatalf("expected exit 2, got %v", err)
+	}
+	if cap.called {
+		t.Fatal("execClaudeAttach should not run for unsupported runtime")
+	}
+	if !strings.Contains(errOut.String(), `runtime "codex" does not support managed resume`) {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+	got, err := daemon.ReadMetadata(daemon.DaemonRoot(env.teamDir), "codex-worker")
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	if got.Status != daemon.StatusRunning {
+		t.Fatalf("attach changed unsupported runtime status: got %s want running", got.Status)
+	}
+}
+
 // TestAttach_ClaudeExitCodeIsPropagated covers the case where the user's
 // interactive session exited non-zero. With --no-resume that exit code should
 // be the command's exit code.
@@ -405,4 +553,3 @@ func TestAttach_StateDirSurvivesTransfer(t *testing.T) {
 		t.Errorf("state file mtime changed: %s -> %s", orig.ModTime(), st.ModTime())
 	}
 }
-

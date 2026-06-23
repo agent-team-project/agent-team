@@ -59,7 +59,7 @@ AGENT_TEAM_RUNTIME=codex AGENT_TEAM_RUNTIME_BIN=/opt/bin/codex-wrapper agent-tea
 | Direct CLI resume outside daemon ownership | yes | yes |
 | Native subagent registry | yes | no |
 | Managed resume/start | yes | no |
-| `attach` resume flow | yes | limited to direct process attachment |
+| Interactive daemon `attach` resume flow | yes | no; use logs or direct Codex resume outside daemon ownership |
 | `logs --last-message` sidecar | no | yes for `codex exec` |
 | Worker status, mailbox, channel scripts | yes | yes, through `AGENT_TEAM_*` shell environment policy |
 

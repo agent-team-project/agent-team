@@ -1546,6 +1546,7 @@ func newJobAttachCmd() *cobra.Command {
 	var (
 		repo     string
 		noResume bool
+		dryRun   bool
 		noFollow bool
 		tail     string
 		since    string
@@ -1572,6 +1573,10 @@ func newJobAttachCmd() *cobra.Command {
 			repoRoot := filepath.Dir(teamDir)
 			logMode := noFollow || cmd.Flags().Changed("tail") || strings.TrimSpace(since) != "" || strings.TrimSpace(grep) != ""
 			if logMode {
+				if dryRun {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job attach: --dry-run cannot be combined with log-follow attach options.")
+					return exitErr(2)
+				}
 				if noResume {
 					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job attach: --no-resume cannot be combined with log-follow attach options.")
 					return exitErr(2)
@@ -1584,11 +1589,12 @@ func newJobAttachCmd() *cobra.Command {
 					Grep:     grep,
 				})
 			}
-			return runAttach(cmd, repoRoot, instance, noResume)
+			return runAttach(cmd, repoRoot, instance, noResume, dryRun)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&noResume, "no-resume", false, "Leave the owning instance in stopped state when claude exits.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the owning instance handoff without stopping or resuming the daemon child.")
 	cmd.Flags().BoolVar(&noFollow, "no-follow", false, "Log mode: print the selected log tail and exit instead of following.")
 	cmd.Flags().StringVar(&tail, "tail", "50", "Log mode: show only the last N lines before following (0 or all = all).")
 	cmd.Flags().StringVar(&since, "since", "", "Log mode with --no-follow: only print the log if it was modified since this duration ago (for example 10m, 24h) or RFC3339 timestamp.")
