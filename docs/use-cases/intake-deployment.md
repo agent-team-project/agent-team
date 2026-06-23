@@ -187,7 +187,7 @@ For a container host, generate a Compose service that mounts the repo and runs t
 docker build -t agent-team:local .
 ```
 
-CI publishes the same image recipe to `ghcr.io/jamesaud/agent-team` on pushes to `main` and `v*` release tags. Use that image when you want a registry-hosted base instead of a local build.
+CI publishes the same image recipe to `ghcr.io/jamesaud/agent-team` on pushes to `main` and `v*` release tags, then signs published digests with keyless cosign. Use that image when you want a registry-hosted base instead of a local build.
 
 ```sh
 agent-team intake service compose \

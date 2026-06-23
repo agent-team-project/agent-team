@@ -61,6 +61,7 @@ Built or substantially implemented:
 - published generated CLI reference with CI drift check
 - GHCR container publish workflow for main and release tags
 - Kubernetes intake manifests with Secret, Deployment, Service, and workspace PVC reference
+- keyless cosign signing for published GHCR image digests
 
 ## What Still Needs Design Care
 
@@ -92,7 +93,7 @@ High-value follow-up work:
 
 - runtime resume/adopt flows for long-running agents
 - richer pipeline gates beyond manual approval
-- published-image hardening, signing, and production webhook deployment examples
+- published-image verification docs and production webhook deployment examples
 
 ## Anti-Patterns
 
