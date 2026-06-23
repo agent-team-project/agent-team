@@ -56,6 +56,8 @@ Job-scoped:
 ```sh
 agent-team job queue squ-42
 agent-team job queue squ-42 --summary
+agent-team job queue squ-42 --runtime codex
+agent-team job queue squ-42 --summary --runtime codex
 ```
 
 Team-scoped:
@@ -75,6 +77,7 @@ Preview retries:
 agent-team queue retry --all --dry-run
 agent-team queue retry --all --runtime codex --dry-run
 agent-team job queue retry squ-42 --all --dry-run
+agent-team job queue retry squ-42 --all --runtime codex --dry-run
 agent-team team queue retry delivery --all --job SQU-42 --dry-run
 agent-team team queue retry delivery --all --runtime codex --dry-run
 ```
@@ -98,6 +101,7 @@ Batch drops default to dead-letter entries:
 ```sh
 agent-team queue drop --all --state dead --older-than 24h --dry-run
 agent-team queue drop --all --runtime codex --dry-run
+agent-team job queue drop squ-42 --all --runtime codex --dry-run
 agent-team team queue drop delivery --all --runtime codex --dry-run
 ```
 

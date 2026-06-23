@@ -65,6 +65,7 @@ func newJobQueueCmd() *cobra.Command {
 		repo        string
 		stateFilter string
 		eventTypes  []string
+		runtimes    []string
 		readyOnly   bool
 		summary     bool
 		jsonOut     bool
@@ -90,7 +91,7 @@ func newJobQueueCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job queue: %v\n", err)
 				return exitErr(2)
 			}
-			filters, err := parseQueueListFilters(stateFilter, nil, eventTypes, nil, readyOnly, time.Now().UTC())
+			filters, err := parseQueueListFiltersWithRuntime(stateFilter, nil, eventTypes, nil, runtimes, readyOnly, time.Now().UTC())
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job queue: %v\n", err)
 				return exitErr(2)
@@ -105,6 +106,7 @@ func newJobQueueCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().StringVar(&stateFilter, "state", "", "Filter by queue state: pending or dead.")
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "Filter by event type; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&readyOnly, "ready", false, "Only show pending queue items whose next retry is due now.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate queue counts instead of queue rows.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
@@ -402,6 +404,7 @@ func newJobQueueRetryCmd() *cobra.Command {
 		dryRun      bool
 		stateFilter string
 		eventTypes  []string
+		runtimes    []string
 		readyOnly   bool
 		limit       int
 	)
@@ -437,7 +440,7 @@ func newJobQueueRetryCmd() *cobra.Command {
 						effectiveState = daemon.QueueStatePending
 					}
 				}
-				filters, err := parseQueueListFilters(effectiveState, nil, eventTypes, nil, readyOnly, time.Now().UTC())
+				filters, err := parseQueueListFiltersWithRuntime(effectiveState, nil, eventTypes, nil, runtimes, readyOnly, time.Now().UTC())
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job queue retry: %v\n", err)
 					return exitErr(2)
@@ -452,8 +455,8 @@ func newJobQueueRetryCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue retry: requires <job-id> and one id unless --all is set.")
 				return exitErr(2)
 			}
-			if stateFilter != "" || len(eventTypes) > 0 || readyOnly || limit > 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue retry: --state, --event-type, --ready, and --limit require --all.")
+			if stateFilter != "" || len(eventTypes) > 0 || len(runtimes) > 0 || readyOnly || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue retry: --state, --event-type, --runtime, --ready, and --limit require --all.")
 				return exitErr(2)
 			}
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
@@ -470,6 +473,7 @@ func newJobQueueRetryCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching job-owned queue items without retrying them.")
 	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.")
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "With --all, filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&readyOnly, "ready", false, "With --all, only retry pending queue items whose next retry is due now.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, retry at most this many matching queue items; 0 means no limit.")
 	return cmd
@@ -484,6 +488,7 @@ func newJobQueueDropCmd() *cobra.Command {
 		dryRun      bool
 		stateFilter string
 		eventTypes  []string
+		runtimes    []string
 		readyOnly   bool
 		limit       int
 	)
@@ -519,7 +524,7 @@ func newJobQueueDropCmd() *cobra.Command {
 						effectiveState = daemon.QueueStatePending
 					}
 				}
-				filters, err := parseQueueListFilters(effectiveState, nil, eventTypes, nil, readyOnly, time.Now().UTC())
+				filters, err := parseQueueListFiltersWithRuntime(effectiveState, nil, eventTypes, nil, runtimes, readyOnly, time.Now().UTC())
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job queue drop: %v\n", err)
 					return exitErr(2)
@@ -534,8 +539,8 @@ func newJobQueueDropCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue drop: requires <job-id> and one id unless --all is set.")
 				return exitErr(2)
 			}
-			if stateFilter != "" || len(eventTypes) > 0 || readyOnly || limit > 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue drop: --state, --event-type, --ready, and --limit require --all.")
+			if stateFilter != "" || len(eventTypes) > 0 || len(runtimes) > 0 || readyOnly || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue drop: --state, --event-type, --runtime, --ready, and --limit require --all.")
 				return exitErr(2)
 			}
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
@@ -552,6 +557,7 @@ func newJobQueueDropCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching job-owned queue items without dropping them.")
 	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.")
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "With --all, filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&readyOnly, "ready", false, "With --all, only drop pending queue items whose next retry is due now.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, drop at most this many matching queue items; 0 means no limit.")
 	return cmd
@@ -4713,9 +4719,10 @@ func runJobQueueList(w io.Writer, teamDir string, j *job.Job, filters queueListF
 		return err
 	}
 	now := time.Now().UTC()
-	filtered := filterQueueItems(items, filters.withNow(now))
+	runtimeByInstance := queueRuntimeMap(teamDir)
+	filtered := filterQueueItems(items, filters.withNow(now).withRuntimeByInstance(runtimeByInstance))
 	if summary {
-		queueSummary := summarizeQueueItems(filtered, now)
+		queueSummary := summarizeQueueItems(filtered, now, runtimeByInstance)
 		if jsonOut {
 			return json.NewEncoder(w).Encode(queueSummary)
 		}
@@ -4728,7 +4735,7 @@ func runJobQueueList(w io.Writer, teamDir string, j *job.Job, filters queueListF
 	if tmpl != nil {
 		return renderQueueItemsFormat(w, filtered, tmpl)
 	}
-	renderQueueTable(w, filtered)
+	renderQueueTable(w, filtered, runtimeByInstance)
 	return nil
 }
 
@@ -4792,7 +4799,7 @@ func filteredQueueItemsForJob(teamDir string, j *job.Job, filters queueListFilte
 	if err != nil {
 		return nil, err
 	}
-	matches := filterQueueItems(items, filters.withNow(now))
+	matches := filterQueueItems(items, filters.withNow(now).withRuntimeByInstance(queueRuntimeMap(teamDir)))
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]
 	}

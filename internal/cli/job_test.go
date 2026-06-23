@@ -705,7 +705,8 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 			Instance:   "worker",
 			InstanceID: "worker-squ-120",
 			Payload: map[string]any{
-				"target": "worker",
+				"runtime": "codex",
+				"target":  "worker",
 			},
 			QueuedAt:  now.Add(-2 * time.Hour),
 			UpdatedAt: now.Add(-2 * time.Hour),
@@ -717,8 +718,9 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 			Instance:   "worker",
 			InstanceID: "worker-squ-120-delayed",
 			Payload: map[string]any{
-				"job_id": "squ-120",
-				"target": "worker",
+				"job_id":  "squ-120",
+				"runtime": "claude",
+				"target":  "worker",
 			},
 			NextRetry: now.Add(time.Hour),
 			QueuedAt:  now.Add(-time.Hour),
@@ -731,8 +733,9 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 			Instance:   "worker",
 			InstanceID: "worker-squ-121",
 			Payload: map[string]any{
-				"job_id": "squ-121",
-				"target": "worker",
+				"job_id":  "squ-121",
+				"runtime": "codex",
+				"target":  "worker",
 			},
 			QueuedAt:  now.Add(-30 * time.Minute),
 			UpdatedAt: now.Add(-30 * time.Minute),
@@ -744,9 +747,10 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 			Instance:   "worker",
 			InstanceID: "worker-squ-120",
 			Payload: map[string]any{
-				"job_id": "squ-120",
-				"ticket": "SQU-120",
-				"target": "worker",
+				"job_id":  "squ-120",
+				"runtime": "codex",
+				"ticket":  "SQU-120",
+				"target":  "worker",
 			},
 			Attempts:       daemon.MaxQueueAttempts,
 			LastError:      "spawn failed",
@@ -776,6 +780,22 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 		t.Fatalf("job queue ids = %s", got)
 	}
 
+	runtimeList := NewRootCmd()
+	runtimeListOut, runtimeListErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeList.SetOut(runtimeListOut)
+	runtimeList.SetErr(runtimeListErr)
+	runtimeList.SetArgs([]string{"job", "queue", "SQU-120", "--repo", tmp, "--runtime", "codex", "--json"})
+	if err := runtimeList.Execute(); err != nil {
+		t.Fatalf("job queue runtime json: %v\nstderr=%s", err, runtimeListErr.String())
+	}
+	var runtimeItems []daemon.QueueItem
+	if err := json.Unmarshal(runtimeListOut.Bytes(), &runtimeItems); err != nil {
+		t.Fatalf("decode job queue runtime json: %v\nbody=%s", err, runtimeListOut.String())
+	}
+	if got := strings.Join(queueItemIDs(runtimeItems), ","); got != "q-job-dead,q-job-ready" {
+		t.Fatalf("job queue runtime ids = %s", got)
+	}
+
 	ready := NewRootCmd()
 	readyOut, readyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	ready.SetOut(readyOut)
@@ -796,12 +816,28 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 	if err := summary.Execute(); err != nil {
 		t.Fatalf("job queue summary json: %v\nstderr=%s", err, summaryErr.String())
 	}
-	var queueSummary queueSummary
-	if err := json.Unmarshal(summaryOut.Bytes(), &queueSummary); err != nil {
+	var summaryResult queueSummary
+	if err := json.Unmarshal(summaryOut.Bytes(), &summaryResult); err != nil {
 		t.Fatalf("decode job queue summary: %v\nbody=%s", err, summaryOut.String())
 	}
-	if queueSummary.Total != 3 || queueSummary.Pending != 2 || queueSummary.Dead != 1 || queueSummary.Delayed != 1 || queueSummary.Attempts != daemon.MaxQueueAttempts {
-		t.Fatalf("job queue summary = %+v", queueSummary)
+	if summaryResult.Total != 3 || summaryResult.Pending != 2 || summaryResult.Dead != 1 || summaryResult.Delayed != 1 || summaryResult.Attempts != daemon.MaxQueueAttempts || summaryResult.Runtimes["codex"] != 2 || summaryResult.Runtimes["claude"] != 1 {
+		t.Fatalf("job queue summary = %+v", summaryResult)
+	}
+
+	runtimeSummaryCmd := NewRootCmd()
+	runtimeSummaryOut, runtimeSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeSummaryCmd.SetOut(runtimeSummaryOut)
+	runtimeSummaryCmd.SetErr(runtimeSummaryErr)
+	runtimeSummaryCmd.SetArgs([]string{"job", "queue", "SQU-120", "--repo", tmp, "--summary", "--runtime", "codex", "--json"})
+	if err := runtimeSummaryCmd.Execute(); err != nil {
+		t.Fatalf("job queue runtime summary json: %v\nstderr=%s", err, runtimeSummaryErr.String())
+	}
+	var runtimeSummary queueSummary
+	if err := json.Unmarshal(runtimeSummaryOut.Bytes(), &runtimeSummary); err != nil {
+		t.Fatalf("decode job queue runtime summary: %v\nbody=%s", err, runtimeSummaryOut.String())
+	}
+	if runtimeSummary.Total != 2 || runtimeSummary.Pending != 1 || runtimeSummary.Dead != 1 || runtimeSummary.Delayed != 0 || runtimeSummary.Runtimes["codex"] != 2 {
+		t.Fatalf("job queue runtime summary = %+v", runtimeSummary)
 	}
 }
 
@@ -827,11 +863,26 @@ func TestJobQueueRetryDropScopesOwnedItems(t *testing.T) {
 			Instance:   "worker",
 			InstanceID: "worker-squ-121",
 			Payload: map[string]any{
-				"job_id": "squ-121",
-				"target": "worker",
+				"job_id":  "squ-121",
+				"runtime": "codex",
+				"target":  "worker",
 			},
 			QueuedAt:  now.Add(-2 * time.Hour),
 			UpdatedAt: now.Add(-2 * time.Hour),
+		},
+		{
+			ID:         "q-job-pending-claude",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-121-claude",
+			Payload: map[string]any{
+				"job_id":  "squ-121",
+				"runtime": "claude",
+				"target":  "worker",
+			},
+			QueuedAt:  now.Add(-90 * time.Minute),
+			UpdatedAt: now.Add(-90 * time.Minute),
 		},
 		{
 			ID:         "q-job-dead",
@@ -840,9 +891,10 @@ func TestJobQueueRetryDropScopesOwnedItems(t *testing.T) {
 			Instance:   "worker",
 			InstanceID: "worker-squ-121",
 			Payload: map[string]any{
-				"job_id": "squ-121",
-				"ticket": "SQU-121",
-				"target": "worker",
+				"job_id":  "squ-121",
+				"runtime": "codex",
+				"ticket":  "SQU-121",
+				"target":  "worker",
 			},
 			Attempts:       daemon.MaxQueueAttempts,
 			LastError:      "spawn failed",
@@ -851,15 +903,34 @@ func TestJobQueueRetryDropScopesOwnedItems(t *testing.T) {
 			DeadLetteredAt: now.Add(-3 * time.Hour),
 		},
 		{
+			ID:         "q-job-dead-claude",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-121-claude",
+			Payload: map[string]any{
+				"job_id":  "squ-121",
+				"runtime": "claude",
+				"ticket":  "SQU-121",
+				"target":  "worker",
+			},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-4 * time.Hour),
+			UpdatedAt:      now.Add(-4 * time.Hour),
+			DeadLetteredAt: now.Add(-4 * time.Hour),
+		},
+		{
 			ID:         "q-other-dead",
 			State:      daemon.QueueStateDead,
 			EventType:  "agent.dispatch",
 			Instance:   "worker",
 			InstanceID: "worker-squ-122",
 			Payload: map[string]any{
-				"job_id": "squ-122",
-				"ticket": "SQU-122",
-				"target": "worker",
+				"job_id":  "squ-122",
+				"runtime": "codex",
+				"ticket":  "SQU-122",
+				"target":  "worker",
 			},
 			Attempts:       daemon.MaxQueueAttempts,
 			LastError:      "spawn failed",
@@ -877,7 +948,7 @@ func TestJobQueueRetryDropScopesOwnedItems(t *testing.T) {
 	retryDryOut, retryDryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	retryDry.SetOut(retryDryOut)
 	retryDry.SetErr(retryDryErr)
-	retryDry.SetArgs([]string{"job", "queue", "retry", "SQU-121", "--repo", tmp, "--all", "--dry-run", "--json"})
+	retryDry.SetArgs([]string{"job", "queue", "retry", "SQU-121", "--repo", tmp, "--all", "--runtime", "codex", "--dry-run", "--json"})
 	if err := retryDry.Execute(); err != nil {
 		t.Fatalf("job queue retry --all dry-run: %v\nstderr=%s", err, retryDryErr.String())
 	}
@@ -890,6 +961,22 @@ func TestJobQueueRetryDropScopesOwnedItems(t *testing.T) {
 	}
 	if item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-job-dead"); err != nil || item.State != daemon.QueueStateDead {
 		t.Fatalf("retry dry-run changed item=%+v err=%v", item, err)
+	}
+
+	dropDryAll := NewRootCmd()
+	dropDryAllOut, dropDryAllErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropDryAll.SetOut(dropDryAllOut)
+	dropDryAll.SetErr(dropDryAllErr)
+	dropDryAll.SetArgs([]string{"job", "queue", "drop", "SQU-121", "--repo", tmp, "--all", "--state", "pending", "--runtime", "codex", "--dry-run", "--json"})
+	if err := dropDryAll.Execute(); err != nil {
+		t.Fatalf("job queue drop --all runtime dry-run: %v\nstderr=%s", err, dropDryAllErr.String())
+	}
+	var dropDryAllResults []queueDropResult
+	if err := json.Unmarshal(dropDryAllOut.Bytes(), &dropDryAllResults); err != nil {
+		t.Fatalf("decode drop all dry-run: %v\nbody=%s", err, dropDryAllOut.String())
+	}
+	if len(dropDryAllResults) != 1 || dropDryAllResults[0].ID != "q-job-pending" || dropDryAllResults[0].Action != "would_drop" || !dropDryAllResults[0].DryRun {
+		t.Fatalf("drop all dry-run results = %+v", dropDryAllResults)
 	}
 
 	retry := NewRootCmd()
@@ -908,6 +995,9 @@ func TestJobQueueRetryDropScopesOwnedItems(t *testing.T) {
 	}
 	if item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-other-dead"); err != nil || item.State != daemon.QueueStateDead {
 		t.Fatalf("unrelated retry item changed=%+v err=%v", item, err)
+	}
+	if item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-job-dead-claude"); err != nil || item.State != daemon.QueueStateDead {
+		t.Fatalf("claude retry item changed=%+v err=%v", item, err)
 	}
 
 	dropOther := NewRootCmd()
@@ -942,6 +1032,9 @@ func TestJobQueueRetryDropScopesOwnedItems(t *testing.T) {
 	}
 	if item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-other-dead"); err != nil || item.State != daemon.QueueStateDead {
 		t.Fatalf("unrelated drop item changed=%+v err=%v", item, err)
+	}
+	if item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-job-pending-claude"); err != nil || item.State != daemon.QueueStatePending {
+		t.Fatalf("claude drop item changed=%+v err=%v", item, err)
 	}
 }
 
@@ -1362,7 +1455,12 @@ func TestJobQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "retry filter without all",
 			args: []string{"job", "queue", "retry", "SQU-121", "q-job-dead", "--state", "dead"},
-			want: "--state, --event-type, --ready, and --limit require --all",
+			want: "--state, --event-type, --runtime, --ready, and --limit require --all",
+		},
+		{
+			name: "retry runtime without all",
+			args: []string{"job", "queue", "retry", "SQU-121", "q-job-dead", "--runtime", "codex"},
+			want: "--state, --event-type, --runtime, --ready, and --limit require --all",
 		},
 		{
 			name: "drop format with json",
@@ -1382,7 +1480,12 @@ func TestJobQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "drop filter without all",
 			args: []string{"job", "queue", "drop", "SQU-121", "q-job-dead", "--ready"},
-			want: "--state, --event-type, --ready, and --limit require --all",
+			want: "--state, --event-type, --runtime, --ready, and --limit require --all",
+		},
+		{
+			name: "drop runtime without all",
+			args: []string{"job", "queue", "drop", "SQU-121", "q-job-dead", "--runtime", "codex"},
+			want: "--state, --event-type, --runtime, --ready, and --limit require --all",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

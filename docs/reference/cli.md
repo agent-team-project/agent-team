@@ -97,10 +97,11 @@ Shortcuts:
 
 | Command | Purpose |
 | --- | --- |
-| `agent-team job queue <job-id>` | List active queue entries owned by a job |
+| `agent-team job queue <job-id>` | List active queue entries owned by a job; filter queued dispatches with `--runtime` |
 | `agent-team job queue retry <job-id> <id>` | Retry one job-owned queue item |
-| `agent-team job queue retry <job-id> --all` | Retry matching job-owned queue items |
+| `agent-team job queue retry <job-id> --all` | Retry matching job-owned queue items; filter batch actions with `--runtime` |
 | `agent-team job queue drop <job-id> <id>` | Drop one job-owned queue item |
+| `agent-team job queue drop <job-id> --all` | Drop matching job-owned queue items; filter batch actions with `--runtime` |
 | `agent-team job queue prune <job-id>` | Age-prune job-owned queue entries |
 | `agent-team job queue quarantine <job-id>` | List job-owned quarantined queue files |
 | `agent-team job queue quarantine show <job-id> <path>` | Inspect one preserved file |
