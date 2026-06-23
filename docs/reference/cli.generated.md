@@ -3957,6 +3957,7 @@ Flags:
   -q, --quiet                   Suppress non-error output and use only the exit code.
       --repo string             Repo root. (default "<repo>")
       --rm                      Remove selected instance state and daemon metadata after stopping.
+      --runtime strings         Only target team-owned daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
       --summary                 Show aggregate action counts instead of per-instance rows.
       --timeout duration        Grace before --force kills. With --wait and no --wait-timeout, also used as the wait deadline (0 = no wait deadline; force defaults to 10s).
       --wait                    Wait for stopped instances to reach a terminal state.
@@ -4530,6 +4531,7 @@ Flags:
   -q, --quiet                    Suppress non-error output and use only the exit code.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
       --repo string              Repo root. (default "<repo>")
+      --runtime strings          Only target team-owned daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
       --summary                  Show aggregate action counts instead of per-instance rows.
       --tail string              With --attach, show only the last N lines before following (0 or all = all). (default "50")
       --timeout duration         Maximum time to wait for each running instance to stop before resuming (0 = daemon default).
@@ -4825,6 +4827,7 @@ Flags:
   -q, --quiet                    Suppress non-error output and use only the exit code.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
       --repo string              Repo root. (default "<repo>")
+      --runtime strings          Only target team-owned daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
       --summary                  Show aggregate action counts instead of per-instance rows.
       --tail string              With --attach, show only the last N lines before following (0 or all = all). (default "50")
       --timeout duration         Maximum time to wait with --wait (0 = no timeout).

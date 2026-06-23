@@ -1848,10 +1848,11 @@ instances = ["other", "build-worker"]
 	}
 	now := time.Now().UTC()
 	for _, meta := range []*daemon.Metadata{
-		{Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
-		{Instance: "worker-squ-101", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
-		{Instance: "build-worker-1", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
-		{Instance: "other", Agent: "other", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "manager", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "ticket-manager", Agent: "ticket-manager", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "worker-squ-101", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "build-worker-1", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+		{Instance: "other", Agent: "other", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
 	} {
 		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
 			t.Fatalf("write metadata %s: %v", meta.Instance, err)
@@ -1872,6 +1873,22 @@ instances = ["other", "build-worker"]
 	}
 	if got := lifecycleResultInstances(upRows); strings.Join(got, ",") != "manager,ticket-manager" {
 		t.Fatalf("team up instances = %v", got)
+	}
+
+	upRuntime := NewRootCmd()
+	upRuntimeOut, upRuntimeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	upRuntime.SetOut(upRuntimeOut)
+	upRuntime.SetErr(upRuntimeErr)
+	upRuntime.SetArgs([]string{"team", "up", "delivery", "--repo", root, "--runtime", "codex", "--dry-run", "--json"})
+	if err := upRuntime.Execute(); err != nil {
+		t.Fatalf("team up runtime dry-run: %v\nstderr=%s", err, upRuntimeErr.String())
+	}
+	var upRuntimeRows []lifecycleActionResult
+	if err := json.Unmarshal(upRuntimeOut.Bytes(), &upRuntimeRows); err != nil {
+		t.Fatalf("decode team up runtime: %v\nbody=%s", err, upRuntimeOut.String())
+	}
+	if got := lifecycleResultInstances(upRuntimeRows); strings.Join(got, ",") != "ticket-manager" {
+		t.Fatalf("team up runtime instances = %v", got)
 	}
 
 	down := NewRootCmd()
@@ -1898,6 +1915,30 @@ instances = ["other", "build-worker"]
 		}
 	}
 
+	downRuntime := NewRootCmd()
+	downRuntimeOut, downRuntimeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	downRuntime.SetOut(downRuntimeOut)
+	downRuntime.SetErr(downRuntimeErr)
+	downRuntime.SetArgs([]string{"team", "down", "delivery", "--repo", root, "--runtime", "codex", "--dry-run", "--json"})
+	if err := downRuntime.Execute(); err != nil {
+		t.Fatalf("team down runtime dry-run: %v\nstderr=%s", err, downRuntimeErr.String())
+	}
+	var downRuntimeRows []instanceDownResult
+	if err := json.Unmarshal(downRuntimeOut.Bytes(), &downRuntimeRows); err != nil {
+		t.Fatalf("decode team down runtime: %v\nbody=%s", err, downRuntimeOut.String())
+	}
+	downRuntimeNames := instanceDownResultNames(downRuntimeRows)
+	for _, want := range []string{"ticket-manager", "worker-squ-101"} {
+		if !stringInSlice(want, downRuntimeNames) {
+			t.Fatalf("team down runtime instances = %v, missing %s", downRuntimeNames, want)
+		}
+	}
+	for _, unwanted := range []string{"manager", "worker", "build-worker-1", "other"} {
+		if stringInSlice(unwanted, downRuntimeNames) {
+			t.Fatalf("team down runtime instances = %v, included %s", downRuntimeNames, unwanted)
+		}
+	}
+
 	restart := NewRootCmd()
 	restartOut, restartErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restart.SetOut(restartOut)
@@ -1912,6 +1953,34 @@ instances = ["other", "build-worker"]
 	}
 	if got := lifecycleResultInstances(restartRows); strings.Join(got, ",") != "manager,ticket-manager" {
 		t.Fatalf("team restart instances = %v", got)
+	}
+
+	restartRuntime := NewRootCmd()
+	restartRuntimeOut, restartRuntimeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restartRuntime.SetOut(restartRuntimeOut)
+	restartRuntime.SetErr(restartRuntimeErr)
+	restartRuntime.SetArgs([]string{"team", "restart", "delivery", "--repo", root, "--runtime", "codex", "--dry-run", "--json"})
+	if err := restartRuntime.Execute(); err != nil {
+		t.Fatalf("team restart runtime dry-run: %v\nstderr=%s", err, restartRuntimeErr.String())
+	}
+	var restartRuntimeRows []lifecycleActionResult
+	if err := json.Unmarshal(restartRuntimeOut.Bytes(), &restartRuntimeRows); err != nil {
+		t.Fatalf("decode team restart runtime: %v\nbody=%s", err, restartRuntimeOut.String())
+	}
+	if got := lifecycleResultInstances(restartRuntimeRows); strings.Join(got, ",") != "ticket-manager" {
+		t.Fatalf("team restart runtime instances = %v", got)
+	}
+
+	invalid := NewRootCmd()
+	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalid.SetOut(invalidOut)
+	invalid.SetErr(invalidErr)
+	invalid.SetArgs([]string{"team", "up", "delivery", "--repo", root, "--runtime", "llama", "--dry-run", "--json"})
+	if err := invalid.Execute(); err == nil {
+		t.Fatalf("team up invalid runtime succeeded\nstdout=%s\nstderr=%s", invalidOut.String(), invalidErr.String())
+	}
+	if !strings.Contains(invalidErr.String(), "unknown --runtime") {
+		t.Fatalf("invalid runtime stderr = %q", invalidErr.String())
 	}
 }
 

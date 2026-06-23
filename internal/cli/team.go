@@ -3118,18 +3118,19 @@ func newTeamRepairCmd() *cobra.Command {
 
 func newTeamUpCmd() *cobra.Command {
 	var (
-		repo         string
-		prompt       string
-		wait         bool
-		timeout      time.Duration
-		readyTimeout time.Duration
-		dryRun       bool
-		summary      bool
-		attach       bool
-		tail         string
-		quiet        bool
-		jsonOut      bool
-		format       string
+		repo           string
+		prompt         string
+		wait           bool
+		timeout        time.Duration
+		readyTimeout   time.Duration
+		dryRun         bool
+		summary        bool
+		attach         bool
+		tail           string
+		runtimeFilters []string
+		quiet          bool
+		jsonOut        bool
+		format         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -3154,7 +3155,15 @@ func newTeamUpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, names, err := loadTeamPersistentLifecycleInstances(cmd, repo, args[0])
+			runtimes, err := lifecycleRuntimeFilterSet(runtimeFilters)
+			if err != nil {
+				return teamLifecycleUsageError(cmd, "agent-team team up", err.Error())
+			}
+			teamDir, names, err := loadTeamPersistentLifecycleInstances(cmd, repo, args[0])
+			if err != nil {
+				return reportTeamLifecycleLoadError(cmd, "agent-team team up", err)
+			}
+			names, err = filterTeamLifecycleNamesByRuntime(teamDir, names, runtimes)
 			if err != nil {
 				return reportTeamLifecycleLoadError(cmd, "agent-team team up", err)
 			}
@@ -3190,6 +3199,7 @@ func newTeamUpCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate action counts instead of per-instance rows.")
 	cmd.Flags().BoolVar(&attach, "attach", false, "Follow the selected instance log after starting or resuming. Requires exactly one selected instance.")
 	cmd.Flags().StringVar(&tail, "tail", "50", "With --attach, show only the last N lines before following (0 or all = all).")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only target team-owned daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.")
@@ -3198,17 +3208,18 @@ func newTeamUpCmd() *cobra.Command {
 
 func newTeamDownCmd() *cobra.Command {
 	var (
-		repo        string
-		force       bool
-		wait        bool
-		timeout     time.Duration
-		waitTimeout time.Duration
-		dryRun      bool
-		remove      bool
-		summary     bool
-		quiet       bool
-		jsonOut     bool
-		format      string
+		repo           string
+		force          bool
+		wait           bool
+		timeout        time.Duration
+		waitTimeout    time.Duration
+		dryRun         bool
+		remove         bool
+		summary        bool
+		runtimeFilters []string
+		quiet          bool
+		jsonOut        bool
+		format         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -3230,7 +3241,15 @@ func newTeamDownCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, names, err := loadTeamStopLifecycleInstances(cmd, repo, args[0])
+			runtimes, err := lifecycleRuntimeFilterSet(runtimeFilters)
+			if err != nil {
+				return teamLifecycleUsageError(cmd, "agent-team team down", err.Error())
+			}
+			teamDir, names, err := loadTeamStopLifecycleInstances(cmd, repo, args[0])
+			if err != nil {
+				return reportTeamLifecycleLoadError(cmd, "agent-team team down", err)
+			}
+			names, err = filterTeamLifecycleNamesByRuntime(teamDir, names, runtimes)
 			if err != nil {
 				return reportTeamLifecycleLoadError(cmd, "agent-team team down", err)
 			}
@@ -3260,6 +3279,7 @@ func newTeamDownCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview planned stop actions without changing daemon state.")
 	cmd.Flags().BoolVar(&remove, "rm", false, "Remove selected instance state and daemon metadata after stopping.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate action counts instead of per-instance rows.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only target team-owned daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.")
@@ -3268,20 +3288,21 @@ func newTeamDownCmd() *cobra.Command {
 
 func newTeamRestartCmd() *cobra.Command {
 	var (
-		repo         string
-		prompt       string
-		timeout      time.Duration
-		readyTimeout time.Duration
-		wait         bool
-		waitTimeout  time.Duration
-		force        bool
-		dryRun       bool
-		summary      bool
-		attach       bool
-		tail         string
-		quiet        bool
-		jsonOut      bool
-		format       string
+		repo           string
+		prompt         string
+		timeout        time.Duration
+		readyTimeout   time.Duration
+		wait           bool
+		waitTimeout    time.Duration
+		force          bool
+		dryRun         bool
+		summary        bool
+		attach         bool
+		tail           string
+		runtimeFilters []string
+		quiet          bool
+		jsonOut        bool
+		format         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -3306,7 +3327,15 @@ func newTeamRestartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, names, err := loadTeamPersistentLifecycleInstances(cmd, repo, args[0])
+			runtimes, err := lifecycleRuntimeFilterSet(runtimeFilters)
+			if err != nil {
+				return teamLifecycleUsageError(cmd, "agent-team team restart", err.Error())
+			}
+			teamDir, names, err := loadTeamPersistentLifecycleInstances(cmd, repo, args[0])
+			if err != nil {
+				return reportTeamLifecycleLoadError(cmd, "agent-team team restart", err)
+			}
+			names, err = filterTeamLifecycleNamesByRuntime(teamDir, names, runtimes)
 			if err != nil {
 				return reportTeamLifecycleLoadError(cmd, "agent-team team restart", err)
 			}
@@ -3345,6 +3374,7 @@ func newTeamRestartCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate action counts instead of per-instance rows.")
 	cmd.Flags().BoolVar(&attach, "attach", false, "Follow the selected instance log after restarting or resuming. Requires exactly one selected instance.")
 	cmd.Flags().StringVar(&tail, "tail", "50", "With --attach, show only the last N lines before following (0 or all = all).")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only target team-owned daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.")
@@ -4376,6 +4406,30 @@ func loadTeamStopLifecycleInstances(cmd *cobra.Command, repo, name string) (stri
 	}
 	names = append(names, teamEphemeralChildLifecycleInstanceNames(top, team, metas)...)
 	return teamDir, names, nil
+}
+
+func filterTeamLifecycleNamesByRuntime(teamDir string, names []string, runtimes map[string]bool) ([]string, error) {
+	if len(runtimes) == 0 {
+		return names, nil
+	}
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return nil, err
+	}
+	runtimeByName := make(map[string]string, len(metas))
+	for _, meta := range metas {
+		if meta == nil {
+			continue
+		}
+		runtimeByName[meta.Instance] = metadataRuntimeKey(meta)
+	}
+	filtered := make([]string, 0, len(names))
+	for _, name := range names {
+		if runtimes[runtimeByName[name]] {
+			filtered = append(filtered, name)
+		}
+	}
+	return filtered, nil
 }
 
 func teamPersistentLifecycleInstanceNames(top *topology.Topology, team *topology.Team) []string {
