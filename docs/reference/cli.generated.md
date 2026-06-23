@@ -2660,6 +2660,7 @@ Flags:
       --json            Emit recommended actions as JSON.
       --limit int       Maximum number of actions to print (0 = no limit).
       --repo string     Repo root. (default "<repo>")
+      --team string     Only consider pipelines owned by this declared team; actions are rendered with team-scoped commands.
 ```
 
 ## `agent-team pipeline ready`

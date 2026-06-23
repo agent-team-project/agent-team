@@ -794,6 +794,10 @@ target = "worker"
 id = "review"
 target = "manager"
 after = ["implement"]
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -822,6 +826,18 @@ after = ["implement"]
 			UpdatedAt: now,
 			Steps: []job.Step{
 				{ID: "implement", Target: "worker", Status: job.StatusFailed},
+			},
+		},
+		{
+			ID:        "squ-712",
+			Ticket:    "SQU-712",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusQueued, Instance: "worker-squ-712-implement"},
 			},
 		},
 	} {
@@ -864,9 +880,29 @@ after = ["implement"]
 		"ticket_to_pr|ready_steps=1|agent-team pipeline advance ticket_to_pr --dry-run --preview-routes",
 		"ticket_to_pr|failed_steps=1|agent-team repair --retry-pipelines --dry-run --preview-routes",
 		"ticket_to_pr|failed_steps=1|agent-team pipeline ready ticket_to_pr --state failed",
+		"ticket_to_pr|queued_steps=1|agent-team tick",
 	} {
 		if !strings.Contains(formatOut.String(), want) {
 			t.Fatalf("pipeline next format missing %q:\n%s", want, formatOut.String())
+		}
+	}
+
+	teamCmd := NewRootCmd()
+	teamOut, teamErr := &bytes.Buffer{}, &bytes.Buffer{}
+	teamCmd.SetOut(teamOut)
+	teamCmd.SetErr(teamErr)
+	teamCmd.SetArgs([]string{"pipeline", "next", "ticket_to_pr", "--team", "delivery", "--repo", root, "--format", "{{.Pipeline}}|{{.Reason}}|{{.Action}}"})
+	if err := teamCmd.Execute(); err != nil {
+		t.Fatalf("pipeline next team format: %v\nstderr=%s", err, teamErr.String())
+	}
+	for _, want := range []string{
+		"ticket_to_pr|ready_steps=1|agent-team team advance delivery --dry-run --preview-routes",
+		"ticket_to_pr|failed_steps=1|agent-team team repair delivery --retry-pipelines --dry-run --preview-routes",
+		"ticket_to_pr|failed_steps=1|agent-team team ready delivery --state failed",
+		"ticket_to_pr|queued_steps=1|agent-team team tick delivery",
+	} {
+		if !strings.Contains(teamOut.String(), want) {
+			t.Fatalf("pipeline next team format missing %q:\n%s", want, teamOut.String())
 		}
 	}
 }

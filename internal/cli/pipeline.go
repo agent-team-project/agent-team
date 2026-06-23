@@ -337,11 +337,12 @@ func newPipelineStatusCmd() *cobra.Command {
 
 func newPipelineNextCmd() *cobra.Command {
 	var (
-		repo    string
-		all     bool
-		limit   int
-		jsonOut bool
-		format  string
+		repo     string
+		teamName string
+		all      bool
+		limit    int
+		jsonOut  bool
+		format   string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -383,7 +384,15 @@ func newPipelineNextCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline next: pipeline name is required.")
 				return exitErr(2)
 			}
-			rows, err := collectPipelineStatusRows(teamDir, pipelineName)
+			var rows []pipelineStatusRow
+			if strings.TrimSpace(teamName) != "" {
+				rows, err = collectTeamPipelineStatus(teamDir, teamName)
+				if err == nil && pipelineName != "" {
+					rows, err = filterPipelineNextRowsForPipeline(rows, pipelineName, teamName)
+				}
+			} else {
+				rows, err = collectPipelineStatusRows(teamDir, pipelineName)
+			}
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline next: %v\n", err)
 				return exitErr(1)
@@ -393,6 +402,7 @@ func newPipelineNextCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
+	cmd.Flags().StringVar(&teamName, "team", "", "Only consider pipelines owned by this declared team; actions are rendered with team-scoped commands.")
 	cmd.Flags().BoolVar(&all, "all", false, "Consider all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum number of actions to print (0 = no limit).")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit recommended actions as JSON.")
@@ -1522,19 +1532,39 @@ func pipelineNextActionsFromStatus(rows []pipelineStatusRow, limit int) []pipeli
 	return actions
 }
 
+func filterPipelineNextRowsForPipeline(rows []pipelineStatusRow, pipeline, teamName string) ([]pipelineStatusRow, error) {
+	pipeline = strings.TrimSpace(pipeline)
+	if pipeline == "" {
+		return rows, nil
+	}
+	out := make([]pipelineStatusRow, 0, 1)
+	for _, row := range rows {
+		if row.Pipeline == pipeline {
+			out = append(out, row)
+		}
+	}
+	if len(out) == 0 {
+		if strings.TrimSpace(teamName) != "" {
+			return nil, fmt.Errorf("pipeline %q not found for team %q", pipeline, teamName)
+		}
+		return nil, fmt.Errorf("pipeline %q not found", pipeline)
+	}
+	return out, nil
+}
+
 func pipelineNextActionReason(row pipelineStatusRow, action string) string {
 	switch {
-	case strings.Contains(action, " pipeline advance "):
+	case strings.Contains(action, " advance "):
 		return fmt.Sprintf("ready_steps=%d", row.ReadySteps)
-	case strings.Contains(action, " pipeline retry "),
+	case strings.Contains(action, " retry "),
 		strings.Contains(action, " --retry-pipelines "),
 		strings.Contains(action, " --state failed"):
 		return fmt.Sprintf("failed_steps=%d", row.FailedSteps)
-	case strings.Contains(action, " pipeline approve "):
+	case strings.Contains(action, " approve "):
 		return fmt.Sprintf("manual_gates=%d", row.ManualGates)
 	case strings.Contains(action, " --state blocked"):
 		return fmt.Sprintf("blocked_steps=%d", row.BlockedSteps)
-	case action == "agent-team tick":
+	case action == "agent-team tick", strings.Contains(action, " tick "):
 		return fmt.Sprintf("queued_steps=%d", row.QueuedSteps)
 	default:
 		return ""
