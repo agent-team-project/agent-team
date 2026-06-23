@@ -312,7 +312,7 @@ Use `snapshot --output diagnostics.json` when you need one read-only artifact fo
 
 `<ref>` for `init` and `template show` accepts:
 
-- **empty / `bundled`** — the default template embedded in the binary.
+- **omitted / `bundled` / `default`** — the default template embedded in the binary.
 - **a local path** (`./eng-team`, `/abs/path`) — useful when authoring a template.
 - **a cached name** — anything previously `template pull`'d.
 - **a Git ref after pull** — `agent-team template pull github.com/foo/bar@v0.1.0`, then `agent-team init github.com/foo/bar@v0.1.0`. HTTPS, SSH, `git@host:path.git@ref`, and `file://...@ref` sources are supported; use `--as <cache-ref>` to store under a custom cache key.

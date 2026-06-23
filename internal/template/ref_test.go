@@ -35,6 +35,27 @@ default = "v"
 	}
 }
 
+func TestResolver_DefaultAlias(t *testing.T) {
+	manifest := []byte(`[template]
+name = "x"
+version = "0.0.1"
+`)
+	bundled := fstest.MapFS{
+		"root/template.toml": &fstest.MapFile{Data: manifest},
+	}
+	r := &Resolver{BundledFS: bundled, BundledRoot: "root"}
+	rt, err := r.Resolve(DefaultRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.Ref != BundledRef {
+		t.Errorf("ref = %s, want %s", rt.Ref, BundledRef)
+	}
+	if rt.Manifest == nil || rt.Manifest.Template.Name != "x" {
+		t.Errorf("manifest: %+v", rt.Manifest)
+	}
+}
+
 func TestResolver_LocalPath(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "template.toml"),

@@ -40,6 +40,20 @@ func TestTemplateShow_Bundled(t *testing.T) {
 	}
 }
 
+func TestTemplateShow_DefaultAlias(t *testing.T) {
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"template", "show", "default"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("template show default: %v\nstderr: %s", err, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Ref: bundled") || !strings.Contains(out.String(), "Template: default v") {
+		t.Fatalf("default alias output = %s", out.String())
+	}
+}
+
 func TestTemplateLs_IncludesBundled(t *testing.T) {
 	cmd := NewRootCmd()
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
@@ -74,6 +88,39 @@ func TestTemplateRm_RejectsBundled(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "cannot rm the bundled template") {
 		t.Errorf("missing rejection message: %s", errOut.String())
+	}
+}
+
+func TestTemplateRm_RejectsDefaultAlias(t *testing.T) {
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"template", "rm", "default"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected rm default to fail")
+	}
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 2 {
+		t.Errorf("expected exit 2, got %v", err)
+	}
+	if !strings.Contains(errOut.String(), "cannot rm the bundled template") {
+		t.Errorf("missing rejection message: %s", errOut.String())
+	}
+}
+
+func TestTemplatePull_DefaultAliasNoop(t *testing.T) {
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"template", "pull", "default"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("template pull default: %v\nstderr=%s", err, errOut.String())
+	}
+	if !strings.Contains(out.String(), "bundled template needs no pull") {
+		t.Fatalf("pull default output = %s", out.String())
 	}
 }
 

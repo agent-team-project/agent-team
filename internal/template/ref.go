@@ -13,6 +13,20 @@ import (
 // template. Passed as the ref to `init`, `template show`, etc.
 const BundledRef = "bundled"
 
+// DefaultRef is a friendlier alias for the embedded default template. The
+// resolved template still reports Ref=BundledRef so provenance stays stable.
+const DefaultRef = "default"
+
+// IsBundledRef reports whether ref selects the embedded default template.
+func IsBundledRef(ref string) bool {
+	switch strings.TrimSpace(ref) {
+	case "", BundledRef, DefaultRef:
+		return true
+	default:
+		return false
+	}
+}
+
 // ResolvedTemplate is the result of resolving a template ref. The caller
 // gets enough info to walk the template tree and read files from it without
 // caring whether the source is the embedded FS or a directory on disk.
@@ -46,7 +60,7 @@ type Resolver struct {
 }
 
 // Resolve maps a ref to a ResolvedTemplate. Three forms are supported:
-//   - "" or "bundled" — the embedded default template.
+//   - "", "bundled", or "default" — the embedded default template.
 //   - "./...", "../...", "/...", or any path that exists on disk — a local
 //     directory.
 //   - any other string — looked up in the cache root as a relative path.
@@ -54,7 +68,7 @@ type Resolver struct {
 // Git sources are fetched by `agent-team template pull` into the cache first;
 // after that, init/show/run resolve them through the same cache-relative path.
 func (r *Resolver) Resolve(ref string) (*ResolvedTemplate, error) {
-	if ref == "" || ref == BundledRef {
+	if IsBundledRef(ref) {
 		return r.resolveBundled()
 	}
 	if isLocalPath(ref) {

@@ -42,7 +42,8 @@ func newTemplateCmd() *cobra.Command {
 		Short: "Manage templates (bundled + cached) used by `agent-team init`.",
 		Long: "Manage templates: list, inspect, pull, and remove. A template is a parameterised " +
 			"directory tree with a `template.toml` manifest. The default template is embedded in the " +
-			"binary; additional templates are pulled from local paths into a local cache.",
+			"binary and can be referenced as `bundled` or `default`; additional templates are pulled " +
+			"from local paths into a local cache.",
 	}
 	cmd.AddCommand(newTemplateLsCmd())
 	cmd.AddCommand(newTemplateShowCmd())
@@ -138,7 +139,7 @@ func listCachedRefs(cacheRoot string) ([]string, error) {
 func newTemplateShowCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "show [ref]",
-		Short: "Print a template's manifest. Default ref: bundled.",
+		Short: "Print a template's manifest. Default ref: bundled (alias: default).",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := template.BundledRef
@@ -472,7 +473,7 @@ func newTemplatePullCmd() *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := args[0]
-			if ref == template.BundledRef {
+			if template.IsBundledRef(ref) {
 				fmt.Fprintln(cmd.OutOrStdout(), "bundled template needs no pull (embedded in the binary)")
 				return nil
 			}
@@ -745,7 +746,7 @@ func newTemplateRmCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := args[0]
-			if ref == template.BundledRef {
+			if template.IsBundledRef(ref) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: cannot rm the bundled template (it's compiled into the binary)")
 				return exitErr(2)
 			}

@@ -95,7 +95,7 @@ Supported ref sources:
 
 | Ref | Behavior |
 | --- | --- |
-| omitted or `bundled` | Use the embedded default template |
+| omitted, `bundled`, or `default` | Use the embedded default template |
 | local path | Copy from the local filesystem |
 | cached ref | Resolve from `~/.agent-team/cache/` |
 

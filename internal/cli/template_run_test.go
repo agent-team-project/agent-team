@@ -71,6 +71,32 @@ func TestTemplateRun_TargetUsed(t *testing.T) {
 	}
 }
 
+func TestTemplateRun_DefaultAlias(t *testing.T) {
+	target := t.TempDir()
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"template", "run", "default", "manager",
+		"--target", target,
+		"--prompt", "hello default",
+		"--set", "linear.team_id=tt-team",
+		"--set", "linear.ticket_prefix=TT",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("template run default: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, ".agent_team", ".template.lock")); err != nil {
+		t.Fatalf("template lock missing: %v", err)
+	}
+	if cap.agentsJSON == "" {
+		t.Errorf("expected --agents to be present in captured args: %v", cap.args)
+	}
+}
+
 // TestTemplateRun_TempdirRemovedOnExit verifies that without --target and
 // without --keep, the auto-created tempdir is removed when the command
 // returns successfully.

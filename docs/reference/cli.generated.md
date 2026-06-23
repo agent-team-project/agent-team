@@ -4694,7 +4694,7 @@ Flags:
 
 Manage templates (bundled + cached) used by `agent-team init`.
 
-Manage templates: list, inspect, pull, and remove. A template is a parameterised directory tree with a `template.toml` manifest. The default template is embedded in the binary; additional templates are pulled from local paths into a local cache.
+Manage templates: list, inspect, pull, and remove. A template is a parameterised directory tree with a `template.toml` manifest. The default template is embedded in the binary and can be referenced as `bundled` or `default`; additional templates are pulled from local paths into a local cache.
 
 ```text
 agent-team template
@@ -4712,7 +4712,7 @@ Subcommands:
 - `agent-team template pull` - Fetch a template into the cache so it can be referenced later.
 - `agent-team template rm` - Remove a template from the cache.
 - `agent-team template run` - One-shot: instantiate a template into a tempdir and spawn an agent.
-- `agent-team template show` - Print a template&#39;s manifest. Default ref: bundled.
+- `agent-team template show` - Print a template&#39;s manifest. Default ref: bundled (alias: default).
 - `agent-team template smoke` - Render a template into a temp repo and validate it.
 
 ## `agent-team template ls`
@@ -4797,7 +4797,7 @@ Inherited Flags:
 
 ## `agent-team template show`
 
-Print a template&#39;s manifest. Default ref: bundled.
+Print a template&#39;s manifest. Default ref: bundled (alias: default).
 
 ```text
 agent-team template show [ref]
