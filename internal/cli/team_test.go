@@ -587,6 +587,64 @@ instances = ["platform-worker"]
 	}
 }
 
+func TestTeamStatusIncludesJobRuntimeSummary(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.worker]
+agent = "worker"
+
+[teams.delivery]
+instances = ["worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-902",
+		Ticket:    "SQU-902",
+		Target:    "worker",
+		Instance:  "worker",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance:      "worker",
+		Agent:         "worker",
+		Runtime:       string(runtimebin.KindCodex),
+		RuntimeBinary: "codex-dev",
+		Status:        daemon.StatusRunning,
+		PID:           os.Getpid(),
+		Workspace:     root,
+		StartedAt:     now,
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "status", "delivery", "--repo", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team status: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot teamStatusSnapshot
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode team status: %v\nbody=%s", err, out.String())
+	}
+	if snapshot.JobSummary.Runtimes["codex"] != 1 {
+		t.Fatalf("team status job runtimes = %+v", snapshot.JobSummary.Runtimes)
+	}
+}
+
 func TestTeamPsFiltersByRuntime(t *testing.T) {
 	root := t.TempDir()
 	initInto(t, root)

@@ -4040,7 +4040,7 @@ func collectTeamStatusWithOptions(teamDir, name string, now time.Time, opts psOp
 		CheckedAt:       now.UTC().Format(time.RFC3339),
 		InstanceSummary: psSummaryRows(instanceRows),
 		Instances:       psJSONRows(instanceRows),
-		JobSummary:      summarizeJobs(ownedJobs),
+		JobSummary:      summarizeJobsWithRuntime(teamDir, ownedJobs),
 		Queue:           queueSummary,
 		PipelineStatus:  teamPipelineStatus(team, pipelineStatus),
 		Schedules:       teamSchedules(team, schedules),
@@ -4755,7 +4755,7 @@ func addTeamJobHealth(result *healthResult, teamDir string, top *topology.Topolo
 	if err != nil {
 		return err
 	}
-	triage.Summary = summarizeJobs(ownedJobs)
+	triage.Summary = summarizeJobsWithRuntime(teamDir, ownedJobs)
 	triage.Queue = result.Queue
 	triage.Attention = filterJobTriageItemsByJobIDs(triage.Attention, ownedIDs)
 	triage.ReadySteps = filterJobReadyRowsByJobIDs(triage.ReadySteps, ownedIDs)
@@ -4919,7 +4919,7 @@ func collectTeamTriage(teamDir, name string, now time.Time, staleAfter time.Dura
 	if err != nil {
 		return jobTriageSnapshot{}, err
 	}
-	snapshot.Summary = summarizeJobs(ownedJobs)
+	snapshot.Summary = summarizeJobsWithRuntime(teamDir, ownedJobs)
 	snapshot.Queue = summarizeQueueItems(teamQueue, now)
 	applyQueueQuarantineSummary(&snapshot.Queue, teamQuarantine)
 	snapshot.Attention = filterJobTriageItemsByJobIDs(snapshot.Attention, ownedIDs)
