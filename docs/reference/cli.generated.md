@@ -4683,6 +4683,7 @@ Flags:
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --phase strings       Only show team-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --repo string         Repo root. (default "<repo>")
+      --runtime strings     Only show team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
       --sort string         Sort rows by name, cpu, mem, rss, status, agent, phase, stale, or unhealthy. (default "name")
       --stale               Only show team-owned instances whose status.toml is stale.
       --status strings      Only show team-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.

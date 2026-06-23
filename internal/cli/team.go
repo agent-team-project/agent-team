@@ -2456,21 +2456,22 @@ func newTeamPruneCmd() *cobra.Command {
 
 func newTeamStatsCmd() *cobra.Command {
 	var (
-		repo          string
-		all           bool
-		latest        bool
-		last          int
-		watch         bool
-		jsonOut       bool
-		summary       bool
-		noClear       bool
-		format        string
-		sortBy        string
-		interval      time.Duration
-		statusFilters []string
-		phaseFilters  []string
-		staleOnly     bool
-		unhealthyOnly bool
+		repo           string
+		all            bool
+		latest         bool
+		last           int
+		watch          bool
+		jsonOut        bool
+		summary        bool
+		noClear        bool
+		format         string
+		sortBy         string
+		interval       time.Duration
+		statusFilters  []string
+		runtimeFilters []string
+		phaseFilters   []string
+		staleOnly      bool
+		unhealthyOnly  bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -2501,8 +2502,8 @@ func newTeamStatsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --last cannot be combined with instance names.")
 				return exitErr(2)
 			}
-			if len(names) > 0 && (len(statusFilters) > 0 || len(phaseFilters) > 0 || staleOnly || unhealthyOnly) {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --status, --phase, --stale, and --unhealthy cannot be combined with instance names.")
+			if len(names) > 0 && (len(statusFilters) > 0 || len(runtimeFilters) > 0 || len(phaseFilters) > 0 || staleOnly || unhealthyOnly) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --status, --runtime, --phase, --stale, and --unhealthy cannot be combined with instance names.")
 				return exitErr(2)
 			}
 			if interval < 0 {
@@ -2518,7 +2519,7 @@ func newTeamStatsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team stats: %v\n", err)
 				return exitErr(2)
 			}
-			opts, err := newStatsOptionsWithInstancesPhasesAndUnhealthy(all, statusFilters, nil, phaseFilters, nil, unhealthyOnly)
+			opts, err := newStatsOptionsWithRuntimeInstancesPhasesAndUnhealthy(all, statusFilters, runtimeFilters, nil, phaseFilters, nil, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team stats: %v\n", err)
 				return exitErr(2)
@@ -2611,6 +2612,7 @@ func newTeamStatsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort rows by name, cpu, mem, rss, status, agent, phase, stale, or unhealthy.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show team-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show team-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show team-owned instances whose status.toml is stale.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed or stale team-owned instances.")

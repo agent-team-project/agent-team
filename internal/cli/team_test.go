@@ -2198,10 +2198,10 @@ instances = ["other", "build-worker"]
 	}
 	now := time.Now().UTC()
 	for _, meta := range []*daemon.Metadata{
-		{Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-3 * time.Minute)},
-		{Instance: "worker-squ-101", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-2 * time.Minute)},
-		{Instance: "build-worker-1", Agent: "worker", Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-time.Minute)},
-		{Instance: "other", Agent: "other", Status: daemon.StatusExited, Workspace: root, StartedAt: now.Add(-time.Minute), ExitedAt: now},
+		{Instance: "manager", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-3 * time.Minute)},
+		{Instance: "worker-squ-101", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-2 * time.Minute)},
+		{Instance: "build-worker-1", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-time.Minute)},
+		{Instance: "other", Agent: "other", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusExited, Workspace: root, StartedAt: now.Add(-time.Minute), ExitedAt: now},
 	} {
 		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
 			t.Fatalf("write metadata %s: %v", meta.Instance, err)
@@ -2222,6 +2222,37 @@ instances = ["other", "build-worker"]
 	}
 	if got := statsJSONRowNames(rows); strings.Join(got, ",") != "manager,worker-squ-101" {
 		t.Fatalf("team stats running names = %v", got)
+	}
+
+	codex := NewRootCmd()
+	codexOut, codexErr := &bytes.Buffer{}, &bytes.Buffer{}
+	codex.SetOut(codexOut)
+	codex.SetErr(codexErr)
+	codex.SetArgs([]string{"team", "stats", "delivery", "--repo", root, "--runtime", "codex", "--json"})
+	if err := codex.Execute(); err != nil {
+		t.Fatalf("team stats runtime: %v\nstderr=%s", err, codexErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(codexOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode team stats runtime: %v\nbody=%s", err, codexOut.String())
+	}
+	if got := statsJSONRowNames(rows); strings.Join(got, ",") != "worker-squ-101" {
+		t.Fatalf("team stats runtime names = %v", got)
+	}
+	if rows[0].Runtime != "codex" {
+		t.Fatalf("team stats runtime row = %+v", rows[0])
+	}
+
+	badRuntime := NewRootCmd()
+	badRuntime.SetOut(&bytes.Buffer{})
+	badRuntimeErr := &bytes.Buffer{}
+	badRuntime.SetErr(badRuntimeErr)
+	badRuntime.SetArgs([]string{"team", "stats", "delivery", "--repo", root, "--runtime", "llama"})
+	if err := badRuntime.Execute(); err == nil {
+		t.Fatal("team stats accepted unknown runtime")
+	}
+	if !strings.Contains(badRuntimeErr.String(), "unknown --runtime") {
+		t.Fatalf("bad runtime stderr = %q", badRuntimeErr.String())
 	}
 
 	all := NewRootCmd()
