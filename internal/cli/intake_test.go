@@ -555,12 +555,67 @@ func TestIntakeServiceLaunchd(t *testing.T) {
 	}
 }
 
+func TestIntakeServiceCompose(t *testing.T) {
+	target := t.TempDir()
+	initInto(t, target)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"intake", "service", "compose",
+		"--repo", target,
+		"--bin", "agent-team",
+		"--name", "agent-team-intake-test",
+		"--image", "ghcr.io/acme/agent-team:test",
+		"--container-workdir", "/workspace/repo",
+		"--publish", "127.0.0.1:9999:8787",
+		"--linear-secret-env", "LINEAR_SECRET",
+		"--github-secret-env", "GITHUB_SECRET",
+		"--github-reconcile-job",
+		"--github-cleanup-merged",
+		"--github-verify-pr",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake service compose: %v\nstderr=%s", err, stderr.String())
+	}
+	expectedTarget := target
+	if eval, err := filepath.EvalSymlinks(target); err == nil {
+		expectedTarget = eval
+	}
+	body := out.String()
+	for _, want := range []string{
+		"# Save as docker-compose.agent-team-intake-test.yml",
+		"services:",
+		`  "agent-team-intake-test":`,
+		`    image: "ghcr.io/acme/agent-team:test"`,
+		`    working_dir: "/workspace/repo"`,
+		`      - "` + expectedTarget + `:/workspace/repo"`,
+		`      - "127.0.0.1:9999:8787"`,
+		`      "LINEAR_SECRET": "replace-me"`,
+		`      "GITHUB_SECRET": "replace-me"`,
+		`      - "/bin/sh"`,
+		`      - "-lc"`,
+		`      - "agent-team daemon start && exec agent-team intake serve --addr 0.0.0.0:8787 --linear-max-age 1m0s --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr"`,
+		"    restart: unless-stopped",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("compose output missing %q:\n%s", want, body)
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestIntakeServiceValidation(t *testing.T) {
 	cases := []struct {
 		args []string
 		want string
 	}{
-		{[]string{"intake", "service", "supervisord"}, "service kind must be one of: systemd, launchd"},
+		{[]string{"intake", "service", "supervisord"}, "service kind must be one of: systemd, launchd, compose"},
+		{[]string{"intake", "service", "compose", "--image", ""}, "--image is required"},
 		{[]string{"intake", "service", "systemd", "--github-verify-pr"}, "--github-verify-pr requires --github-cleanup-merged"},
 		{[]string{"intake", "service", "systemd", "--github-cleanup-merged"}, "--github-cleanup-merged requires --github-reconcile-job"},
 	}

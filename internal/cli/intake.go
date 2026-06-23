@@ -253,6 +253,9 @@ type intakeServiceOptions struct {
 	Bin                     string
 	Name                    string
 	Description             string
+	Image                   string
+	ContainerWorkdir        string
+	Publish                 string
 	LinearSecretEnv         string
 	GitHubSecretEnv         string
 	GitHubReconcileJob      bool
@@ -269,6 +272,9 @@ func newIntakeServiceCmd() *cobra.Command {
 	opts.Bin = "agent-team"
 	opts.Name = "agent-team-intake"
 	opts.Description = "agent-team intake server"
+	opts.Image = "agent-team:local"
+	opts.ContainerWorkdir = "/workspace"
+	opts.Publish = "127.0.0.1:8787:8787"
 	opts.LinearSecretEnv = "LINEAR_WEBHOOK_SECRET"
 	opts.GitHubSecretEnv = "GITHUB_WEBHOOK_SECRET"
 	opts.LinearMaxAge = time.Minute
@@ -277,17 +283,20 @@ func newIntakeServiceCmd() *cobra.Command {
 	cwd, _ := os.Getwd()
 	opts.Target = cwd
 	cmd := &cobra.Command{
-		Use:   "service systemd|launchd",
+		Use:   "service systemd|launchd|compose",
 		Short: "Print a service-manager config for intake serve.",
 		Long:  "Print a read-only service-manager configuration for running `agent-team intake serve` against this repo. The command does not install or write the service file.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kind := strings.ToLower(strings.TrimSpace(args[0]))
-			if kind != "systemd" && kind != "launchd" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake service: service kind must be one of: systemd, launchd.")
+			if kind != "systemd" && kind != "launchd" && kind != "compose" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake service: service kind must be one of: systemd, launchd, compose.")
 				return exitErr(2)
 			}
-			if err := validateIntakeServiceOptions(opts); err != nil {
+			if kind == "compose" && !cmd.Flags().Changed("addr") {
+				opts.Addr = "0.0.0.0:8787"
+			}
+			if err := validateIntakeServiceOptions(kind, opts); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake service: %v\n", err)
 				return exitErr(2)
 			}
@@ -296,9 +305,12 @@ func newIntakeServiceCmd() *cobra.Command {
 				return err
 			}
 			repoRoot := filepath.Dir(teamDir)
-			if kind == "launchd" {
+			switch kind {
+			case "launchd":
 				renderIntakeLaunchdService(cmd.OutOrStdout(), repoRoot, opts)
-			} else {
+			case "compose":
+				renderIntakeComposeService(cmd.OutOrStdout(), repoRoot, opts)
+			default:
 				renderIntakeSystemdService(cmd.OutOrStdout(), repoRoot, opts)
 			}
 			return nil
@@ -309,6 +321,9 @@ func newIntakeServiceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Bin, "bin", opts.Bin, "agent-team binary path used in the service.")
 	cmd.Flags().StringVar(&opts.Name, "name", opts.Name, "Service unit name/comment stem.")
 	cmd.Flags().StringVar(&opts.Description, "description", opts.Description, "Service description.")
+	cmd.Flags().StringVar(&opts.Image, "image", opts.Image, "Container image used by compose service generation.")
+	cmd.Flags().StringVar(&opts.ContainerWorkdir, "container-workdir", opts.ContainerWorkdir, "Container working directory used by compose service generation.")
+	cmd.Flags().StringVar(&opts.Publish, "publish", opts.Publish, "Compose port publication host:container mapping; empty omits ports.")
 	cmd.Flags().StringVar(&opts.LinearSecretEnv, "linear-secret-env", opts.LinearSecretEnv, "Environment variable name containing the Linear webhook secret; empty omits it.")
 	cmd.Flags().StringVar(&opts.GitHubSecretEnv, "github-secret-env", opts.GitHubSecretEnv, "Environment variable name containing the GitHub webhook secret; empty omits it.")
 	cmd.Flags().BoolVar(&opts.GitHubReconcileJob, "github-reconcile-job", false, "Include --github-reconcile-job in ExecStart.")
@@ -320,12 +335,20 @@ func newIntakeServiceCmd() *cobra.Command {
 	return cmd
 }
 
-func validateIntakeServiceOptions(opts intakeServiceOptions) error {
+func validateIntakeServiceOptions(kind string, opts intakeServiceOptions) error {
 	if strings.TrimSpace(opts.Name) == "" {
 		return fmt.Errorf("--name is required")
 	}
 	if strings.TrimSpace(opts.Description) == "" {
 		return fmt.Errorf("--description is required")
+	}
+	if kind == "compose" {
+		if strings.TrimSpace(opts.Image) == "" {
+			return fmt.Errorf("--image is required")
+		}
+		if strings.TrimSpace(opts.ContainerWorkdir) == "" {
+			return fmt.Errorf("--container-workdir is required")
+		}
 	}
 	if strings.TrimSpace(opts.Bin) == "" {
 		return fmt.Errorf("--bin is required")
@@ -376,6 +399,32 @@ func renderIntakeSystemdService(w io.Writer, repoRoot string, opts intakeService
 	fmt.Fprintln(w, "WantedBy=multi-user.target")
 }
 
+func renderIntakeComposeService(w io.Writer, repoRoot string, opts intakeServiceOptions) {
+	fmt.Fprintf(w, "# Save as docker-compose.%s.yml\n", opts.Name)
+	fmt.Fprintln(w, "services:")
+	fmt.Fprintf(w, "  %s:\n", yamlQuote(opts.Name))
+	fmt.Fprintf(w, "    image: %s\n", yamlQuote(opts.Image))
+	fmt.Fprintf(w, "    working_dir: %s\n", yamlQuote(opts.ContainerWorkdir))
+	fmt.Fprintln(w, "    volumes:")
+	fmt.Fprintf(w, "      - %s\n", yamlQuote(repoRoot+":"+opts.ContainerWorkdir))
+	if publish := strings.TrimSpace(opts.Publish); publish != "" {
+		fmt.Fprintln(w, "    ports:")
+		fmt.Fprintf(w, "      - %s\n", yamlQuote(publish))
+	}
+	envs := serviceSecretEnvs(opts)
+	if len(envs) > 0 {
+		fmt.Fprintln(w, "    environment:")
+		for _, env := range envs {
+			fmt.Fprintf(w, "      %s: %s\n", yamlQuote(env), yamlQuote("replace-me"))
+		}
+	}
+	fmt.Fprintln(w, "    command:")
+	for _, arg := range []string{"/bin/sh", "-lc", serviceShellCommand(opts)} {
+		fmt.Fprintf(w, "      - %s\n", yamlQuote(arg))
+	}
+	fmt.Fprintln(w, "    restart: unless-stopped")
+}
+
 func renderIntakeLaunchdService(w io.Writer, repoRoot string, opts intakeServiceOptions) {
 	fmt.Fprintf(w, "# Save as ~/Library/LaunchAgents/%s.plist\n", opts.Name)
 	fmt.Fprintln(w, `<?xml version="1.0" encoding="UTF-8"?>`)
@@ -386,16 +435,13 @@ func renderIntakeLaunchdService(w io.Writer, repoRoot string, opts intakeService
 	writeLaunchdKeyString(w, "  ", "WorkingDirectory", repoRoot)
 	fmt.Fprintln(w, "  <key>EnvironmentVariables</key>")
 	fmt.Fprintln(w, "  <dict>")
-	if env := strings.TrimSpace(opts.LinearSecretEnv); env != "" {
-		writeLaunchdKeyString(w, "    ", env, "replace-me")
-	}
-	if env := strings.TrimSpace(opts.GitHubSecretEnv); env != "" {
+	for _, env := range serviceSecretEnvs(opts) {
 		writeLaunchdKeyString(w, "    ", env, "replace-me")
 	}
 	fmt.Fprintln(w, "  </dict>")
 	fmt.Fprintln(w, "  <key>ProgramArguments</key>")
 	fmt.Fprintln(w, "  <array>")
-	for _, arg := range []string{"/bin/sh", "-lc", launchdIntakeCommand(opts)} {
+	for _, arg := range []string{"/bin/sh", "-lc", serviceShellCommand(opts)} {
 		fmt.Fprintf(w, "    <string>%s</string>\n", xmlEscape(arg))
 	}
 	fmt.Fprintln(w, "  </array>")
@@ -412,10 +458,21 @@ func writeLaunchdKeyString(w io.Writer, indent string, key string, value string)
 	fmt.Fprintf(w, "%s<string>%s</string>\n", indent, xmlEscape(value))
 }
 
-func launchdIntakeCommand(opts intakeServiceOptions) string {
+func serviceShellCommand(opts intakeServiceOptions) string {
 	start := append([]string{opts.Bin}, "daemon", "start")
 	serve := append([]string{opts.Bin}, intakeServeArgs(opts)...)
 	return strings.Join(shellQuoteArgs(start), " ") + " && exec " + strings.Join(shellQuoteArgs(serve), " ")
+}
+
+func serviceSecretEnvs(opts intakeServiceOptions) []string {
+	envs := make([]string, 0, 2)
+	if env := strings.TrimSpace(opts.LinearSecretEnv); env != "" {
+		envs = append(envs, env)
+	}
+	if env := strings.TrimSpace(opts.GitHubSecretEnv); env != "" {
+		envs = append(envs, env)
+	}
+	return envs
 }
 
 func shellQuoteArgs(args []string) []string {
@@ -441,6 +498,28 @@ func shellQuote(s string) string {
 func xmlEscape(s string) string {
 	var b strings.Builder
 	_ = xml.EscapeText(&b, []byte(s))
+	return b.String()
+}
+
+func yamlQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\', '"':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
 	return b.String()
 }
 

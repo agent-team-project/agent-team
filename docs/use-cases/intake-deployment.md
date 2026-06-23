@@ -178,6 +178,44 @@ The generated plist starts the repo daemon, then replaces the shell with the for
 </plist>
 ```
 
+## Compose Example
+
+For a container host, generate a Compose service that mounts the repo and runs the intake listener inside an image containing `agent-team`, `agent-teamd`, and any runtime binaries your topology needs:
+
+```sh
+agent-team intake service compose \
+  --image agent-team:local \
+  --bin agent-team \
+  --name agent-team-intake-my-repo \
+  --publish 127.0.0.1:8787:8787 \
+  --github-reconcile-job \
+  --github-cleanup-merged \
+  --github-verify-pr \
+  > docker-compose.agent-team-intake-my-repo.yml
+```
+
+Compose defaults the listener address to `0.0.0.0:8787` so Docker port publishing can reach it. The generated service has this shape:
+
+```yaml
+# Save as docker-compose.agent-team-intake-my-repo.yml
+services:
+  "agent-team-intake-my-repo":
+    image: "agent-team:local"
+    working_dir: "/workspace"
+    volumes:
+      - "/srv/agent-team/my-repo:/workspace"
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      "LINEAR_WEBHOOK_SECRET": "replace-me"
+      "GITHUB_WEBHOOK_SECRET": "replace-me"
+    command:
+      - "/bin/sh"
+      - "-lc"
+      - "agent-team daemon start && exec agent-team intake serve --addr 0.0.0.0:8787 --linear-max-age 1m0s --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr"
+    restart: unless-stopped
+```
+
 ## Operations
 
 Check listener health:
