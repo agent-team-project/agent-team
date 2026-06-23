@@ -3356,6 +3356,73 @@ func TestJobLogsReadsOwningInstanceLog(t *testing.T) {
 	}
 }
 
+func TestJobLogsLastMessageUsesOwningInstanceSidecar(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-56",
+		Ticket:    "SQU-56",
+		Target:    "worker",
+		Instance:  "worker-squ-56",
+		Status:    job.StatusDone,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	writeLastMessageForTest(t, teamDir, "worker-squ-56", "clean job final")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "logs", "SQU-56", "--repo", tmp, "--last-message"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job logs last-message: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := out.String(); got != "clean job final\n" {
+		t.Fatalf("job last-message output = %q, want clean sidecar", got)
+	}
+}
+
+func TestJobLogsLastMessageRejectsLogFilters(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-57",
+		Ticket:    "SQU-57",
+		Target:    "worker",
+		Instance:  "worker-squ-57",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "logs", "SQU-57", "--repo", tmp, "--last-message", "--tail", "1"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("job logs last-message with tail succeeded")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || code != 2 {
+		t.Fatalf("err = %v, want exit 2", err)
+	}
+	if !strings.Contains(stderr.String(), "--last-message cannot be combined with --tail") {
+		t.Fatalf("stderr = %q, want tail validation", stderr.String())
+	}
+}
+
 func TestJobLogsRequiresOwningInstance(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

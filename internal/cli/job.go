@@ -1494,6 +1494,7 @@ func newJobLogsCmd() *cobra.Command {
 		tail   string
 		since  string
 		grep   string
+		last   bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1509,6 +1510,25 @@ func newJobLogsCmd() *cobra.Command {
 			if instance == "" {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job logs: job %q has no owning instance; dispatch it first.\n", j.ID)
 				return exitErr(2)
+			}
+			if last {
+				if follow {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job logs: --last-message cannot be combined with --follow.")
+					return exitErr(2)
+				}
+				if cmd.Flags().Changed("tail") {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job logs: --last-message cannot be combined with --tail.")
+					return exitErr(2)
+				}
+				if strings.TrimSpace(since) != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job logs: --last-message cannot be combined with --since.")
+					return exitErr(2)
+				}
+				if strings.TrimSpace(grep) != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job logs: --last-message cannot be combined with --grep.")
+					return exitErr(2)
+				}
+				return streamSelectedLastMessageWithPrefix(cmd, teamDir, logListRow{Instance: instance}, "agent-team job logs")
 			}
 			tailLines, err := parseLogTail(tail)
 			if err != nil {
@@ -1539,6 +1559,7 @@ func newJobLogsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&tail, "tail", "0", "Show only the last N lines before returning or following (0 or all = all).")
 	cmd.Flags().StringVar(&since, "since", "", "Only print the log if it was modified since a duration ago (for example 10m, 24h) or RFC3339 timestamp.")
 	cmd.Flags().StringVar(&grep, "grep", "", "Only print log lines matching this regular expression. One-shot reads only.")
+	cmd.Flags().BoolVar(&last, "last-message", false, "Show the clean final Codex response sidecar for the owning instance.")
 	return cmd
 }
 

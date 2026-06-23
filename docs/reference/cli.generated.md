@@ -1630,6 +1630,7 @@ Flags:
 ```text
   -f, --follow         Tail the owning instance log; print new bytes as they appear.
       --grep string    Only print log lines matching this regular expression. One-shot reads only.
+      --last-message   Show the clean final Codex response sidecar for the owning instance.
       --repo string    Repo root. (default "<repo>")
       --since string   Only print the log if it was modified since a duration ago (for example 10m, 24h) or RFC3339 timestamp.
       --tail string    Show only the last N lines before returning or following (0 or all = all). (default "0")
@@ -4022,6 +4023,7 @@ Flags:
       --grep string      Only print log lines matching this regular expression. One-shot reads only.
       --json             Emit machine-readable JSON with --list.
   -n, --last int         Show logs for the N most recently started team instances (0 = all).
+      --last-message     Show clean final Codex response sidecars instead of raw runtime logs.
       --latest           Show the most recently started team instance log.
       --list             List team log streams instead of printing log content.
       --no-prefix        Do not prefix lines when streaming multiple team logs.

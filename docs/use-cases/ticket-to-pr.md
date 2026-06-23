@@ -39,7 +39,8 @@ The job stores:
 
 ```sh
 agent-team job show squ-42
-agent-team logs worker-squ-42 --tail 100
+agent-team job logs squ-42 --tail 100
+agent-team job logs squ-42 --last-message
 agent-team monitor --jobs
 ```
 

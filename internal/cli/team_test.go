@@ -2442,6 +2442,10 @@ instances = ["other", "build-worker"]
 	writeChildLogForTest(t, daemonRoot, "worker-squ-201", "worker first\nworker latest\n")
 	writeChildLogForTest(t, daemonRoot, "build-worker-1", "build worker log\n")
 	writeChildLogForTest(t, daemonRoot, "other", "other log\n")
+	writeLastMessageForTest(t, teamDir, "manager", "manager final")
+	writeLastMessageForTest(t, teamDir, "worker-squ-201", "worker final")
+	writeLastMessageForTest(t, teamDir, "build-worker-1", "build worker final")
+	writeLastMessageForTest(t, teamDir, "other", "other final")
 
 	list := NewRootCmd()
 	listOut, listErr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -2505,6 +2509,53 @@ instances = ["other", "build-worker"]
 	}
 	if got := latestOut.String(); got != "worker latest\n" {
 		t.Fatalf("team logs latest = %q", got)
+	}
+
+	lastMessages := NewRootCmd()
+	lastOut, lastErr := &bytes.Buffer{}, &bytes.Buffer{}
+	lastMessages.SetOut(lastOut)
+	lastMessages.SetErr(lastErr)
+	lastMessages.SetArgs([]string{"team", "logs", "delivery", "--repo", root, "--last-message"})
+	if err := lastMessages.Execute(); err != nil {
+		t.Fatalf("team logs last-message: %v\nstderr=%s", err, lastErr.String())
+	}
+	lastBody := lastOut.String()
+	for _, want := range []string{"manager              | manager final", "worker-squ-201       | worker final"} {
+		if !strings.Contains(lastBody, want) {
+			t.Fatalf("team last-message missing %q:\n%s", want, lastBody)
+		}
+	}
+	if strings.Contains(lastBody, "build worker final") || strings.Contains(lastBody, "other final") {
+		t.Fatalf("team last-message leaked unrelated content:\n%s", lastBody)
+	}
+
+	latestLast := NewRootCmd()
+	latestLastOut, latestLastErr := &bytes.Buffer{}, &bytes.Buffer{}
+	latestLast.SetOut(latestLastOut)
+	latestLast.SetErr(latestLastErr)
+	latestLast.SetArgs([]string{"team", "logs", "delivery", "--repo", root, "--latest", "--last-message"})
+	if err := latestLast.Execute(); err != nil {
+		t.Fatalf("team logs latest last-message: %v\nstderr=%s", err, latestLastErr.String())
+	}
+	if got := latestLastOut.String(); got != "worker final\n" {
+		t.Fatalf("team logs latest last-message = %q", got)
+	}
+
+	conflict := NewRootCmd()
+	conflictErr := &bytes.Buffer{}
+	conflict.SetOut(&bytes.Buffer{})
+	conflict.SetErr(conflictErr)
+	conflict.SetArgs([]string{"team", "logs", "delivery", "--repo", root, "--last-message", "--grep", "final"})
+	err := conflict.Execute()
+	if err == nil {
+		t.Fatalf("team logs last-message with grep succeeded")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || code != 2 {
+		t.Fatalf("err = %v, want exit 2", err)
+	}
+	if !strings.Contains(conflictErr.String(), "--last-message cannot be combined with --grep") {
+		t.Fatalf("stderr = %q, want grep validation", conflictErr.String())
 	}
 }
 

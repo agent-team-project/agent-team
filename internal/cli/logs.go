@@ -756,10 +756,14 @@ func runLogsLastMessage(cmd *cobra.Command, target string, args []string, opts l
 }
 
 func streamSelectedLastMessage(cmd *cobra.Command, teamDir string, row logListRow) error {
+	return streamSelectedLastMessageWithPrefix(cmd, teamDir, row, "agent-team logs")
+}
+
+func streamSelectedLastMessageWithPrefix(cmd *cobra.Command, teamDir string, row logListRow, prefix string) error {
 	path := lastMessagePathForInstance(teamDir, row.Instance)
 	if err := writeLastMessageFile(cmd.OutOrStdout(), path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "agent-team logs: last message not found at %s.\n", displayPathFromTeamDir(teamDir, path))
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s: last message not found at %s.\n", prefix, displayPathFromTeamDir(teamDir, path))
 			fmt.Fprintln(cmd.ErrOrStderr(), "  Codex last-message capture is available for one-shot runs launched after this feature was added.")
 			return exitErr(1)
 		}

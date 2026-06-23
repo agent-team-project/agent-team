@@ -141,6 +141,8 @@ Read the clean final answer with:
 
 ```sh
 agent-team logs <instance> --last-message
+agent-team job logs <job-id> --last-message
+agent-team team logs <team> --last-message
 ```
 
 The Codex adapter sets `AGENT_TEAM_*` variables through Codex shell-environment policy options, so status, inbox, and channel scripts can find the repo team root and state directory without broadly inheriting the parent process environment.

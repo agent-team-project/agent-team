@@ -36,11 +36,13 @@ agent-team inspect manager
 agent-team stats --all --summary
 agent-team logs worker-squ-42 --tail 200
 agent-team logs worker-squ-42 --last-message
+agent-team job logs squ-42 --last-message
+agent-team team logs delivery --last-message
 agent-team monitor --jobs --schedules
 ```
 
 `inspect` combines runtime metadata, daemon-known topology, status file data, and state paths.
-For Codex one-shot runs, the adapter feeds the assembled agent prompt to `codex exec -` on stdin and `logs --last-message` reads the captured final response sidecar instead of the raw Codex diagnostic log.
+For Codex one-shot runs, the adapter feeds the assembled agent prompt to `codex exec -` on stdin. `logs --last-message`, `job logs --last-message`, and `team logs --last-message` read captured final response sidecars instead of raw Codex diagnostic logs.
 See [Runtime Profiles](./profiles.md) for the Claude/Codex capability matrix.
 
 ## Attach

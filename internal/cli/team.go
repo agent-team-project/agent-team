@@ -1766,6 +1766,7 @@ func newTeamLogsCmd() *cobra.Command {
 		phases    []string
 		staleOnly bool
 		unhealthy bool
+		lastMsg   bool
 		tail      string
 		since     string
 		grep      string
@@ -1800,6 +1801,36 @@ func newTeamLogsCmd() *cobra.Command {
 			if list && (follow || cmd.Flags().Changed("tail")) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team logs: --list cannot be combined with --follow or --tail.")
 				return exitErr(2)
+			}
+			if lastMsg {
+				if follow {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team logs: --last-message cannot be combined with --follow.")
+					return exitErr(2)
+				}
+				if list {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team logs: --last-message cannot be combined with --list.")
+					return exitErr(2)
+				}
+				if jsonOut {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team logs: --last-message cannot be combined with --json.")
+					return exitErr(2)
+				}
+				if format != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team logs: --last-message cannot be combined with --format.")
+					return exitErr(2)
+				}
+				if cmd.Flags().Changed("tail") {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team logs: --last-message cannot be combined with --tail.")
+					return exitErr(2)
+				}
+				if strings.TrimSpace(since) != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team logs: --last-message cannot be combined with --since.")
+					return exitErr(2)
+				}
+				if strings.TrimSpace(grep) != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team logs: --last-message cannot be combined with --grep.")
+					return exitErr(2)
+				}
 			}
 			formatTemplate, err := parseLogListFormat(format)
 			if err != nil {
@@ -1843,18 +1874,19 @@ func newTeamLogsCmd() *cobra.Command {
 				return err
 			}
 			opts := logsOptions{
-				Follow:    follow,
-				Latest:    latest,
-				Limit:     last,
-				List:      list,
-				JSON:      jsonOut,
-				NoPrefix:  noPrefix,
-				Tail:      tailLines,
-				TailSet:   cmd.Flags().Changed("tail"),
-				Since:     sinceCutoff,
-				Grep:      grepPattern,
-				Format:    formatTemplate,
-				Unhealthy: unhealthy,
+				Follow:      follow,
+				Latest:      latest,
+				Limit:       last,
+				List:        list,
+				JSON:        jsonOut,
+				NoPrefix:    noPrefix,
+				Tail:        tailLines,
+				TailSet:     cmd.Flags().Changed("tail"),
+				Since:       sinceCutoff,
+				Grep:        grepPattern,
+				Format:      formatTemplate,
+				Unhealthy:   unhealthy,
+				LastMessage: lastMsg,
 			}
 			return runTeamLogs(cmd, teamDir, args[0], opts, listOpts)
 		},
@@ -1870,6 +1902,7 @@ func newTeamLogsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&phases, "phase", nil, "Only show logs for work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show logs for team instances whose status.toml is stale.")
 	cmd.Flags().BoolVar(&unhealthy, "unhealthy", false, "Only show logs for crashed or stale team instances.")
+	cmd.Flags().BoolVar(&lastMsg, "last-message", false, "Show clean final Codex response sidecars instead of raw runtime logs.")
 	cmd.Flags().StringVar(&tail, "tail", "0", "Show only the last N lines before returning or following (0 or all = all).")
 	cmd.Flags().StringVar(&since, "since", "", "Only include log streams modified since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	cmd.Flags().StringVar(&grep, "grep", "", "Only print log lines matching this regular expression. One-shot reads only.")
@@ -5095,6 +5128,12 @@ func runTeamLogs(cmd *cobra.Command, teamDir, name string, opts logsOptions, lis
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), "(no instances)")
 		return nil
+	}
+	if opts.LastMessage {
+		if len(rows) == 1 {
+			return streamSelectedLastMessageWithPrefix(cmd, teamDir, rows[0], "agent-team team logs")
+		}
+		return streamLastMessageRows(cmd.OutOrStdout(), teamDir, rows, !opts.NoPrefix)
 	}
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer cancel()
