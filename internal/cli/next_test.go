@@ -160,6 +160,75 @@ func TestTeamNextCommandFormat(t *testing.T) {
 	}
 }
 
+func TestNextCommandFiltersBySourceAndReason(t *testing.T) {
+	root := writeOverviewAttentionFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"next", "--target", root, "--source", "queue", "--reason", "queue_dead_letter", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("next filtered json: %v\nstderr=%s", err, stderr.String())
+	}
+
+	var result nextActionResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode filtered next json: %v\nbody=%s", err, out.String())
+	}
+	if len(result.Actions) != 2 || !stringSliceContains(result.Actions, "agent-team job queue retry squ-700 --all --dry-run") || !stringSliceContains(result.Actions, "agent-team repair --skip-tick --dry-run") || result.TotalActions != 2 || result.HiddenActions != 0 {
+		t.Fatalf("filtered result = %+v", result)
+	}
+	if len(result.ActionDetails) != 2 {
+		t.Fatalf("filtered details = %+v", result.ActionDetails)
+	}
+	for _, detail := range result.ActionDetails {
+		if detail.Source != "queue" || detail.Reason != "queue_dead_letter" {
+			t.Fatalf("filtered detail = %+v, want queue queue_dead_letter", detail)
+		}
+	}
+
+	reasonPrefix := NewRootCmd()
+	prefixOut, prefixErr := &bytes.Buffer{}, &bytes.Buffer{}
+	reasonPrefix.SetOut(prefixOut)
+	reasonPrefix.SetErr(prefixErr)
+	reasonPrefix.SetArgs([]string{"next", "--target", root, "--source", "schedules", "--reason", "due", "--json"})
+	if err := reasonPrefix.Execute(); err != nil {
+		t.Fatalf("next reason prefix json: %v\nstderr=%s", err, prefixErr.String())
+	}
+	var prefixResult nextActionResult
+	if err := json.Unmarshal(prefixOut.Bytes(), &prefixResult); err != nil {
+		t.Fatalf("decode prefix next json: %v\nbody=%s", err, prefixOut.String())
+	}
+	if len(prefixResult.Actions) != 1 || prefixResult.Actions[0] != "agent-team schedule fire --dry-run --preview-triggers" {
+		t.Fatalf("prefix-filtered result = %+v", prefixResult)
+	}
+}
+
+func TestTeamNextCommandFiltersBySource(t *testing.T) {
+	root := writeOverviewAttentionFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "next", "delivery", "--repo", root, "--source", "pipelines", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team next filtered json: %v\nstderr=%s", err, stderr.String())
+	}
+
+	var result nextActionResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode team filtered next json: %v\nbody=%s", err, out.String())
+	}
+	if len(result.Actions) != 1 || result.Actions[0] != "agent-team team advance delivery --dry-run --preview-routes" {
+		t.Fatalf("team filtered result = %+v", result)
+	}
+	if len(result.ActionDetails) != 1 || result.ActionDetails[0].Team != "delivery" || result.ActionDetails[0].Source != "pipelines" {
+		t.Fatalf("team filtered details = %+v", result.ActionDetails)
+	}
+}
+
 func TestNextCommandFormatValidation(t *testing.T) {
 	cases := []struct {
 		name string
@@ -185,6 +254,21 @@ func TestNextCommandFormatValidation(t *testing.T) {
 			name: "team-next-invalid-template",
 			args: []string{"team", "next", "delivery", "--format", "{{"},
 			want: "invalid --format template",
+		},
+		{
+			name: "next-invalid-source",
+			args: []string{"next", "--source", "unknown"},
+			want: "unknown --source",
+		},
+		{
+			name: "next-empty-reason",
+			args: []string{"next", "--reason", ","},
+			want: "--reason requires",
+		},
+		{
+			name: "team-next-invalid-source",
+			args: []string{"team", "next", "delivery", "--source", "unknown"},
+			want: "unknown --source",
 		},
 	}
 	for _, tc := range cases {
@@ -342,7 +426,7 @@ func TestNextWatchRendersUntilContextDone(t *testing.T) {
 			CapturedAt: now.UTC().Format(time.RFC3339),
 			Actions:    []string{"agent-team queue drain --dry-run"},
 		}, nil
-	}, 0, false, nil, time.Millisecond, false)
+	}, 0, nextActionFilters{}, false, nil, time.Millisecond, false)
 	if err != nil {
 		t.Fatalf("runNextWatch: %v", err)
 	}

@@ -20,6 +20,8 @@ func newNextCmd() *cobra.Command {
 		teamName      string
 		limit         int
 		scheduleLimit int
+		sources       []string
+		reasons       []string
 		watch         bool
 		noClear       bool
 		interval      time.Duration
@@ -55,6 +57,11 @@ func newNextCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team next: %v\n", err)
 				return exitErr(2)
 			}
+			filters, err := parseNextActionFilters(sources, reasons)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team next: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -68,7 +75,7 @@ func newNextCmd() *cobra.Command {
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
-				if err := runNextWatch(ctx, cmd.OutOrStdout(), collect, limit, jsonOut, tmpl, interval, !noClear && !jsonOut); err != nil {
+				if err := runNextWatch(ctx, cmd.OutOrStdout(), collect, limit, filters, jsonOut, tmpl, interval, !noClear && !jsonOut); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team next: %v\n", err)
 					return exitErr(1)
 				}
@@ -79,13 +86,15 @@ func newNextCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team next: %v\n", err)
 				return exitErr(1)
 			}
-			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverview(overview, limit), jsonOut, tmpl)
+			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverviewFiltered(overview, limit, filters), jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVar(&teamName, "team", "", "Scope recommendations to this declared team.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Show at most this many actions; 0 means all.")
 	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 5, "Upcoming schedules to inspect while building recommendations; 0 means all.")
+	cmd.Flags().StringSliceVar(&sources, "source", nil, "Only show actions from this source: health, topology, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Can repeat or comma-separate.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
@@ -99,6 +108,8 @@ func newTeamNextCmd() *cobra.Command {
 		repo          string
 		limit         int
 		scheduleLimit int
+		sources       []string
+		reasons       []string
 		watch         bool
 		noClear       bool
 		interval      time.Duration
@@ -133,6 +144,11 @@ func newTeamNextCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team next: %v\n", err)
 				return exitErr(2)
 			}
+			filters, err := parseNextActionFilters(sources, reasons)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team next: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -144,7 +160,7 @@ func newTeamNextCmd() *cobra.Command {
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
-				if err := runNextWatch(ctx, cmd.OutOrStdout(), collect, limit, jsonOut, tmpl, interval, !noClear && !jsonOut); err != nil {
+				if err := runNextWatch(ctx, cmd.OutOrStdout(), collect, limit, filters, jsonOut, tmpl, interval, !noClear && !jsonOut); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team next: %v\n", err)
 					return exitErr(1)
 				}
@@ -155,12 +171,14 @@ func newTeamNextCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team next: %v\n", err)
 				return exitErr(1)
 			}
-			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverview(overview, limit), jsonOut, tmpl)
+			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverviewFiltered(overview, limit, filters), jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Show at most this many actions; 0 means all.")
 	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 5, "Upcoming schedules to inspect while building recommendations; 0 means all.")
+	cmd.Flags().StringSliceVar(&sources, "source", nil, "Only show actions from this source: health, topology, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Can repeat or comma-separate.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
@@ -181,11 +199,16 @@ type nextActionResult struct {
 }
 
 func nextActionResultFromOverview(overview *overviewResult, limit int) nextActionResult {
+	return nextActionResultFromOverviewFiltered(overview, limit, nextActionFilters{})
+}
+
+func nextActionResultFromOverviewFiltered(overview *overviewResult, limit int, filters nextActionFilters) nextActionResult {
 	if overview == nil {
 		return nextActionResult{OK: true, State: "ok", Actions: []string{}}
 	}
 	actions := append([]string{}, overview.Actions...)
 	details := nextActionDetailsFromOverview(overview, actions)
+	actions, details = filterNextActions(actions, details, filters)
 	total := len(actions)
 	hidden := 0
 	if limit > 0 && len(actions) > limit {
@@ -246,6 +269,85 @@ func nextActionDetailsFromOverview(overview *overviewResult, actions []string) [
 	return details
 }
 
+type nextActionFilters struct {
+	sources map[string]bool
+	reasons []string
+}
+
+func parseNextActionFilters(sourceRaw, reasonRaw []string) (nextActionFilters, error) {
+	out := nextActionFilters{}
+	if len(sourceRaw) > 0 {
+		out.sources = map[string]bool{}
+		for _, raw := range splitFilterValues(sourceRaw) {
+			source := strings.ToLower(strings.TrimSpace(raw))
+			if source == "" {
+				continue
+			}
+			switch source {
+			case "health", "topology", "queue", "jobs", "pipelines", "schedules", "intake", "section_errors", "overview":
+				out.sources[source] = true
+			default:
+				return nextActionFilters{}, fmt.Errorf("unknown --source %q", raw)
+			}
+		}
+		if len(out.sources) == 0 {
+			return nextActionFilters{}, fmt.Errorf("--source requires at least one non-empty value")
+		}
+	}
+	for _, raw := range splitFilterValues(reasonRaw) {
+		reason := strings.ToLower(strings.TrimSpace(raw))
+		if reason != "" {
+			out.reasons = append(out.reasons, reason)
+		}
+	}
+	if len(reasonRaw) > 0 && len(out.reasons) == 0 {
+		return nextActionFilters{}, fmt.Errorf("--reason requires at least one non-empty value")
+	}
+	return out, nil
+}
+
+func filterNextActions(actions []string, details []operatorActionHint, filters nextActionFilters) ([]string, []operatorActionHint) {
+	if len(filters.sources) == 0 && len(filters.reasons) == 0 {
+		return actions, details
+	}
+	filteredActions := make([]string, 0, len(actions))
+	filteredDetails := make([]operatorActionHint, 0, len(details))
+	for i, action := range actions {
+		var detail operatorActionHint
+		if i < len(details) {
+			detail = details[i]
+		} else {
+			detail = operatorActionHint{Command: action, Source: "overview"}
+		}
+		if !nextActionMatchesFilters(detail, filters) {
+			continue
+		}
+		filteredActions = append(filteredActions, action)
+		filteredDetails = append(filteredDetails, detail)
+	}
+	return filteredActions, filteredDetails
+}
+
+func nextActionMatchesFilters(detail operatorActionHint, filters nextActionFilters) bool {
+	if len(filters.sources) > 0 && !filters.sources[strings.ToLower(strings.TrimSpace(detail.Source))] {
+		return false
+	}
+	if len(filters.reasons) > 0 {
+		reason := strings.ToLower(strings.TrimSpace(detail.Reason))
+		matched := false
+		for _, filter := range filters.reasons {
+			if reason == filter || strings.HasPrefix(reason, filter+"=") {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
 func renderNextActionResult(w io.Writer, result nextActionResult, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(result)
@@ -290,7 +392,7 @@ func renderNextActionFormat(w io.Writer, result nextActionResult, tmpl *template
 	return err
 }
 
-func runNextWatch(ctx context.Context, w io.Writer, collect func(time.Time) (*overviewResult, error), limit int, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+func runNextWatch(ctx context.Context, w io.Writer, collect func(time.Time) (*overviewResult, error), limit int, filters nextActionFilters, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
@@ -306,7 +408,7 @@ func runNextWatch(ctx context.Context, w io.Writer, collect func(time.Time) (*ov
 		if err != nil {
 			return err
 		}
-		if err := renderNextActionResult(w, nextActionResultFromOverview(overview, limit), jsonOut, tmpl); err != nil {
+		if err := renderNextActionResult(w, nextActionResultFromOverviewFiltered(overview, limit, filters), jsonOut, tmpl); err != nil {
 			return err
 		}
 		select {

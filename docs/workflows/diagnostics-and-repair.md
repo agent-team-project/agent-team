@@ -46,6 +46,8 @@ agent-team team overview delivery
 ```sh
 agent-team next
 agent-team next --team delivery
+agent-team next --source queue
+agent-team next --reason dead
 agent-team team next delivery
 ```
 
@@ -53,6 +55,11 @@ agent-team team next delivery
 focused on copyable commands; JSON output also includes `action_details` so
 scripts can group recommendations by source and reason without parsing command
 strings.
+
+Use `--source` to narrow recommendations to one subsystem such as `queue`,
+`jobs`, or `pipelines`. Use `--reason` when an automation only wants a
+specific trigger; values match exactly, or as prefixes before `=`, so
+`--reason dead` matches a detail reason like `dead=2`.
 
 Use it in scripts or when a human wants a short checklist.
 
