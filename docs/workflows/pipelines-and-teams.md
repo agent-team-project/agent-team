@@ -52,6 +52,7 @@ agent-team pipeline status
 agent-team pipeline ready
 agent-team pipeline advance ticket_to_pr --dry-run --preview-routes
 agent-team pipeline retry ticket_to_pr --dry-run
+agent-team pipeline retry ticket_to_pr --step review --dry-run
 agent-team pipeline retry ticket_to_pr --dispatch --dry-run --preview-routes
 agent-team repair --retry-pipelines --dry-run --preview-routes
 ```
@@ -81,7 +82,7 @@ Common states:
 
 `job triage`, `pipeline status`, `pipeline ready`, and `team triage` all read the same job state.
 When an operator intentionally bypasses a stage, `agent-team job step <job-id> <step-id> --skip` records that step as `done` with `skipped = true`, so dependency checks can continue while `job show` still reports the bypass.
-When a step fails, `agent-team pipeline retry <pipeline>` resets retryable failed steps to a blocked-but-ready state so the next `pipeline advance`, `team advance`, or `tick` can dispatch another attempt. Add `--dispatch` to retry and dispatch in one command, use `--dry-run --preview-routes` before a batch retry to inspect the resolved routes and payloads, and pass `--message` to record why the retry happened.
+When a step fails, `agent-team pipeline retry <pipeline>` resets retryable failed steps to a blocked-but-ready state so the next `pipeline advance`, `team advance`, or `tick` can dispatch another attempt. Add `--step <id>` to target one failed stage, add `--dispatch` to retry and dispatch in one command, use `--dry-run --preview-routes` before a batch retry to inspect the resolved routes and payloads, and pass `--message` to record why the retry happened.
 Use `agent-team team retry <team>` for the same recovery flow scoped to one team's declared pipelines.
 Use `agent-team repair --retry-pipelines` or `agent-team team repair <team> --retry-pipelines` when failed-step retry should happen inside the broader repair loop after daemon reconciliation and dead-letter queue retry. Add `--dry-run --preview-routes` first to inspect the dispatch routes, and `--retry-message` to record the operator reason.
 Pipeline status, health, overview, and next-action hints recommend these retry dry-runs when failed steps are present.
@@ -117,6 +118,7 @@ agent-team team triage delivery
 agent-team team ready delivery
 agent-team team advance delivery --dry-run --preview-routes
 agent-team team retry delivery --dispatch --dry-run --preview-routes
+agent-team team retry delivery --step review --dry-run
 agent-team team tick delivery --dry-run
 agent-team team repair delivery --dry-run --jobs
 agent-team team repair delivery --retry-pipelines --dry-run --preview-routes

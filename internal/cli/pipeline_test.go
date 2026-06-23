@@ -1683,6 +1683,104 @@ func TestPipelineRetryFailedSteps(t *testing.T) {
 	}
 }
 
+func TestPipelineRetryStepFilter(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:         "squ-611",
+			Ticket:     "SQU-611",
+			Target:     "worker",
+			Kickoff:    "retry implement only when selected",
+			Pipeline:   "ticket_to_pr",
+			Status:     job.StatusFailed,
+			LastEvent:  "step_failed",
+			LastStatus: "implement failed",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusFailed, Instance: "worker-implement", StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+			},
+		},
+		{
+			ID:         "squ-612",
+			Ticket:     "SQU-612",
+			Target:     "manager",
+			Kickoff:    "retry review",
+			Pipeline:   "ticket_to_pr",
+			Status:     job.StatusFailed,
+			LastEvent:  "step_failed",
+			LastStatus: "review failed",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+			Steps: []job.Step{
+				{ID: "review", Target: "manager", Status: job.StatusFailed, Instance: "manager-review", StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"pipeline", "retry", "ticket_to_pr", "--repo", root, "--step", "review", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("pipeline retry --step dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryRows []pipelineRetryResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryRows); err != nil {
+		t.Fatalf("decode retry --step dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(dryRows) != 1 || dryRows[0].JobID != "squ-612" || dryRows[0].StepID != "review" || dryRows[0].Action != "would_retry" || dryRows[0].StepStatus != job.StatusBlocked {
+		t.Fatalf("dry rows = %+v", dryRows)
+	}
+
+	run := NewRootCmd()
+	runOut, runErr := &bytes.Buffer{}, &bytes.Buffer{}
+	run.SetOut(runOut)
+	run.SetErr(runErr)
+	run.SetArgs([]string{"pipeline", "retry", "ticket_to_pr", "--repo", root, "--step", "review", "--message", "review retry only", "--json"})
+	if err := run.Execute(); err != nil {
+		t.Fatalf("pipeline retry --step: %v\nstderr=%s", err, runErr.String())
+	}
+	var runRows []pipelineRetryResult
+	if err := json.Unmarshal(runOut.Bytes(), &runRows); err != nil {
+		t.Fatalf("decode retry --step: %v\nbody=%s", err, runOut.String())
+	}
+	if len(runRows) != 1 || runRows[0].JobID != "squ-612" || runRows[0].StepID != "review" || runRows[0].Action != "retried" || runRows[0].Message != "review retry only" {
+		t.Fatalf("run rows = %+v", runRows)
+	}
+	implement, err := job.Read(teamDir, "squ-611")
+	if err != nil {
+		t.Fatalf("read implement job: %v", err)
+	}
+	review, err := job.Read(teamDir, "squ-612")
+	if err != nil {
+		t.Fatalf("read review job: %v", err)
+	}
+	if implement.Status != job.StatusFailed || implement.Steps[0].Status != job.StatusFailed || implement.Steps[0].Instance != "worker-implement" {
+		t.Fatalf("implement job should be untouched = %+v", implement)
+	}
+	if review.Status != job.StatusQueued || review.Steps[0].Status != job.StatusBlocked || review.Steps[0].Instance != "" || review.LastStatus != "review retry only" {
+		t.Fatalf("review job = %+v", review)
+	}
+	events, err := job.ListEvents(teamDir, "squ-612")
+	if err != nil {
+		t.Fatalf("list review events: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "reopened" || events[0].Data["step"] != "review" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
 func TestPipelineRetryValidation(t *testing.T) {
 	cases := []struct {
 		args []string

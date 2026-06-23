@@ -2585,7 +2585,7 @@ Flags:
 
 Reset failed pipeline steps for another attempt.
 
-Reset failed pipeline steps for jobs in one pipeline, or all pipelines with --all. By default this makes failed steps ready for the next pipeline advance; pass --dispatch to immediately dispatch each retry.
+Reset failed pipeline steps for jobs in one pipeline, or all pipelines with --all. By default this makes failed steps ready for the next pipeline advance; pass --step to target one stage, or --dispatch to immediately dispatch each retry.
 
 ```text
 agent-team pipeline retry <pipeline>|--all [flags]
@@ -2603,6 +2603,7 @@ Flags:
       --message string     Status message recorded on each retried job.
       --preview-routes     With --dry-run --dispatch, include route and payload previews.
       --repo string        Repo root. (default "<repo>")
+      --step string        Retry only failed jobs whose next failed step has this id.
       --workspace string   Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
 ```
 
@@ -4432,7 +4433,7 @@ Flags:
 
 Reset failed pipeline steps owned by one team.
 
-Reset or preview failed-step retries for jobs in one team&#39;s declared pipelines. Pass --dispatch to immediately dispatch each reset retry.
+Reset or preview failed-step retries for jobs in one team&#39;s declared pipelines. Pass --step to target one stage, or --dispatch to immediately dispatch each reset retry.
 
 ```text
 agent-team team retry <team> [flags]
@@ -4449,6 +4450,7 @@ Flags:
       --message string     Status message recorded on each retried team job.
       --preview-routes     With --dry-run --dispatch, include local topology route and dispatch payload previews.
       --repo string        Repo root. (default "<repo>")
+      --step string        Retry only failed team jobs whose next failed step has this id.
       --workspace string   Workspace mode for retried dispatches: auto, worktree, or repo. (default "auto")
 ```
 

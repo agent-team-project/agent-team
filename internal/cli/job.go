@@ -5925,9 +5925,17 @@ func stepGatePending(j *job.Job, step *job.Step) bool {
 }
 
 func resetFailedPipelineStepForRetry(j *job.Job) string {
+	return resetFailedPipelineStepForRetryByID(j, "")
+}
+
+func resetFailedPipelineStepForRetryByID(j *job.Job, stepID string) string {
+	stepID = strings.TrimSpace(stepID)
 	for i := range j.Steps {
 		step := &j.Steps[i]
 		if step.Status != job.StatusFailed {
+			continue
+		}
+		if stepID != "" && step.ID != stepID {
 			continue
 		}
 		if len(unmetJobStepDependencies(j, step)) > 0 {

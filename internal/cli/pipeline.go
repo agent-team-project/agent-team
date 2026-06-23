@@ -451,6 +451,7 @@ func newPipelineRetryCmd() *cobra.Command {
 		limit         int
 		dispatchNow   bool
 		workspace     string
+		step          string
 		message       string
 		dryRun        bool
 		previewRoutes bool
@@ -462,7 +463,7 @@ func newPipelineRetryCmd() *cobra.Command {
 		Use:   "retry <pipeline>|--all",
 		Short: "Reset failed pipeline steps for another attempt.",
 		Long: "Reset failed pipeline steps for jobs in one pipeline, or all pipelines with --all. " +
-			"By default this makes failed steps ready for the next pipeline advance; pass --dispatch to immediately dispatch each retry.",
+			"By default this makes failed steps ready for the next pipeline advance; pass --step to target one stage, or --dispatch to immediately dispatch each retry.",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
@@ -502,7 +503,7 @@ func newPipelineRetryCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			results, err := retryPipelineJobs(cmd, teamDir, pipelineName, workspace, message, limit, dispatchNow, dryRun, previewRoutes)
+			results, err := retryPipelineJobs(cmd, teamDir, pipelineName, workspace, step, message, limit, dispatchNow, dryRun, previewRoutes)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline retry: %v\n", err)
 				return exitErr(1)
@@ -515,6 +516,7 @@ func newPipelineRetryCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum failed jobs to retry (0 = no limit).")
 	cmd.Flags().BoolVar(&dispatchNow, "dispatch", false, "Dispatch each reset failed step immediately.")
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for --dispatch: auto, worktree, or repo.")
+	cmd.Flags().StringVar(&step, "step", "", "Retry only failed jobs whose next failed step has this id.")
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each retried job.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview failed-step resets and optional dispatches without writing job or daemon state.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run --dispatch, include route and payload previews.")
@@ -1353,11 +1355,12 @@ func advanceReadyPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace s
 	return results, nil
 }
 
-func retryPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace, message string, limit int, dispatchNow, dryRun bool, previewRoutes bool) ([]pipelineRetryResult, error) {
+func retryPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace, stepFilter, message string, limit int, dispatchNow, dryRun bool, previewRoutes bool) ([]pipelineRetryResult, error) {
 	rows, err := collectJobReadyRows(teamDir, pipeline, map[string]bool{"failed": true})
 	if err != nil {
 		return nil, err
 	}
+	rows = filterPipelineRetryRowsByStep(rows, stepFilter)
 	if limit > 0 && len(rows) > limit {
 		rows = rows[:limit]
 	}
@@ -1379,7 +1382,7 @@ func retryPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace, message
 			DryRun:     dryRun,
 			Message:    row.Message,
 		}
-		stepID := resetFailedPipelineStepForRetry(j)
+		stepID := resetFailedPipelineStepForRetryByID(j, row.StepID)
 		if stepID == "" {
 			result.Action = "skipped"
 			result.Message = "no retryable failed step"
@@ -1454,6 +1457,20 @@ func retryPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace, message
 		results = append(results, result)
 	}
 	return results, nil
+}
+
+func filterPipelineRetryRowsByStep(rows []jobReadyRow, stepFilter string) []jobReadyRow {
+	stepFilter = strings.TrimSpace(stepFilter)
+	if stepFilter == "" {
+		return rows
+	}
+	out := rows[:0]
+	for _, row := range rows {
+		if row.StepID == stepFilter {
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 func filterAdvanceablePipelineRows(rows []jobReadyRow) []jobReadyRow {
