@@ -443,6 +443,9 @@ func filterQueueQuarantineItems(items []queueQuarantineItem, filters queueListFi
 		if len(filters.jobs) > 0 && !filters.jobs[job.NormalizeID(item.Job)] {
 			continue
 		}
+		if len(filters.runtimes) > 0 {
+			continue
+		}
 		if filters.readyOnly && item.State != daemon.QueueStatePending {
 			continue
 		}

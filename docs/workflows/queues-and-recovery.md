@@ -44,8 +44,12 @@ agent-team queue ls
 agent-team queue ls --summary
 agent-team queue ls --state dead
 agent-team queue ls --job SQU-42
+agent-team queue ls --runtime codex
+agent-team queue ls --summary --runtime codex
 agent-team queue show <id>
 ```
+
+Use `--runtime claude|codex` to narrow active queue entries by the runtime recorded in the dispatch payload, falling back to daemon metadata when a queued item already names a concrete instance. Runtime-filtered summaries include a `runtimes` count and exclude quarantined files whose runtime cannot be known from the quarantine index.
 
 Job-scoped:
 

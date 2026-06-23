@@ -113,7 +113,7 @@ Shortcuts:
 
 | Command | Purpose |
 | --- | --- |
-| `agent-team queue ls` | List active queue entries |
+| `agent-team queue ls` | List active queue entries; filter queued dispatches with `--runtime` |
 | `agent-team queue show <id>` | Inspect one active queue item |
 | `agent-team queue drain` | Dispatch ready pending entries |
 | `agent-team queue retry <id>` | Retry one entry |

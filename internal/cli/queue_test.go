@@ -30,6 +30,9 @@ func TestQueueSummaryEncodesEmptyMapsAsObjects(t *testing.T) {
 	if _, ok := raw["events"].(map[string]any); !ok {
 		t.Fatalf("events = %#v, want object in %s", raw["events"], string(body))
 	}
+	if _, ok := raw["runtimes"].(map[string]any); !ok {
+		t.Fatalf("runtimes = %#v, want object in %s", raw["runtimes"], string(body))
+	}
 }
 
 func TestQueueListJSONEmptyArray(t *testing.T) {
@@ -1120,7 +1123,7 @@ func TestQueueListFilters(t *testing.T) {
 			EventType:  "agent.dispatch",
 			Instance:   "worker",
 			InstanceID: "worker-squ-96",
-			Payload:    map[string]any{"target": "worker", "ticket": "SQU-96"},
+			Payload:    map[string]any{"target": "worker", "ticket": "SQU-96", "runtime": "codex"},
 			Attempts:   1,
 			NextRetry:  now.Add(-time.Minute),
 			QueuedAt:   now.Add(-2 * time.Hour),
@@ -1132,7 +1135,7 @@ func TestQueueListFilters(t *testing.T) {
 			EventType:  "agent.dispatch",
 			Instance:   "worker",
 			InstanceID: "worker-squ-97",
-			Payload:    map[string]any{"target": "worker", "ticket": "SQU-97"},
+			Payload:    map[string]any{"target": "worker", "ticket": "SQU-97", "runtime": "claude"},
 			Attempts:   2,
 			NextRetry:  now.Add(time.Hour),
 			QueuedAt:   now.Add(-time.Hour),
@@ -1154,7 +1157,7 @@ func TestQueueListFilters(t *testing.T) {
 			EventType:      "agent.dispatch",
 			Instance:       "worker",
 			InstanceID:     "worker-squ-99",
-			Payload:        map[string]any{"target": "worker", "ticket": "SQU-99"},
+			Payload:        map[string]any{"target": "worker", "ticket": "SQU-99", "runtime": "codex"},
 			Attempts:       daemon.MaxQueueAttempts,
 			LastError:      "spawn failed",
 			QueuedAt:       now.Add(-3 * time.Hour),
@@ -1167,6 +1170,14 @@ func TestQueueListFilters(t *testing.T) {
 			t.Fatalf("WriteQueueItem %s: %v", item.ID, err)
 		}
 	}
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance: "manager-squ-98",
+		Agent:    "manager",
+		Runtime:  "codex",
+		Status:   daemon.StatusRunning,
+	}); err != nil {
+		t.Fatalf("WriteMetadata manager-squ-98: %v", err)
+	}
 
 	list := NewRootCmd()
 	listOut, listErr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -1178,6 +1189,7 @@ func TestQueueListFilters(t *testing.T) {
 		"--instance", "worker,manager",
 		"--event-type", "agent.dispatch",
 		"--job", "SQU-96",
+		"--runtime", "codex",
 		"--ready",
 		"--json",
 	})
@@ -1202,8 +1214,10 @@ func TestQueueListFilters(t *testing.T) {
 	}
 	for _, want := range []string{
 		"q-ready",
+		"codex",
 		"agent-team queue drain; agent-team queue drop q-ready",
 		"q-delayed",
+		"claude",
 		"agent-team queue show q-delayed; agent-team queue drop q-delayed",
 		"q-dead-worker",
 		"agent-team queue retry q-dead-worker; agent-team queue drop q-dead-worker",
@@ -1211,6 +1225,31 @@ func TestQueueListFilters(t *testing.T) {
 		if !strings.Contains(textListOut.String(), want) {
 			t.Fatalf("queue ls text missing %q:\n%s", want, textListOut.String())
 		}
+	}
+
+	runtimeList := NewRootCmd()
+	runtimeListOut, runtimeListErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeList.SetOut(runtimeListOut)
+	runtimeList.SetErr(runtimeListErr)
+	runtimeList.SetArgs([]string{"queue", "ls", "--target", tmp, "--runtime", "codex", "--json"})
+	if err := runtimeList.Execute(); err != nil {
+		t.Fatalf("queue ls runtime filter: %v\nstderr=%s", err, runtimeListErr.String())
+	}
+	var runtimeListed []daemon.QueueItem
+	if err := json.Unmarshal(runtimeListOut.Bytes(), &runtimeListed); err != nil {
+		t.Fatalf("decode runtime list json: %v\nbody=%s", err, runtimeListOut.String())
+	}
+	gotRuntimeIDs := map[string]bool{}
+	for _, item := range runtimeListed {
+		gotRuntimeIDs[item.ID] = true
+	}
+	for _, want := range []string{"q-dead-worker", "q-manager", "q-ready"} {
+		if !gotRuntimeIDs[want] {
+			t.Fatalf("runtime listed ids = %v, missing %s", queueItemIDs(runtimeListed), want)
+		}
+	}
+	if len(gotRuntimeIDs) != 3 {
+		t.Fatalf("runtime listed ids = %v", queueItemIDs(runtimeListed))
 	}
 
 	summaryCmd := NewRootCmd()
@@ -1238,6 +1277,31 @@ func TestQueueListFilters(t *testing.T) {
 	if summary.Instances["worker"] != 3 || summary.Events["agent.dispatch"] != 3 {
 		t.Fatalf("summary maps = %+v", summary)
 	}
+	if summary.Runtimes["codex"] != 2 || summary.Runtimes["claude"] != 1 {
+		t.Fatalf("summary runtimes = %+v", summary.Runtimes)
+	}
+
+	runtimeSummaryCmd := NewRootCmd()
+	runtimeSummaryOut, runtimeSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeSummaryCmd.SetOut(runtimeSummaryOut)
+	runtimeSummaryCmd.SetErr(runtimeSummaryErr)
+	runtimeSummaryCmd.SetArgs([]string{
+		"queue", "ls",
+		"--target", tmp,
+		"--summary",
+		"--runtime", "codex",
+		"--json",
+	})
+	if err := runtimeSummaryCmd.Execute(); err != nil {
+		t.Fatalf("queue ls runtime summary: %v\nstderr=%s", err, runtimeSummaryErr.String())
+	}
+	var runtimeSummary queueSummary
+	if err := json.Unmarshal(runtimeSummaryOut.Bytes(), &runtimeSummary); err != nil {
+		t.Fatalf("decode runtime summary json: %v\nbody=%s", err, runtimeSummaryOut.String())
+	}
+	if runtimeSummary.Total != 3 || runtimeSummary.Pending != 2 || runtimeSummary.Dead != 1 || runtimeSummary.Runtimes["codex"] != 3 {
+		t.Fatalf("runtime summary = %+v", runtimeSummary)
+	}
 
 	bad := NewRootCmd()
 	badOut, badErr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -1249,6 +1313,18 @@ func TestQueueListFilters(t *testing.T) {
 	}
 	if !strings.Contains(badErr.String(), "--instance requires at least one non-empty instance") {
 		t.Fatalf("bad stderr = %q", badErr.String())
+	}
+
+	badRuntime := NewRootCmd()
+	badRuntimeOut, badRuntimeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	badRuntime.SetOut(badRuntimeOut)
+	badRuntime.SetErr(badRuntimeErr)
+	badRuntime.SetArgs([]string{"queue", "ls", "--target", tmp, "--runtime", "llama"})
+	if err := badRuntime.Execute(); err == nil {
+		t.Fatalf("queue ls bad runtime succeeded; stdout=%s", badRuntimeOut.String())
+	}
+	if !strings.Contains(badRuntimeErr.String(), "unknown --runtime") {
+		t.Fatalf("bad runtime stderr = %q", badRuntimeErr.String())
 	}
 }
 

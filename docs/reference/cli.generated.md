@@ -2959,6 +2959,7 @@ Flags:
       --json                 Emit machine-readable JSON.
       --no-clear             With --watch, append snapshots instead of redrawing the terminal.
       --ready                Only show pending queue items whose next retry is due now.
+      --runtime strings      Filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.
       --state string         Filter by queue state: pending or dead.
       --summary              Show aggregate queue counts instead of queue rows.
       --target string        Repo root. (default "<repo>")
