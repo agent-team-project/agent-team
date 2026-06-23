@@ -81,7 +81,7 @@ doctor`; it exits non-zero if any step fails.
 - Agents have simple frontmatter.
 - Shared skills are referenced by agent config.
 - `template smoke` passes with representative parameters.
-- One-shot `template run` works when relevant.
+- One-shot `template run` works when relevant, including `--runtime codex` when the template should be tested against the Codex adapter.
 
 ## Promotion Path
 

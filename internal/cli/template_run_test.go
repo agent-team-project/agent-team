@@ -153,6 +153,38 @@ func TestTemplateRun_CodexAutoTempdirAddsSkipGitRepoCheck(t *testing.T) {
 	}
 }
 
+func TestTemplateRun_RuntimeFlagSelectsCodex(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "bad-env-runtime")
+	t.Setenv(runtimebin.EnvBinary, "claude-env-wrapper")
+	runsRootEnv(t)
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"template", "run", "bundled", "manager",
+		"--runtime", "codex",
+		"--runtime-bin", "codex-dev",
+		"--prompt", "codex template run",
+		"--set", "linear.team_id=tt-team",
+		"--set", "linear.ticket_prefix=TT",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("template run with runtime flag: %v", err)
+	}
+	if cap.bin != "codex-dev" {
+		t.Fatalf("runtime binary = %q, want explicit codex-dev", cap.bin)
+	}
+	if len(cap.args) == 0 || cap.args[0] != "exec" {
+		t.Fatalf("codex args = %v, want exec subcommand", cap.args)
+	}
+	if !containsString(cap.args, "--skip-git-repo-check") {
+		t.Fatalf("codex template run args missing --skip-git-repo-check: %v", cap.args)
+	}
+}
+
 func TestTemplateRun_CodexAutoTempdirDoesNotDuplicateSkipGitRepoCheck(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindCodex))
 	runsRootEnv(t)

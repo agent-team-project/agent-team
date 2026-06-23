@@ -4899,13 +4899,15 @@ agent-team template run <ref> <agent> [-- <runtime-args>...] [flags]
 Flags:
 
 ```text
-      --force             Overwrite an existing .agent_team/ at --target.
-      --keep              Keep the auto-created tempdir on exit (no-op when --target is set).
-  -n, --name string       Instance name (defaults to the agent name).
-      --no-input          Fail if required parameters are missing instead of prompting.
-  -p, --prompt string     Kickoff message for the agent (one-shot mode if set, interactive otherwise).
-      --set stringArray   Set a template parameter, e.g. --set linear.team_id=<uuid>. Repeatable.
-      --target string     Target directory (must not already contain .agent_team/ unless --force). Defaults to a tempdir.
+      --force                Overwrite an existing .agent_team/ at --target.
+      --keep                 Keep the auto-created tempdir on exit (no-op when --target is set).
+  -n, --name string          Instance name (defaults to the agent name).
+      --no-input             Fail if required parameters are missing instead of prompting.
+  -p, --prompt string        Kickoff message for the agent (one-shot mode if set, interactive otherwise).
+      --runtime string       Runtime profile for this invocation (claude or codex). Overrides env and rendered repo config.
+      --runtime-bin string   Runtime binary for this invocation. Overrides env and rendered repo config.
+      --set stringArray      Set a template parameter, e.g. --set linear.team_id=<uuid>. Repeatable.
+      --target string        Target directory (must not already contain .agent_team/ unless --force). Defaults to a tempdir.
 ```
 
 Inherited Flags:

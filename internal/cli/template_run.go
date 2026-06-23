@@ -28,13 +28,15 @@ func runsRootDir() string {
 }
 
 type templateRunConfig struct {
-	target     string
-	keep       bool
-	force      bool
-	prompt     string
-	name       string
-	setStrings []string
-	noInput    bool
+	target        string
+	keep          bool
+	force         bool
+	prompt        string
+	name          string
+	setStrings    []string
+	noInput       bool
+	runtimeKind   string
+	runtimeBinary string
 }
 
 func newTemplateRunCmd() *cobra.Command {
@@ -65,6 +67,8 @@ func newTemplateRunCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&cfg.name, "name", "n", "", "Instance name (defaults to the agent name).")
 	cmd.Flags().StringArrayVar(&cfg.setStrings, "set", nil, "Set a template parameter, e.g. --set linear.team_id=<uuid>. Repeatable.")
 	cmd.Flags().BoolVar(&cfg.noInput, "no-input", false, "Fail if required parameters are missing instead of prompting.")
+	cmd.Flags().StringVar(&cfg.runtimeKind, "runtime", "", "Runtime profile for this invocation (claude or codex). Overrides env and rendered repo config.")
+	cmd.Flags().StringVar(&cfg.runtimeBinary, "runtime-bin", "", "Runtime binary for this invocation. Overrides env and rendered repo config.")
 	return cmd
 }
 
@@ -101,7 +105,8 @@ func runTemplateRun(cmd *cobra.Command, cfg templateRunConfig, ref, agent string
 		return err
 	}
 
-	forwarded, err = templateRunRuntimeArgs(target, autoCreated, forwarded)
+	selection := runtimeSelection{Kind: cfg.runtimeKind, Binary: cfg.runtimeBinary}
+	forwarded, err = templateRunRuntimeArgs(target, autoCreated, forwarded, selection)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team template run: %v\n", err)
 		return exitErr(2)
@@ -111,19 +116,21 @@ func runTemplateRun(cmd *cobra.Command, cfg templateRunConfig, ref, agent string
 	// § Worked example step 8. A tempdir-scoped daemon would just add
 	// lifecycle churn for a one-shot run.
 	return runAgent(cmd, runConfig{
-		target:     target,
-		name:       cfg.name,
-		prompt:     cfg.prompt,
-		setStrings: cfg.setStrings,
-		noDaemon:   true,
+		target:        target,
+		name:          cfg.name,
+		prompt:        cfg.prompt,
+		setStrings:    cfg.setStrings,
+		noDaemon:      true,
+		runtimeKind:   cfg.runtimeKind,
+		runtimeBinary: cfg.runtimeBinary,
 	}, agent, forwarded)
 }
 
-func templateRunRuntimeArgs(target string, autoCreated bool, forwarded []string) ([]string, error) {
+func templateRunRuntimeArgs(target string, autoCreated bool, forwarded []string, selection runtimeSelection) ([]string, error) {
 	if !autoCreated {
 		return forwarded, nil
 	}
-	rt, err := runtimebin.CurrentFromConfig(filepath.Join(target, teamDirName, "config.toml"))
+	rt, err := runtimeFromConfigWithOverrides(filepath.Join(target, teamDirName, "config.toml"), selection)
 	if err != nil {
 		return nil, err
 	}
