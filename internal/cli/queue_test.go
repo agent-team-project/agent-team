@@ -1144,7 +1144,7 @@ func TestQueueListFilters(t *testing.T) {
 			EventType:  "agent.dispatch",
 			Instance:   "worker",
 			InstanceID: "worker-squ-97",
-			Payload:    map[string]any{"target": "worker", "ticket": "SQU-97", "runtime": "claude"},
+			Payload:    map[string]any{"job_id": "squ-97", "target": "worker", "ticket": "SQU-97", "runtime": "claude"},
 			Attempts:   2,
 			NextRetry:  now.Add(time.Hour),
 			QueuedAt:   now.Add(-time.Hour),
@@ -1227,7 +1227,7 @@ func TestQueueListFilters(t *testing.T) {
 		"agent-team queue drain; agent-team queue drop q-ready",
 		"q-delayed",
 		"claude",
-		"agent-team queue show q-delayed; agent-team queue drop q-delayed",
+		"agent-team job queue show squ-97 q-delayed; agent-team job queue drop squ-97 q-delayed",
 		"q-dead-worker",
 		"agent-team queue retry q-dead-worker; agent-team queue drop q-dead-worker",
 	} {

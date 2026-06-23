@@ -1544,7 +1544,7 @@ func queueItemActions(item *daemon.QueueItem, now time.Time) []string {
 		if !item.NextRetry.IsZero() && item.NextRetry.After(now.UTC()) {
 			showAction := fmt.Sprintf("agent-team queue show %s", item.ID)
 			if jobID != "" {
-				showAction = fmt.Sprintf("agent-team job queue %s", jobID)
+				showAction = fmt.Sprintf("agent-team job queue show %s %s", jobID, item.ID)
 			}
 			return []string{
 				showAction,
