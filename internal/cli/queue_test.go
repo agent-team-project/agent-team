@@ -32,6 +32,54 @@ func TestQueueSummaryEncodesEmptyMapsAsObjects(t *testing.T) {
 	}
 }
 
+func TestQueueListJSONEmptyArray(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"queue", "ls", "--target", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("queue ls json: %v\nstderr=%s", err, errOut.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "[]" {
+		t.Fatalf("queue ls empty json = %q, want []", got)
+	}
+	var items []daemon.QueueItem
+	if err := json.Unmarshal(out.Bytes(), &items); err != nil {
+		t.Fatalf("decode queue ls json: %v\nbody=%s", err, out.String())
+	}
+	if items == nil || len(items) != 0 {
+		t.Fatalf("queue ls decoded items = %#v, want empty non-nil slice", items)
+	}
+}
+
+func TestQueueQuarantineListJSONEmptyArray(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"queue", "quarantine", "ls", "--target", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("queue quarantine ls json: %v\nstderr=%s", err, errOut.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "[]" {
+		t.Fatalf("queue quarantine ls empty json = %q, want []", got)
+	}
+	var items []queueQuarantineItem
+	if err := json.Unmarshal(out.Bytes(), &items); err != nil {
+		t.Fatalf("decode queue quarantine ls json: %v\nbody=%s", err, out.String())
+	}
+	if items == nil || len(items) != 0 {
+		t.Fatalf("queue quarantine decoded items = %#v, want empty non-nil slice", items)
+	}
+}
+
 func TestQueueCommandListShowDropLocal(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

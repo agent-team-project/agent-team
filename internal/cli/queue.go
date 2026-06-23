@@ -1289,6 +1289,9 @@ func runQueueList(w io.Writer, teamDir string, filters queueListFilters, jsonOut
 	}
 	filtered := filterQueueItems(items, filters.withNow(time.Now().UTC()))
 	if jsonOut {
+		if filtered == nil {
+			filtered = []*daemon.QueueItem{}
+		}
 		return json.NewEncoder(w).Encode(filtered)
 	}
 	if tmpl != nil {

@@ -734,6 +734,9 @@ func parseQueueQuarantineFormat(format string) (*template.Template, error) {
 
 func renderQueueQuarantineList(w io.Writer, items []queueQuarantineItem, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
+		if items == nil {
+			items = []queueQuarantineItem{}
+		}
 		return json.NewEncoder(w).Encode(items)
 	}
 	if tmpl != nil {

@@ -238,6 +238,11 @@ intentionally stuck pipeline job as `running_without_instance`.
 
 Severity: medium
 
+Status: fixed after validation. The checked-in template tree is clean, and
+`scripts/ci/validate_template_tree.py` rejects generated/cache artifacts such
+as `__pycache__`, `.pyc`, `.pyo`, `.DS_Store`, and `node_modules` before they
+can be embedded.
+
 Observed during every `init` and `template run`: the generated `.agent_team`
 included:
 
@@ -266,6 +271,10 @@ Suggested improvement:
 
 Severity: low
 
+Status: fixed after validation. Runtime-neutral init, README quickstart, and
+`template run` help text now refer to the selected runtime. Claude-specific
+wording remains only in runtime capability notes and Claude-only examples.
+
 Observed examples:
 
 - `agent-team init` next step: `Run agent-team run to launch Claude Code...`
@@ -284,6 +293,10 @@ Suggested improvement:
 ### 3. `template run` with Codex fails in auto tempdirs without a forwarded flag
 
 Severity: medium
+
+Status: fixed after validation. Auto-created Codex `template run` targets now
+append `--skip-git-repo-check` unless the caller already forwarded it, with
+regression coverage in `internal/cli/template_run_test.go`.
 
 Repro:
 
@@ -313,6 +326,10 @@ Suggested improvement:
 ### 4. Fresh pipeline jobs are not advanced by `pipeline advance`, `team advance`, or `tick`
 
 Severity: high
+
+Status: fixed after validation. Batch pipeline advancement now treats queued,
+dependency-satisfied steps as advanceable, matching `job advance`; regression
+coverage includes `TestPipelineAdvanceIncludesQueuedReadyFirstStep`.
 
 Repro:
 
@@ -475,6 +492,10 @@ Suggested improvement:
 
 Severity: low
 
+Status: fixed after validation. Empty active and quarantined queue list JSON
+now emits `[]`, and queue summaries marshal empty `instances` and `events`
+maps as `{}` consistently.
+
 Observed:
 
 ```sh
@@ -521,12 +542,5 @@ Suggested improvement:
 
 ## Suggested Next Fix Order
 
-1. Fix pipeline advancement for queued first steps.
-2. Fix persistent-target pipeline state so steps are not marked running when no
-   consumer exists.
-3. Remove/filter `__pycache__` from embedded templates and add CI coverage.
-4. Make plan/sync/start recovery runtime-aware for stopped Codex instances.
-5. Update runtime-neutral wording in init/template-run help and docs.
-6. Fix channel name normalization and docs.
-7. Normalize empty JSON output for queue/monitor surfaces.
-8. Improve Codex log capture ergonomics.
+1. Improve Codex log capture ergonomics.
+2. Re-run the full Codex docs validation after the next runtime UX change.
