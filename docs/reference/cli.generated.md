@@ -3642,6 +3642,7 @@ Flags:
       --latest              Show stats for the most recently started instance after other filters.
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --phase strings       Only show instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
+      --runtime strings     Only show instances for this runtime: claude or codex. Can repeat or comma-separate.
       --sort string         Sort rows by name, cpu, mem, rss, status, agent, phase, stale, or unhealthy. (default "name")
       --stale               Only show instances whose status.toml is stale.
       --status strings      Only show lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.

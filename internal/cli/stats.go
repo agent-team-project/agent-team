@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/spf13/cobra"
 )
 
@@ -34,6 +35,7 @@ func newStatsCmd() *cobra.Command {
 		sortBy          string
 		interval        time.Duration
 		statusFilters   []string
+		runtimeFilters  []string
 		agentFilters    []string
 		phaseFilters    []string
 		instanceFilters []string
@@ -69,8 +71,8 @@ func newStatsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team stats: --last cannot be combined with instance names.")
 				return exitErr(2)
 			}
-			if len(args) > 0 && (len(statusFilters) > 0 || len(agentFilters) > 0 || len(phaseFilters) > 0 || len(instanceFilters) > 0 || staleOnly || unhealthyOnly) {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team stats: --status, --agent, --phase, --instance, --stale, and --unhealthy cannot be combined with instance names.")
+			if len(args) > 0 && (len(statusFilters) > 0 || len(runtimeFilters) > 0 || len(agentFilters) > 0 || len(phaseFilters) > 0 || len(instanceFilters) > 0 || staleOnly || unhealthyOnly) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team stats: --status, --runtime, --agent, --phase, --instance, --stale, and --unhealthy cannot be combined with instance names.")
 				return exitErr(2)
 			}
 			if interval < 0 {
@@ -86,7 +88,7 @@ func newStatsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team stats: %v\n", err)
 				return exitErr(2)
 			}
-			opts, err := newStatsOptionsWithInstancesPhasesAndUnhealthy(all, statusFilters, agentFilters, phaseFilters, instanceFilters, unhealthyOnly)
+			opts, err := newStatsOptionsWithRuntimeInstancesPhasesAndUnhealthy(all, statusFilters, runtimeFilters, agentFilters, phaseFilters, instanceFilters, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team stats: %v\n", err)
 				return exitErr(2)
@@ -155,6 +157,7 @@ func newStatsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort rows by name, cpu, mem, rss, status, agent, phase, stale, or unhealthy.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&agentFilters, "agent", nil, "Only show instances for this agent. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only show instances with this name. Can repeat or comma-separate.")
@@ -172,6 +175,7 @@ type statsOptions struct {
 	Sort      statsSortMode
 	SortSet   bool
 	statuses  map[string]bool
+	runtimes  map[string]bool
 	agents    map[string]bool
 	phases    map[string]bool
 	instances map[string]bool
@@ -205,6 +209,8 @@ type processStatsProbe func(pid int) (processStats, error)
 type statsRow struct {
 	Instance       string
 	Agent          string
+	Runtime        string
+	RuntimeBinary  string
 	Status         string
 	Phase          string
 	Stale          bool
@@ -220,6 +226,8 @@ type statsRow struct {
 type statsJSONRow struct {
 	Instance      string   `json:"instance"`
 	Agent         string   `json:"agent"`
+	Runtime       string   `json:"runtime,omitempty"`
+	RuntimeBinary string   `json:"runtime_binary,omitempty"`
 	Status        string   `json:"status"`
 	Phase         string   `json:"phase,omitempty"`
 	Stale         bool     `json:"stale,omitempty"`
@@ -235,6 +243,8 @@ type statsJSONRow struct {
 type statsFormatRow struct {
 	Instance      string
 	Agent         string
+	Runtime       string
+	RuntimeBinary string
 	Status        string
 	Phase         string
 	Stale         bool
@@ -294,6 +304,10 @@ func newStatsOptionsWithInstancesAndPhases(all bool, statusFilters, agentFilters
 }
 
 func newStatsOptionsWithInstancesPhasesAndUnhealthy(all bool, statusFilters, agentFilters, phaseFilters, instanceFilters []string, unhealthyOnly bool) (statsOptions, error) {
+	return newStatsOptionsWithRuntimeInstancesPhasesAndUnhealthy(all, statusFilters, nil, agentFilters, phaseFilters, instanceFilters, unhealthyOnly)
+}
+
+func newStatsOptionsWithRuntimeInstancesPhasesAndUnhealthy(all bool, statusFilters, runtimeFilters, agentFilters, phaseFilters, instanceFilters []string, unhealthyOnly bool) (statsOptions, error) {
 	opts := statsOptions{All: all, Unhealthy: unhealthyOnly, Sort: statsSortName}
 	if len(statusFilters) > 0 {
 		opts.statuses = map[string]bool{}
@@ -311,6 +325,22 @@ func newStatsOptionsWithInstancesPhasesAndUnhealthy(all bool, statusFilters, age
 		}
 		if len(opts.statuses) == 0 {
 			return opts, errors.New("--status requires at least one non-empty status")
+		}
+	}
+	if len(runtimeFilters) > 0 {
+		opts.runtimes = map[string]bool{}
+		for _, raw := range splitFilterValues(runtimeFilters) {
+			if strings.TrimSpace(raw) == "" {
+				continue
+			}
+			kind, err := runtimebin.ParseKind(raw)
+			if err != nil {
+				return opts, fmt.Errorf("unknown --runtime %q (want claude or codex)", raw)
+			}
+			opts.runtimes[string(kind)] = true
+		}
+		if len(opts.runtimes) == 0 {
+			return opts, errors.New("--runtime requires at least one non-empty runtime")
 		}
 	}
 	if len(agentFilters) > 0 {
@@ -584,13 +614,15 @@ func collectStatsRows(lister instanceLister, names []string, opts statsOptions, 
 	rows := make([]statsRow, 0, len(selected))
 	for _, meta := range selected {
 		row := statsRow{
-			Instance: meta.Instance,
-			Agent:    meta.Agent,
-			Status:   metadataStatusKey(meta),
-			Phase:    statsMetaPhase(opts, meta.Instance),
-			Stale:    statsMetaStale(opts, meta.Instance),
-			PID:      meta.PID,
-			Age:      startedAge(meta.StartedAt, now),
+			Instance:      meta.Instance,
+			Agent:         meta.Agent,
+			Runtime:       meta.Runtime,
+			RuntimeBinary: meta.RuntimeBinary,
+			Status:        metadataStatusKey(meta),
+			Phase:         statsMetaPhase(opts, meta.Instance),
+			Stale:         statsMetaStale(opts, meta.Instance),
+			PID:           meta.PID,
+			Age:           startedAge(meta.StartedAt, now),
 		}
 		if meta.Status == daemon.StatusRunning && meta.PID > 0 {
 			stats, err := probe(meta.PID)
@@ -713,6 +745,9 @@ func statsOptionsMatchesMeta(opts statsOptions, meta *daemon.Metadata) bool {
 	if len(opts.agents) > 0 && !opts.agents[meta.Agent] {
 		return false
 	}
+	if len(opts.runtimes) > 0 && !opts.runtimes[statsMetaRuntimeKey(meta)] {
+		return false
+	}
 	if len(opts.instances) > 0 && !opts.instances[meta.Instance] {
 		return false
 	}
@@ -729,7 +764,18 @@ func statsOptionsMatchesMeta(opts statsOptions, meta *daemon.Metadata) bool {
 }
 
 func statsOptionsHasFilters(opts statsOptions) bool {
-	return len(opts.statuses) > 0 || len(opts.agents) > 0 || len(opts.phases) > 0 || len(opts.instances) > 0 || opts.Stale || opts.Unhealthy
+	return len(opts.statuses) > 0 || len(opts.runtimes) > 0 || len(opts.agents) > 0 || len(opts.phases) > 0 || len(opts.instances) > 0 || opts.Stale || opts.Unhealthy
+}
+
+func statsMetaRuntimeKey(meta *daemon.Metadata) string {
+	if meta == nil {
+		return "unknown"
+	}
+	runtime := strings.ToLower(strings.TrimSpace(meta.Runtime))
+	if runtime == "" {
+		return "unknown"
+	}
+	return runtime
 }
 
 func statsPhaseByInstance(teamDir string, now time.Time) map[string]string {
@@ -861,14 +907,16 @@ func statsJSONRows(rows []statsRow) []statsJSONRow {
 	out := make([]statsJSONRow, 0, len(rows))
 	for _, row := range rows {
 		body := statsJSONRow{
-			Instance: row.Instance,
-			Agent:    row.Agent,
-			Status:   row.Status,
-			Phase:    row.Phase,
-			Stale:    row.Stale,
-			PID:      row.PID,
-			Age:      row.Age,
-			Error:    row.Error,
+			Instance:      row.Instance,
+			Agent:         row.Agent,
+			Runtime:       row.Runtime,
+			RuntimeBinary: row.RuntimeBinary,
+			Status:        row.Status,
+			Phase:         row.Phase,
+			Stale:         row.Stale,
+			PID:           row.PID,
+			Age:           row.Age,
+			Error:         row.Error,
 		}
 		if row.StatsAvailable {
 			cpu := row.CPUPercent
@@ -887,14 +935,16 @@ func statsFormatRows(rows []statsRow) []statsFormatRow {
 	out := make([]statsFormatRow, 0, len(rows))
 	for _, row := range rows {
 		body := statsFormatRow{
-			Instance: row.Instance,
-			Agent:    row.Agent,
-			Status:   row.Status,
-			Phase:    row.Phase,
-			Stale:    row.Stale,
-			PID:      row.PID,
-			Age:      row.Age,
-			Error:    row.Error,
+			Instance:      row.Instance,
+			Agent:         row.Agent,
+			Runtime:       row.Runtime,
+			RuntimeBinary: row.RuntimeBinary,
+			Status:        row.Status,
+			Phase:         row.Phase,
+			Stale:         row.Stale,
+			PID:           row.PID,
+			Age:           row.Age,
+			Error:         row.Error,
 		}
 		if row.StatsAvailable {
 			body.CPUPercent = fmt.Sprintf("%.1f", row.CPUPercent)

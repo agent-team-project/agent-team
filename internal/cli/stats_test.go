@@ -589,6 +589,43 @@ func TestStatsFiltersByAgent(t *testing.T) {
 	}
 }
 
+func TestStatsFiltersByRuntime(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	lister := &fakeInstanceLister{snapshots: [][]*daemon.Metadata{{
+		{Instance: "codex-worker", Agent: "worker", Runtime: "codex", RuntimeBinary: "codex-dev", Status: daemon.StatusRunning, PID: 10, StartedAt: now.Add(-3 * time.Minute)},
+		{Instance: "claude-manager", Agent: "manager", Runtime: "claude", RuntimeBinary: "claude-code", Status: daemon.StatusRunning, PID: 11, StartedAt: now.Add(-5 * time.Minute)},
+		{Instance: "unknown-runtime", Agent: "worker", Status: daemon.StatusRunning, PID: 12, StartedAt: now.Add(-2 * time.Minute)},
+	}}}
+	probed := map[int]bool{}
+	probe := func(pid int) (processStats, error) {
+		probed[pid] = true
+		return processStats{CPUPercent: float64(pid), MemoryPercent: 0.1, RSSKiB: 1024}, nil
+	}
+	opts, err := newStatsOptionsWithRuntimeInstancesPhasesAndUnhealthy(false, nil, []string{"codex"}, nil, nil, nil, false)
+	if err != nil {
+		t.Fatalf("newStatsOptionsWithRuntimeInstancesPhasesAndUnhealthy: %v", err)
+	}
+
+	rows, err := collectStatsRows(lister, nil, opts, now, probe)
+	if err != nil {
+		t.Fatalf("collectStatsRows: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Instance != "codex-worker" || rows[0].Runtime != "codex" || rows[0].RuntimeBinary != "codex-dev" {
+		t.Fatalf("rows = %+v, want codex worker only", rows)
+	}
+	if !probed[10] || probed[11] || probed[12] {
+		t.Fatalf("probed pids = %+v, want codex pid only", probed)
+	}
+	jsonRows := statsJSONRows(rows)
+	if len(jsonRows) != 1 || jsonRows[0].Runtime != "codex" || jsonRows[0].RuntimeBinary != "codex-dev" {
+		t.Fatalf("json rows = %+v, want codex runtime metadata", jsonRows)
+	}
+	formatRows := statsFormatRows(rows)
+	if len(formatRows) != 1 || formatRows[0].Runtime != "codex" || formatRows[0].RuntimeBinary != "codex-dev" {
+		t.Fatalf("format rows = %+v, want codex runtime metadata", formatRows)
+	}
+}
+
 func TestStatsFiltersByInstance(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	lister := &fakeInstanceLister{snapshots: [][]*daemon.Metadata{{
@@ -742,6 +779,38 @@ func TestStatsFiltersByUnhealthy(t *testing.T) {
 	summary := summarizeStatsRows(rows)
 	if summary.Total != 2 || summary.Crashed != 1 || summary.Stale != 1 {
 		t.Fatalf("summary = %+v, want one crashed and one stale row", summary)
+	}
+}
+
+func TestStatsCommandRuntimeFilterUsesLocalMetadataWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "codex-worker", Agent: "worker", Runtime: "codex", RuntimeBinary: "codex-dev", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-5 * time.Minute)},
+		{Instance: "claude-manager", Agent: "manager", Runtime: "claude", RuntimeBinary: "claude-code", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-3 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"stats", "--json", "--runtime", "codex", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("stats --runtime local metadata: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []statsJSONRow
+	if err := json.Unmarshal(stdout.Bytes(), &rows); err != nil {
+		t.Fatalf("decode stats json: %v\nbody=%s", err, stdout.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "codex-worker" || rows[0].Runtime != "codex" || rows[0].RuntimeBinary != "codex-dev" {
+		t.Fatalf("rows = %+v, want codex worker only", rows)
 	}
 }
 
@@ -907,23 +976,32 @@ func TestStatsOptionsRejectUnknownStatus(t *testing.T) {
 	}
 }
 
+func TestStatsOptionsRejectUnknownRuntime(t *testing.T) {
+	_, err := newStatsOptionsWithRuntimeInstancesPhasesAndUnhealthy(false, nil, []string{"llama"}, nil, nil, nil, false)
+	if err == nil || !strings.Contains(err.Error(), "unknown --runtime") {
+		t.Fatalf("err = %v, want unknown runtime", err)
+	}
+}
+
 func TestStatsOptionsRejectEmptyFilters(t *testing.T) {
 	cases := []struct {
 		name      string
 		statuses  []string
+		runtimes  []string
 		agents    []string
 		phases    []string
 		instances []string
 		want      string
 	}{
 		{name: "status", statuses: []string{"  "}, want: "non-empty status"},
+		{name: "runtime", runtimes: []string{"  "}, want: "non-empty runtime"},
 		{name: "agent", agents: []string{"  "}, want: "non-empty agent"},
 		{name: "phase", phases: []string{"  "}, want: "non-empty phase"},
 		{name: "instance", instances: []string{"  "}, want: "non-empty instance"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := newStatsOptionsWithInstancesAndPhases(false, tc.statuses, tc.agents, tc.phases, tc.instances)
+			_, err := newStatsOptionsWithRuntimeInstancesPhasesAndUnhealthy(false, tc.statuses, tc.runtimes, tc.agents, tc.phases, tc.instances, false)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
@@ -1097,6 +1175,7 @@ func TestStatsAllRejectsExplicitNames(t *testing.T) {
 func TestStatsFiltersRejectExplicitNames(t *testing.T) {
 	for _, args := range [][]string{
 		{"stats", "--instance", "manager", "manager"},
+		{"stats", "--runtime", "codex", "manager"},
 		{"stats", "--stale", "manager"},
 	} {
 		cmd := NewRootCmd()
@@ -1108,7 +1187,7 @@ func TestStatsFiltersRejectExplicitNames(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%v: expected validation error", args)
 		}
-		if !strings.Contains(stderr.String(), "--status, --agent, --phase, --instance, --stale, and --unhealthy cannot be combined") {
+		if !strings.Contains(stderr.String(), "--status, --runtime, --agent, --phase, --instance, --stale, and --unhealthy cannot be combined") {
 			t.Fatalf("%v: stderr = %q, want filter/name validation", args, stderr.String())
 		}
 	}
