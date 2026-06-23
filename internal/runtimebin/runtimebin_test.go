@@ -87,3 +87,27 @@ func TestClaudeCompatibleBinaryRejectsCodex(t *testing.T) {
 		t.Fatal("ClaudeCompatibleBinary() error = nil, want unsupported runtime error")
 	}
 }
+
+func TestCodexAgentTeamEnvConfigArgsSetsOnlyAgentTeamVars(t *testing.T) {
+	args := CodexAgentTeamEnvConfigArgs([]string{
+		"AGENT_TEAM_ROOT=/tmp/team",
+		"AGENT_TEAM_INSTANCE=worker-1",
+		"PATH=/bin",
+		"BAD-KEY=value",
+		"AGENT_TEAM_STATE_DIR=/tmp/team/state/worker 1",
+	})
+
+	want := []string{
+		"-c", `shell_environment_policy.set.AGENT_TEAM_ROOT="/tmp/team"`,
+		"-c", `shell_environment_policy.set.AGENT_TEAM_INSTANCE="worker-1"`,
+		"-c", `shell_environment_policy.set.AGENT_TEAM_STATE_DIR="/tmp/team/state/worker 1"`,
+	}
+	if len(args) != len(want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args[%d] = %q, want %q; all=%#v", i, args[i], want[i], args)
+		}
+	}
+}

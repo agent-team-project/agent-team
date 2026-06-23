@@ -540,10 +540,6 @@ func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, p
 	body, _ := json.Marshal(map[string]any{"event": eventType, "payload": payload})
 	prompt := fmt.Sprintf("Topology event for declared instance %q (agent=%s):\n%s",
 		inst.Name, inst.Agent, string(body))
-	args, rt, err := r.prepareEphemeralAgentArgs(inst.Agent, name, runtime.stateDir, prompt)
-	if err != nil {
-		return nil, err
-	}
 	workspace := r.teamDirParent()
 	worktreePath := ""
 	branch := ""
@@ -557,6 +553,11 @@ func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, p
 	}
 	env := append([]string(nil), runtime.env...)
 	env = append(env, dispatchContextEnv(payload, branch, worktreePath)...)
+	args, rt, err := r.prepareEphemeralAgentArgs(inst.Agent, name, runtime.stateDir, prompt, env)
+	if err != nil {
+		cleanupWorkspace()
+		return nil, err
+	}
 	meta, err := r.mgr.Dispatch(DispatchInput{
 		Agent:         inst.Agent,
 		Name:          name,
@@ -830,7 +831,7 @@ func (r *EventResolver) rerenderTmplFiles(stateDir string, resolved teamtemplate
 	return nil
 }
 
-func (r *EventResolver) prepareEphemeralAgentArgs(agentName, instance, stateDir, prompt string) ([]string, runtimebin.Runtime, error) {
+func (r *EventResolver) prepareEphemeralAgentArgs(agentName, instance, stateDir, prompt string, env []string) ([]string, runtimebin.Runtime, error) {
 	rt, err := runtimebin.CurrentFromConfig(filepath.Join(r.teamDir, "config.toml"))
 	if err != nil {
 		return nil, runtimebin.Runtime{}, fmt.Errorf("event runtime: %w", err)
@@ -896,12 +897,14 @@ func (r *EventResolver) prepareEphemeralAgentArgs(agentName, instance, stateDir,
 			"-p", prompt,
 		}, rt, nil
 	case runtimebin.KindCodex:
-		return []string{
-			"exec",
+		args := []string{"exec"}
+		args = append(args, runtimebin.CodexAgentTeamEnvConfigArgs(env)...)
+		args = append(args,
 			"-C", r.teamDirParent(),
 			"--add-dir", runtimeDir,
 			codexEventPrompt(kickoff, prompt, agents),
-		}, rt, nil
+		)
+		return args, rt, nil
 	default:
 		return nil, runtimebin.Runtime{}, fmt.Errorf("unsupported runtime %q", rt.Kind)
 	}

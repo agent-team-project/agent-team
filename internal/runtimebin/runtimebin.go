@@ -3,6 +3,7 @@ package runtimebin
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -131,4 +132,37 @@ func defaultBinary(kind Kind) string {
 // DefaultBinaryForKind returns the built-in binary name for a runtime kind.
 func DefaultBinaryForKind(kind Kind) string {
 	return defaultBinary(kind)
+}
+
+// CodexAgentTeamEnvConfigArgs returns Codex -c overrides that expose the
+// daemon/session contract to shell commands without broadly inheriting the
+// parent process environment.
+func CodexAgentTeamEnvConfigArgs(env []string) []string {
+	args := []string{}
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		key = strings.TrimSpace(key)
+		if !ok || !strings.HasPrefix(key, "AGENT_TEAM_") || !validEnvKey(key) {
+			continue
+		}
+		args = append(args, "-c", "shell_environment_policy.set."+key+"="+strconv.Quote(value))
+	}
+	return args
+}
+
+func validEnvKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i, r := range key {
+		switch {
+		case r == '_':
+		case r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
 }

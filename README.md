@@ -307,16 +307,18 @@ binary = "codex" # optional wrapper/binary override
 Environment variables take precedence:
 
 - `AGENT_TEAM_RUNTIME=claude` (default) enables the full daemon, resume, subagent registry, and queue/event dispatch path.
-- `AGENT_TEAM_RUNTIME=codex` launches Codex sessions with `codex` or `codex exec`. The chosen agent prompt and task are passed as the initial Codex prompt, and team agents are listed as coordination context. Direct interactive runs work without the daemon; one-shot runs with `--prompt` can also use `--detach`, `--attach`, `--json`, or `--format` for daemon-managed logs and process metadata. Codex-managed daemon runs do not support `start`/resume or native subagent registration because Codex does not expose the same `--agents` / `--session-id` contract.
+- `AGENT_TEAM_RUNTIME=codex` launches Codex sessions with `codex` or `codex exec`. The chosen agent prompt and task are passed as the initial Codex prompt, and team agents are listed as coordination context. Direct interactive runs work without the daemon; one-shot runs with `--prompt` can also use `--detach`, `--attach`, `--json`, or `--format` for daemon-managed logs and process metadata. The adapter sets Codex shell-environment policy entries for `AGENT_TEAM_*` variables so bundled status, inbox, and channel scripts can find the repo team root and instance state without broadly inheriting the parent process environment. Codex-managed daemon runs do not support `start`/resume or native subagent registration because Codex does not expose the same `--agents` / `--session-id` contract.
 - `AGENT_TEAM_RUNTIME_BIN=/path/to/wrapper` overrides the binary for the selected runtime.
 
 Run `agent-team runtime` to confirm the selected profile, resolved binary path, config source, and supported capabilities.
 
-For the Claude-compatible runtime, the named agent's prompt becomes the session's system prompt and all other agents stay registered as subagents so the named agent can dispatch them via the Task tool. The launcher creates `.agent_team/state/<instance>/` (defaults the instance name to the agent name; pass `--name` for a unique identifier) and exports:
+The launcher creates `.agent_team/state/<instance>/` (defaults the instance name to the agent name; pass `--name` for a unique identifier) and exports the same session contract for every runtime:
 
 - `AGENT_TEAM_ROOT` — absolute path to `.agent_team/`
 - `AGENT_TEAM_INSTANCE` — the instance name
 - `AGENT_TEAM_STATE_DIR` — absolute path to `.agent_team/state/<instance>/`
+
+For the Claude-compatible runtime, the named agent's prompt becomes the session's system prompt and all other agents stay registered as subagents so the named agent can dispatch them via the Task tool.
 
 Subagents are session-scoped — they exist only for the duration of the spawned `claude` process. Nothing is written into `.claude/agents/`. No plugin install, no marketplace, no global state.
 

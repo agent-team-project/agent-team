@@ -252,17 +252,17 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 	if len(forwarded) > 0 && forwarded[0] == "--" {
 		forwarded = forwarded[1:]
 	}
-	runtimeArgs, err := buildRuntimeArgs(rt, target, tmpdir, agentsJSON, promptFile, kickoff, cfg.prompt, forwarded, agents)
-	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
-		return exitErr(2)
-	}
-
 	teamEnv := []string{
 		"AGENT_TEAM_ROOT=" + teamDir,
 		"AGENT_TEAM_INSTANCE=" + instance,
 		"AGENT_TEAM_STATE_DIR=" + stateDir,
 	}
+	runtimeArgs, err := buildRuntimeArgs(rt, target, tmpdir, agentsJSON, promptFile, kickoff, cfg.prompt, forwarded, agents, teamEnv)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
+		return exitErr(2)
+	}
+
 	env := append(os.Environ(), teamEnv...)
 
 	// Daemon-aware routing: one-shot dispatches (--prompt given) route
@@ -348,7 +348,7 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 	return execClaude(cmd, runtimeArgs, env, target)
 }
 
-func buildRuntimeArgs(rt runtimebin.Runtime, target, addDir, agentsJSON, promptFile, kickoff, prompt string, forwarded []string, agents []*loader.Agent) ([]string, error) {
+func buildRuntimeArgs(rt runtimebin.Runtime, target, addDir, agentsJSON, promptFile, kickoff, prompt string, forwarded []string, agents []*loader.Agent, env []string) ([]string, error) {
 	switch rt.Kind {
 	case runtimebin.KindClaude:
 		args := []string{
@@ -365,6 +365,7 @@ func buildRuntimeArgs(rt runtimebin.Runtime, target, addDir, agentsJSON, promptF
 		if prompt != "" {
 			args = append(args, "exec")
 		}
+		args = append(args, runtimebin.CodexAgentTeamEnvConfigArgs(env)...)
 		args = append(args, "-C", target, "--add-dir", addDir)
 		args = append(args, forwarded...)
 		args = append(args, codexInitialPrompt(kickoff, prompt, agents))

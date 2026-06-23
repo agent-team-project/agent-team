@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -365,9 +366,10 @@ func TestEvent_EphemeralJobExitPreservesMetadataAndCompletesJob(t *testing.T) {
 func TestEvent_EphemeralDispatchUsesCodexRuntime(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindCodex))
 	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
 	fake := newFakeSpawner(30 * time.Second)
 	m := NewInstanceManager(root, fake.spawn)
-	resolver := NewEventResolver(m, fixtureTeamDir(t), mustParseTopo(t))
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
 	srv := httptest.NewServer(Handler(m, nil, resolver, root))
 	defer srv.Close()
 
@@ -388,6 +390,15 @@ func TestEvent_EphemeralDispatchUsesCodexRuntime(t *testing.T) {
 	for _, want := range []string{"-C", "--add-dir"} {
 		if !containsString(call, want) {
 			t.Fatalf("codex spawn call missing %q: %#v", want, call)
+		}
+	}
+	for _, want := range []string{
+		"shell_environment_policy.set.AGENT_TEAM_ROOT=" + strconv.Quote(teamDir),
+		"shell_environment_policy.set.AGENT_TEAM_INSTANCE=" + strconv.Quote("worker-squ-42"),
+		"shell_environment_policy.set.AGENT_TEAM_STATE_DIR=" + strconv.Quote(filepath.Join(teamDir, "state", "worker-squ-42")),
+	} {
+		if !containsString(call, want) {
+			t.Fatalf("codex spawn call missing env config %q: %#v", want, call)
 		}
 	}
 	if !strings.Contains(call[len(call)-1], "implement SQU-42") {

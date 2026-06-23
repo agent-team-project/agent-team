@@ -262,6 +262,16 @@ func TestRun_CodexRuntimeBuildsDirectExecArgs(t *testing.T) {
 	if !containsString(cap.args, "--sandbox") || !containsString(cap.args, "workspace-write") {
 		t.Fatalf("forwarded codex args missing: %v", cap.args)
 	}
+	wantTeamDir := filepath.Join(cap.cwd, ".agent_team")
+	for _, want := range []string{
+		"shell_environment_policy.set.AGENT_TEAM_ROOT=" + strconv.Quote(wantTeamDir),
+		"shell_environment_policy.set.AGENT_TEAM_INSTANCE=" + strconv.Quote("manager"),
+		"shell_environment_policy.set.AGENT_TEAM_STATE_DIR=" + strconv.Quote(filepath.Join(wantTeamDir, "state", "manager")),
+	} {
+		if !containsString(cap.args, want) {
+			t.Fatalf("codex args missing env config %q: %v", want, cap.args)
+		}
+	}
 	prompt := cap.args[len(cap.args)-1]
 	for _, want := range []string{
 		"You are the `manager` instance of the `manager` agent.",
@@ -409,6 +419,16 @@ func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 	}
 	if !containsString(args, "--add-dir") || !strings.Contains(args[len(args)-1], "codex task") {
 		t.Fatalf("codex daemon args missing add-dir or task prompt: %v", args)
+	}
+	wantTeamDir := filepath.Join(workspace, ".agent_team")
+	for _, want := range []string{
+		"shell_environment_policy.set.AGENT_TEAM_ROOT=" + strconv.Quote(wantTeamDir),
+		"shell_environment_policy.set.AGENT_TEAM_INSTANCE=" + strconv.Quote("manager"),
+		"shell_environment_policy.set.AGENT_TEAM_STATE_DIR=" + strconv.Quote(filepath.Join(wantTeamDir, "state", "manager")),
+	} {
+		if !containsString(args, want) {
+			t.Fatalf("codex daemon args missing env config %q: %v", want, args)
+		}
 	}
 }
 

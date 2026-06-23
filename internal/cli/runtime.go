@@ -126,7 +126,7 @@ func collectRuntimeInfoForConfig(configPath string) (runtimeInfo, error) {
 		info.Subagents = true
 	case runtimebin.KindCodex:
 		info.DaemonDispatch = true
-		info.Notes = append(info.Notes, "codex adapter supports direct launches and daemon-managed one-shot exec runs with --prompt; resume and native subagent registration are not available")
+		info.Notes = append(info.Notes, "codex adapter supports direct launches and daemon-managed one-shot exec runs with --prompt; AGENT_TEAM_* vars are exposed to Codex shell commands; resume and native subagent registration are not available")
 	default:
 		return runtimeInfo{}, fmt.Errorf("unsupported runtime %q", rt.Kind)
 	}
