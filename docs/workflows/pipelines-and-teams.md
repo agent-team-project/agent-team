@@ -76,6 +76,11 @@ Common states:
 
 `job triage`, `pipeline status`, `pipeline ready`, and `team triage` all read the same job state.
 
+Supported gates:
+
+- `gate = "manual"`: wait for operator approval with `agent-team job step <job-id> <step-id> --status queued`.
+- `gate = "pr"`: wait until the job has PR metadata, then advance normally.
+
 When a ready step targets a persistent instance that is not currently running,
 advancement writes the mailbox message and leaves the step `queued` with the
 persistent instance name. Once that instance is started, it can drain its

@@ -680,10 +680,10 @@ func parseStepGate(raw any) (string, error) {
 		return "", fmt.Errorf("gate must be a non-empty string")
 	}
 	switch value {
-	case "manual":
+	case "manual", "pr":
 		return value, nil
 	default:
-		return "", fmt.Errorf("gate must be manual")
+		return "", fmt.Errorf("gate must be manual or pr")
 	}
 }
 

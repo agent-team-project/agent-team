@@ -148,6 +148,15 @@ func TestJobValidation(t *testing.T) {
 	if err := Validate(j); err == nil {
 		t.Fatalf("Validate accepted invalid status")
 	}
+	j.Status = StatusQueued
+	j.Steps = []Step{{ID: "review", Target: "manager", Status: StatusBlocked, Gate: StepGatePR}}
+	if err := Validate(j); err != nil {
+		t.Fatalf("Validate rejected PR gate: %v", err)
+	}
+	j.Steps[0].Gate = "robot"
+	if err := Validate(j); err == nil {
+		t.Fatalf("Validate accepted invalid gate")
+	}
 }
 
 func TestReadMissingJob(t *testing.T) {

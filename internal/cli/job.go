@@ -869,7 +869,7 @@ func jobStepsFromPipeline(p *topology.Pipeline) []job.Step {
 	steps := make([]job.Step, 0, len(p.Steps))
 	for i, step := range p.Steps {
 		status := job.StatusQueued
-		if i > 0 {
+		if i > 0 || strings.TrimSpace(step.Gate) != "" {
 			status = job.StatusBlocked
 		}
 		steps = append(steps, job.Step{
@@ -4170,6 +4170,9 @@ func actionsForJobReadyRow(row jobReadyRow) []string {
 			}
 			return nil
 		}
+		if row.Gate == job.StepGatePR {
+			return []string{fmt.Sprintf("agent-team job update %s --pr <url>", row.JobID)}
+		}
 		return []string{fmt.Sprintf("agent-team job unblock %s <answer...>", row.JobID)}
 	default:
 		return nil
@@ -5649,7 +5652,7 @@ func inspectNextJobStep(j *job.Job) jobNextResult {
 	if step := firstJobStepWithStatus(j, job.StatusQueued); step != nil {
 		res.State = "queued"
 		res.Step = cloneJobStep(step)
-		res.WaitingFor = unmetJobStepDependencies(j, step)
+		res.WaitingFor = jobStepWaitingFor(j, step)
 		res.Message = "step " + step.ID + " is queued"
 		return res
 	}
@@ -5667,12 +5670,16 @@ func inspectNextJobStep(j *job.Job) jobNextResult {
 	if step := firstJobStepWithStatus(j, job.StatusBlocked); step != nil {
 		res.State = "blocked"
 		res.Step = cloneJobStep(step)
-		res.WaitingFor = unmetJobStepDependencies(j, step)
+		res.WaitingFor = jobStepWaitingFor(j, step)
 		switch {
 		case step.Gate == job.StepGateManual && len(res.WaitingFor) > 0:
 			res.Message = "step " + step.ID + " is waiting for " + strings.Join(res.WaitingFor, ",") + " before manual approval"
 		case step.Gate == job.StepGateManual:
 			res.Message = "step " + step.ID + " is waiting for manual approval"
+		case step.Gate == job.StepGatePR && len(res.WaitingFor) > 0:
+			res.Message = "step " + step.ID + " is waiting for " + strings.Join(res.WaitingFor, ",")
+		case step.Gate == job.StepGatePR:
+			res.Message = "step " + step.ID + " is waiting for PR metadata"
 		case len(res.WaitingFor) > 0:
 			res.Message = "step " + step.ID + " is waiting for " + strings.Join(res.WaitingFor, ",")
 		default:
@@ -5721,6 +5728,14 @@ func unmetJobStepDependencies(j *job.Job, step *job.Step) []string {
 	return waiting
 }
 
+func jobStepWaitingFor(j *job.Job, step *job.Step) []string {
+	waiting := append([]string(nil), unmetJobStepDependencies(j, step)...)
+	if stepPRGatePending(j, step) {
+		waiting = append(waiting, "pr")
+	}
+	return waiting
+}
+
 func nextReadyJobStep(j *job.Job) *job.Step {
 	done := map[string]bool{}
 	for _, step := range j.Steps {
@@ -5730,7 +5745,7 @@ func nextReadyJobStep(j *job.Job) *job.Step {
 	}
 	for i := range j.Steps {
 		step := &j.Steps[i]
-		if stepManualGatePending(step) {
+		if stepGatePending(j, step) {
 			continue
 		}
 		if step.Status == job.StatusDone || step.Status == job.StatusFailed || step.Status == job.StatusRunning || step.Status == job.StatusQueued {
@@ -5752,6 +5767,9 @@ func nextReadyJobStep(j *job.Job) *job.Step {
 		if step.Status != job.StatusQueued {
 			continue
 		}
+		if stepGatePending(j, step) {
+			continue
+		}
 		ready := true
 		for _, dep := range step.After {
 			if !done[dep] {
@@ -5768,6 +5786,14 @@ func nextReadyJobStep(j *job.Job) *job.Step {
 
 func stepManualGatePending(step *job.Step) bool {
 	return step != nil && step.Status == job.StatusBlocked && step.Gate == job.StepGateManual
+}
+
+func stepPRGatePending(j *job.Job, step *job.Step) bool {
+	return step != nil && step.Gate == job.StepGatePR && strings.TrimSpace(j.PR) == ""
+}
+
+func stepGatePending(j *job.Job, step *job.Step) bool {
+	return stepManualGatePending(step) || stepPRGatePending(j, step)
 }
 
 func resetFailedPipelineStepForRetry(j *job.Job) string {

@@ -30,6 +30,7 @@ const (
 // Supported pipeline step gates.
 const (
 	StepGateManual = "manual"
+	StepGatePR     = "pr"
 )
 
 // Job is one durable work unit under `.agent_team/jobs/<id>.toml`.
@@ -222,11 +223,21 @@ func Validate(j *Job) error {
 		if !ValidStatus(step.Status) {
 			return fmt.Errorf("steps[%d]: unknown status %q", i, step.Status)
 		}
-		if strings.TrimSpace(step.Gate) != "" && step.Gate != StepGateManual {
+		if !ValidStepGate(step.Gate) {
 			return fmt.Errorf("steps[%d]: unknown gate %q", i, step.Gate)
 		}
 	}
 	return nil
+}
+
+// ValidStepGate reports whether gate is one of the supported pipeline gates.
+func ValidStepGate(gate string) bool {
+	switch strings.TrimSpace(gate) {
+	case "", StepGateManual, StepGatePR:
+		return true
+	default:
+		return false
+	}
 }
 
 // Read loads a single job by normalized or raw id.

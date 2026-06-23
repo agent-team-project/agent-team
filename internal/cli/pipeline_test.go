@@ -964,6 +964,148 @@ gate = "manual"
 	}
 }
 
+func TestPipelinePRGateWaitsForJobPR(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[[instances.manager.triggers]]
+event        = "agent.dispatch"
+match.target = "manager"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+gate = "pr"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{"pipeline", "run", "ticket_to_pr", "SQU-902", "pr gate test", "--repo", root, "--json"})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("pipeline run: %v\nstderr=%s", err, createErr.String())
+	}
+	created, err := job.Read(teamDir, "squ-902")
+	if err != nil {
+		t.Fatalf("read created job: %v", err)
+	}
+	if len(created.Steps) != 2 || created.Steps[1].Gate != job.StepGatePR || created.Steps[1].Status != job.StatusBlocked {
+		t.Fatalf("created steps = %+v", created.Steps)
+	}
+
+	markDone := NewRootCmd()
+	markDoneOut, markDoneErr := &bytes.Buffer{}, &bytes.Buffer{}
+	markDone.SetOut(markDoneOut)
+	markDone.SetErr(markDoneErr)
+	markDone.SetArgs([]string{"job", "step", "squ-902", "implement", "--status", "done", "--repo", root, "--json"})
+	if err := markDone.Execute(); err != nil {
+		t.Fatalf("mark implement done: %v\nstderr=%s", err, markDoneErr.String())
+	}
+
+	nextBlockedCmd := NewRootCmd()
+	nextBlockedOut, nextBlockedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	nextBlockedCmd.SetOut(nextBlockedOut)
+	nextBlockedCmd.SetErr(nextBlockedErr)
+	nextBlockedCmd.SetArgs([]string{"job", "next", "squ-902", "--repo", root, "--json"})
+	if err := nextBlockedCmd.Execute(); err != nil {
+		t.Fatalf("job next blocked: %v\nstderr=%s", err, nextBlockedErr.String())
+	}
+	var blocked jobNextResult
+	if err := json.Unmarshal(nextBlockedOut.Bytes(), &blocked); err != nil {
+		t.Fatalf("decode blocked next: %v\nbody=%s", err, nextBlockedOut.String())
+	}
+	if blocked.State != "blocked" || blocked.Step == nil || blocked.Step.Gate != job.StepGatePR || strings.Join(blocked.WaitingFor, ",") != "pr" {
+		t.Fatalf("blocked next = %+v", blocked)
+	}
+
+	readyBlocked := NewRootCmd()
+	readyBlockedOut, readyBlockedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	readyBlocked.SetOut(readyBlockedOut)
+	readyBlocked.SetErr(readyBlockedErr)
+	readyBlocked.SetArgs([]string{"job", "ready", "--repo", root, "--state", "blocked", "--json"})
+	if err := readyBlocked.Execute(); err != nil {
+		t.Fatalf("job ready blocked: %v\nstderr=%s", err, readyBlockedErr.String())
+	}
+	var rows []jobReadyRow
+	if err := json.Unmarshal(readyBlockedOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode ready rows: %v\nbody=%s", err, readyBlockedOut.String())
+	}
+	if len(rows) != 1 || rows[0].Gate != job.StepGatePR || strings.Join(rows[0].WaitingFor, ",") != "pr" || len(rows[0].Actions) != 1 || rows[0].Actions[0] != "agent-team job update squ-902 --pr <url>" {
+		t.Fatalf("blocked ready rows = %+v", rows)
+	}
+
+	advanceBlocked := NewRootCmd()
+	advanceBlockedOut, advanceBlockedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	advanceBlocked.SetOut(advanceBlockedOut)
+	advanceBlocked.SetErr(advanceBlockedErr)
+	advanceBlocked.SetArgs([]string{"job", "advance", "squ-902", "--repo", root, "--dry-run", "--json"})
+	if err := advanceBlocked.Execute(); err != nil {
+		t.Fatalf("advance blocked dry-run: %v\nstderr=%s", err, advanceBlockedErr.String())
+	}
+	var blockedPreview jobAdvancePreview
+	if err := json.Unmarshal(advanceBlockedOut.Bytes(), &blockedPreview); err != nil {
+		t.Fatalf("decode blocked advance preview: %v\nbody=%s", err, advanceBlockedOut.String())
+	}
+	if blockedPreview.Step != nil || blockedPreview.Message != "no ready steps" {
+		t.Fatalf("blocked advance preview = %+v", blockedPreview)
+	}
+
+	update := NewRootCmd()
+	updateOut, updateErr := &bytes.Buffer{}, &bytes.Buffer{}
+	update.SetOut(updateOut)
+	update.SetErr(updateErr)
+	update.SetArgs([]string{"job", "update", "squ-902", "--pr", "https://github.com/acme/app/pull/42", "--repo", root, "--json"})
+	if err := update.Execute(); err != nil {
+		t.Fatalf("job update pr: %v\nstderr=%s", err, updateErr.String())
+	}
+
+	nextReadyCmd := NewRootCmd()
+	nextReadyOut, nextReadyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	nextReadyCmd.SetOut(nextReadyOut)
+	nextReadyCmd.SetErr(nextReadyErr)
+	nextReadyCmd.SetArgs([]string{"job", "next", "squ-902", "--repo", root, "--json"})
+	if err := nextReadyCmd.Execute(); err != nil {
+		t.Fatalf("job next ready: %v\nstderr=%s", err, nextReadyErr.String())
+	}
+	var ready jobNextResult
+	if err := json.Unmarshal(nextReadyOut.Bytes(), &ready); err != nil {
+		t.Fatalf("decode ready next: %v\nbody=%s", err, nextReadyOut.String())
+	}
+	if ready.State != "ready" || ready.Step == nil || ready.Step.ID != "review" || ready.Step.Gate != job.StepGatePR || len(ready.WaitingFor) != 0 {
+		t.Fatalf("ready next = %+v", ready)
+	}
+
+	advanceReady := NewRootCmd()
+	advanceReadyOut, advanceReadyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	advanceReady.SetOut(advanceReadyOut)
+	advanceReady.SetErr(advanceReadyErr)
+	advanceReady.SetArgs([]string{"job", "advance", "squ-902", "--repo", root, "--dry-run", "--json"})
+	if err := advanceReady.Execute(); err != nil {
+		t.Fatalf("advance ready dry-run: %v\nstderr=%s", err, advanceReadyErr.String())
+	}
+	var readyPreview jobAdvancePreview
+	if err := json.Unmarshal(advanceReadyOut.Bytes(), &readyPreview); err != nil {
+		t.Fatalf("decode ready advance preview: %v\nbody=%s", err, advanceReadyOut.String())
+	}
+	if readyPreview.Step == nil || readyPreview.Step.ID != "review" || readyPreview.Dispatch == nil || readyPreview.Dispatch.RequestedName != "manager-squ-902-review" {
+		t.Fatalf("ready advance preview = %+v", readyPreview)
+	}
+}
+
 func TestPipelineRunCreatesDurableJob(t *testing.T) {
 	root := t.TempDir()
 	initInto(t, root)

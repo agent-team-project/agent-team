@@ -101,7 +101,7 @@ target = "worker"
 id = "review"
 target = "manager"
 after = ["implement"]
-gate = "manual"
+gate = "pr"
 
 [teams.delivery]
 instances = ["manager", "worker"]
@@ -138,8 +138,13 @@ id = "review"
 target = "manager"
 status = "blocked"
 after = ["implement"]
-gate = "manual"
+gate = "pr"
 ```
+
+Supported step gates are:
+
+- `manual`: waits for operator approval with `agent-team job step <job-id> <step-id> --status queued`.
+- `pr`: waits until the job has PR metadata, usually from `agent-team job update <job-id> --pr <url>` or status reconciliation.
 
 Exact encoding is owned by `internal/job`.
 

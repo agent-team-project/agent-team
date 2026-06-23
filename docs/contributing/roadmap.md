@@ -55,6 +55,7 @@ Built or substantially implemented:
 - copyable topology example fixtures parsed in CI
 - conservative template upgrade apply mode
 - manual pipeline gates and approval hints
+- PR metadata pipeline gates
 - systemd, launchd, and compose intake service generators
 - local Dockerfile for the compose intake service
 - env-file secret references for service generation
@@ -94,7 +95,7 @@ Use these when evaluating feature ideas:
 High-value follow-up work:
 
 - runtime resume/adopt flows for long-running agents
-- richer pipeline gates beyond manual approval
+- richer pipeline semantics without overbuilding a workflow engine
 
 ## Anti-Patterns
 

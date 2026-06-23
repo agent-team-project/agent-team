@@ -112,6 +112,8 @@ gate = "manual"
 
 Pipeline state is stored in jobs, not in a separate scheduler database. A step with `gate = "manual"` stays blocked after its dependencies finish until an operator approves it with `agent-team job step <job-id> <step-id> --status queued`; after that, normal `job advance`, `pipeline advance`, `team advance`, or `tick` dispatch can run it.
 
+Use `gate = "pr"` when a later step should wait for PR metadata. The step remains blocked with `waiting_for = ["pr"]` until the job has `pr` set, for example through `agent-team job update <job-id> --pr <url>` or status-file reconciliation.
+
 ## Teams
 
 Teams scope operations:
