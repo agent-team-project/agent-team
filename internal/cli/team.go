@@ -3493,11 +3493,12 @@ func newTeamPlanCmd() *cobra.Command {
 
 func newTeamHealthCmd() *cobra.Command {
 	var (
-		repo        string
-		includeJobs bool
-		quiet       bool
-		jsonOut     bool
-		format      string
+		repo           string
+		includeJobs    bool
+		quiet          bool
+		jsonOut        bool
+		format         string
+		runtimeFilters []string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -3518,11 +3519,16 @@ func newTeamHealthCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team health: %v\n", err)
 				return exitErr(2)
 			}
+			healthOpts, err := newHealthOptionsWithRuntimeInstancesAndUnhealthy(nil, runtimeFilters, nil, nil, nil, false, false)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team health: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
 			}
-			snapshot, err := collectTeamHealth(teamDir, args[0], time.Now().UTC(), includeJobs)
+			snapshot, err := collectTeamHealthWithOptions(teamDir, args[0], time.Now().UTC(), includeJobs, healthOpts)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team health: %v\n", err)
 				return exitErr(1)
@@ -3542,6 +3548,7 @@ func newTeamHealthCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&includeJobs, "jobs", false, "Include team-owned job and pipeline health.")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team health as JSON.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only check team-owned daemon-known instances for this runtime: claude or codex. Daemon, queue, and job health remain team-scoped. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&format, "format", "", "Render team health with a Go template, e.g. '{{.Team.Name}} {{.Health.Healthy}}'.")
 	return cmd
 }
@@ -4232,6 +4239,10 @@ func teamSyncStopExtraResults(w io.Writer, dc *daemonClient, top *topology.Topol
 }
 
 func collectTeamHealth(teamDir, name string, now time.Time, includeJobs bool) (*teamHealthSnapshot, error) {
+	return collectTeamHealthWithOptions(teamDir, name, now, includeJobs, healthOptions{})
+}
+
+func collectTeamHealthWithOptions(teamDir, name string, now time.Time, includeJobs bool, opts healthOptions) (*teamHealthSnapshot, error) {
 	top, team, err := loadTopologyTeam(teamDir, name)
 	if err != nil {
 		return nil, err
@@ -4242,7 +4253,7 @@ func collectTeamHealth(teamDir, name string, now time.Time, includeJobs bool) (*
 	}
 	healthRows := teamRuntimeRows(top, team, rows)
 	scoped := teamScopedTopology(top, team)
-	result := buildHealthWithDaemonStatus(collectDaemonStatus(teamDir), healthRows, scoped, now, healthOptions{})
+	result := buildHealthWithDaemonStatus(collectDaemonStatus(teamDir), healthRows, scoped, now, opts)
 	jobs, err := job.List(teamDir)
 	if err != nil {
 		return nil, err

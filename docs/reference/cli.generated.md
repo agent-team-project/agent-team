@@ -4015,11 +4015,12 @@ agent-team team health <team> [flags]
 Flags:
 
 ```text
-      --format string   Render team health with a Go template, e.g. '{{.Team.Name}} {{.Health.Healthy}}'.
-      --jobs            Include team-owned job and pipeline health.
-      --json            Emit team health as JSON.
-  -q, --quiet           Suppress output and use only the exit code.
-      --repo string     Repo root. (default "<repo>")
+      --format string     Render team health with a Go template, e.g. '{{.Team.Name}} {{.Health.Healthy}}'.
+      --jobs              Include team-owned job and pipeline health.
+      --json              Emit team health as JSON.
+  -q, --quiet             Suppress output and use only the exit code.
+      --repo string       Repo root. (default "<repo>")
+      --runtime strings   Only check team-owned daemon-known instances for this runtime: claude or codex. Daemon, queue, and job health remain team-scoped. Can repeat or comma-separate.
 ```
 
 ## `agent-team team jobs`
