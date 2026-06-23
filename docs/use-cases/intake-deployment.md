@@ -131,6 +131,53 @@ WantedBy=multi-user.target
 
 Use your host's normal secret manager instead of literal `Environment=` values when possible.
 
+## launchd Example
+
+For a macOS development host, generate a LaunchAgent plist from the repo where `.agent_team/` lives:
+
+```sh
+agent-team intake service launchd \
+  --bin /opt/homebrew/bin/agent-team \
+  --name com.example.agent-team-intake-my-repo \
+  --github-reconcile-job \
+  --github-cleanup-merged \
+  --github-verify-pr \
+  > com.example.agent-team-intake-my-repo.plist
+```
+
+The generated plist starts the repo daemon, then replaces the shell with the foreground intake server:
+
+```xml
+# Save as ~/Library/LaunchAgents/com.example.agent-team-intake-my-repo.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.agent-team-intake-my-repo</string>
+  <key>WorkingDirectory</key>
+  <string>/srv/agent-team/my-repo</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LINEAR_WEBHOOK_SECRET</key>
+    <string>replace-me</string>
+    <key>GITHUB_WEBHOOK_SECRET</key>
+    <string>replace-me</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-lc</string>
+    <string>/opt/homebrew/bin/agent-team daemon start &amp;&amp; exec /opt/homebrew/bin/agent-team intake serve --addr 127.0.0.1:8787 --linear-max-age 1m0s --prune-ok-older-than 168h0m0s --prune-recovered-older-than 168h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
+```
+
 ## Operations
 
 Check listener health:

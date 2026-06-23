@@ -171,7 +171,7 @@ Shortcuts:
 | `agent-team intake github` | Normalize GitHub payload, reconcile jobs, and optionally verify PR cleanup |
 | `agent-team intake schedule` | Normalize schedule payload |
 | `agent-team intake serve` | Run local intake server with optional GitHub job reconciliation |
-| `agent-team intake service systemd` | Print a systemd unit for `intake serve` |
+| `agent-team intake service systemd|launchd` | Print a systemd unit or launchd plist for `intake serve` |
 | `agent-team intake summary` | Summarize delivery history |
 | `agent-team intake deliveries` | Inspect delivery rows |
 | `agent-team intake replay` | Replay failed deliveries |

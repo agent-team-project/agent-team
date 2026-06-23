@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -276,14 +277,14 @@ func newIntakeServiceCmd() *cobra.Command {
 	cwd, _ := os.Getwd()
 	opts.Target = cwd
 	cmd := &cobra.Command{
-		Use:   "service systemd",
+		Use:   "service systemd|launchd",
 		Short: "Print a service-manager config for intake serve.",
 		Long:  "Print a read-only service-manager configuration for running `agent-team intake serve` against this repo. The command does not install or write the service file.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kind := strings.ToLower(strings.TrimSpace(args[0]))
-			if kind != "systemd" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake service: service kind must be systemd.")
+			if kind != "systemd" && kind != "launchd" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake service: service kind must be one of: systemd, launchd.")
 				return exitErr(2)
 			}
 			if err := validateIntakeServiceOptions(opts); err != nil {
@@ -295,15 +296,19 @@ func newIntakeServiceCmd() *cobra.Command {
 				return err
 			}
 			repoRoot := filepath.Dir(teamDir)
-			renderIntakeSystemdService(cmd.OutOrStdout(), repoRoot, opts)
+			if kind == "launchd" {
+				renderIntakeLaunchdService(cmd.OutOrStdout(), repoRoot, opts)
+			} else {
+				renderIntakeSystemdService(cmd.OutOrStdout(), repoRoot, opts)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&opts.Target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVar(&opts.Addr, "addr", opts.Addr, "Address for the webhook listener.")
 	cmd.Flags().StringVar(&opts.Bin, "bin", opts.Bin, "agent-team binary path used in the service.")
-	cmd.Flags().StringVar(&opts.Name, "name", opts.Name, "Systemd unit name/comment stem.")
-	cmd.Flags().StringVar(&opts.Description, "description", opts.Description, "Systemd unit description.")
+	cmd.Flags().StringVar(&opts.Name, "name", opts.Name, "Service unit name/comment stem.")
+	cmd.Flags().StringVar(&opts.Description, "description", opts.Description, "Service description.")
 	cmd.Flags().StringVar(&opts.LinearSecretEnv, "linear-secret-env", opts.LinearSecretEnv, "Environment variable name containing the Linear webhook secret; empty omits it.")
 	cmd.Flags().StringVar(&opts.GitHubSecretEnv, "github-secret-env", opts.GitHubSecretEnv, "Environment variable name containing the GitHub webhook secret; empty omits it.")
 	cmd.Flags().BoolVar(&opts.GitHubReconcileJob, "github-reconcile-job", false, "Include --github-reconcile-job in ExecStart.")
@@ -369,6 +374,74 @@ func renderIntakeSystemdService(w io.Writer, repoRoot string, opts intakeService
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "[Install]")
 	fmt.Fprintln(w, "WantedBy=multi-user.target")
+}
+
+func renderIntakeLaunchdService(w io.Writer, repoRoot string, opts intakeServiceOptions) {
+	fmt.Fprintf(w, "# Save as ~/Library/LaunchAgents/%s.plist\n", opts.Name)
+	fmt.Fprintln(w, `<?xml version="1.0" encoding="UTF-8"?>`)
+	fmt.Fprintln(w, `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">`)
+	fmt.Fprintln(w, `<plist version="1.0">`)
+	fmt.Fprintln(w, `<dict>`)
+	writeLaunchdKeyString(w, "  ", "Label", opts.Name)
+	writeLaunchdKeyString(w, "  ", "WorkingDirectory", repoRoot)
+	fmt.Fprintln(w, "  <key>EnvironmentVariables</key>")
+	fmt.Fprintln(w, "  <dict>")
+	if env := strings.TrimSpace(opts.LinearSecretEnv); env != "" {
+		writeLaunchdKeyString(w, "    ", env, "replace-me")
+	}
+	if env := strings.TrimSpace(opts.GitHubSecretEnv); env != "" {
+		writeLaunchdKeyString(w, "    ", env, "replace-me")
+	}
+	fmt.Fprintln(w, "  </dict>")
+	fmt.Fprintln(w, "  <key>ProgramArguments</key>")
+	fmt.Fprintln(w, "  <array>")
+	for _, arg := range []string{"/bin/sh", "-lc", launchdIntakeCommand(opts)} {
+		fmt.Fprintf(w, "    <string>%s</string>\n", xmlEscape(arg))
+	}
+	fmt.Fprintln(w, "  </array>")
+	fmt.Fprintln(w, "  <key>RunAtLoad</key>")
+	fmt.Fprintln(w, "  <true/>")
+	fmt.Fprintln(w, "  <key>KeepAlive</key>")
+	fmt.Fprintln(w, "  <true/>")
+	fmt.Fprintln(w, "</dict>")
+	fmt.Fprintln(w, "</plist>")
+}
+
+func writeLaunchdKeyString(w io.Writer, indent string, key string, value string) {
+	fmt.Fprintf(w, "%s<key>%s</key>\n", indent, xmlEscape(key))
+	fmt.Fprintf(w, "%s<string>%s</string>\n", indent, xmlEscape(value))
+}
+
+func launchdIntakeCommand(opts intakeServiceOptions) string {
+	start := append([]string{opts.Bin}, "daemon", "start")
+	serve := append([]string{opts.Bin}, intakeServeArgs(opts)...)
+	return strings.Join(shellQuoteArgs(start), " ") + " && exec " + strings.Join(shellQuoteArgs(serve), " ")
+}
+
+func shellQuoteArgs(args []string) []string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return quoted
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if strings.IndexFunc(s, func(r rune) bool {
+		return !(r == '_' || r == '-' || r == '.' || r == '/' || r == ':' || r == '@' || r == '%' || r == '+' || r == '=' || (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z'))
+	}) == -1 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func xmlEscape(s string) string {
+	var b strings.Builder
+	_ = xml.EscapeText(&b, []byte(s))
+	return b.String()
 }
 
 func intakeServeArgs(opts intakeServiceOptions) []string {

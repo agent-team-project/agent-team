@@ -55,7 +55,7 @@ Built or substantially implemented:
 - copyable topology example fixtures parsed in CI
 - conservative template upgrade apply mode
 - manual pipeline gates and approval hints
-- systemd intake service generator
+- systemd and launchd intake service generators
 
 ## What Still Needs Design Care
 
@@ -88,7 +88,7 @@ High-value follow-up work:
 
 - runtime resume/adopt flows for long-running agents
 - richer pipeline gates beyond manual approval
-- launchd/container webhook deployment examples
+- container webhook deployment examples
 
 ## Anti-Patterns
 

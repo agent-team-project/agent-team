@@ -497,12 +497,70 @@ func TestIntakeServiceSystemd(t *testing.T) {
 	}
 }
 
+func TestIntakeServiceLaunchd(t *testing.T) {
+	target := t.TempDir()
+	initInto(t, target)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"intake", "service", "launchd",
+		"--repo", target,
+		"--bin", "/Applications/Agent Team/bin/agent-team",
+		"--name", "com.example.agent-team-intake-test",
+		"--description", "agent-team intake for tests",
+		"--addr", "127.0.0.1:9999",
+		"--linear-secret-env", "LINEAR_SECRET",
+		"--github-secret-env", "GITHUB_SECRET",
+		"--linear-max-age", "2m",
+		"--prune-ok-older-than", "24h",
+		"--prune-recovered-older-than", "48h",
+		"--github-reconcile-job",
+		"--github-cleanup-merged",
+		"--github-verify-pr",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake service launchd: %v\nstderr=%s", err, stderr.String())
+	}
+	expectedTarget := target
+	if eval, err := filepath.EvalSymlinks(target); err == nil {
+		expectedTarget = eval
+	}
+	body := out.String()
+	for _, want := range []string{
+		"# Save as ~/Library/LaunchAgents/com.example.agent-team-intake-test.plist",
+		"<key>Label</key>",
+		"<string>com.example.agent-team-intake-test</string>",
+		"<key>WorkingDirectory</key>",
+		"<string>" + expectedTarget + "</string>",
+		"<key>LINEAR_SECRET</key>",
+		"<string>replace-me</string>",
+		"<key>GITHUB_SECRET</key>",
+		"<string>/bin/sh</string>",
+		"<string>-lc</string>",
+		"<string>&#39;/Applications/Agent Team/bin/agent-team&#39; daemon start &amp;&amp; exec &#39;/Applications/Agent Team/bin/agent-team&#39; intake serve --addr 127.0.0.1:9999 --linear-max-age 2m0s --prune-ok-older-than 24h0m0s --prune-recovered-older-than 48h0m0s --github-reconcile-job --github-cleanup-merged --github-verify-pr</string>",
+		"<key>RunAtLoad</key>",
+		"<true/>",
+		"<key>KeepAlive</key>",
+		"<true/>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("launchd output missing %q:\n%s", want, body)
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestIntakeServiceValidation(t *testing.T) {
 	cases := []struct {
 		args []string
 		want string
 	}{
-		{[]string{"intake", "service", "launchd"}, "service kind must be systemd"},
+		{[]string{"intake", "service", "supervisord"}, "service kind must be one of: systemd, launchd"},
 		{[]string{"intake", "service", "systemd", "--github-verify-pr"}, "--github-verify-pr requires --github-cleanup-merged"},
 		{[]string{"intake", "service", "systemd", "--github-cleanup-merged"}, "--github-cleanup-merged requires --github-reconcile-job"},
 	}
