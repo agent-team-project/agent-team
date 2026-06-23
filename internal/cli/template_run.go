@@ -37,6 +37,7 @@ type templateRunConfig struct {
 	noInput       bool
 	runtimeKind   string
 	runtimeBinary string
+	lastMessage   bool
 }
 
 func newTemplateRunCmd() *cobra.Command {
@@ -69,6 +70,7 @@ func newTemplateRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&cfg.noInput, "no-input", false, "Fail if required parameters are missing instead of prompting.")
 	cmd.Flags().StringVar(&cfg.runtimeKind, "runtime", "", "Runtime profile for this invocation (claude or codex). Overrides env and rendered repo config.")
 	cmd.Flags().StringVar(&cfg.runtimeBinary, "runtime-bin", "", "Runtime binary for this invocation. Overrides env and rendered repo config.")
+	cmd.Flags().BoolVar(&cfg.lastMessage, "last-message", false, "With Codex --prompt runs, suppress runtime diagnostics and print the clean final response sidecar.")
 	return cmd
 }
 
@@ -123,6 +125,7 @@ func runTemplateRun(cmd *cobra.Command, cfg templateRunConfig, ref, agent string
 		noDaemon:      true,
 		runtimeKind:   cfg.runtimeKind,
 		runtimeBinary: cfg.runtimeBinary,
+		lastMessage:   cfg.lastMessage,
 	}, agent, forwarded)
 }
 

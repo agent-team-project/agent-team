@@ -60,7 +60,7 @@ One-off command override:
 agent-team runtime --runtime codex
 agent-team run worker --runtime codex --prompt "check status" --last-message
 agent-team run worker --runtime codex --runtime-bin /opt/bin/codex-wrapper --prompt "check status" --detach
-agent-team template run bundled manager --runtime codex --prompt "check status"
+agent-team template run bundled manager --runtime codex --prompt "check status" --last-message
 ```
 
 ## Capability Matrix

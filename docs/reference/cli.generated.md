@@ -4901,6 +4901,7 @@ Flags:
 ```text
       --force                Overwrite an existing .agent_team/ at --target.
       --keep                 Keep the auto-created tempdir on exit (no-op when --target is set).
+      --last-message         With Codex --prompt runs, suppress runtime diagnostics and print the clean final response sidecar.
   -n, --name string          Instance name (defaults to the agent name).
       --no-input             Fail if required parameters are missing instead of prompting.
   -p, --prompt string        Kickoff message for the agent (one-shot mode if set, interactive otherwise).

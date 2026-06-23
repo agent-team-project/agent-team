@@ -185,6 +185,49 @@ func TestTemplateRun_RuntimeFlagSelectsCodex(t *testing.T) {
 	}
 }
 
+func TestTemplateRun_CodexLastMessagePrintsCleanSidecar(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindClaude))
+	t.Setenv(runtimebin.EnvBinary, "claude-env-wrapper")
+	target := t.TempDir()
+
+	cap, restore := captureRuntime(t, nil)
+	defer restore()
+	cap.stdout = "raw codex stdout\n"
+	cap.stderr = "raw codex stderr\n"
+	cap.lastMessage = "clean template codex answer\n"
+
+	cmd := NewRootCmd()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"template", "run", "bundled", "manager",
+		"--target", target,
+		"--runtime", "codex",
+		"--runtime-bin", "codex-dev",
+		"--prompt", "codex template run",
+		"--last-message",
+		"--set", "linear.team_id=tt-team",
+		"--set", "linear.ticket_prefix=TT",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("template run last-message: %v\nstderr: %s", err, stderr.String())
+	}
+	if got := stdout.String(); !strings.HasSuffix(got, "clean template codex answer\n") || strings.Contains(got, cap.stdout) {
+		t.Fatalf("stdout = %q, want init output followed by clean sidecar only", got)
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("stderr = %q, want raw stderr suppressed on success", got)
+	}
+	if cap.bin != "codex-dev" {
+		t.Fatalf("runtime binary = %q, want explicit codex-dev", cap.bin)
+	}
+	if len(cap.args) == 0 || cap.args[0] != "exec" {
+		t.Fatalf("codex args = %v, want exec", cap.args)
+	}
+}
+
 func TestTemplateRun_CodexAutoTempdirDoesNotDuplicateSkipGitRepoCheck(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindCodex))
 	runsRootEnv(t)

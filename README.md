@@ -151,10 +151,11 @@ agent-team template run bundled manager \
     --runtime codex \
     --set linear.team_id=<your-team-uuid> \
     --set linear.ticket_prefix=APP \
+    --last-message \
     -p "kickoff message"
 ```
 
-This instantiates the template into a tempdir under `~/.agent-team/runs/<timestamp>-<agent>/` (or `$XDG_CACHE_HOME/agent-team/runs/...`), spawns the agent against it, and removes the tempdir when the agent exits. Pass `--runtime claude|codex` and `--runtime-bin <path>` for one-off runtime selection, `--keep` to preserve the tempdir, or `--target <dir>` to use a specific directory (which is always preserved). `--no-input` fails if required parameters are missing — useful in CI.
+This instantiates the template into a tempdir under `~/.agent-team/runs/<timestamp>-<agent>/` (or `$XDG_CACHE_HOME/agent-team/runs/...`), spawns the agent against it, and removes the tempdir when the agent exits. Pass `--runtime claude|codex` and `--runtime-bin <path>` for one-off runtime selection, `--last-message` for clean Codex one-shot output, `--keep` to preserve the tempdir, or `--target <dir>` to use a specific directory (which is always preserved). `--no-input` fails if required parameters are missing — useful in CI.
 
 The daemon is bypassed; the selected runtime is exec'd directly. For long-lived setups where you want `instance ps` / `logs --follow` visibility, use `init` + `run` separately.
 
@@ -286,7 +287,7 @@ agent-team template pull <ref> [--as <n>]       # copy a local template or clone
 agent-team template rm <ref>                    # remove a cached template
 agent-team template smoke [<ref>] [--set k=v]... [--keep] [--json]
                                                 # init a template into a temp repo and run doctor/pipeline/team validation
-agent-team template run <ref> <agent> [--target <dir>] [--keep] [--runtime claude|codex] [--runtime-bin <path>] [--set k=v]... [-p "..."]
+agent-team template run <ref> <agent> [--target <dir>] [--keep] [--runtime claude|codex] [--runtime-bin <path>] [--last-message] [--set k=v]... [-p "..."]
                                                 # one-shot: init into a (temp)dir + spawn the agent
 
 agent-team instance ls                          # list instance state dirs (.agent_team/state/*)
