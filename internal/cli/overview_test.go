@@ -371,7 +371,7 @@ func TestTeamOverviewScopesCountsAndActions(t *testing.T) {
 	}
 	for _, want := range []string{
 		"agent-team team repair delivery --dry-run --jobs",
-		"agent-team team queue retry delivery --all --dry-run",
+		"agent-team team queue retry delivery --all --job squ-700 --dry-run",
 		"agent-team team queue quarantine delivery",
 		"agent-team team triage delivery",
 		"agent-team team advance delivery --dry-run --preview-routes",
@@ -380,6 +380,9 @@ func TestTeamOverviewScopesCountsAndActions(t *testing.T) {
 		if !stringSliceContains(overview.Actions, want) {
 			t.Fatalf("actions missing %q: %+v", want, overview.Actions)
 		}
+	}
+	if stringSliceContains(overview.Actions, "agent-team team queue retry delivery --all --dry-run") {
+		t.Fatalf("team actions should prefer job-filtered retry: %+v", overview.Actions)
 	}
 }
 

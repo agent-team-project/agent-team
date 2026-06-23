@@ -583,22 +583,46 @@ func overviewActionsForScope(out *overviewResult, health *healthResult, teamName
 }
 
 func overviewQueueDeadRetryAction(health *healthResult, teamName string) string {
-	if teamName != "" {
-		return fmt.Sprintf("agent-team team queue retry %s --all --dry-run", teamName)
-	}
 	if health != nil {
 		for _, issue := range health.Issues {
 			if issue.Code != "queue_dead_letter" {
 				continue
 			}
 			for _, action := range issue.Actions {
-				if strings.HasPrefix(action, "agent-team job queue retry ") || action == "agent-team queue retry --all" {
-					return action + " --dry-run"
+				if retry := overviewQueueRetryDryRunAction(action, teamName); retry != "" {
+					return retry
 				}
 			}
 		}
 	}
+	if teamName != "" {
+		return fmt.Sprintf("agent-team team queue retry %s --all --dry-run", teamName)
+	}
 	return "agent-team queue retry --all --dry-run"
+}
+
+func overviewQueueRetryDryRunAction(action, teamName string) string {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return ""
+	}
+	switch {
+	case strings.HasPrefix(action, "agent-team job queue retry "):
+		return appendDryRunFlag(action)
+	case teamName != "" && strings.HasPrefix(action, fmt.Sprintf("agent-team team queue retry %s ", teamName)):
+		return appendDryRunFlag(action)
+	case teamName == "" && action == "agent-team queue retry --all":
+		return appendDryRunFlag(action)
+	default:
+		return ""
+	}
+}
+
+func appendDryRunFlag(action string) string {
+	if strings.Contains(" "+action+" ", " --dry-run ") {
+		return action
+	}
+	return action + " --dry-run"
 }
 
 func overviewQueueQuarantineAction(health *healthResult, teamName string) string {

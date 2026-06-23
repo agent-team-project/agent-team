@@ -55,11 +55,14 @@ func TestNextCommandCanScopeToTeam(t *testing.T) {
 		"next: attention",
 		"team: delivery",
 		"agent-team team repair delivery --dry-run --jobs",
-		"agent-team team queue retry delivery --all --dry-run",
+		"agent-team team queue retry delivery --all --job squ-700 --dry-run",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("next team output missing %q:\n%s", want, out.String())
 		}
+	}
+	if strings.Contains(out.String(), "agent-team team queue retry delivery --all --dry-run") {
+		t.Fatalf("next team output should prefer job-filtered retry:\n%s", out.String())
 	}
 }
 
@@ -102,10 +105,13 @@ func TestTeamNextCommandReportsScopedActions(t *testing.T) {
 	if err := text.Execute(); err != nil {
 		t.Fatalf("team next text: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"next: attention", "team: delivery", "agent-team team queue retry delivery --all --dry-run"} {
+	for _, want := range []string{"next: attention", "team: delivery", "agent-team team queue retry delivery --all --job squ-700 --dry-run"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("team next text missing %q:\n%s", want, textOut.String())
 		}
+	}
+	if strings.Contains(textOut.String(), "agent-team team queue retry delivery --all --dry-run") {
+		t.Fatalf("team next text should prefer job-filtered retry:\n%s", textOut.String())
 	}
 }
 
