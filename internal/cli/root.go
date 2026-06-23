@@ -13,6 +13,8 @@ import (
 // `.goreleaser.yaml`.
 var Version = "0.1.0"
 
+const rootRepoFlagName = "repo"
+
 // ExitCode is a sentinel error type used to signal a non-zero process exit
 // code from a Cobra `RunE`. `cmd/agent-team/main.go` unwraps it via
 // `errors.As` and calls `os.Exit` with the wrapped code.
@@ -36,6 +38,7 @@ func NewRootCmd() *cobra.Command {
 		Version:       Version,
 	}
 	root.SetVersionTemplate("agent-team " + Version + "\n")
+	root.PersistentFlags().String(rootRepoFlagName, "", "Repo root for commands that read .agent_team; overrides legacy repo-root --target flags.")
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newUpgradeCmd())
 	root.AddCommand(newStartCmd())

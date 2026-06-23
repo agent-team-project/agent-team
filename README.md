@@ -132,6 +132,8 @@ The daemon is bypassed; the selected runtime is exec'd directly. For long-lived 
 
 ## Commands
 
+Most repo-scoped commands accept the global `--repo <dir>` selector. Legacy repo-root `--target <dir>` flags remain for compatibility; `agent-team job create --target <agent>` still means the target agent for that job.
+
 ```sh
 agent-team init [<ref>] [--set k=v]... [--no-input] [--force]
                                                 # instantiate a template into the current repo
