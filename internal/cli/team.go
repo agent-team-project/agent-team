@@ -1248,7 +1248,7 @@ func newTeamQueueShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return renderQueueItemResult(cmd.OutOrStdout(), item, jsonOut, tmpl, queueRuntimeMap(teamDir))
+			return renderQueueItemResultWithActions(cmd.OutOrStdout(), item, jsonOut, tmpl, teamQueueActionResolver(args[0]), queueRuntimeMap(teamDir))
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, "Repo root.")
@@ -5248,8 +5248,43 @@ func runTeamQueueList(w io.Writer, teamDir, name string, filters queueListFilter
 	if tmpl != nil {
 		return renderQueueItemsFormat(w, items, tmpl)
 	}
-	renderQueueTable(w, items, queueRuntimeMap(teamDir))
+	renderQueueTableWithActions(w, items, queueRuntimeMap(teamDir), teamQueueActionResolver(name))
 	return nil
+}
+
+func teamQueueActionResolver(name string) queueActionResolver {
+	return func(item *daemon.QueueItem, now time.Time) []string {
+		return teamQueueItemActions(name, item, now)
+	}
+}
+
+func teamQueueItemActions(name string, item *daemon.QueueItem, now time.Time) []string {
+	if queueItemActionJobID(item) != "" {
+		return queueItemActions(item, now)
+	}
+	queueCommand := func(verb string) string {
+		return fmt.Sprintf("agent-team team queue %s %s %s", verb, name, item.ID)
+	}
+	switch item.State {
+	case daemon.QueueStateDead:
+		return []string{
+			queueCommand("retry"),
+			queueCommand("drop"),
+		}
+	case daemon.QueueStatePending:
+		if !item.NextRetry.IsZero() && item.NextRetry.After(now.UTC()) {
+			return []string{
+				queueCommand("show"),
+				queueCommand("drop"),
+			}
+		}
+		return []string{
+			fmt.Sprintf("agent-team team drain %s", name),
+			queueCommand("drop"),
+		}
+	default:
+		return nil
+	}
 }
 
 func runTeamQueueSummary(w io.Writer, teamDir, name string, filters queueListFilters, jsonOut bool) error {

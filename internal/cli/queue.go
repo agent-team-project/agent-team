@@ -834,6 +834,8 @@ type queueRetryResult struct {
 	DryRun     bool   `json:"dry_run,omitempty"`
 }
 
+type queueActionResolver func(*daemon.QueueItem, time.Time) []string
+
 type queueSummary struct {
 	Total                  int            `json:"total"`
 	Pending                int            `json:"pending"`
@@ -1416,6 +1418,10 @@ func renderQueueItemsFormat(w io.Writer, items []*daemon.QueueItem, tmpl *templa
 }
 
 func renderQueueItemResult(w io.Writer, item *daemon.QueueItem, jsonOut bool, tmpl *template.Template, runtimeByInstanceOpt ...map[string]string) error {
+	return renderQueueItemResultWithActions(w, item, jsonOut, tmpl, nil, runtimeByInstanceOpt...)
+}
+
+func renderQueueItemResultWithActions(w io.Writer, item *daemon.QueueItem, jsonOut bool, tmpl *template.Template, actions queueActionResolver, runtimeByInstanceOpt ...map[string]string) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(item)
 	}
@@ -1426,7 +1432,7 @@ func renderQueueItemResult(w io.Writer, item *daemon.QueueItem, jsonOut bool, tm
 	if len(runtimeByInstanceOpt) > 0 {
 		runtimeByInstance = runtimeByInstanceOpt[0]
 	}
-	renderQueueDetail(w, item, runtimeByInstance)
+	renderQueueDetailWithActions(w, item, runtimeByInstance, actions)
 	return nil
 }
 
@@ -1443,6 +1449,10 @@ func renderQueueTable(w io.Writer, items []*daemon.QueueItem, runtimeByInstanceO
 	if len(runtimeByInstanceOpt) > 0 {
 		runtimeByInstance = runtimeByInstanceOpt[0]
 	}
+	renderQueueTableWithActions(w, items, runtimeByInstance, nil)
+}
+
+func renderQueueTableWithActions(w io.Writer, items []*daemon.QueueItem, runtimeByInstance map[string]string, actions queueActionResolver) {
 	if len(items) == 0 {
 		fmt.Fprintln(w, "(no queue items)")
 		return
@@ -1451,8 +1461,12 @@ func renderQueueTable(w io.Writer, items []*daemon.QueueItem, runtimeByInstanceO
 	fmt.Fprintln(tw, "ID\tSTATE\tINSTANCE\tINSTANCE_ID\tRUNTIME\tATTEMPTS\tNEXT_RETRY\tACTION\tLAST_ERROR")
 	now := time.Now().UTC()
 	for _, item := range items {
+		itemActions := queueItemActions(item, now)
+		if actions != nil {
+			itemActions = actions(item, now)
+		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
-			item.ID, item.State, item.Instance, item.InstanceID, queueItemRuntimeLabel(item, runtimeByInstance), item.Attempts, queueTime(item.NextRetry), emptyDash(strings.Join(queueItemActions(item, now), "; ")), emptyDash(item.LastError))
+			item.ID, item.State, item.Instance, item.InstanceID, queueItemRuntimeLabel(item, runtimeByInstance), item.Attempts, queueTime(item.NextRetry), emptyDash(strings.Join(itemActions, "; ")), emptyDash(item.LastError))
 	}
 	_ = tw.Flush()
 }
@@ -1493,6 +1507,10 @@ func renderQueueDetail(w io.Writer, item *daemon.QueueItem, runtimeByInstanceOpt
 	if len(runtimeByInstanceOpt) > 0 {
 		runtimeByInstance = runtimeByInstanceOpt[0]
 	}
+	renderQueueDetailWithActions(w, item, runtimeByInstance, nil)
+}
+
+func renderQueueDetailWithActions(w io.Writer, item *daemon.QueueItem, runtimeByInstance map[string]string, actions queueActionResolver) {
 	fmt.Fprintf(w, "ID:          %s\n", item.ID)
 	fmt.Fprintf(w, "State:       %s\n", item.State)
 	fmt.Fprintf(w, "Event:       %s\n", item.EventType)
@@ -1511,9 +1529,14 @@ func renderQueueDetail(w io.Writer, item *daemon.QueueItem, runtimeByInstanceOpt
 	if !item.DeadLetteredAt.IsZero() {
 		fmt.Fprintf(w, "Dead:        %s\n", item.DeadLetteredAt.Format(time.RFC3339))
 	}
-	if actions := queueItemActions(item, time.Now().UTC()); len(actions) > 0 {
+	now := time.Now().UTC()
+	itemActions := queueItemActions(item, now)
+	if actions != nil {
+		itemActions = actions(item, now)
+	}
+	if len(itemActions) > 0 {
 		fmt.Fprintln(w, "Actions:")
-		for _, action := range actions {
+		for _, action := range itemActions {
 			fmt.Fprintf(w, "  %s\n", action)
 		}
 	}

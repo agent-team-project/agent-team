@@ -3370,6 +3370,24 @@ instances = ["other"]
 		t.Fatalf("team queue ids = %v", got)
 	}
 
+	textList := NewRootCmd()
+	textListOut, textListErr := &bytes.Buffer{}, &bytes.Buffer{}
+	textList.SetOut(textListOut)
+	textList.SetErr(textListErr)
+	textList.SetArgs([]string{"team", "queue", "delivery", "--repo", root})
+	if err := textList.Execute(); err != nil {
+		t.Fatalf("team queue text: %v\nstderr=%s", err, textListErr.String())
+	}
+	for _, want := range []string{
+		"agent-team job queue retry squ-501 q-team-job; agent-team job queue drop squ-501 q-team-job",
+		"agent-team team queue retry delivery q-team-claude; agent-team team queue drop delivery q-team-claude",
+		"agent-team team drain delivery; agent-team team queue drop delivery q-team-target",
+	} {
+		if !strings.Contains(textListOut.String(), want) {
+			t.Fatalf("team queue text missing %q:\n%s", want, textListOut.String())
+		}
+	}
+
 	runtimeList := NewRootCmd()
 	runtimeListOut, runtimeListErr := &bytes.Buffer{}, &bytes.Buffer{}
 	runtimeList.SetOut(runtimeListOut)
@@ -3394,7 +3412,7 @@ instances = ["other"]
 	if err := showText.Execute(); err != nil {
 		t.Fatalf("team queue show text: %v\nstderr=%s", err, showTextErr.String())
 	}
-	for _, want := range []string{"Runtime:     claude", "agent-team queue retry q-team-claude", "agent-team queue drop q-team-claude"} {
+	for _, want := range []string{"Runtime:     claude", "agent-team team queue retry delivery q-team-claude", "agent-team team queue drop delivery q-team-claude"} {
 		if !strings.Contains(showTextOut.String(), want) {
 			t.Fatalf("team queue show missing %q:\n%s", want, showTextOut.String())
 		}
