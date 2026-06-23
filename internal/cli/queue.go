@@ -136,11 +136,11 @@ func newQueueShowCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue show: %v\n", err)
 				return exitErr(2)
 			}
-			item, err := readQueueItemFromRepo(cmd, target, args[0])
+			item, teamDir, err := readQueueItemFromRepo(cmd, target, args[0])
 			if err != nil {
 				return err
 			}
-			return renderQueueItemResult(cmd.OutOrStdout(), item, jsonOut, tmpl)
+			return renderQueueItemResult(cmd.OutOrStdout(), item, jsonOut, tmpl, queueRuntimeMap(teamDir))
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
@@ -569,20 +569,20 @@ func newQueuePruneCmd() *cobra.Command {
 	return cmd
 }
 
-func readQueueItemFromRepo(cmd *cobra.Command, target, id string) (*daemon.QueueItem, error) {
+func readQueueItemFromRepo(cmd *cobra.Command, target, id string) (*daemon.QueueItem, string, error) {
 	teamDir, err := resolveTeamDir(cmd, target)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue show: queue item %q not found.\n", id)
-			return nil, exitErr(2)
+			return nil, "", exitErr(2)
 		}
-		return nil, err
+		return nil, "", err
 	}
-	return item, nil
+	return item, teamDir, nil
 }
 
 func parseQueueStateFilter(raw string) (string, error) {
@@ -1415,14 +1415,18 @@ func renderQueueItemsFormat(w io.Writer, items []*daemon.QueueItem, tmpl *templa
 	return nil
 }
 
-func renderQueueItemResult(w io.Writer, item *daemon.QueueItem, jsonOut bool, tmpl *template.Template) error {
+func renderQueueItemResult(w io.Writer, item *daemon.QueueItem, jsonOut bool, tmpl *template.Template, runtimeByInstanceOpt ...map[string]string) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(item)
 	}
 	if tmpl != nil {
 		return renderQueueItemTemplate(w, item, tmpl)
 	}
-	renderQueueDetail(w, item)
+	var runtimeByInstance map[string]string
+	if len(runtimeByInstanceOpt) > 0 {
+		runtimeByInstance = runtimeByInstanceOpt[0]
+	}
+	renderQueueDetail(w, item, runtimeByInstance)
 	return nil
 }
 
@@ -1484,12 +1488,17 @@ func queueItemRuntimeLabel(item *daemon.QueueItem, runtimeByInstance map[string]
 	return runtime
 }
 
-func renderQueueDetail(w io.Writer, item *daemon.QueueItem) {
+func renderQueueDetail(w io.Writer, item *daemon.QueueItem, runtimeByInstanceOpt ...map[string]string) {
+	var runtimeByInstance map[string]string
+	if len(runtimeByInstanceOpt) > 0 {
+		runtimeByInstance = runtimeByInstanceOpt[0]
+	}
 	fmt.Fprintf(w, "ID:          %s\n", item.ID)
 	fmt.Fprintf(w, "State:       %s\n", item.State)
 	fmt.Fprintf(w, "Event:       %s\n", item.EventType)
 	fmt.Fprintf(w, "Instance:    %s\n", item.Instance)
 	fmt.Fprintf(w, "Instance ID: %s\n", item.InstanceID)
+	fmt.Fprintf(w, "Runtime:     %s\n", queueItemRuntimeLabel(item, runtimeByInstance))
 	fmt.Fprintf(w, "Attempts:    %d\n", item.Attempts)
 	if !item.NextRetry.IsZero() {
 		fmt.Fprintf(w, "Next Retry:  %s\n", item.NextRetry.Format(time.RFC3339))

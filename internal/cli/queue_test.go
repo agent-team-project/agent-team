@@ -103,6 +103,15 @@ func TestQueueCommandListShowDropLocal(t *testing.T) {
 	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
 		t.Fatalf("WriteQueueItem: %v", err)
 	}
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance:  "worker-squ-90",
+		Agent:     "worker",
+		Runtime:   "codex",
+		Status:    daemon.StatusStopped,
+		StartedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("WriteMetadata: %v", err)
+	}
 
 	ls := NewRootCmd()
 	lsOut, lsErr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -126,7 +135,7 @@ func TestQueueCommandListShowDropLocal(t *testing.T) {
 	if err := showText.Execute(); err != nil {
 		t.Fatalf("queue show text: %v\nstderr=%s", err, showTextErr.String())
 	}
-	for _, want := range []string{"Actions:", "agent-team queue retry q-local", "agent-team queue drop q-local"} {
+	for _, want := range []string{"Runtime:     codex", "Actions:", "agent-team queue retry q-local", "agent-team queue drop q-local"} {
 		if !strings.Contains(showTextOut.String(), want) {
 			t.Fatalf("queue show text missing %q:\n%s", want, showTextOut.String())
 		}
