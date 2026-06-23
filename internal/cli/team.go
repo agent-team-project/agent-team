@@ -1938,15 +1938,16 @@ func newTeamLogsCmd() *cobra.Command {
 
 func newTeamEventsCmd() *cobra.Command {
 	var (
-		repo          string
-		follow        bool
-		tail          int
-		jsonOut       bool
-		summary       bool
-		format        string
-		actionFilters []string
-		statusFilters []string
-		sinceRaw      string
+		repo           string
+		follow         bool
+		tail           int
+		jsonOut        bool
+		summary        bool
+		format         string
+		actionFilters  []string
+		statusFilters  []string
+		runtimeFilters []string
+		sinceRaw       string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1981,6 +1982,11 @@ func newTeamEventsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team events: %v\n", err)
 				return exitErr(2)
 			}
+			filters, err = teamEventRuntimeFilter(teamDir, args[0], filters, runtimeFilters)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team events: %v\n", err)
+				return exitErr(2)
+			}
 			var client eventsClient
 			if dc, err := newDaemonClient(teamDir); err == nil {
 				client = dc
@@ -2002,6 +2008,7 @@ func newTeamEventsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "", "Render each event with a Go template, e.g. '{{.Action}} {{.Instance}} {{.Status}}'.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only show events with this action. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show events with this lifecycle status. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show team events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&sinceRaw, "since", "", "Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	return cmd
 }
@@ -5277,6 +5284,39 @@ func teamEventFilters(teamDir, name string, actionFilters, statusFilters []strin
 	}
 	filters.instances = instances
 	filters.instancePrefixes = prefixes
+	return filters, nil
+}
+
+func teamEventRuntimeFilter(teamDir, name string, filters eventFilters, runtimeFilters []string) (eventFilters, error) {
+	if len(runtimeFilters) == 0 {
+		return filters, nil
+	}
+	runtimes, err := lifecycleRuntimeFilterSet(runtimeFilters)
+	if err != nil {
+		return filters, err
+	}
+	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return filters, err
+	}
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return filters, err
+	}
+	selected := map[string]bool{}
+	for _, meta := range teamMetadata(top, team, metas) {
+		if meta == nil {
+			continue
+		}
+		if runtimes[metadataRuntimeKey(meta)] {
+			selected[meta.Instance] = true
+		}
+	}
+	if len(selected) == 0 {
+		selected[""] = false
+	}
+	filters.instances = selected
+	filters.instancePrefixes = nil
 	return filters, nil
 }
 

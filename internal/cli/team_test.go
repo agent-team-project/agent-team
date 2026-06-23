@@ -2611,6 +2611,16 @@ instances = ["other", "build-worker"]
 	}
 	daemonRoot := daemon.DaemonRoot(teamDir)
 	base := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: base},
+		{Instance: "worker-squ-501", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusStopped, PID: os.Getpid(), Workspace: root, StartedAt: base.Add(2 * time.Minute), StoppedAt: base.Add(4 * time.Minute)},
+		{Instance: "build-worker-1", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusStopped, PID: os.Getpid(), Workspace: root, StartedAt: base.Add(time.Minute), StoppedAt: base.Add(time.Minute)},
+		{Instance: "other", Agent: "other", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusStopped, PID: os.Getpid(), Workspace: root, StartedAt: base.Add(3 * time.Minute), StoppedAt: base.Add(3 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(daemonRoot, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
 	for _, ev := range []*daemon.LifecycleEvent{
 		{TS: base, Action: "start", Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, Message: "manager up"},
 		{TS: base.Add(time.Minute), Action: "stop", Instance: "build-worker-1", Agent: "worker", Status: daemon.StatusStopped, Message: "platform stop"},
@@ -2662,6 +2672,34 @@ instances = ["other", "build-worker"]
 	}
 	if eventSummary.Total != 1 || eventSummary.Actions["stop"] != 1 || eventSummary.Instances["worker-squ-501"] != 1 {
 		t.Fatalf("team events summary = %+v", eventSummary)
+	}
+
+	codex := NewRootCmd()
+	codexOut, codexErr := &bytes.Buffer{}, &bytes.Buffer{}
+	codex.SetOut(codexOut)
+	codex.SetErr(codexErr)
+	codex.SetArgs([]string{"team", "events", "delivery", "--repo", root, "--runtime", "codex", "--json"})
+	if err := codex.Execute(); err != nil {
+		t.Fatalf("team events runtime: %v\nstderr=%s", err, codexErr.String())
+	}
+	events = decodeLifecycleEventJSONL(t, codexOut.String())
+	if got := lifecycleEventInstances(events); strings.Join(got, ",") != "worker-squ-501,worker-squ-501" {
+		t.Fatalf("team events runtime instances = %v\nbody=%s", got, codexOut.String())
+	}
+	if strings.Contains(codexOut.String(), "manager up") || strings.Contains(codexOut.String(), "build-worker-1") || strings.Contains(codexOut.String(), "other stop") {
+		t.Fatalf("team events runtime leaked unrelated event:\n%s", codexOut.String())
+	}
+
+	badRuntime := NewRootCmd()
+	badRuntime.SetOut(&bytes.Buffer{})
+	badRuntimeErr := &bytes.Buffer{}
+	badRuntime.SetErr(badRuntimeErr)
+	badRuntime.SetArgs([]string{"team", "events", "delivery", "--repo", root, "--runtime", "llama"})
+	if err := badRuntime.Execute(); err == nil {
+		t.Fatal("team events accepted unknown runtime")
+	}
+	if !strings.Contains(badRuntimeErr.String(), "unknown --runtime") {
+		t.Fatalf("bad runtime stderr = %q", badRuntimeErr.String())
 	}
 
 	text := NewRootCmd()

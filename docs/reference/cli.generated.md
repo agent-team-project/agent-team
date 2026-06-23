@@ -3993,15 +3993,16 @@ agent-team team events <team> [flags]
 Flags:
 
 ```text
-      --action strings   Only show events with this action. Can repeat or comma-separate.
-  -f, --follow           Keep streaming new lifecycle events.
-      --format string    Render each event with a Go template, e.g. '{{.Action}} {{.Instance}} {{.Status}}'.
-      --json             Emit raw JSONL events.
-      --repo string      Repo root. (default "<repo>")
-      --since string     Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
-      --status strings   Only show events with this lifecycle status. Can repeat or comma-separate.
-      --summary          Summarize matching team events by action, status, agent, and instance.
-      --tail int         Show only the last N matching team events before returning or following (0 = all).
+      --action strings    Only show events with this action. Can repeat or comma-separate.
+  -f, --follow            Keep streaming new lifecycle events.
+      --format string     Render each event with a Go template, e.g. '{{.Action}} {{.Instance}} {{.Status}}'.
+      --json              Emit raw JSONL events.
+      --repo string       Repo root. (default "<repo>")
+      --runtime strings   Only show team events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --since string      Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
+      --status strings    Only show events with this lifecycle status. Can repeat or comma-separate.
+      --summary           Summarize matching team events by action, status, agent, and instance.
+      --tail int          Show only the last N matching team events before returning or following (0 = all).
 ```
 
 ## `agent-team team health`
