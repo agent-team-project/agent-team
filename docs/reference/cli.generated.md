@@ -5165,6 +5165,7 @@ Flags:
       --latest                Wait for the most recently started daemon-known instance after other filters.
       --phase strings         Wait for daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
   -q, --quiet                 Suppress output and use only the exit code.
+      --runtime strings       Wait for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
       --stale                 Wait for daemon-known instances whose status.toml is stale.
       --status strings        Wait for daemon-known instances currently in this lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary               Show aggregate final status and phase counts instead of per-instance rows.

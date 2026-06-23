@@ -3810,6 +3810,28 @@ func TestWaitFilteredInstanceNamesByStatus(t *testing.T) {
 	}
 }
 
+func TestWaitFilteredInstanceNamesByRuntime(t *testing.T) {
+	lister := &fakeInstanceLister{snapshots: [][]*daemon.Metadata{
+		{
+			{Instance: "codex-worker", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning},
+			{Instance: "claude-manager", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning},
+			{Instance: "unknown-runtime", Agent: "worker", Status: daemon.StatusRunning},
+		},
+	}}
+	names, err := waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, nil, nil, []string{"codex"}, nil, nil, nil, false, false)
+	if err != nil {
+		t.Fatalf("waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy: %v", err)
+	}
+	if strings.Join(names, ",") != "codex-worker" {
+		t.Fatalf("names = %v, want codex-worker only", names)
+	}
+
+	names, err = waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, nil, nil, []string{"unknown"}, nil, nil, nil, false, false)
+	if err == nil || !strings.Contains(err.Error(), "unknown --runtime") {
+		t.Fatalf("unknown runtime error = %v, want unknown --runtime", err)
+	}
+}
+
 func TestWaitFilteredInstanceNamesByAgentAndStatus(t *testing.T) {
 	lister := &fakeInstanceLister{snapshots: [][]*daemon.Metadata{
 		{
@@ -3944,6 +3966,24 @@ func TestWaitLatestInstanceNamesFiltersUnhealthyBeforeLimit(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "stale-new" {
 		t.Fatalf("names = %v, want newest unhealthy worker", names)
+	}
+}
+
+func TestWaitLatestInstanceNamesFiltersRuntimeBeforeLimit(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	lister := &fakeInstanceLister{snapshots: [][]*daemon.Metadata{
+		{
+			{Instance: "codex-old", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, StartedAt: now.Add(-3 * time.Hour)},
+			{Instance: "codex-new", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, StartedAt: now.Add(-2 * time.Hour)},
+			{Instance: "claude-newer", Agent: "worker", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, StartedAt: now.Add(-1 * time.Hour)},
+		},
+	}}
+	names, err := waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister, nil, nil, []string{"codex"}, nil, nil, nil, false, false, 1)
+	if err != nil {
+		t.Fatalf("waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy: %v", err)
+	}
+	if strings.Join(names, ",") != "codex-new" {
+		t.Fatalf("names = %v, want newest Codex worker", names)
 	}
 }
 
@@ -4161,6 +4201,37 @@ func TestWaitUsesLocalMetadataWhenDaemonStopped(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Instance != "manager" || rows[0].Status != "stopped" || rows[0].PID != 321 {
 		t.Fatalf("rows = %+v, want stopped manager", rows)
+	}
+}
+
+func TestWaitRuntimeFilterUsesLocalMetadataWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "codex-worker", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: 321},
+		{Instance: "claude-manager", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: 654},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"wait", "--runtime", "codex", "--until", "running", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("wait --runtime local metadata: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []waitResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode wait json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "codex-worker" || rows[0].Status != "running" || rows[0].PID != 321 {
+		t.Fatalf("rows = %+v, want running Codex worker only", rows)
 	}
 }
 
@@ -4689,6 +4760,21 @@ func TestWaitStatusRejectsExplicitNames(t *testing.T) {
 	}
 }
 
+func TestWaitRuntimeRejectsExplicitNames(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"wait", "--runtime", "codex", "manager"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	if !strings.Contains(stderr.String(), "--runtime cannot be combined") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestWaitPhaseRejectsExplicitNames(t *testing.T) {
 	cmd := NewRootCmd()
 	stderr := &bytes.Buffer{}
@@ -4745,6 +4831,21 @@ func TestWaitRejectsUnknownStatus(t *testing.T) {
 		t.Fatalf("expected validation error")
 	}
 	if !strings.Contains(stderr.String(), "unknown --status") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestWaitRejectsUnknownRuntime(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"wait", "--runtime", "llama"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	if !strings.Contains(stderr.String(), "unknown --runtime") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
