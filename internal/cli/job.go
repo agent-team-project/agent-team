@@ -3478,17 +3478,7 @@ func summarizeJobRuntimeCounts(teamDir string, jobs []*job.Job) map[string]int {
 	if strings.TrimSpace(teamDir) == "" || len(jobs) == 0 {
 		return nil
 	}
-	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
-	if err != nil {
-		return nil
-	}
-	runtimeByInstance := make(map[string]string, len(metas))
-	for _, meta := range metas {
-		if meta == nil || strings.TrimSpace(meta.Instance) == "" {
-			continue
-		}
-		runtimeByInstance[meta.Instance] = metadataRuntimeKey(meta)
-	}
+	runtimeByInstance := jobRuntimeMap(teamDir)
 	if len(runtimeByInstance) == 0 {
 		return nil
 	}
@@ -3521,6 +3511,24 @@ func summarizeJobRuntimeCounts(teamDir string, jobs []*job.Job) map[string]int {
 		return nil
 	}
 	return counts
+}
+
+func jobRuntimeMap(teamDir string) map[string]string {
+	if strings.TrimSpace(teamDir) == "" {
+		return nil
+	}
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(metas))
+	for _, meta := range metas {
+		if meta == nil || strings.TrimSpace(meta.Instance) == "" {
+			continue
+		}
+		out[meta.Instance] = metadataRuntimeKey(meta)
+	}
+	return out
 }
 
 func collectJobTriage(teamDir string, now time.Time, staleAfter time.Duration) (jobTriageSnapshot, error) {
@@ -4353,7 +4361,7 @@ func runJobList(w io.Writer, teamDir string, filters jobListFilters, jsonOut boo
 		}
 		return nil
 	}
-	renderJobTable(w, filtered)
+	renderJobTableWithRuntime(w, filtered, jobRuntimeMap(teamDir))
 	return nil
 }
 
@@ -6925,6 +6933,51 @@ func renderJobTable(w io.Writer, jobs []*job.Job) {
 			j.ID, j.Status, j.Target, emptyDash(j.Instance), emptyDash(j.Pipeline), j.Ticket, j.UpdatedAt.Format(time.RFC3339))
 	}
 	_ = tw.Flush()
+}
+
+func renderJobTableWithRuntime(w io.Writer, jobs []*job.Job, runtimeByInstance map[string]string) {
+	if len(jobs) == 0 {
+		fmt.Fprintln(w, "(no jobs)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tSTATUS\tTARGET\tINSTANCE\tRUNTIME\tPIPELINE\tTICKET\tUPDATED")
+	for _, j := range jobs {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			j.ID, j.Status, j.Target, emptyDash(j.Instance), jobRuntimeLabel(j, runtimeByInstance), emptyDash(j.Pipeline), j.Ticket, j.UpdatedAt.Format(time.RFC3339))
+	}
+	_ = tw.Flush()
+}
+
+func jobRuntimeLabel(j *job.Job, runtimeByInstance map[string]string) string {
+	if j == nil || len(runtimeByInstance) == 0 {
+		return "-"
+	}
+	runtimes := map[string]bool{}
+	add := func(instance string) {
+		instance = strings.TrimSpace(instance)
+		if instance == "" {
+			return
+		}
+		runtime := strings.TrimSpace(runtimeByInstance[instance])
+		if runtime == "" {
+			return
+		}
+		runtimes[runtime] = true
+	}
+	add(j.Instance)
+	for _, step := range j.Steps {
+		add(step.Instance)
+	}
+	if len(runtimes) == 0 {
+		return "-"
+	}
+	keys := make([]string, 0, len(runtimes))
+	for runtime := range runtimes {
+		keys = append(keys, runtime)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
 }
 
 func renderJobQueueReconcileResults(w io.Writer, results []jobQueueReconcileResult, jsonOut bool, tmpl *template.Template) error {

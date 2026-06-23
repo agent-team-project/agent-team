@@ -2662,6 +2662,20 @@ func TestJobListFilters(t *testing.T) {
 		t.Fatalf("claude runtime jobs = %+v", got)
 	}
 
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"job", "ls", "--repo", tmp, "--status", "running"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("job ls text runtime column: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"RUNTIME", "squ-50", "codex", "squ-52", "claude"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("job ls text missing %q:\n%s", want, textOut.String())
+		}
+	}
+
 	invalid := NewRootCmd()
 	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
 	invalid.SetOut(invalidOut)
