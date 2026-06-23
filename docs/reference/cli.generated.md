@@ -1348,6 +1348,8 @@ Flags:
       --github-secret-env string              Environment variable name containing the GitHub webhook secret; empty omits it. (default "GITHUB_WEBHOOK_SECRET")
       --github-verify-pr                      Include --github-verify-pr in ExecStart; requires --github-cleanup-merged.
       --image string                          Container image used by compose service generation. (default "agent-team:local")
+      --ingress-class string                  Kubernetes IngressClass name for --ingress-host; kubernetes output only.
+      --ingress-host string                   Kubernetes Ingress host to expose the generated Service; kubernetes output only.
       --linear-max-age duration               Maximum accepted Linear webhook age after signature verification. (default 1m0s)
       --linear-secret-env string              Environment variable name containing the Linear webhook secret; empty omits it. (default "LINEAR_WEBHOOK_SECRET")
       --name string                           Service unit name/comment stem. (default "agent-team-intake")
@@ -1356,6 +1358,7 @@ Flags:
       --publish string                        Compose port publication host:container mapping; empty omits ports. (default "127.0.0.1:8787:8787")
       --secret-name string                    Kubernetes Secret name used by kubernetes service generation; defaults to <name>-secrets.
       --target string                         Repo root. (default "<repo>")
+      --tls-secret string                     Kubernetes TLS Secret name for --ingress-host; kubernetes output only.
       --workspace-claim string                Kubernetes PersistentVolumeClaim name mounted at --container-workdir; defaults to <name>-workspace.
 ```
 

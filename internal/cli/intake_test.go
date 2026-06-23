@@ -687,6 +687,9 @@ func TestIntakeServiceKubernetes(t *testing.T) {
 		"--container-workdir", "/workspace/repo",
 		"--secret-name", "agent-team-intake-secrets",
 		"--workspace-claim", "agent-team-workspace",
+		"--ingress-host", "intake.example.com",
+		"--ingress-class", "nginx",
+		"--tls-secret", "agent-team-intake-tls",
 		"--linear-secret-env", "LINEAR_SECRET",
 		"--github-secret-env", "GITHUB_SECRET",
 		"--github-reconcile-job",
@@ -725,6 +728,15 @@ func TestIntakeServiceKubernetes(t *testing.T) {
 		"kind: Service",
 		"      port: 8787",
 		"      targetPort: 8787",
+		"kind: Ingress",
+		`  ingressClassName: "nginx"`,
+		`        - "intake.example.com"`,
+		`      secretName: "agent-team-intake-tls"`,
+		`    - host: "intake.example.com"`,
+		`          - path: "/"`,
+		`            pathType: "Prefix"`,
+		`                name: "agent-team-intake-test"`,
+		"                  number: 8787",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("kubernetes output missing %q:\n%s", want, body)
@@ -747,6 +759,10 @@ func TestIntakeServiceValidation(t *testing.T) {
 		{[]string{"intake", "service", "kubernetes", "--name", "BadName"}, "--name must be a Kubernetes DNS label"},
 		{[]string{"intake", "service", "kubernetes", "--secret-name", "bad_name"}, "--secret-name must be a Kubernetes DNS label"},
 		{[]string{"intake", "service", "kubernetes", "--addr", "8787"}, "--addr must include a host and port for kubernetes output"},
+		{[]string{"intake", "service", "systemd", "--ingress-host", "intake.example.com"}, "--ingress-host, --ingress-class, and --tls-secret are only supported for kubernetes output"},
+		{[]string{"intake", "service", "kubernetes", "--ingress-class", "nginx"}, "--ingress-class requires --ingress-host"},
+		{[]string{"intake", "service", "kubernetes", "--tls-secret", "agent-team-intake-tls"}, "--tls-secret requires --ingress-host"},
+		{[]string{"intake", "service", "kubernetes", "--ingress-host", "intake.example.com", "--tls-secret", "bad_name"}, "--tls-secret must be a Kubernetes DNS label"},
 		{[]string{"intake", "service", "systemd", "--github-verify-pr"}, "--github-verify-pr requires --github-cleanup-merged"},
 		{[]string{"intake", "service", "systemd", "--github-cleanup-merged"}, "--github-cleanup-merged requires --github-reconcile-job"},
 	}

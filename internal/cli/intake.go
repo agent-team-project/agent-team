@@ -259,6 +259,9 @@ type intakeServiceOptions struct {
 	EnvFile                 string
 	KubeSecretName          string
 	KubeWorkspaceClaim      string
+	KubeIngressHost         string
+	KubeIngressClass        string
+	KubeTLSSecret           string
 	LinearSecretEnv         string
 	GitHubSecretEnv         string
 	GitHubReconcileJob      bool
@@ -340,6 +343,9 @@ func newIntakeServiceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.EnvFile, "env-file", "", "Secret environment file for systemd EnvironmentFile or compose env_file; launchd does not support this.")
 	cmd.Flags().StringVar(&opts.KubeSecretName, "secret-name", "", "Kubernetes Secret name used by kubernetes service generation; defaults to <name>-secrets.")
 	cmd.Flags().StringVar(&opts.KubeWorkspaceClaim, "workspace-claim", "", "Kubernetes PersistentVolumeClaim name mounted at --container-workdir; defaults to <name>-workspace.")
+	cmd.Flags().StringVar(&opts.KubeIngressHost, "ingress-host", "", "Kubernetes Ingress host to expose the generated Service; kubernetes output only.")
+	cmd.Flags().StringVar(&opts.KubeIngressClass, "ingress-class", "", "Kubernetes IngressClass name for --ingress-host; kubernetes output only.")
+	cmd.Flags().StringVar(&opts.KubeTLSSecret, "tls-secret", "", "Kubernetes TLS Secret name for --ingress-host; kubernetes output only.")
 	cmd.Flags().StringVar(&opts.LinearSecretEnv, "linear-secret-env", opts.LinearSecretEnv, "Environment variable name containing the Linear webhook secret; empty omits it.")
 	cmd.Flags().StringVar(&opts.GitHubSecretEnv, "github-secret-env", opts.GitHubSecretEnv, "Environment variable name containing the GitHub webhook secret; empty omits it.")
 	cmd.Flags().BoolVar(&opts.GitHubReconcileJob, "github-reconcile-job", false, "Include --github-reconcile-job in ExecStart.")
@@ -379,6 +385,19 @@ func validateIntakeServiceOptions(kind string, opts intakeServiceOptions) error 
 		if _, err := intakeServicePort(opts.Addr); err != nil {
 			return err
 		}
+		if strings.TrimSpace(opts.KubeIngressClass) != "" && strings.TrimSpace(opts.KubeIngressHost) == "" {
+			return fmt.Errorf("--ingress-class requires --ingress-host")
+		}
+		if tlsSecret := strings.TrimSpace(opts.KubeTLSSecret); tlsSecret != "" {
+			if strings.TrimSpace(opts.KubeIngressHost) == "" {
+				return fmt.Errorf("--tls-secret requires --ingress-host")
+			}
+			if !isKubernetesDNSLabel(tlsSecret) {
+				return fmt.Errorf("--tls-secret must be a Kubernetes DNS label")
+			}
+		}
+	} else if strings.TrimSpace(opts.KubeIngressHost) != "" || strings.TrimSpace(opts.KubeIngressClass) != "" || strings.TrimSpace(opts.KubeTLSSecret) != "" {
+		return fmt.Errorf("--ingress-host, --ingress-class, and --tls-secret are only supported for kubernetes output")
 	}
 	if strings.TrimSpace(opts.Bin) == "" {
 		return fmt.Errorf("--bin is required")
@@ -532,6 +551,38 @@ func renderIntakeKubernetesService(w io.Writer, repoRoot string, opts intakeServ
 	fmt.Fprintln(w, "    - name: \"http\"")
 	fmt.Fprintf(w, "      port: %d\n", port)
 	fmt.Fprintf(w, "      targetPort: %d\n", port)
+	if host := strings.TrimSpace(opts.KubeIngressHost); host != "" {
+		renderIntakeKubernetesIngress(w, opts, port, host)
+	}
+}
+
+func renderIntakeKubernetesIngress(w io.Writer, opts intakeServiceOptions, port int, host string) {
+	fmt.Fprintln(w, "---")
+	fmt.Fprintln(w, "apiVersion: networking.k8s.io/v1")
+	fmt.Fprintln(w, "kind: Ingress")
+	fmt.Fprintln(w, "metadata:")
+	fmt.Fprintf(w, "  name: %s\n", yamlQuote(opts.Name))
+	fmt.Fprintln(w, "spec:")
+	if className := strings.TrimSpace(opts.KubeIngressClass); className != "" {
+		fmt.Fprintf(w, "  ingressClassName: %s\n", yamlQuote(className))
+	}
+	if tlsSecret := strings.TrimSpace(opts.KubeTLSSecret); tlsSecret != "" {
+		fmt.Fprintln(w, "  tls:")
+		fmt.Fprintln(w, "    - hosts:")
+		fmt.Fprintf(w, "        - %s\n", yamlQuote(host))
+		fmt.Fprintf(w, "      secretName: %s\n", yamlQuote(tlsSecret))
+	}
+	fmt.Fprintln(w, "  rules:")
+	fmt.Fprintf(w, "    - host: %s\n", yamlQuote(host))
+	fmt.Fprintln(w, "      http:")
+	fmt.Fprintln(w, "        paths:")
+	fmt.Fprintln(w, "          - path: \"/\"")
+	fmt.Fprintln(w, "            pathType: \"Prefix\"")
+	fmt.Fprintln(w, "            backend:")
+	fmt.Fprintln(w, "              service:")
+	fmt.Fprintf(w, "                name: %s\n", yamlQuote(opts.Name))
+	fmt.Fprintln(w, "                port:")
+	fmt.Fprintf(w, "                  number: %d\n", port)
 }
 
 func renderIntakeLaunchdService(w io.Writer, repoRoot string, opts intakeServiceOptions) {

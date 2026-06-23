@@ -63,6 +63,7 @@ Built or substantially implemented:
 - Kubernetes intake manifests with Secret, Deployment, Service, and workspace PVC reference
 - keyless cosign signing for published GHCR image digests
 - SBOM/provenance attestations and image verification docs
+- optional Kubernetes Ingress generation for production webhook endpoints
 
 ## What Still Needs Design Care
 
@@ -94,7 +95,6 @@ High-value follow-up work:
 
 - runtime resume/adopt flows for long-running agents
 - richer pipeline gates beyond manual approval
-- production webhook deployment examples
 
 ## Anti-Patterns
 

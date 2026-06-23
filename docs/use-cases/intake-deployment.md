@@ -252,13 +252,16 @@ agent-team intake service kubernetes \
   --name agent-team-intake-my-repo \
   --secret-name agent-team-intake-secrets \
   --workspace-claim agent-team-workspace \
+  --ingress-host intake.example.com \
+  --ingress-class nginx \
+  --tls-secret agent-team-intake-tls \
   --github-reconcile-job \
   --github-cleanup-merged \
   --github-verify-pr \
   > kubernetes.agent-team-intake-my-repo.yaml
 ```
 
-Kubernetes defaults the listener address to `0.0.0.0:8787` so the generated Service can reach the pod. The manifest includes a Secret with placeholder webhook values, a Deployment that starts the daemon before execing `intake serve`, and a Service on port 8787. The PVC named by `--workspace-claim` must already contain the repo state that should be served.
+Kubernetes defaults the listener address to `0.0.0.0:8787` so the generated Service can reach the pod. The manifest includes a Secret with placeholder webhook values, a Deployment that starts the daemon before execing `intake serve`, a Service on port 8787, and an optional Ingress when `--ingress-host` is set. The PVC named by `--workspace-claim` must already contain the repo state that should be served.
 
 ## Operations
 
