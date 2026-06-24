@@ -597,6 +597,18 @@ func TestPipelineJobsListsMatchingJobs(t *testing.T) {
 		t.Fatalf("pipeline jobs format output = %q", formatOut.String())
 	}
 
+	sortCmd := NewRootCmd()
+	sortOut, sortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sortCmd.SetOut(sortOut)
+	sortCmd.SetErr(sortErr)
+	sortCmd.SetArgs([]string{"pipeline", "jobs", "ticket_to_pr", "--repo", root, "--sort", "target", "--format", "{{.ID}} {{.Target}}"})
+	if err := sortCmd.Execute(); err != nil {
+		t.Fatalf("pipeline jobs sort: %v\nstderr=%s", err, sortErr.String())
+	}
+	if got := strings.Split(strings.TrimSpace(sortOut.String()), "\n"); strings.Join(got, ",") != "squ-303 manager,squ-301 worker" {
+		t.Fatalf("pipeline jobs sorted output = %q", sortOut.String())
+	}
+
 	runtimeCmd := NewRootCmd()
 	runtimeOut, runtimeErr := &bytes.Buffer{}, &bytes.Buffer{}
 	runtimeCmd.SetOut(runtimeOut)
@@ -639,6 +651,18 @@ func TestPipelineJobsListsMatchingJobs(t *testing.T) {
 	}
 	if !strings.Contains(invalidErr.String(), "unknown job status") {
 		t.Fatalf("invalid status stderr = %q", invalidErr.String())
+	}
+
+	invalidSort := NewRootCmd()
+	invalidSortOut, invalidSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSort.SetOut(invalidSortOut)
+	invalidSort.SetErr(invalidSortErr)
+	invalidSort.SetArgs([]string{"pipeline", "jobs", "ticket_to_pr", "--repo", root, "--sort", "priority"})
+	if err := invalidSort.Execute(); err == nil {
+		t.Fatalf("pipeline jobs invalid sort succeeded")
+	}
+	if !strings.Contains(invalidSortErr.String(), "--sort must be id, status, target") {
+		t.Fatalf("invalid sort stderr = %q", invalidSortErr.String())
 	}
 }
 

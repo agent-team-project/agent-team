@@ -155,7 +155,7 @@ Shortcuts:
 | `agent-team pipeline explain <pipeline>` | Expand pipeline jobs into per-step readiness, blockers, gates, and actions |
 | `agent-team pipeline snapshot <pipeline>` | Capture one pipeline's status, explained jobs, queue ownership, and dry-run advance previews |
 | `agent-team pipeline next` | Print recommended pipeline actions |
-| `agent-team pipeline jobs <pipeline>` | List or summarize pipeline jobs; filter held state, hold deadlines, and mixed-runtime ownership |
+| `agent-team pipeline jobs <pipeline>` | List or summarize pipeline jobs; filter held state, hold deadlines, mixed-runtime ownership, and sort rows |
 | `agent-team pipeline ready` | List ready steps |
 | `agent-team pipeline hold <pipeline>` | Hold matching pipeline jobs without changing lifecycle status; add `--for` or `--until` for a deadline |
 | `agent-team pipeline release <pipeline>` | Release held jobs in a pipeline; add `--expired` to release only elapsed deadlines |

@@ -233,6 +233,7 @@ func newPipelineJobsCmd() *cobra.Command {
 		summary        bool
 		jsonOut        bool
 		format         string
+		sortBy         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -261,6 +262,11 @@ func newPipelineJobsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --expired-hold and --active-hold cannot be combined.")
 				return exitErr(2)
 			}
+			sortMode, err := parseJobSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline jobs: %v\n", err)
+				return exitErr(2)
+			}
 			filters, err := newJobListFilters(status, "", "", args[0], "", "", "", runtimeFilters)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline jobs: %v\n", err)
@@ -268,6 +274,7 @@ func newPipelineJobsCmd() *cobra.Command {
 			}
 			filters.Held = jobHeldFilter(held, unheld)
 			filters.HoldExpired = jobHoldExpiredFilter(expiredHold, activeHold)
+			filters.Sort = sortMode
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -298,6 +305,7 @@ func newPipelineJobsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate pipeline job counts instead of job rows.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit jobs as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
+	cmd.Flags().StringVar(&sortBy, "sort", "id", "Sort jobs by id, status, target, ticket, created, updated, instance, branch, or pr.")
 	return cmd
 }
 
