@@ -3318,12 +3318,13 @@ agent-team repair [flags]
 Flags:
 
 ```text
+      --all-ready-steps          Advance every currently ready independent pipeline step during the repair tick.
       --dry-run                  Preview repair actions without mutating state or starting the daemon.
       --format string            Render the repair result with a Go template, e.g. '{{.DryRun}} {{.Queue.Action}}'.
       --interval duration        Delay between --until-idle maintenance cycles. (default 2s)
       --jobs                     Include durable job triage and status-file previews in health snapshots.
       --json                     Emit machine-readable JSON.
-      --limit int                Retry at most this many dead-letter queue items or failed pipeline jobs, and advance at most this many ready pipeline jobs; 0 means no limit.
+      --limit int                Retry at most this many dead-letter queue items or failed pipeline jobs, and advance at most this many ready pipeline jobs or ready steps with --all-ready-steps; 0 means no limit.
       --max-cycles int           With --until-idle, stop after this many cycles if work keeps appearing. (default 20)
       --preview-routes           With --dry-run, include route and dispatch payload previews for retried or ready pipeline steps.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
@@ -4107,10 +4108,11 @@ agent-team team drain <team> [flags]
 Flags:
 
 ```text
+      --all-ready-steps     Advance every currently ready independent team pipeline step in each drain cycle.
       --format string       Render the drain result with a Go template, e.g. '{{.Team.Name}} {{.CyclesRun}} {{.Idle}}'.
       --interval duration   Delay between drain cycles. (default 2s)
       --json                Emit machine-readable JSON.
-      --limit int           Advance at most this many ready pipeline jobs per cycle; 0 means no limit.
+      --limit int           Advance at most this many ready pipeline jobs per cycle, or ready steps with --all-ready-steps; 0 means no limit.
       --max-cycles int      Stop after this many cycles if work keeps appearing. (default 20)
       --repo string         Repo root. (default "<repo>")
       --skip-advance        Skip pipeline advancement work.
@@ -4647,12 +4649,13 @@ agent-team team repair <team> [flags]
 Flags:
 
 ```text
+      --all-ready-steps          Advance every currently ready independent team pipeline step during the scoped repair tick.
       --dry-run                  Preview team repair actions without mutating state or starting the daemon.
       --format string            Render the team repair result with a Go template, e.g. '{{.Team.Name}} {{.Queue.Action}}'.
       --interval duration        Delay between --until-idle scoped team tick cycles. (default 2s)
       --jobs                     Include team-owned durable job and pipeline health.
       --json                     Emit machine-readable JSON.
-      --limit int                Retry at most this many team dead-letter queue items or failed team pipeline jobs, and advance at most this many ready team pipeline jobs; 0 means no limit.
+      --limit int                Retry at most this many team dead-letter queue items or failed team pipeline jobs, and advance at most this many ready team pipeline jobs or ready steps with --all-ready-steps; 0 means no limit.
       --max-cycles int           With --until-idle, stop after this many cycles if work keeps appearing. (default 20)
       --preview-routes           With --dry-run, include route and dispatch payload previews for retried or ready team pipeline steps.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)

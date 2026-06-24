@@ -1317,6 +1317,62 @@ pipelines = ["ticket_to_pr"]
 	}
 }
 
+func TestTeamRepairAllReadyStepsDryRun(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.parallel_checks]
+trigger.event = "ticket.created"
+
+[[pipelines.parallel_checks.steps]]
+id = "lint"
+target = "worker"
+
+[[pipelines.parallel_checks.steps]]
+id = "test"
+target = "worker"
+
+[[pipelines.parallel_checks.steps]]
+id = "review"
+target = "manager"
+after = ["lint", "test"]
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["parallel_checks"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{"team", "run", "delivery", "SQU-814", "--repo", root, "--json"})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("team run: %v\nstderr=%s", err, createErr.String())
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "repair", "delivery", "--repo", root, "--dry-run", "--skip-daemon", "--skip-queue", "--all-ready-steps", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team repair all-ready: %v\nstderr=%s", err, stderr.String())
+	}
+	var result teamRepairResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode team repair all-ready: %v\nbody=%s", err, out.String())
+	}
+	if result.Tick.Result == nil || len(result.Tick.Result.Tick.Advance) != 2 || result.Tick.Result.Tick.Advance[0].StepID != "lint" || result.Tick.Result.Tick.Advance[0].StepStatus != job.StatusQueued || result.Tick.Result.Tick.Advance[1].StepID != "test" {
+		t.Fatalf("team repair all-ready advance = %+v, want queued lint then ready test", result.Tick.Result)
+	}
+}
+
 func TestTeamRetryValidation(t *testing.T) {
 	cases := []struct {
 		args []string

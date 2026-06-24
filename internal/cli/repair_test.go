@@ -297,6 +297,56 @@ func TestRepairDryRunCanPreviewTickRoutes(t *testing.T) {
 	}
 }
 
+func TestRepairAllReadyStepsDryRun(t *testing.T) {
+	target, _, cleanup := setupDispatchCommandRepo(t)
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.parallel_checks]
+trigger.event = "ticket.created"
+
+[[pipelines.parallel_checks.steps]]
+id = "lint"
+target = "worker"
+
+[[pipelines.parallel_checks.steps]]
+id = "test"
+target = "worker"
+
+[[pipelines.parallel_checks.steps]]
+id = "review"
+target = "manager"
+after = ["lint", "test"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{"pipeline", "run", "parallel_checks", "SQU-321", "--repo", target, "--json"})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("pipeline run: %v\nstderr=%s", err, createErr.String())
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"repair", "--target", target, "--dry-run", "--skip-daemon", "--skip-queue", "--all-ready-steps", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("repair all-ready dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var result repairResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode repair all-ready: %v\nbody=%s", err, out.String())
+	}
+	if result.Tick.Result == nil || len(result.Tick.Result.Advance) != 2 || result.Tick.Result.Advance[0].StepID != "lint" || result.Tick.Result.Advance[0].StepStatus != job.StatusQueued || result.Tick.Result.Advance[1].StepID != "test" {
+		t.Fatalf("repair all-ready advance = %+v, want queued lint then ready test", result.Tick.Result)
+	}
+}
+
 func TestRepairDryRunCanRetryFailedPipelineRoutes(t *testing.T) {
 	target, _, cleanup := setupDispatchCommandRepo(t)
 	defer cleanup()

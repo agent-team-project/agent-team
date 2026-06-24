@@ -29,6 +29,7 @@ func newRepairCmd() *cobra.Command {
 		skipTick       bool
 		includeJobs    bool
 		retryPipelines bool
+		allReadySteps  bool
 		retryStep      string
 		retryMessage   string
 		untilIdle      bool
@@ -111,6 +112,7 @@ func newRepairCmd() *cobra.Command {
 				SkipTick:       skipTick,
 				IncludeJobs:    includeJobs,
 				RetryPipelines: retryPipelines,
+				AllReadySteps:  allReadySteps,
 				RetryStep:      retryStep,
 				RetryMessage:   retryMessage,
 				UntilIdle:      untilIdle,
@@ -128,7 +130,7 @@ func newRepairCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for retried or advanced pipeline steps: auto, worktree, or repo.")
-	cmd.Flags().IntVar(&limit, "limit", 0, "Retry at most this many dead-letter queue items or failed pipeline jobs, and advance at most this many ready pipeline jobs; 0 means no limit.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Retry at most this many dead-letter queue items or failed pipeline jobs, and advance at most this many ready pipeline jobs or ready steps with --all-ready-steps; 0 means no limit.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview repair actions without mutating state or starting the daemon.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include route and dispatch payload previews for retried or ready pipeline steps.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
@@ -138,6 +140,7 @@ func newRepairCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipTick, "skip-tick", false, "Do not run a maintenance tick after queue retry.")
 	cmd.Flags().BoolVar(&includeJobs, "jobs", false, "Include durable job triage and status-file previews in health snapshots.")
 	cmd.Flags().BoolVar(&retryPipelines, "retry-pipelines", false, "Reset failed pipeline steps and dispatch them before the maintenance tick.")
+	cmd.Flags().BoolVar(&allReadySteps, "all-ready-steps", false, "Advance every currently ready independent pipeline step during the repair tick.")
 	cmd.Flags().StringVar(&retryStep, "retry-step", "", "With --retry-pipelines, retry only failed jobs whose next failed step has this id.")
 	cmd.Flags().StringVar(&retryMessage, "retry-message", "", "Audit message to record when --retry-pipelines resets failed steps.")
 	cmd.Flags().BoolVar(&untilIdle, "until-idle", false, "Run maintenance ticks until no immediate queue, schedule, or pipeline work remains.")
@@ -157,6 +160,7 @@ type repairOptions struct {
 	SkipTick       bool
 	IncludeJobs    bool
 	RetryPipelines bool
+	AllReadySteps  bool
 	RetryStep      string
 	RetryMessage   string
 	UntilIdle      bool
@@ -397,7 +401,7 @@ func runRepairTickStep(cmd *cobra.Command, teamDir string, opts repairOptions) r
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		until, err := runTickUntilIdle(ctx, cmd, teamDir, opts.Workspace, opts.Limit, tickOptions{}, opts.MaxCycles, opts.Interval)
+		until, err := runTickUntilIdle(ctx, cmd, teamDir, opts.Workspace, opts.Limit, tickOptions{AllReadySteps: opts.AllReadySteps}, opts.MaxCycles, opts.Interval)
 		if err != nil {
 			return repairTickStep{Action: "error", Reason: err.Error()}
 		}
@@ -407,7 +411,7 @@ func runRepairTickStep(cmd *cobra.Command, teamDir string, opts repairOptions) r
 		}
 		return repairTickStep{Action: action, UntilIdle: until}
 	}
-	tick, err := runTick(cmd, teamDir, opts.Workspace, opts.Limit, tickOptions{DryRun: opts.DryRun, PreviewRoutes: opts.PreviewRoutes})
+	tick, err := runTick(cmd, teamDir, opts.Workspace, opts.Limit, tickOptions{DryRun: opts.DryRun, PreviewRoutes: opts.PreviewRoutes, AllReadySteps: opts.AllReadySteps})
 	if err != nil {
 		return repairTickStep{Action: "error", Reason: err.Error()}
 	}

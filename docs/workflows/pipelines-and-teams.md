@@ -61,6 +61,7 @@ agent-team pipeline retry ticket_to_pr --dry-run
 agent-team pipeline retry ticket_to_pr --step review --dry-run
 agent-team pipeline retry ticket_to_pr --dispatch --dry-run --preview-routes
 agent-team repair --retry-pipelines --dry-run --preview-routes
+agent-team repair --all-ready-steps --dry-run --preview-routes
 agent-team repair --retry-pipelines --retry-step review --dry-run --preview-routes
 ```
 
@@ -135,13 +136,15 @@ agent-team team retry delivery --step review --dry-run
 agent-team team tick delivery --dry-run
 agent-team team tick delivery --all-ready-steps --dry-run
 agent-team team repair delivery --dry-run --jobs
+agent-team team repair delivery --all-ready-steps --dry-run --preview-routes
 agent-team team repair delivery --retry-pipelines --dry-run --preview-routes
 agent-team team repair delivery --retry-pipelines --retry-step review --dry-run --preview-routes
+agent-team team drain delivery --all-ready-steps
 agent-team team snapshot delivery --output delivery.json
 ```
 
 `team advance <team> --all-ready-steps` applies the same parallel-ready fan-out as `pipeline advance --all-ready-steps`, but only for pipelines declared on that team. Use it when one team owns a job with independent stages that can run at the same time.
-`tick --all-ready-steps` and `team tick <team> --all-ready-steps` apply that fan-out during maintenance cycles, including watch and until-idle loops.
+`tick --all-ready-steps`, `repair --all-ready-steps`, `team tick <team> --all-ready-steps`, `team repair <team> --all-ready-steps`, and `team drain <team> --all-ready-steps` apply that fan-out during maintenance and recovery cycles, including watch and until-idle loops.
 
 ## Why Teams Matter
 
