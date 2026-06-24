@@ -6151,6 +6151,7 @@ Flags:
       --phase strings          Only show instances and stats in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --plan                   Include desired-state actions from instances.toml and daemon metadata.
       --resources              With --summary, include aggregate CPU, memory, and RSS totals.
+      --runtime strings        Only show instances and stats for this runtime: claude or codex. Can repeat or comma-separate.
       --schedules              Include due and upcoming declared schedule state.
       --since string           With --events, only show lifecycle events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --sort string            Sort instance rows by name, status, agent, phase, stale, unhealthy, started, stopped, or exited. (default "name")

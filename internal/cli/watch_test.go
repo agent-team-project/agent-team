@@ -705,6 +705,7 @@ func TestWatchRejectsInvalidFilters(t *testing.T) {
 		want string
 	}{
 		{args: []string{"watch", "--status", "paused"}, want: `agent-team watch: unknown --status "paused"`},
+		{args: []string{"watch", "--runtime", "llama"}, want: `agent-team watch: unknown --runtime "llama"`},
 		{args: []string{"watch", "--phase", "reviewing"}, want: `agent-team watch: unknown --phase "reviewing"`},
 	} {
 		cmd := NewRootCmd()
