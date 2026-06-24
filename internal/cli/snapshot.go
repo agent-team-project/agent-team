@@ -92,6 +92,7 @@ func newSnapshotCmd() *cobra.Command {
 	cmd.Flags().IntVar(&eventLimit, "events", 50, "Recent lifecycle events to include. Use -1 for all events or 0 to skip events.")
 	cmd.Flags().IntVar(&intakeLimit, "intake-deliveries", 50, "Recent intake deliveries to include. Use -1 for all deliveries or 0 to skip deliveries.")
 	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 10, "Upcoming schedules to include after ordering; 0 means all.")
+	cmd.AddCommand(newSnapshotDiffCmd())
 	return cmd
 }
 

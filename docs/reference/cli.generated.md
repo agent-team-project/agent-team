@@ -3833,6 +3833,32 @@ Inherited Flags:
       --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
 ```
 
+Subcommands:
+
+- `agent-team snapshot diff` - Compare two saved diagnostic snapshots.
+
+## `agent-team snapshot diff`
+
+Compare two saved diagnostic snapshots.
+
+Compare two saved global, team, or pipeline diagnostic snapshot JSON files and summarize job, queue, pipeline, ready-advance, and section-error changes.
+
+```text
+agent-team snapshot diff <before.json> <after.json> [flags]
+```
+
+Flags:
+
+```text
+      --json   Emit snapshot diff as JSON.
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
 ## `agent-team start`
 
 Start agent-teamd if needed, then start or resume instances.

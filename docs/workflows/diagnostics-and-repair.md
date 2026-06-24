@@ -95,9 +95,10 @@ agent-team snapshot --output diagnostics.json
 agent-team snapshot --json
 agent-team pipeline snapshot ticket_to_pr --output ticket-to-pr-diagnostics.json
 agent-team team snapshot delivery --output delivery-diagnostics.json
+agent-team snapshot diff before-repair.json after-repair.json
 ```
 
-Snapshots are redacted by default and are designed for debugging or handoff. Use `pipeline snapshot` when the handoff only needs one workflow's pipeline status, explained jobs, owned jobs, and dry-run advance previews.
+Snapshots are redacted by default and are designed for debugging or handoff. Use `pipeline snapshot` when the handoff only needs one workflow's pipeline status, explained jobs, owned jobs, and dry-run advance previews. Use `snapshot diff` to compare two saved artifacts after a tick, repair, or manual intervention.
 
 They include:
 
@@ -169,6 +170,7 @@ Use `--retry-step <id>` with `--retry-pipelines` when a broad repair pass should
 | CI wants pass/fail | `agent-team health --jobs` |
 | Need handoff artifact | `agent-team snapshot --output diagnostics.json` |
 | Need one workflow handoff artifact | `agent-team pipeline snapshot ticket_to_pr --output ticket-to-pr-diagnostics.json` |
+| Need before/after artifact comparison | `agent-team snapshot diff before.json after.json` |
 | Queue parsing fails | `agent-team queue doctor --quarantine --dry-run` |
 | Dead queue entries | `agent-team repair --dry-run --jobs` |
 | Failed pipeline steps | `agent-team repair --retry-pipelines --dry-run --preview-routes` |

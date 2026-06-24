@@ -243,6 +243,117 @@ func TestSnapshotIncludesPipelineAdvancePreview(t *testing.T) {
 	}
 }
 
+func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
+	tmp := t.TempDir()
+	beforePath := filepath.Join(tmp, "before.json")
+	afterPath := filepath.Join(tmp, "after.json")
+	before := snapshotDiffInput{
+		CapturedAt: "2026-06-18T12:00:00Z",
+		Pipeline:   "ticket_to_pr",
+		Jobs: []snapshotDiffJob{
+			{ID: "squ-801", Status: "running", Pipeline: "ticket_to_pr", Target: "worker"},
+			{ID: "squ-802", Status: "blocked", Pipeline: "ticket_to_pr", Target: "worker"},
+		},
+		Queue: []snapshotDiffQueueItem{
+			{ID: "q-1", State: "pending"},
+		},
+		Status: &pipelineStatusRow{
+			Pipeline:     "ticket_to_pr",
+			Jobs:         2,
+			ReadySteps:   1,
+			FailedSteps:  0,
+			BlockedSteps: 1,
+		},
+		AdvancePreview: []snapshotDiffAdvance{
+			{JobID: "squ-801", Pipeline: "ticket_to_pr", StepID: "implement", Target: "worker", Action: "would_advance"},
+		},
+		SectionErrors: map[string]string{"queue": "parse failed"},
+	}
+	after := snapshotDiffInput{
+		CapturedAt: "2026-06-18T12:05:00Z",
+		Pipeline:   "ticket_to_pr",
+		Jobs: []snapshotDiffJob{
+			{ID: "squ-801", Status: "done", Pipeline: "ticket_to_pr", Target: "worker"},
+			{ID: "squ-803", Status: "queued", Pipeline: "ticket_to_pr", Target: "manager"},
+		},
+		Queue: []snapshotDiffQueueItem{
+			{ID: "q-1", State: "dead"},
+			{ID: "q-2", State: "pending"},
+		},
+		Status: &pipelineStatusRow{
+			Pipeline:     "ticket_to_pr",
+			Jobs:         2,
+			ReadySteps:   0,
+			FailedSteps:  1,
+			BlockedSteps: 0,
+		},
+		AdvancePreview: []snapshotDiffAdvance{
+			{JobID: "squ-803", Pipeline: "ticket_to_pr", StepID: "review", Target: "manager", Action: "would_advance"},
+		},
+		SectionErrors: map[string]string{"advance_preview": "route missing"},
+	}
+	writeSnapshotDiffInput(t, beforePath, before)
+	writeSnapshotDiffInput(t, afterPath, after)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("snapshot diff json: %v\nstderr=%s", err, stderr.String())
+	}
+	var result snapshotDiffResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode snapshot diff json: %v\nbody=%s", err, out.String())
+	}
+	if result.Before.Kind != "pipeline" || result.Before.Scope != "ticket_to_pr" || result.After.Scope != "ticket_to_pr" {
+		t.Fatalf("snapshot diff metadata = %+v -> %+v", result.Before, result.After)
+	}
+	if result.Summary.Jobs.Added != 1 || result.Summary.Jobs.Removed != 1 || result.Summary.Jobs.Changed != 1 {
+		t.Fatalf("job counters = %+v", result.Summary.Jobs)
+	}
+	if result.Summary.Queue.Added != 1 || result.Summary.Queue.Changed != 1 {
+		t.Fatalf("queue counters = %+v", result.Summary.Queue)
+	}
+	if result.Summary.Advance.Added != 1 || result.Summary.Advance.Removed != 1 {
+		t.Fatalf("advance counters = %+v", result.Summary.Advance)
+	}
+	if result.Summary.SectionErrors.Added != 1 || result.Summary.SectionErrors.Removed != 1 {
+		t.Fatalf("section error counters = %+v", result.Summary.SectionErrors)
+	}
+	if !hasSnapshotDiffChange(result.Changes, "jobs", "squ-801", "changed") ||
+		!hasSnapshotDiffChange(result.Changes, "jobs", "squ-802", "removed") ||
+		!hasSnapshotDiffChange(result.Changes, "jobs", "squ-803", "added") ||
+		!hasSnapshotDiffChange(result.Changes, "pipelines", "ticket_to_pr.ready_steps", "changed") ||
+		!hasSnapshotDiffChange(result.Changes, "advance", "squ-803:review", "added") {
+		t.Fatalf("missing expected changes: %+v", result.Changes)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"snapshot", "diff", beforePath, afterPath})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("snapshot diff text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{
+		"snapshot diff:",
+		"jobs: added=1 removed=1 changed=1",
+		"pipelines:",
+		"queue: added=1 removed=0 changed=1",
+		"advance: added=1 removed=1 changed=0",
+		"section_errors: added=1 removed=1 changed=0",
+		"squ-801",
+		"ticket_to_pr.ready_steps",
+	} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("snapshot diff text missing %q:\n%s", want, textOut.String())
+		}
+	}
+}
+
 func TestSnapshotIncludesGitMetadata(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -276,6 +387,26 @@ func TestSnapshotIncludesGitMetadata(t *testing.T) {
 	if !snapshot.Git.Dirty || snapshot.Git.Changes == 0 {
 		t.Fatalf("git metadata = %+v, want dirty working tree", snapshot.Git)
 	}
+}
+
+func writeSnapshotDiffInput(t *testing.T, path string, input snapshotDiffInput) {
+	t.Helper()
+	body, err := json.MarshalIndent(input, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal snapshot diff input: %v", err)
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func hasSnapshotDiffChange(changes []snapshotDiffChange, section, id, action string) bool {
+	for _, change := range changes {
+		if change.Section == section && change.ID == id && change.Action == action {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSnapshotIntakeSummaryUsesFullLedger(t *testing.T) {
