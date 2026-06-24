@@ -524,6 +524,13 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 			if issue.Code == "daemon_not_running" || issue.Code == "daemon_not_ready" {
 				add("agent-team daemon start", "health", issue.Code)
 			}
+			if issue.Code == "declared_missing" || issue.Code == "declared_not_running" {
+				if teamName != "" {
+					add(fmt.Sprintf("agent-team team sync %s --dry-run", teamName), "health", issue.Code)
+				} else {
+					add("agent-team sync --dry-run", "health", issue.Code)
+				}
+			}
 			for _, action := range issue.Actions {
 				action = overviewIssueAction(action)
 				add(action, overviewIssueActionSource(action, issue.Code), issue.Code)
