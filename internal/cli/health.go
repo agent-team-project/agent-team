@@ -990,11 +990,12 @@ func renderHealth(w io.Writer, result *healthResult) {
 		fmt.Fprintln(w, queueSummaryLine(result.Queue))
 	}
 	if result.Intake.Deliveries > 0 {
-		fmt.Fprintf(w, "intake: deliveries=%d errors=%d recovered=%d replayable=%d\n",
+		fmt.Fprintf(w, "intake: deliveries=%d errors=%d recovered=%d replayable=%d duplicate_request_ids=%d\n",
 			result.Intake.Deliveries,
 			result.Intake.Errors,
 			result.Intake.Recovered,
 			result.Intake.Replayable,
+			result.Intake.DuplicateRequestIDs,
 		)
 	}
 	if result.Jobs != nil {

@@ -259,6 +259,67 @@ func TestOverviewReportsIntakeErrors(t *testing.T) {
 	}
 }
 
+func TestOverviewReportsIntakeDuplicateRequestIDs(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, delivery := range []intakeDelivery{
+		{
+			ID:         "first",
+			Time:       time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC),
+			Provider:   "github",
+			RequestID:  "github-delivery-1",
+			Status:     intakeDeliveryStatusOK,
+			HTTPStatus: 200,
+			EventType:  "pr.opened",
+		},
+		{
+			ID:         "second",
+			Time:       time.Date(2026, 6, 19, 12, 1, 0, 0, time.UTC),
+			Provider:   "github",
+			RequestID:  "github-delivery-1",
+			Status:     intakeDeliveryStatusOK,
+			HTTPStatus: 200,
+			EventType:  "pr.opened",
+		},
+	} {
+		if err := appendIntakeDelivery(teamDir, delivery); err != nil {
+			t.Fatalf("append %s: %v", delivery.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview duplicate intake json: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview duplicate intake: %v\nbody=%s", err, out.String())
+	}
+	if overview.OK || overview.State != "attention" || overview.Intake.Errors != 0 || overview.Intake.DuplicateRequestIDs != 1 {
+		t.Fatalf("overview duplicate state/intake = ok:%v state:%q intake:%+v", overview.OK, overview.State, overview.Intake)
+	}
+	if !stringSliceContains(overview.Actions, "agent-team intake duplicates") {
+		t.Fatalf("actions missing intake duplicates: %+v", overview.Actions)
+	}
+	var sawDetail bool
+	for _, detail := range overview.ActionDetails {
+		if detail.Command == "agent-team intake duplicates" && detail.Source == "intake" && detail.Reason == "duplicate_request_ids=1" {
+			sawDetail = true
+			break
+		}
+	}
+	if !sawDetail {
+		t.Fatalf("action details missing duplicate intake detail: %+v", overview.ActionDetails)
+	}
+}
+
 func TestOverviewRecommendsBatchCleanupReadyJobs(t *testing.T) {
 	root := writeOverviewCleanupFixture(t)
 

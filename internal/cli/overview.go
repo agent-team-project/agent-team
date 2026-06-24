@@ -218,12 +218,13 @@ type overviewScheduleSummary struct {
 }
 
 type overviewIntakeSummary struct {
-	Deliveries    int    `json:"deliveries"`
-	Errors        int    `json:"errors"`
-	Recovered     int    `json:"recovered"`
-	Replayable    int    `json:"replayable"`
-	LatestErrorID string `json:"latest_error_id,omitempty"`
-	LatestError   string `json:"latest_error,omitempty"`
+	Deliveries          int    `json:"deliveries"`
+	Errors              int    `json:"errors"`
+	Recovered           int    `json:"recovered"`
+	Replayable          int    `json:"replayable"`
+	DuplicateRequestIDs int    `json:"duplicate_request_ids,omitempty"`
+	LatestErrorID       string `json:"latest_error_id,omitempty"`
+	LatestError         string `json:"latest_error,omitempty"`
 }
 
 func collectOverview(teamDir string, now time.Time, scheduleLimit int) *overviewResult {
@@ -538,12 +539,13 @@ func overviewSchedulesFromRows(schedules []scheduleInfo, now time.Time, limit in
 func overviewIntakeFromDeliveries(deliveries []intakeDelivery) overviewIntakeSummary {
 	summary := summarizeIntakeDeliveries(deliveries)
 	return overviewIntakeSummary{
-		Deliveries:    summary.Deliveries,
-		Errors:        summary.Unresolved,
-		Recovered:     summary.Recovered,
-		Replayable:    summary.Replayable,
-		LatestErrorID: summary.LatestErrorID,
-		LatestError:   summary.LatestError,
+		Deliveries:          summary.Deliveries,
+		Errors:              summary.Unresolved,
+		Recovered:           summary.Recovered,
+		Replayable:          summary.Replayable,
+		DuplicateRequestIDs: len(duplicateIntakeRequestIDs(deliveries, "", "")),
+		LatestErrorID:       summary.LatestErrorID,
+		LatestError:         summary.LatestError,
 	}
 }
 
@@ -689,6 +691,9 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 		if out.Intake.Replayable > 0 {
 			add(intakeReplayAllDryRunAction(), "intake", fmt.Sprintf("replayable=%d", out.Intake.Replayable))
 		}
+	}
+	if teamName == "" && out.Intake.DuplicateRequestIDs > 0 {
+		add("agent-team intake duplicates", "intake", fmt.Sprintf("duplicate_request_ids=%d", out.Intake.DuplicateRequestIDs))
 	}
 	if len(out.SectionErrors) > 0 {
 		if teamName == "" && strings.TrimSpace(out.SectionErrors["intake"]) != "" {
@@ -871,7 +876,8 @@ func overviewOK(out *overviewResult, health *healthResult) bool {
 		out.Pipelines.BlockedSteps == 0 &&
 		out.Pipelines.FailedSteps == 0 &&
 		out.Schedules.Due == 0 &&
-		out.Intake.Errors == 0
+		out.Intake.Errors == 0 &&
+		out.Intake.DuplicateRequestIDs == 0
 }
 
 func overviewState(out *overviewResult) string {
@@ -887,7 +893,8 @@ func overviewState(out *overviewResult) string {
 		out.Jobs.Attention > 0 ||
 		out.Pipelines.BlockedSteps > 0 ||
 		out.Pipelines.FailedSteps > 0 ||
-		out.Intake.Errors > 0 {
+		out.Intake.Errors > 0 ||
+		out.Intake.DuplicateRequestIDs > 0 {
 		return "attention"
 	}
 	return "active"
@@ -1009,11 +1016,12 @@ func renderOverview(w io.Writer, result *overviewResult, jsonOut bool, tmpl *tem
 		result.Schedules.Declared,
 		result.Schedules.Due,
 		result.Schedules.Upcoming)
-	fmt.Fprintf(w, "intake: deliveries=%d errors=%d recovered=%d replayable=%d latest_error=%s\n",
+	fmt.Fprintf(w, "intake: deliveries=%d errors=%d recovered=%d replayable=%d duplicate_request_ids=%d latest_error=%s\n",
 		result.Intake.Deliveries,
 		result.Intake.Errors,
 		result.Intake.Recovered,
 		result.Intake.Replayable,
+		result.Intake.DuplicateRequestIDs,
 		emptyDash(result.Intake.LatestErrorID))
 	if len(result.Actions) == 0 {
 		fmt.Fprintln(w, "actions: none")
