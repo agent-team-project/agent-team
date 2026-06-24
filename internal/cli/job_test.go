@@ -1116,6 +1116,26 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 		t.Fatalf("job queue sort/limit output = %q", sortedOut.String())
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var watchOut bytes.Buffer
+	if err := runJobQueueListWatch(ctx, &watchOut, teamDir, j, queueListFilters{}, queueListOptions{Sort: "attempts", Limit: 1}, false, nil, time.Millisecond, false); err != nil {
+		t.Fatalf("runJobQueueListWatch: %v", err)
+	}
+	if got := watchOut.String(); !strings.Contains(got, "q-job-dead") || strings.Contains(got, "q-job-ready") || strings.Contains(got, watchClearSequence) {
+		t.Fatalf("job queue watch output = %q", got)
+	}
+
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel()
+	var summaryWatchOut bytes.Buffer
+	if err := runJobQueueSummaryWatch(ctx, &summaryWatchOut, teamDir, j, queueListFilters{}, false, time.Millisecond, false); err != nil {
+		t.Fatalf("runJobQueueSummaryWatch: %v", err)
+	}
+	if got := summaryWatchOut.String(); !strings.Contains(got, "queue: total=3 pending=2 dead=1") || strings.Contains(got, watchClearSequence) {
+		t.Fatalf("job queue summary watch output = %q", got)
+	}
+
 	textList := NewRootCmd()
 	textListOut, textListErr := &bytes.Buffer{}, &bytes.Buffer{}
 	textList.SetOut(textListOut)
@@ -1232,6 +1252,28 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 	}
 	if runtimeSummary.Total != 2 || runtimeSummary.Pending != 1 || runtimeSummary.Dead != 1 || runtimeSummary.Delayed != 0 || runtimeSummary.Runtimes["codex"] != 2 {
 		t.Fatalf("job queue runtime summary = %+v", runtimeSummary)
+	}
+}
+
+func TestJobQueueRejectsNegativeWatchInterval(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	j := mustNewJob(t, "SQU-122", "worker")
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("job.Write: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "queue", "SQU-122", "--repo", tmp, "--watch", "--interval", "-1s"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("job queue negative interval succeeded")
+	}
+	if !strings.Contains(stderr.String(), "--interval must be >= 0") {
+		t.Fatalf("negative interval stderr = %q", stderr.String())
 	}
 }
 

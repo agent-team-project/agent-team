@@ -80,6 +80,9 @@ func newJobQueueCmd() *cobra.Command {
 		readyOnly   bool
 		sortBy      string
 		limit       int
+		watch       bool
+		noClear     bool
+		interval    time.Duration
 		summary     bool
 		jsonOut     bool
 		format      string
@@ -107,6 +110,10 @@ func newJobQueueCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue: --limit must be >= 0.")
 				return exitErr(2)
 			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue: --interval must be >= 0.")
+				return exitErr(2)
+			}
 			sortMode, err := parseQueueListSort(sortBy)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job queue: %v\n", err)
@@ -126,6 +133,14 @@ func newJobQueueCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				if summary {
+					return runJobQueueSummaryWatch(ctx, cmd.OutOrStdout(), teamDir, j, filters, jsonOut, interval, !noClear && !jsonOut)
+				}
+				return runJobQueueListWatch(ctx, cmd.OutOrStdout(), teamDir, j, filters, queueListOptions{Sort: sortMode, Limit: limit}, jsonOut, tmpl, interval, !noClear && !jsonOut)
+			}
 			return runJobQueueList(cmd.OutOrStdout(), teamDir, j, filters, queueListOptions{Sort: sortMode, Limit: limit}, summary, jsonOut, tmpl)
 		},
 	}
@@ -136,6 +151,9 @@ func newJobQueueCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&readyOnly, "ready", false, "Only show pending queue items whose next retry is due now.")
 	cmd.Flags().StringVar(&sortBy, "sort", "state", "Sort rows by state, id, event, instance, job, runtime, queued, updated, next-retry, or attempts.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the job queue table until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate queue counts instead of queue rows.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
@@ -6299,6 +6317,58 @@ func runJobQueueList(w io.Writer, teamDir string, j *job.Job, filters queueListF
 	}
 	renderQueueTableWithActions(w, filtered, runtimeByInstance, jobQueueActionResolver(j.ID))
 	return nil
+}
+
+func runJobQueueListWatch(ctx context.Context, w io.Writer, teamDir string, j *job.Job, filters queueListFilters, opts queueListOptions, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if !jsonOut {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+		}
+		if err := runJobQueueList(w, teamDir, j, filters, opts, false, jsonOut, tmpl); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
+}
+
+func runJobQueueSummaryWatch(ctx context.Context, w io.Writer, teamDir string, j *job.Job, filters queueListFilters, jsonOut bool, interval time.Duration, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if !jsonOut {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+		}
+		if err := runJobQueueList(w, teamDir, j, filters, queueListOptions{}, true, jsonOut, nil); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
 }
 
 func jobQueueActionResolver(jobID string) queueActionResolver {

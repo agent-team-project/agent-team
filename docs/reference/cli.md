@@ -110,7 +110,7 @@ Shortcuts:
 
 | Command | Purpose |
 | --- | --- |
-| `agent-team job queue <job-id>` | List active queue entries owned by a job; filter queued dispatches with `--runtime`, sort rows with `--sort`, and cap output with `--limit` |
+| `agent-team job queue <job-id>` | List or watch active queue entries owned by a job; filter queued dispatches with `--runtime`, sort rows with `--sort`, and cap output with `--limit` |
 | `agent-team job queue show <job-id> <id>` | Inspect one active queue item owned by a job |
 | `agent-team job queue retry <job-id> <id>` | Retry one job-owned queue item |
 | `agent-team job queue retry <job-id> --all` | Retry matching job-owned queue items; filter batch actions with `--runtime` |

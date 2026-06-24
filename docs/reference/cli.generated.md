@@ -1969,14 +1969,17 @@ Flags:
 ```text
       --event-type strings   Filter by event type; repeat or comma-separate values.
       --format string        Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --interval duration    Refresh interval for --watch. (default 2s)
       --json                 Emit machine-readable JSON.
       --limit int            Limit rows after filtering and sorting; 0 means no limit.
+      --no-clear             With --watch, append snapshots instead of redrawing the terminal.
       --ready                Only show pending queue items whose next retry is due now.
       --repo string          Repo root containing .agent_team. (default "<repo>")
       --runtime strings      Filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.
       --sort string          Sort rows by state, id, event, instance, job, runtime, queued, updated, next-retry, or attempts. (default "state")
       --state string         Filter by queue state: pending or dead.
       --summary              Show aggregate queue counts instead of queue rows.
+  -w, --watch                Refresh the job queue table until interrupted.
 ```
 
 Subcommands:
