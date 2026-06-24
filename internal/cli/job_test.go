@@ -5860,6 +5860,26 @@ func TestJobHoldReleaseStopsReadiness(t *testing.T) {
 		t.Fatalf("held summary = %+v", summary)
 	}
 
+	triageExpired := NewRootCmd()
+	triageExpiredOut, triageExpiredErr := &bytes.Buffer{}, &bytes.Buffer{}
+	triageExpired.SetOut(triageExpiredOut)
+	triageExpired.SetErr(triageExpiredErr)
+	triageExpired.SetArgs([]string{"job", "triage", "--repo", tmp, "--reason", "expired_hold", "--json"})
+	if err := triageExpired.Execute(); err != nil {
+		t.Fatalf("job triage expired hold: %v\nstderr=%s", err, triageExpiredErr.String())
+	}
+	var expiredTriage jobTriageSnapshot
+	if err := json.Unmarshal(triageExpiredOut.Bytes(), &expiredTriage); err != nil {
+		t.Fatalf("decode expired hold triage: %v\nbody=%s", err, triageExpiredOut.String())
+	}
+	if len(expiredTriage.Attention) != 1 ||
+		expiredTriage.Attention[0].JobID != "squ-241" ||
+		!containsString(expiredTriage.Attention[0].Reasons, "expired_hold") ||
+		!containsString(expiredTriage.Attention[0].Actions, "agent-team job release squ-241") ||
+		!strings.Contains(expiredTriage.Attention[0].Message, "expired") {
+		t.Fatalf("expired hold triage = %+v", expiredTriage.Attention)
+	}
+
 	release := NewRootCmd()
 	releaseOut, releaseErr := &bytes.Buffer{}, &bytes.Buffer{}
 	release.SetOut(releaseOut)

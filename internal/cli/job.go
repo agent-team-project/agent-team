@@ -4121,11 +4121,16 @@ func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, n
 		addTriageReason("blocked_step", "warning")
 	case "held":
 		addTriageReason("held", "info")
+		if jobHoldExpired(j, now) {
+			addTriageReason("expired_hold", "warning")
+		}
 	}
 	if len(item.Reasons) == 0 {
 		return jobTriageItem{}, false
 	}
-	if strings.TrimSpace(j.LastStatus) != "" {
+	if stringSliceContains(item.Reasons, "expired_hold") {
+		item.Message = heldJobMessage(j)
+	} else if strings.TrimSpace(j.LastStatus) != "" {
 		item.Message = j.LastStatus
 	} else if strings.TrimSpace(next.Message) != "" {
 		item.Message = next.Message
@@ -4286,7 +4291,7 @@ func actionsForJobTriageItem(item jobTriageItem) []string {
 	if stringSliceContains(item.Reasons, "cleanup_ready") {
 		add(fmt.Sprintf("agent-team job cleanup %s --dry-run", item.JobID))
 	}
-	if stringSliceContains(item.Reasons, "held") {
+	if stringSliceContains(item.Reasons, "held") || stringSliceContains(item.Reasons, "expired_hold") {
 		add(fmt.Sprintf("agent-team job release %s", item.JobID))
 	}
 	if strings.TrimSpace(item.Pipeline) != "" {

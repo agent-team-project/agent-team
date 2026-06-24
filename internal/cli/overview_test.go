@@ -247,6 +247,64 @@ func TestOverviewRecommendsBatchCleanupReadyJobs(t *testing.T) {
 	}
 }
 
+func TestOverviewRecommendsExpiredHoldRelease(t *testing.T) {
+	root := writeOverviewExpiredHoldFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview expired holds: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview expired holds: %v\nbody=%s", err, out.String())
+	}
+	if overview.Jobs.ExpiredHolds != 1 || overview.Jobs.Summary.ExpiredHeld != 1 {
+		t.Fatalf("overview jobs = %+v", overview.Jobs)
+	}
+	if !stringSliceContains(overview.Actions, "agent-team pipeline release --all --expired --dry-run") {
+		t.Fatalf("actions missing expired release: %+v", overview.Actions)
+	}
+	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team pipeline release --all --expired --dry-run"); !ok || detail.Source != "jobs" || detail.Reason != "expired_holds=1" {
+		t.Fatalf("expired release detail = %+v ok=%v", detail, ok)
+	}
+
+	next := NewRootCmd()
+	nextOut, nextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	next.SetOut(nextOut)
+	next.SetErr(nextErr)
+	next.SetArgs([]string{"next", "--target", root, "--reason", "expired_holds", "--json"})
+	if err := next.Execute(); err != nil {
+		t.Fatalf("next expired holds: %v\nstderr=%s", err, nextErr.String())
+	}
+	var nextResult nextActionResult
+	if err := json.Unmarshal(nextOut.Bytes(), &nextResult); err != nil {
+		t.Fatalf("decode next expired holds: %v\nbody=%s", err, nextOut.String())
+	}
+	if len(nextResult.Actions) != 1 || nextResult.Actions[0] != "agent-team pipeline release --all --expired --dry-run" {
+		t.Fatalf("next expired holds = %+v", nextResult)
+	}
+
+	team := NewRootCmd()
+	teamOut, teamErr := &bytes.Buffer{}, &bytes.Buffer{}
+	team.SetOut(teamOut)
+	team.SetErr(teamErr)
+	team.SetArgs([]string{"team", "overview", "delivery", "--repo", root, "--json"})
+	if err := team.Execute(); err != nil {
+		t.Fatalf("team overview expired holds: %v\nstderr=%s", err, teamErr.String())
+	}
+	var teamOverview overviewResult
+	if err := json.Unmarshal(teamOut.Bytes(), &teamOverview); err != nil {
+		t.Fatalf("decode team overview expired holds: %v\nbody=%s", err, teamOut.String())
+	}
+	if teamOverview.Jobs.ExpiredHolds != 1 || !stringSliceContains(teamOverview.Actions, "agent-team team release delivery --expired --dry-run") {
+		t.Fatalf("team overview expired holds = %+v actions=%+v", teamOverview.Jobs, teamOverview.Actions)
+	}
+}
+
 func TestOverviewRecommendsIntakeDoctorForLedgerParseErrors(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
@@ -846,6 +904,56 @@ instances = ["worker"]
 		PR:        "https://github.com/acme/repo/pull/710",
 		CreatedAt: now,
 		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("job.Write: %v", err)
+	}
+	return root
+}
+
+func writeOverviewExpiredHoldFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	instances := `
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[teams.delivery]
+instances = ["worker"]
+pipelines = ["ticket_to_pr"]
+`
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(instances), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	j := &job.Job{
+		ID:         "squ-711",
+		Ticket:     "SQU-711",
+		Target:     "worker",
+		Pipeline:   "ticket_to_pr",
+		Status:     job.StatusQueued,
+		Held:       true,
+		HoldReason: "maintenance window elapsed",
+		HoldUntil:  now.Add(-time.Minute),
+		CreatedAt:  now.Add(-time.Hour),
+		UpdatedAt:  now,
+		Steps: []job.Step{{
+			ID:     "implement",
+			Target: "worker",
+			Status: job.StatusQueued,
+		}},
 	}
 	if err := job.Write(teamDir, j); err != nil {
 		t.Fatalf("job.Write: %v", err)
