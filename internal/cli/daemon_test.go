@@ -294,12 +294,16 @@ func TestDaemonAdoptUpdatesOwningJob(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
+	worktree := filepath.Join(tmp, "worktrees", "squ-66")
 	now := time.Now().UTC()
 	if err := job.Write(teamDir, &job.Job{
 		ID:        "squ-66",
 		Ticket:    "SQU-66",
 		Target:    "worker",
 		Status:    job.StatusQueued,
+		Branch:    "squ-66-adopted",
+		Worktree:  worktree,
+		PR:        "https://github.com/example/repo/pull/66",
 		CreatedAt: now,
 		UpdatedAt: now,
 	}); err != nil {
@@ -313,12 +317,8 @@ func TestDaemonAdoptUpdatesOwningJob(t *testing.T) {
 	cmd.SetArgs([]string{
 		"daemon", "adopt", "worker-squ-66",
 		"--target", tmp,
-		"--agent", "worker",
 		"--pid", strconv.Itoa(os.Getpid()),
 		"--job", "squ-66",
-		"--ticket", "SQU-66",
-		"--branch", "squ-66-adopted",
-		"--pr", "https://github.com/example/repo/pull/66",
 		"--json",
 	})
 	if err := cmd.Execute(); err != nil {
@@ -330,6 +330,9 @@ func TestDaemonAdoptUpdatesOwningJob(t *testing.T) {
 	}
 	if result.Metadata == nil || result.Metadata.Job != "squ-66" || result.Job == nil || !result.JobChanged {
 		t.Fatalf("adopt result = %+v", result)
+	}
+	if result.Metadata.Agent != "worker" || result.Metadata.Ticket != "SQU-66" || result.Metadata.Branch != "squ-66-adopted" || result.Metadata.PR != "https://github.com/example/repo/pull/66" || result.Metadata.Workspace != worktree {
+		t.Fatalf("metadata defaults = %+v", result.Metadata)
 	}
 	if result.Job.Status != job.StatusRunning || result.Job.Instance != "worker-squ-66" || result.Job.Branch != "squ-66-adopted" || result.Job.PR != "https://github.com/example/repo/pull/66" || result.Job.LastEvent != "adopted" {
 		t.Fatalf("adopted job result = %+v", result.Job)

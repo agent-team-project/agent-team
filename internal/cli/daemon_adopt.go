@@ -138,14 +138,26 @@ func runDaemonAdopt(cmd *cobra.Command, target, instance string, opts daemonAdop
 		return err
 	}
 	repoRoot := filepath.Dir(teamDir)
+	jobDefaults, err := loadDaemonAdoptJobDefaults(teamDir, opts.Job)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team daemon adopt: %v\n", err)
+		return exitErr(1)
+	}
 	workspace := strings.TrimSpace(opts.Workspace)
+	if workspace == "" {
+		workspace = strings.TrimSpace(jobDefaults.Workspace)
+	}
 	if workspace == "" {
 		workspace = repoRoot
 	}
 	if abs, err := filepath.Abs(workspace); err == nil {
 		workspace = abs
 	}
-	agent, err := inferDaemonAdoptAgent(teamDir, instance, opts.Agent)
+	agentDefault := strings.TrimSpace(opts.Agent)
+	if agentDefault == "" {
+		agentDefault = strings.TrimSpace(jobDefaults.Agent)
+	}
+	agent, err := inferDaemonAdoptAgent(teamDir, instance, agentDefault)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team daemon adopt: %v\n", err)
 		return exitErr(2)
@@ -173,9 +185,9 @@ func runDaemonAdopt(cmd *cobra.Command, target, instance string, opts daemonAdop
 		Instance:      instance,
 		Agent:         agent,
 		Job:           opts.Job,
-		Ticket:        opts.Ticket,
-		Branch:        opts.Branch,
-		PR:            opts.PR,
+		Ticket:        adoptDefaultString(opts.Ticket, jobDefaults.Ticket),
+		Branch:        adoptDefaultString(opts.Branch, jobDefaults.Branch),
+		PR:            adoptDefaultString(opts.PR, jobDefaults.PR),
 		Runtime:       string(rt.Kind),
 		RuntimeBinary: rt.Binary,
 		Workspace:     workspace,
@@ -217,6 +229,43 @@ func runDaemonAdopt(cmd *cobra.Command, target, instance string, opts daemonAdop
 		}
 	}
 	return renderDaemonAdoptResult(cmd.OutOrStdout(), result, opts)
+}
+
+type daemonAdoptJobDefaults struct {
+	Agent     string
+	Ticket    string
+	Branch    string
+	PR        string
+	Workspace string
+}
+
+func loadDaemonAdoptJobDefaults(teamDir, rawID string) (daemonAdoptJobDefaults, error) {
+	id := job.IDFromInput(rawID)
+	if id == "" {
+		return daemonAdoptJobDefaults{}, nil
+	}
+	j, err := job.Read(teamDir, id)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return daemonAdoptJobDefaults{}, nil
+		}
+		return daemonAdoptJobDefaults{}, err
+	}
+	return daemonAdoptJobDefaults{
+		Agent:     strings.TrimSpace(j.Target),
+		Ticket:    strings.TrimSpace(j.Ticket),
+		Branch:    strings.TrimSpace(j.Branch),
+		PR:        strings.TrimSpace(j.PR),
+		Workspace: strings.TrimSpace(j.Worktree),
+	}, nil
+}
+
+func adoptDefaultString(explicit, fallback string) string {
+	explicit = strings.TrimSpace(explicit)
+	if explicit != "" {
+		return explicit
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func updateJobAfterDaemonAdopt(teamDir string, meta *daemon.Metadata, dryRun bool, now time.Time) (*job.Job, bool, error) {
