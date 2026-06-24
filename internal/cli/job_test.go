@@ -7424,6 +7424,21 @@ func TestJobReadyListsAdvanceablePipelineJobs(t *testing.T) {
 		t.Fatalf("limited ready rows = %q", out.String())
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetContext(ctx)
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--pipeline", "ticket_to_pr", "--state", "all", "--sort", "updated", "--limit", "1", "--watch", "--no-clear", "--interval", "1ms", "--format", "{{.JobID}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job ready watch: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "squ-211" || strings.Contains(out.String(), watchClearSequence) {
+		t.Fatalf("watched ready rows = %q", out.String())
+	}
+
 	cmd = NewRootCmd()
 	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
@@ -7458,6 +7473,18 @@ func TestJobReadyListsAdvanceablePipelineJobs(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--limit must be >= 0") {
 		t.Fatalf("missing limit error:\n%s", stderr.String())
+	}
+
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--watch", "--interval", "-1s"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("job ready negative interval succeeded")
+	}
+	if !strings.Contains(stderr.String(), "--interval must be >= 0") {
+		t.Fatalf("missing interval error:\n%s", stderr.String())
 	}
 
 	cmd = NewRootCmd()

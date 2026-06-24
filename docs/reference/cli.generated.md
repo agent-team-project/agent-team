@@ -2181,14 +2181,17 @@ agent-team job ready [flags]
 Flags:
 
 ```text
-      --format string     Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
-      --json              Emit ready rows as JSON.
-      --limit int         Limit rows after filtering and sorting; 0 means no limit.
-      --pipeline string   Filter by pipeline name.
-      --repo string       Repo root containing .agent_team. (default "<repo>")
-      --sort string       Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label. (default "job")
-      --state strings     Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
-      --step string       Only include rows whose next step has this id.
+      --format string       Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
+      --interval duration   Refresh interval for --watch. (default 2s)
+      --json                Emit ready rows as JSON.
+      --limit int           Limit rows after filtering and sorting; 0 means no limit.
+      --no-clear            With --watch, append snapshots instead of redrawing the terminal.
+      --pipeline string     Filter by pipeline name.
+      --repo string         Repo root containing .agent_team. (default "<repo>")
+      --sort string         Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label. (default "job")
+      --state strings       Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --step string         Only include rows whose next step has this id.
+  -w, --watch               Refresh the ready-step table until interrupted.
 ```
 
 ## `agent-team job reconcile`
@@ -3060,14 +3063,17 @@ agent-team pipeline ready <pipeline>|--all [flags]
 Flags:
 
 ```text
-      --all             List ready jobs across all pipelines.
-      --format string   Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
-      --json            Emit ready rows as JSON.
-      --limit int       Limit rows after filtering and sorting; 0 means no limit.
-      --repo string     Repo root containing .agent_team. (default "<repo>")
-      --sort string     Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label. (default "job")
-      --state strings   Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
-      --step string     Only include rows whose next step has this id.
+      --all                 List ready jobs across all pipelines.
+      --format string       Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
+      --interval duration   Refresh interval for --watch. (default 2s)
+      --json                Emit ready rows as JSON.
+      --limit int           Limit rows after filtering and sorting; 0 means no limit.
+      --no-clear            With --watch, append snapshots instead of redrawing the terminal.
+      --repo string         Repo root containing .agent_team. (default "<repo>")
+      --sort string         Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label. (default "job")
+      --state strings       Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --step string         Only include rows whose next step has this id.
+  -w, --watch               Refresh the ready-step table until interrupted.
 ```
 
 ## `agent-team pipeline release`
@@ -5221,13 +5227,16 @@ agent-team team ready <team> [flags]
 Flags:
 
 ```text
-      --format string   Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
-      --json            Emit team ready rows as JSON.
-      --limit int       Limit rows after filtering and sorting; 0 means no limit.
-      --repo string     Repo root containing .agent_team. (default "<repo>")
-      --sort string     Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label. (default "job")
-      --state strings   Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
-      --step string     Only include rows whose next step has this id.
+      --format string       Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
+      --interval duration   Refresh interval for --watch. (default 2s)
+      --json                Emit team ready rows as JSON.
+      --limit int           Limit rows after filtering and sorting; 0 means no limit.
+      --no-clear            With --watch, append snapshots instead of redrawing the terminal.
+      --repo string         Repo root containing .agent_team. (default "<repo>")
+      --sort string         Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label. (default "job")
+      --state strings       Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --step string         Only include rows whose next step has this id.
+  -w, --watch               Refresh the team ready-step table until interrupted.
 ```
 
 ## `agent-team team release`

@@ -3569,6 +3569,9 @@ func newJobReadyCmd() *cobra.Command {
 		step     string
 		sortBy   string
 		limit    int
+		watch    bool
+		noClear  bool
+		interval time.Duration
 		jsonOut  bool
 		format   string
 	)
@@ -3596,6 +3599,10 @@ func newJobReadyCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ready: --limit must be >= 0.")
 				return exitErr(2)
 			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ready: --interval must be >= 0.")
+				return exitErr(2)
+			}
 			tmpl, err := parseJobReadyFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job ready: %v\n", err)
@@ -3605,13 +3612,19 @@ func newJobReadyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runJobReady(cmd.OutOrStdout(), teamDir, jobReadyOptions{
+			opts := jobReadyOptions{
 				Pipeline: strings.TrimSpace(pipeline),
 				States:   stateFilter,
 				Step:     step,
 				Sort:     sortMode,
 				Limit:    limit,
-			}, jsonOut, tmpl)
+			}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				return runJobReadyWatch(ctx, cmd.OutOrStdout(), teamDir, opts, jsonOut, tmpl, interval, !noClear && !jsonOut)
+			}
+			return runJobReady(cmd.OutOrStdout(), teamDir, opts, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -3620,6 +3633,9 @@ func newJobReadyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&step, "step", "", "Only include rows whose next step has this id.")
 	cmd.Flags().StringVar(&sortBy, "sort", "job", "Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the ready-step table until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit ready rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.")
 	return cmd
@@ -5682,6 +5698,32 @@ func runJobReady(w io.Writer, teamDir string, opts jobReadyOptions, jsonOut bool
 	}
 	renderJobReadyTable(w, rows)
 	return nil
+}
+
+func runJobReadyWatch(ctx context.Context, w io.Writer, teamDir string, opts jobReadyOptions, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if !jsonOut {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+		}
+		if err := runJobReady(w, teamDir, opts, jsonOut, tmpl); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
 }
 
 func prepareJobReadyRows(rows []jobReadyRow, opts jobReadyOptions) []jobReadyRow {

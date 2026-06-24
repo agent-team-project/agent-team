@@ -325,6 +325,33 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team ready format = %q", got)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	readyWatch := NewRootCmd()
+	readyWatchOut, readyWatchErr := &bytes.Buffer{}, &bytes.Buffer{}
+	readyWatch.SetContext(ctx)
+	readyWatch.SetOut(readyWatchOut)
+	readyWatch.SetErr(readyWatchErr)
+	readyWatch.SetArgs([]string{"team", "ready", "delivery", "--repo", root, "--state", "all", "--step", "review", "--sort", "updated", "--limit", "1", "--watch", "--no-clear", "--interval", "1ms", "--format", "{{.JobID}} {{.State}} {{.StepID}}"})
+	if err := readyWatch.Execute(); err != nil {
+		t.Fatalf("team ready watch: %v\nstderr=%s", err, readyWatchErr.String())
+	}
+	if got := strings.TrimSpace(readyWatchOut.String()); got != "squ-801 ready review" || strings.Contains(readyWatchOut.String(), watchClearSequence) {
+		t.Fatalf("team ready watch = %q", readyWatchOut.String())
+	}
+
+	readyInterval := NewRootCmd()
+	readyIntervalOut, readyIntervalErr := &bytes.Buffer{}, &bytes.Buffer{}
+	readyInterval.SetOut(readyIntervalOut)
+	readyInterval.SetErr(readyIntervalErr)
+	readyInterval.SetArgs([]string{"team", "ready", "delivery", "--repo", root, "--watch", "--interval", "-1s"})
+	if err := readyInterval.Execute(); err == nil {
+		t.Fatalf("team ready negative interval succeeded")
+	}
+	if !strings.Contains(readyIntervalErr.String(), "--interval must be >= 0") {
+		t.Fatalf("team ready negative interval stderr = %q", readyIntervalErr.String())
+	}
+
 	advance := NewRootCmd()
 	advanceOut, advanceErr := &bytes.Buffer{}, &bytes.Buffer{}
 	advance.SetOut(advanceOut)

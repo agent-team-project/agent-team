@@ -909,13 +909,16 @@ func newTeamJobsCmd() *cobra.Command {
 
 func newTeamReadyCmd() *cobra.Command {
 	var (
-		repo    string
-		states  []string
-		step    string
-		sortBy  string
-		limit   int
-		jsonOut bool
-		format  string
+		repo     string
+		states   []string
+		step     string
+		sortBy   string
+		limit    int
+		watch    bool
+		noClear  bool
+		interval time.Duration
+		jsonOut  bool
+		format   string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -941,6 +944,10 @@ func newTeamReadyCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ready: --limit must be >= 0.")
 				return exitErr(2)
 			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ready: --interval must be >= 0.")
+				return exitErr(2)
+			}
 			tmpl, err := parseJobReadyFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team ready: %v\n", err)
@@ -950,13 +957,17 @@ func newTeamReadyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rows, err := collectTeamReadyRows(teamDir, args[0], stateFilter)
-			if err != nil {
+			opts := jobReadyOptions{Step: step, Sort: sortMode, Limit: limit}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				return runTeamReadyWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], stateFilter, opts, jsonOut, tmpl, interval, !noClear && !jsonOut)
+			}
+			if err := runTeamReady(cmd.OutOrStdout(), teamDir, args[0], stateFilter, opts, jsonOut, tmpl); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team ready: %v\n", err)
 				return exitErr(1)
 			}
-			rows = prepareJobReadyRows(rows, jobReadyOptions{Step: step, Sort: sortMode, Limit: limit})
-			return renderTeamReadyRows(cmd.OutOrStdout(), rows, jsonOut, tmpl)
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -964,6 +975,9 @@ func newTeamReadyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&step, "step", "", "Only include rows whose next step has this id.")
 	cmd.Flags().StringVar(&sortBy, "sort", "job", "Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the team ready-step table until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team ready rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.")
 	return cmd
@@ -5702,6 +5716,41 @@ func teamReadyRowActions(teamName string, row jobReadyRow) []string {
 		return []string{fmt.Sprintf("agent-team team tick %s", teamName)}
 	}
 	return row.Actions
+}
+
+func runTeamReady(w io.Writer, teamDir, name string, states map[string]bool, opts jobReadyOptions, jsonOut bool, tmpl *template.Template) error {
+	rows, err := collectTeamReadyRows(teamDir, name, states)
+	if err != nil {
+		return err
+	}
+	rows = prepareJobReadyRows(rows, opts)
+	return renderTeamReadyRows(w, rows, jsonOut, tmpl)
+}
+
+func runTeamReadyWatch(ctx context.Context, w io.Writer, teamDir, name string, states map[string]bool, opts jobReadyOptions, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if !jsonOut {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+		}
+		if err := runTeamReady(w, teamDir, name, states, opts, jsonOut, tmpl); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
 }
 
 func renderTeamReadyRows(w io.Writer, rows []jobReadyRow, jsonOut bool, tmpl *template.Template) error {

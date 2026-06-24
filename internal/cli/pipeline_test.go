@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -1987,6 +1988,21 @@ func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 		t.Fatalf("pipeline ready limited output = %q", limitedOut.String())
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	watch := NewRootCmd()
+	watchOut, watchErr := &bytes.Buffer{}, &bytes.Buffer{}
+	watch.SetContext(ctx)
+	watch.SetOut(watchOut)
+	watch.SetErr(watchErr)
+	watch.SetArgs([]string{"pipeline", "ready", "ticket_to_pr", "--repo", root, "--state", "all", "--sort", "updated", "--limit", "1", "--watch", "--no-clear", "--interval", "1ms", "--format", "{{.JobID}}"})
+	if err := watch.Execute(); err != nil {
+		t.Fatalf("pipeline ready watch: %v\nstderr=%s", err, watchErr.String())
+	}
+	if got := strings.TrimSpace(watchOut.String()); got != "squ-311" || strings.Contains(watchOut.String(), watchClearSequence) {
+		t.Fatalf("pipeline ready watch output = %q", watchOut.String())
+	}
+
 	step := NewRootCmd()
 	stepOut, stepErr := &bytes.Buffer{}, &bytes.Buffer{}
 	step.SetOut(stepOut)
@@ -2025,6 +2041,18 @@ func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 	}
 	if !strings.Contains(invalidAllErr.String(), "--all cannot be combined") {
 		t.Fatalf("invalid all stderr = %q", invalidAllErr.String())
+	}
+
+	invalidInterval := NewRootCmd()
+	invalidIntervalOut, invalidIntervalErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidInterval.SetOut(invalidIntervalOut)
+	invalidInterval.SetErr(invalidIntervalErr)
+	invalidInterval.SetArgs([]string{"pipeline", "ready", "ticket_to_pr", "--repo", root, "--watch", "--interval", "-1s"})
+	if err := invalidInterval.Execute(); err == nil {
+		t.Fatalf("pipeline ready negative interval succeeded")
+	}
+	if !strings.Contains(invalidIntervalErr.String(), "--interval must be >= 0") {
+		t.Fatalf("invalid interval stderr = %q", invalidIntervalErr.String())
 	}
 
 	invalid := NewRootCmd()
