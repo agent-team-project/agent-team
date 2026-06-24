@@ -1185,6 +1185,7 @@ type pipelineStatusRow struct {
 	ParallelReadySteps int      `json:"parallel_ready_steps,omitempty"`
 	QueuedSteps        int      `json:"queued_steps"`
 	RunningSteps       int      `json:"running_steps"`
+	StaleRunningSteps  int      `json:"stale_running_steps,omitempty"`
 	BlockedSteps       int      `json:"blocked_steps"`
 	ManualGates        int      `json:"manual_gates"`
 	FailedSteps        int      `json:"failed_steps"`
@@ -1674,6 +1675,14 @@ func pipelineInfoFromTopology(p *topology.Pipeline) pipelineInfo {
 }
 
 func collectPipelineStatusRows(teamDir, pipeline string) ([]pipelineStatusRow, error) {
+	staleAfter, err := configuredJobTriageStaleAfter(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	return collectPipelineStatusRowsAt(teamDir, pipeline, time.Now().UTC(), staleAfter)
+}
+
+func collectPipelineStatusRowsAt(teamDir, pipeline string, now time.Time, staleAfter time.Duration) ([]pipelineStatusRow, error) {
 	pipeline = strings.TrimSpace(pipeline)
 	infos, err := loadPipelineInfos(teamDir)
 	if err != nil {
@@ -1715,7 +1724,7 @@ func collectPipelineStatusRows(teamDir, pipeline string) ([]pipelineStatusRow, e
 		if pipeline != "" && name != pipeline {
 			continue
 		}
-		applyPipelineStatusJob(rowFor(name), j)
+		applyPipelineStatusJob(rowFor(name), j, now, staleAfter)
 	}
 	if pipeline != "" {
 		row := rows[pipeline]
@@ -1786,7 +1795,7 @@ func collectPipelineExplainRows(teamDir, pipeline string, limit int, stateFilter
 	return out, nil
 }
 
-func applyPipelineStatusJob(row *pipelineStatusRow, j *job.Job) {
+func applyPipelineStatusJob(row *pipelineStatusRow, j *job.Job, now time.Time, staleAfter time.Duration) {
 	if row == nil || j == nil {
 		return
 	}
@@ -1814,6 +1823,9 @@ func applyPipelineStatusJob(row *pipelineStatusRow, j *job.Job) {
 		row.QueuedSteps++
 	case "running":
 		row.RunningSteps++
+		if next.Step != nil && pipelineRunningStepIsStale(next.Step, now, staleAfter) {
+			row.StaleRunningSteps++
+		}
 	case "blocked":
 		row.BlockedSteps++
 		if next.Step != nil && next.Step.Gate == job.StepGateManual && len(next.WaitingFor) == 0 {
@@ -1846,6 +1858,11 @@ func finalizePipelineStatusRow(row *pipelineStatusRow) {
 		actions = append(actions, "agent-team repair --retry-pipelines --dry-run --preview-routes")
 		actions = append(actions, fmt.Sprintf("agent-team pipeline explain %s --state failed", row.Pipeline))
 		actions = append(actions, fmt.Sprintf("agent-team pipeline ready %s --state failed", row.Pipeline))
+	}
+	if row.StaleRunningSteps > 0 {
+		actions = append(actions, "agent-team job reconcile events --dry-run")
+		actions = append(actions, fmt.Sprintf("agent-team pipeline explain %s --state running", row.Pipeline))
+		actions = append(actions, fmt.Sprintf("agent-team pipeline ready %s --state running", row.Pipeline))
 	}
 	if row.HeldSteps > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team pipeline explain %s --state held", row.Pipeline))
@@ -1920,6 +1937,8 @@ func pipelineNextActionReason(row pipelineStatusRow, action string) string {
 		return fmt.Sprintf("manual_gates=%d", row.ManualGates)
 	case strings.Contains(action, " --state blocked"):
 		return fmt.Sprintf("blocked_steps=%d", row.BlockedSteps)
+	case strings.Contains(action, " reconcile events "), strings.Contains(action, " --state running"):
+		return fmt.Sprintf("stale_running_steps=%d", row.StaleRunningSteps)
 	case strings.Contains(action, " --state held"):
 		return fmt.Sprintf("held_steps=%d", row.HeldSteps)
 	case action == "agent-team tick", strings.Contains(action, " tick "):
@@ -1927,6 +1946,16 @@ func pipelineNextActionReason(row pipelineStatusRow, action string) string {
 	default:
 		return ""
 	}
+}
+
+func pipelineRunningStepIsStale(step *job.Step, now time.Time, staleAfter time.Duration) bool {
+	if step == nil || staleAfter <= 0 || step.StartedAt.IsZero() {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return now.Sub(step.StartedAt) > staleAfter
 }
 
 func holdPipelineJobs(teamDir, pipeline, reason string, holdUntil time.Time, stateFilter map[string]bool, stateDefault bool, limit int, dryRun bool) ([]pipelineHoldResult, error) {
@@ -2999,9 +3028,9 @@ func renderPipelineStatusTable(w io.Writer, rows []pipelineStatusRow) {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "PIPELINE\tDECLARED\tSTEPS\tJOBS\tJOB_STATUS\tREADY\tQUEUED\tRUNNING\tBLOCKED\tMANUAL_GATES\tFAILED\tHELD\tDONE\tNONE\tACTION")
+	fmt.Fprintln(tw, "PIPELINE\tDECLARED\tSTEPS\tJOBS\tJOB_STATUS\tREADY\tQUEUED\tRUNNING\tSTALE_RUNNING\tBLOCKED\tMANUAL_GATES\tFAILED\tHELD\tDONE\tNONE\tACTION")
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
 			row.Pipeline,
 			yesNo(row.Declared),
 			row.Steps,
@@ -3010,6 +3039,7 @@ func renderPipelineStatusTable(w io.Writer, rows []pipelineStatusRow) {
 			row.ReadySteps,
 			row.QueuedSteps,
 			row.RunningSteps,
+			row.StaleRunningSteps,
 			row.BlockedSteps,
 			row.ManualGates,
 			row.FailedSteps,

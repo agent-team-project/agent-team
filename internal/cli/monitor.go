@@ -724,10 +724,11 @@ func renderMonitorJobStatusSummary(w io.Writer, results []jobStatusReconcileResu
 }
 
 func renderMonitorPipelineStatusSummary(w io.Writer, rows []pipelineStatusRow) {
-	fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d failed_steps=%d\n",
+	fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d stale_running_steps=%d failed_steps=%d\n",
 		len(rows),
 		countPipelineStatusJobs(rows),
 		countPipelineStatusReadySteps(rows),
+		countPipelineStatusStaleRunningSteps(rows),
 		countPipelineStatusFailedSteps(rows))
 }
 

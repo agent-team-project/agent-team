@@ -198,7 +198,7 @@ func TestOverviewTextRendersOperatorSummary(t *testing.T) {
 		"topology: instances=2 persistent=1 ephemeral=1",
 		"jobs: total=1 queued=0 running=0 blocked=1 done=0 failed=0 attention=1",
 		"queue: total=1 pending=0 dead=1",
-		"pipelines: total=1 jobs=1 ready_steps=1 parallel_ready_steps=0 blocked_steps=0 failed_steps=0",
+		"pipelines: total=1 jobs=1 ready_steps=1 parallel_ready_steps=0 stale_running_steps=0 blocked_steps=0 failed_steps=0",
 		"schedules: declared=1 due=1 upcoming=1",
 		"actions:",
 		"agent-team repair --dry-run --jobs",

@@ -5402,6 +5402,18 @@ func addTeamJobHealth(result *healthResult, teamDir string, top *topology.Topolo
 				row.Actions,
 			)
 		}
+		if row.StaleRunningSteps > 0 {
+			result.addIssueWithSeverityAndActions(
+				"pipeline_stale_running_step",
+				"warning",
+				"",
+				"",
+				"",
+				"",
+				fmt.Sprintf("pipeline %q has %d stale running step(s)", row.Pipeline, row.StaleRunningSteps),
+				row.Actions,
+			)
+		}
 		if row.BlockedSteps > 0 {
 			result.addIssueWithSeverityAndActions(
 				"pipeline_blocked_step",
@@ -7396,6 +7408,11 @@ func teamPipelineActions(teamName string, row pipelineStatusRow) []string {
 		actions = append(actions, fmt.Sprintf("agent-team team explain %s --state failed", teamName))
 		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state failed", teamName))
 	}
+	if row.StaleRunningSteps > 0 {
+		actions = append(actions, "agent-team job reconcile events --dry-run")
+		actions = append(actions, fmt.Sprintf("agent-team team explain %s --state running", teamName))
+		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state running", teamName))
+	}
 	if row.ManualGates > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team team approve %s --dry-run --dispatch --preview-routes", teamName))
 	}
@@ -7737,11 +7754,12 @@ func renderTeamStatus(w io.Writer, snapshot *teamStatusSnapshot, jsonOut bool, t
 	renderJobSummary(w, snapshot.JobSummary)
 	fmt.Fprintln(w, queueSummaryLine(snapshot.Queue))
 	if snapshot.PipelineStatus != nil {
-		fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d manual_gates=%d failed_steps=%d\n",
+		fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d manual_gates=%d stale_running_steps=%d failed_steps=%d\n",
 			len(snapshot.PipelineStatus),
 			countPipelineStatusJobs(snapshot.PipelineStatus),
 			countPipelineStatusReadySteps(snapshot.PipelineStatus),
 			countPipelineStatusManualGates(snapshot.PipelineStatus),
+			countPipelineStatusStaleRunningSteps(snapshot.PipelineStatus),
 			countPipelineStatusFailedSteps(snapshot.PipelineStatus),
 		)
 	}

@@ -699,6 +699,18 @@ target = "manager"
 			},
 		},
 		{
+			ID:        "squ-615",
+			Ticket:    "SQU-615",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-25 * time.Hour),
+			UpdatedAt: now.Add(-25 * time.Hour),
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-615", StartedAt: now.Add(-25 * time.Hour)},
+			},
+		},
+		{
 			ID:        "squ-612",
 			Ticket:    "SQU-612",
 			Target:    "manager",
@@ -745,10 +757,12 @@ target = "manager"
 		t.Fatalf("status rows = %+v", rows)
 	}
 	ticket := byName["ticket_to_pr"]
-	if !ticket.Declared || ticket.Steps != 2 || ticket.Jobs != 3 || ticket.Running != 1 || ticket.Blocked != 1 || ticket.Failed != 1 || ticket.ReadySteps != 1 || ticket.ManualGates != 1 || ticket.FailedSteps != 1 {
+	if !ticket.Declared || ticket.Steps != 2 || ticket.Jobs != 4 || ticket.Running != 2 || ticket.Blocked != 1 || ticket.Failed != 1 || ticket.ReadySteps != 1 || ticket.ManualGates != 1 || ticket.FailedSteps != 1 || ticket.StaleRunningSteps != 1 {
 		t.Fatalf("ticket status = %+v", ticket)
 	}
 	if !containsString(ticket.Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") ||
+		!containsString(ticket.Actions, "agent-team job reconcile events --dry-run") ||
+		!containsString(ticket.Actions, "agent-team pipeline explain ticket_to_pr --state running") ||
 		!containsString(ticket.Actions, "agent-team pipeline approve ticket_to_pr --dry-run --dispatch --preview-routes") ||
 		!containsString(ticket.Actions, "agent-team pipeline retry ticket_to_pr --dry-run --dispatch --preview-routes") ||
 		!containsString(ticket.Actions, "agent-team repair --retry-pipelines --dry-run --preview-routes") ||
@@ -772,11 +786,11 @@ target = "manager"
 	oneOut, oneErr := &bytes.Buffer{}, &bytes.Buffer{}
 	one.SetOut(oneOut)
 	one.SetErr(oneErr)
-	one.SetArgs([]string{"pipeline", "status", "ticket_to_pr", "--repo", root, "--format", "{{.Pipeline}} {{.Jobs}} {{.ReadySteps}} {{.FailedSteps}}"})
+	one.SetArgs([]string{"pipeline", "status", "ticket_to_pr", "--repo", root, "--format", "{{.Pipeline}} {{.Jobs}} {{.ReadySteps}} {{.StaleRunningSteps}} {{.FailedSteps}}"})
 	if err := one.Execute(); err != nil {
 		t.Fatalf("pipeline status one format: %v\nstderr=%s", err, oneErr.String())
 	}
-	if got := strings.TrimSpace(oneOut.String()); got != "ticket_to_pr 3 1 1" {
+	if got := strings.TrimSpace(oneOut.String()); got != "ticket_to_pr 4 1 1 1" {
 		t.Fatalf("formatted pipeline status = %q", got)
 	}
 
@@ -788,7 +802,7 @@ target = "manager"
 	if err := text.Execute(); err != nil {
 		t.Fatalf("pipeline status text: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"PIPELINE", "MANUAL_GATES", "ACTION", "ticket_to_pr", "yes", "running=1,blocked=1,failed=1", "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes", "agent-team pipeline approve ticket_to_pr --dry-run --dispatch --preview-routes", "agent-team repair --retry-pipelines --dry-run --preview-routes", "ad_hoc", "no"} {
+	for _, want := range []string{"PIPELINE", "STALE_RUNNING", "MANUAL_GATES", "ACTION", "ticket_to_pr", "yes", "running=2,blocked=1,failed=1", "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes", "agent-team job reconcile events --dry-run", "agent-team pipeline approve ticket_to_pr --dry-run --dispatch --preview-routes", "agent-team repair --retry-pipelines --dry-run --preview-routes", "ad_hoc", "no"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("pipeline status text missing %q:\n%s", want, textOut.String())
 		}
@@ -810,7 +824,7 @@ target = "manager"
 		t.Fatalf("pipeline explain rows = %+v", explainedRows)
 	}
 	explained := explainedRows[0]
-	if explained.Pipeline != "ticket_to_pr" || !explained.Declared || explained.TotalJobs != 3 || explained.ExplainedJobs != 3 || len(explained.Jobs) != 3 {
+	if explained.Pipeline != "ticket_to_pr" || !explained.Declared || explained.TotalJobs != 4 || explained.ExplainedJobs != 4 || len(explained.Jobs) != 4 {
 		t.Fatalf("pipeline explain ticket_to_pr = %+v", explained)
 	}
 	var readyReview, manualGate, failedImplement bool
@@ -852,7 +866,7 @@ target = "manager"
 	if err := explainFormat.Execute(); err != nil {
 		t.Fatalf("pipeline explain format: %v\nstderr=%s", err, explainFormatErr.String())
 	}
-	if got := strings.TrimSpace(explainFormatOut.String()); got != "ticket_to_pr 3 3" {
+	if got := strings.TrimSpace(explainFormatOut.String()); got != "ticket_to_pr 4 4" {
 		t.Fatalf("pipeline explain format = %q", got)
 	}
 
@@ -868,7 +882,7 @@ target = "manager"
 	if err := json.Unmarshal(explainLimitedOut.Bytes(), &limitedRows); err != nil {
 		t.Fatalf("decode limited pipeline explain json: %v\nbody=%s", err, explainLimitedOut.String())
 	}
-	if len(limitedRows) != 1 || limitedRows[0].TotalJobs != 3 || limitedRows[0].ExplainedJobs != 1 || !limitedRows[0].Truncated || len(limitedRows[0].Jobs) != 1 {
+	if len(limitedRows) != 1 || limitedRows[0].TotalJobs != 4 || limitedRows[0].ExplainedJobs != 1 || !limitedRows[0].Truncated || len(limitedRows[0].Jobs) != 1 {
 		t.Fatalf("limited pipeline explain = %+v", limitedRows)
 	}
 
@@ -884,7 +898,7 @@ target = "manager"
 	if err := json.Unmarshal(explainFailedOut.Bytes(), &failedRows); err != nil {
 		t.Fatalf("decode failed pipeline explain json: %v\nbody=%s", err, explainFailedOut.String())
 	}
-	if len(failedRows) != 1 || failedRows[0].TotalJobs != 3 || failedRows[0].ExplainedJobs != 1 || len(failedRows[0].Jobs) != 1 || failedRows[0].Jobs[0].JobID != "squ-611" {
+	if len(failedRows) != 1 || failedRows[0].TotalJobs != 4 || failedRows[0].ExplainedJobs != 1 || len(failedRows[0].Jobs) != 1 || failedRows[0].Jobs[0].JobID != "squ-611" {
 		t.Fatalf("failed pipeline explain = %+v", failedRows)
 	}
 

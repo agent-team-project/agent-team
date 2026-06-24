@@ -826,6 +826,18 @@ func addJobHealth(result *healthResult, teamDir string, now time.Time) error {
 				row.Actions,
 			)
 		}
+		if row.StaleRunningSteps > 0 {
+			result.addIssueWithSeverityAndActions(
+				"pipeline_stale_running_step",
+				"warning",
+				"",
+				"",
+				"",
+				"",
+				fmt.Sprintf("pipeline %q has %d stale running step(s)", row.Pipeline, row.StaleRunningSteps),
+				row.Actions,
+			)
+		}
 		if row.BlockedSteps > 0 {
 			result.addIssueWithSeverityAndActions(
 				"pipeline_blocked_step",
@@ -1018,11 +1030,12 @@ func renderHealth(w io.Writer, result *healthResult) {
 		)
 	}
 	if result.PipelineStatus != nil {
-		fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d manual_gates=%d failed_steps=%d\n",
+		fmt.Fprintf(w, "pipeline status: pipelines=%d jobs=%d ready_steps=%d manual_gates=%d stale_running_steps=%d failed_steps=%d\n",
 			len(result.PipelineStatus),
 			countPipelineStatusJobs(result.PipelineStatus),
 			countPipelineStatusReadySteps(result.PipelineStatus),
 			countPipelineStatusManualGates(result.PipelineStatus),
+			countPipelineStatusStaleRunningSteps(result.PipelineStatus),
 			countPipelineStatusFailedSteps(result.PipelineStatus),
 		)
 	}

@@ -277,10 +277,11 @@ func renderPipelineSnapshotSummary(w io.Writer, snapshot *pipelineSnapshotResult
 	}
 	fmt.Fprintf(w, "redacted: %s\n", yesNo(snapshot.Redacted))
 	if snapshot.Status != nil {
-		fmt.Fprintf(w, "status: jobs=%d ready_steps=%d manual_gates=%d failed_steps=%d blocked_steps=%d\n",
+		fmt.Fprintf(w, "status: jobs=%d ready_steps=%d manual_gates=%d stale_running_steps=%d failed_steps=%d blocked_steps=%d\n",
 			snapshot.Status.Jobs,
 			snapshot.Status.ReadySteps,
 			snapshot.Status.ManualGates,
+			snapshot.Status.StaleRunningSteps,
 			snapshot.Status.FailedSteps,
 			snapshot.Status.BlockedSteps)
 	}

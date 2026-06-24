@@ -204,6 +204,7 @@ type overviewPipelineSummary struct {
 	ParallelReadySteps int `json:"parallel_ready_steps,omitempty"`
 	QueuedSteps        int `json:"queued_steps"`
 	RunningSteps       int `json:"running_steps"`
+	StaleRunningSteps  int `json:"stale_running_steps,omitempty"`
 	BlockedSteps       int `json:"blocked_steps"`
 	ManualGates        int `json:"manual_gates"`
 	FailedSteps        int `json:"failed_steps"`
@@ -513,6 +514,7 @@ func overviewPipelinesFromRows(rows []pipelineStatusRow) overviewPipelineSummary
 		out.ParallelReadySteps += row.ParallelReadySteps
 		out.QueuedSteps += row.QueuedSteps
 		out.RunningSteps += row.RunningSteps
+		out.StaleRunningSteps += row.StaleRunningSteps
 		out.BlockedSteps += row.BlockedSteps
 		out.ManualGates += row.ManualGates
 		out.FailedSteps += row.FailedSteps
@@ -676,6 +678,15 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 			add(fmt.Sprintf("agent-team team approve %s --dry-run --dispatch --preview-routes", teamName), "pipelines", fmt.Sprintf("manual_gates=%d", out.Pipelines.ManualGates))
 		} else {
 			add("agent-team pipeline approve --all --dry-run --dispatch --preview-routes", "pipelines", fmt.Sprintf("manual_gates=%d", out.Pipelines.ManualGates))
+		}
+	}
+	if out.Pipelines.StaleRunningSteps > 0 {
+		reason := fmt.Sprintf("stale_running_steps=%d", out.Pipelines.StaleRunningSteps)
+		add("agent-team job reconcile events --dry-run", "pipelines", reason)
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team explain %s --state running", teamName), "pipelines", reason)
+		} else {
+			add("agent-team pipeline explain --all --state running", "pipelines", reason)
 		}
 	}
 	if out.Schedules.Due > 0 {
@@ -873,6 +884,7 @@ func overviewOK(out *overviewResult, health *healthResult) bool {
 		out.Jobs.ReadySteps == 0 &&
 		out.Jobs.StatusChanges == 0 &&
 		out.Pipelines.ReadySteps == 0 &&
+		out.Pipelines.StaleRunningSteps == 0 &&
 		out.Pipelines.BlockedSteps == 0 &&
 		out.Pipelines.FailedSteps == 0 &&
 		out.Schedules.Due == 0 &&
@@ -893,6 +905,7 @@ func overviewState(out *overviewResult) string {
 		out.Jobs.Attention > 0 ||
 		out.Pipelines.BlockedSteps > 0 ||
 		out.Pipelines.FailedSteps > 0 ||
+		out.Pipelines.StaleRunningSteps > 0 ||
 		out.Intake.Errors > 0 ||
 		out.Intake.DuplicateRequestIDs > 0 {
 		return "attention"
@@ -1005,11 +1018,12 @@ func renderOverview(w io.Writer, result *overviewResult, jsonOut bool, tmpl *tem
 		result.Jobs.ReadySteps,
 		result.Jobs.StatusChanges)
 	fmt.Fprintln(w, queueSummaryLine(result.Queue))
-	fmt.Fprintf(w, "pipelines: total=%d jobs=%d ready_steps=%d parallel_ready_steps=%d blocked_steps=%d failed_steps=%d\n",
+	fmt.Fprintf(w, "pipelines: total=%d jobs=%d ready_steps=%d parallel_ready_steps=%d stale_running_steps=%d blocked_steps=%d failed_steps=%d\n",
 		result.Pipelines.Total,
 		result.Pipelines.Jobs,
 		result.Pipelines.ReadySteps,
 		result.Pipelines.ParallelReadySteps,
+		result.Pipelines.StaleRunningSteps,
 		result.Pipelines.BlockedSteps,
 		result.Pipelines.FailedSteps)
 	fmt.Fprintf(w, "schedules: declared=%d due=%d upcoming=%d\n",

@@ -1060,7 +1060,7 @@ after = ["implement"]
 	if err := text.Execute(); err == nil {
 		t.Fatal("health --jobs text succeeded unexpectedly")
 	}
-	for _, want := range []string{"pipeline status: pipelines=1 jobs=2 ready_steps=0 manual_gates=0 failed_steps=1", "pipeline_failed_step", "pipeline_blocked_step", "agent-team pipeline retry ticket_to_pr --dry-run --dispatch --preview-routes", "agent-team repair --retry-pipelines --dry-run --preview-routes", "agent-team pipeline explain ticket_to_pr --state failed", "agent-team pipeline ready ticket_to_pr --state failed", "agent-team pipeline explain ticket_to_pr --state blocked", "agent-team pipeline ready ticket_to_pr --state blocked"} {
+	for _, want := range []string{"pipeline status: pipelines=1 jobs=2 ready_steps=0 manual_gates=0 stale_running_steps=0 failed_steps=1", "pipeline_failed_step", "pipeline_blocked_step", "agent-team pipeline retry ticket_to_pr --dry-run --dispatch --preview-routes", "agent-team repair --retry-pipelines --dry-run --preview-routes", "agent-team pipeline explain ticket_to_pr --state failed", "agent-team pipeline ready ticket_to_pr --state failed", "agent-team pipeline explain ticket_to_pr --state blocked", "agent-team pipeline ready ticket_to_pr --state blocked"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("health text missing %q:\n%s", want, textOut.String())
 		}
