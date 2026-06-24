@@ -50,6 +50,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamAdvanceCmd())
 	cmd.AddCommand(newTeamApproveCmd())
 	cmd.AddCommand(newTeamRetryCmd())
+	cmd.AddCommand(newTeamTimeoutCmd())
 	cmd.AddCommand(newTeamQueueCmd())
 	cmd.AddCommand(newTeamLogsCmd())
 	cmd.AddCommand(newTeamEventsCmd())
@@ -1433,6 +1434,64 @@ func newTeamRetryCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview failed-step resets and optional dispatches without writing job or daemon state.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run --dispatch, include local topology route and dispatch payload previews.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit retry results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
+	return cmd
+}
+
+func newTeamTimeoutCmd() *cobra.Command {
+	var (
+		repo    string
+		limit   int
+		step    string
+		message string
+		dryRun  bool
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "timeout <team>",
+		Short: "Mark stale running pipeline steps owned by one team failed.",
+		Long: "Mark or preview stale running steps for jobs in one team's declared pipelines. " +
+			"Timed-out steps become failed so the normal team retry flow can reopen them.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeout: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeout: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineTimeoutFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeout: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			_, team, err := loadTopologyTeam(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeout: %v\n", err)
+				return exitErr(1)
+			}
+			results, err := timeoutTeamPipelineJobs(teamDir, team, step, message, limit, dryRun)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeout: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineTimeoutResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().IntVar(&limit, "limit", 0, "Mark at most this many stale running team steps failed; 0 means no limit.")
+	cmd.Flags().StringVar(&step, "step", "", "Mark only stale running team steps with this id.")
+	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each timed-out team job.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview stale-step failures without writing job state.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit timeout results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd
 }
@@ -6633,6 +6692,32 @@ func retryTeamPipelineJobs(cmd *cobra.Command, teamDir string, team *topology.Te
 	return results, nil
 }
 
+func timeoutTeamPipelineJobs(teamDir string, team *topology.Team, stepFilter string, message string, limit int, dryRun bool) ([]pipelineTimeoutResult, error) {
+	if team == nil || len(team.Pipelines) == 0 {
+		return []pipelineTimeoutResult{}, nil
+	}
+	results := []pipelineTimeoutResult{}
+	remaining := limit
+	for _, pipeline := range team.Pipelines {
+		if limit > 0 && remaining <= 0 {
+			break
+		}
+		batchLimit := 0
+		if limit > 0 {
+			batchLimit = remaining
+		}
+		timedOut, err := timeoutPipelineJobs(teamDir, pipeline, stepFilter, message, batchLimit, dryRun)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, timedOut...)
+		if limit > 0 {
+			remaining -= len(timedOut)
+		}
+	}
+	return results, nil
+}
+
 func renderTeamTickResult(w io.Writer, result *teamTickResult, jsonOut bool, tmpl *template.Template) error {
 	if result == nil {
 		result = &teamTickResult{Tick: tickResult{DryRun: true}}
@@ -7410,7 +7495,7 @@ func teamPipelineActions(teamName string, row pipelineStatusRow) []string {
 	}
 	if row.StaleRunningSteps > 0 {
 		actions = append(actions, "agent-team job reconcile events --dry-run")
-		actions = append(actions, fmt.Sprintf("agent-team pipeline timeout %s --dry-run", row.Pipeline))
+		actions = append(actions, fmt.Sprintf("agent-team team timeout %s --dry-run", teamName))
 		actions = append(actions, fmt.Sprintf("agent-team team explain %s --state running", teamName))
 		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state running", teamName))
 	}

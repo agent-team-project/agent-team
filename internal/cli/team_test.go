@@ -1263,6 +1263,134 @@ pipelines = ["ticket_to_pr"]
 	}
 }
 
+func TestTeamTimeoutMarksOwnedStaleRunningSteps(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+timeout = "1h"
+
+[pipelines.other]
+trigger.event = "ticket.created"
+trigger.match.project = "Other"
+
+[[pipelines.other.steps]]
+id = "implement"
+target = "worker"
+timeout = "1h"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-800",
+			Ticket:    "SQU-800",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-2 * time.Hour),
+			UpdatedAt: now.Add(-90 * time.Minute),
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-800", StartedAt: now.Add(-90 * time.Minute), Timeout: "1h0m0s"},
+			},
+		},
+		{
+			ID:        "oth-800",
+			Ticket:    "OTH-800",
+			Target:    "worker",
+			Pipeline:  "other",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-2 * time.Hour),
+			UpdatedAt: now.Add(-90 * time.Minute),
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-oth-800", StartedAt: now.Add(-90 * time.Minute), Timeout: "1h0m0s"},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"team", "timeout", "delivery", "--repo", root, "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("team timeout dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryRows []pipelineTimeoutResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryRows); err != nil {
+		t.Fatalf("decode dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(dryRows) != 1 || dryRows[0].JobID != "squ-800" || dryRows[0].Action != "would_fail" {
+		t.Fatalf("dry rows = %+v", dryRows)
+	}
+	if strings.Contains(dryOut.String(), "oth-800") {
+		t.Fatalf("team timeout dry-run leaked unrelated job:\n%s", dryOut.String())
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"team", "timeout", "delivery", "--repo", root, "--message", "team timed out stale step", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("team timeout apply: %v\nstderr=%s", err, applyErr.String())
+	}
+	var applied []pipelineTimeoutResult
+	if err := json.Unmarshal(applyOut.Bytes(), &applied); err != nil {
+		t.Fatalf("decode apply: %v\nbody=%s", err, applyOut.String())
+	}
+	if len(applied) != 1 || applied[0].JobID != "squ-800" || applied[0].Action != "failed" {
+		t.Fatalf("applied rows = %+v", applied)
+	}
+	owned, err := job.Read(teamDir, "squ-800")
+	if err != nil {
+		t.Fatalf("read owned job: %v", err)
+	}
+	if owned.Status != job.StatusFailed || owned.Steps[0].Status != job.StatusFailed || owned.Steps[0].Instance != "" || owned.LastStatus != "team timed out stale step" {
+		t.Fatalf("owned job = %+v", owned)
+	}
+	unowned, err := job.Read(teamDir, "oth-800")
+	if err != nil {
+		t.Fatalf("read unowned job: %v", err)
+	}
+	if unowned.Status != job.StatusRunning || unowned.Steps[0].Status != job.StatusRunning || unowned.Steps[0].Instance != "worker-oth-800" {
+		t.Fatalf("unowned job changed: %+v", unowned)
+	}
+
+	retry := NewRootCmd()
+	retryOut, retryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	retry.SetOut(retryOut)
+	retry.SetErr(retryErr)
+	retry.SetArgs([]string{"team", "retry", "delivery", "--repo", root, "--dry-run", "--json"})
+	if err := retry.Execute(); err != nil {
+		t.Fatalf("team retry after timeout: %v\nstderr=%s", err, retryErr.String())
+	}
+	var retryRows []pipelineRetryResult
+	if err := json.Unmarshal(retryOut.Bytes(), &retryRows); err != nil {
+		t.Fatalf("decode retry: %v\nbody=%s", err, retryOut.String())
+	}
+	if len(retryRows) != 1 || retryRows[0].JobID != "squ-800" || retryRows[0].Action != "would_retry" {
+		t.Fatalf("retry rows = %+v", retryRows)
+	}
+}
+
 func TestTeamApproveManualGateScopesToTeam(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

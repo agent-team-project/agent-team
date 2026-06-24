@@ -4438,6 +4438,7 @@ Subcommands:
 - `agent-team team status` - Summarize one team&#39;s instances, jobs, and pipelines.
 - `agent-team team sync` - Sync one team&#39;s declared persistent instances.
 - `agent-team team tick` - Run one team&#39;s orchestration maintenance work.
+- `agent-team team timeout` - Mark stale running pipeline steps owned by one team failed.
 - `agent-team team triage` - Show team-owned jobs that need operator attention.
 - `agent-team team up` - Start or resume a team&#39;s declared persistent instances.
 - `agent-team team wait` - Wait for team-owned instances to reach a lifecycle condition.
@@ -5538,6 +5539,28 @@ Flags:
       --until-idle          Run team tick cycles until no immediate team schedule, queue, or pipeline work remains.
   -w, --watch               Run the team tick repeatedly until interrupted.
       --workspace string    Workspace mode for advanced pipeline steps: auto, worktree, or repo. (default "auto")
+```
+
+## `agent-team team timeout`
+
+Mark stale running pipeline steps owned by one team failed.
+
+Mark or preview stale running steps for jobs in one team&#39;s declared pipelines. Timed-out steps become failed so the normal team retry flow can reopen them.
+
+```text
+agent-team team timeout <team> [flags]
+```
+
+Flags:
+
+```text
+      --dry-run          Preview stale-step failures without writing job state.
+      --format string    Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json             Emit timeout results as JSON.
+      --limit int        Mark at most this many stale running team steps failed; 0 means no limit.
+      --message string   Status message recorded on each timed-out team job.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --step string      Mark only stale running team steps with this id.
 ```
 
 ## `agent-team team triage`
