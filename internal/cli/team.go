@@ -33,6 +33,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamDoctorCmd())
 	cmd.AddCommand(newTeamOverviewCmd())
 	cmd.AddCommand(newTeamNextCmd())
+	cmd.AddCommand(newTeamRuntimeCmd())
 	cmd.AddCommand(newTeamRunCmd())
 	cmd.AddCommand(newTeamUpCmd())
 	cmd.AddCommand(newTeamDownCmd())
@@ -224,6 +225,106 @@ func newTeamDoctorCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team doctor findings as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the team doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.")
 	return cmd
+}
+
+func newTeamRuntimeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "runtime",
+		Short: "Inspect team-owned runtime metadata.",
+		Long:  "Inspect runtime metadata for daemon-known instances owned by one declared team.",
+	}
+	cmd.AddCommand(newTeamRuntimeResumePlanCmd())
+	return cmd
+}
+
+func newTeamRuntimeResumePlanCmd() *cobra.Command {
+	var (
+		repo          string
+		statusFilters []string
+		runtimeFilter []string
+		jsonOut       bool
+		format        string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "resume-plan <team>",
+		Short: "Show runtime resume and fallback commands for one team.",
+		Long: "Show runtime resume and fallback commands for daemon metadata owned by one declared team. " +
+			"This is the team-scoped form of `agent-team runtime resume-plan`.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team runtime resume-plan: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseRuntimeResumePlanFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team runtime resume-plan: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			plans, err := collectTeamRuntimeResumePlans(teamDir, args[0], statusFilters, runtimeFilter)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team runtime resume-plan: %v\n", err)
+				return exitErr(1)
+			}
+			if jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(plans)
+			}
+			if tmpl != nil {
+				return renderRuntimeResumePlanFormat(cmd.OutOrStdout(), plans, tmpl)
+			}
+			renderRuntimeResumePlans(cmd.OutOrStdout(), plans)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedCommand}}'.")
+	return cmd
+}
+
+func collectTeamRuntimeResumePlans(teamDir, name string, statusFilters []string, runtimeFilters []string) ([]runtimeResumePlan, error) {
+	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return nil, err
+	}
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return nil, err
+	}
+	statusSet, err := parseRuntimeResumeStatusFilter(statusFilters)
+	if err != nil {
+		return nil, err
+	}
+	runtimeSet, err := parseRuntimeResumeRuntimeFilter(runtimeFilters)
+	if err != nil {
+		return nil, err
+	}
+	selected := teamMetadata(top, team, metas)
+	plans := make([]runtimeResumePlan, 0, len(selected))
+	for _, meta := range selected {
+		if meta == nil {
+			continue
+		}
+		if len(statusSet) > 0 && !statusSet[strings.ToLower(strings.TrimSpace(string(meta.Status)))] {
+			continue
+		}
+		runtimeKind := lifecycleMetadataRuntimeKind(meta)
+		if len(runtimeSet) > 0 && !runtimeSet[string(runtimeKind)] {
+			continue
+		}
+		plans = append(plans, runtimeResumePlanFromMetadata(meta))
+	}
+	sort.SliceStable(plans, func(i, j int) bool {
+		return plans[i].Instance < plans[j].Instance
+	})
+	return plans, nil
 }
 
 type teamDoctorResult struct {

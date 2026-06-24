@@ -175,7 +175,7 @@ func TestOverviewReportsRuntimeResumePlanActions(t *testing.T) {
 	if teamOverview.Runtime.Total != 3 || teamOverview.Runtime.Crashed != 2 || teamOverview.Runtime.Exited != 1 {
 		t.Fatalf("team runtime summary = %+v", teamOverview.Runtime)
 	}
-	if !stringSliceContains(teamOverview.Actions, "agent-team runtime resume-plan manager worker-squ-900 --status crashed") {
+	if !stringSliceContains(teamOverview.Actions, "agent-team team runtime resume-plan delivery --status crashed") {
 		t.Fatalf("team actions missing scoped runtime resume plan: %+v", teamOverview.Actions)
 	}
 }

@@ -263,7 +263,7 @@ func TestNextCommandFiltersRuntimeSource(t *testing.T) {
 	if err := json.Unmarshal(teamOut.Bytes(), &teamResult); err != nil {
 		t.Fatalf("decode team runtime next json: %v\nbody=%s", err, teamOut.String())
 	}
-	if len(teamResult.Actions) != 1 || teamResult.Actions[0] != "agent-team runtime resume-plan manager worker-squ-900 --status crashed" {
+	if len(teamResult.Actions) != 1 || teamResult.Actions[0] != "agent-team team runtime resume-plan delivery --status crashed" {
 		t.Fatalf("team runtime filtered result = %+v", teamResult)
 	}
 	if len(teamResult.ActionDetails) != 1 || teamResult.ActionDetails[0].Team != "delivery" || teamResult.ActionDetails[0].Source != "runtime" || teamResult.ActionDetails[0].Reason != "crashed=2" {

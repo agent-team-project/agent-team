@@ -214,11 +214,13 @@ agent-team runtime resume-plan worker-squ-42
 agent-team runtime resume-plan --job squ-42
 agent-team runtime resume-plan --runtime codex --status exited
 agent-team runtime resume-plan --json
+agent-team team runtime resume-plan delivery --status crashed
 ```
 
 `agent-team overview` also summarizes runtime metadata and links crashed
-instances to `runtime resume-plan`; `agent-team team overview <team>` narrows
-that hint to crashed instances owned by the selected team.
+instances to `runtime resume-plan`; `agent-team team overview <team>` and
+`agent-team team next <team> --source runtime` use
+`agent-team team runtime resume-plan <team>` for team-scoped recovery.
 
 The command reads `.agent_team/daemon/*/meta.json` directly and prints the
 recommended managed start, attach dry-run, unmanaged runtime resume, log

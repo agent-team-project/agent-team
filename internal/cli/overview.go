@@ -827,11 +827,11 @@ func overviewQueueQuarantineAction(health *healthResult, teamName string) string
 	return "agent-team queue quarantine ls"
 }
 
-func overviewRuntimeResumePlanAction(summary overviewRuntimeSummary, teamName string) string {
-	if teamName == "" || len(summary.CrashedInstances) == 0 {
-		return "agent-team runtime resume-plan --status crashed"
+func overviewRuntimeResumePlanAction(_ overviewRuntimeSummary, teamName string) string {
+	if teamName != "" {
+		return fmt.Sprintf("agent-team team runtime resume-plan %s --status crashed", teamName)
 	}
-	return fmt.Sprintf("agent-team runtime resume-plan %s --status crashed", strings.Join(summary.CrashedInstances, " "))
+	return "agent-team runtime resume-plan --status crashed"
 }
 
 func overviewHasQueueSectionError(out *overviewResult) bool {

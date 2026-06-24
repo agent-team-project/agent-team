@@ -2788,6 +2788,38 @@ instances = ["other", "build-worker"]
 	}
 }
 
+func TestTeamRuntimeResumePlanScopesMetadata(t *testing.T) {
+	root := writeOverviewRuntimeFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "runtime", "resume-plan", "delivery", "--repo", root, "--status", "crashed", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team runtime resume-plan json: %v\nstderr=%s", err, stderr.String())
+	}
+	var plans []runtimeResumePlan
+	if err := json.Unmarshal(out.Bytes(), &plans); err != nil {
+		t.Fatalf("decode team runtime resume-plan: %v\nbody=%s", err, out.String())
+	}
+	if len(plans) != 2 || plans[0].Instance != "manager" || plans[1].Instance != "worker-squ-900" {
+		t.Fatalf("plans = %+v, want manager and worker-squ-900 only", plans)
+	}
+
+	format := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	format.SetOut(formatOut)
+	format.SetErr(formatErr)
+	format.SetArgs([]string{"team", "runtime", "resume-plan", "delivery", "--repo", root, "--status", "crashed", "--runtime", "codex", "--format", "{{.Instance}} {{.Runtime}}"})
+	if err := format.Execute(); err != nil {
+		t.Fatalf("team runtime resume-plan format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if got, want := strings.TrimSpace(formatOut.String()), "worker-squ-900 codex"; got != want {
+		t.Fatalf("formatted team runtime resume-plan = %q, want %q", got, want)
+	}
+}
+
 func TestTeamStatusFiltersByRuntime(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

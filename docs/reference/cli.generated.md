@@ -4378,6 +4378,7 @@ Subcommands:
 - `agent-team team restart` - Restart or resume a team&#39;s declared persistent instances.
 - `agent-team team retry` - Reset failed pipeline steps owned by one team.
 - `agent-team team run` - Create a durable job through a team&#39;s pipeline.
+- `agent-team team runtime` - Inspect team-owned runtime metadata.
 - `agent-team team schedules` - List schedules owned by one team.
 - `agent-team team send` - Send a mailbox message to team-owned instances.
 - `agent-team team show` - Show one declared team.
@@ -5256,6 +5257,46 @@ Flags:
       --runtime-bin string    Runtime binary for --dispatch. Overrides env and repo config.
       --ticket-url string     Canonical ticket URL to store on the job.
       --workspace string      Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
+```
+
+## `agent-team team runtime`
+
+Inspect team-owned runtime metadata.
+
+Inspect runtime metadata for daemon-known instances owned by one declared team.
+
+```text
+agent-team team runtime
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+Subcommands:
+
+- `agent-team team runtime resume-plan` - Show runtime resume and fallback commands for one team.
+
+## `agent-team team runtime resume-plan`
+
+Show runtime resume and fallback commands for one team.
+
+Show runtime resume and fallback commands for daemon metadata owned by one declared team. This is the team-scoped form of `agent-team runtime resume-plan`.
+
+```text
+agent-team team runtime resume-plan <team> [flags]
+```
+
+Flags:
+
+```text
+      --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedCommand}}'.
+      --json              Emit machine-readable JSON.
+      --repo string       Repo root containing .agent_team. (default "<repo>")
+      --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
+      --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
 ```
 
 ## `agent-team team schedules`
