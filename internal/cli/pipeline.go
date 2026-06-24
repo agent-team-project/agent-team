@@ -54,6 +54,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineEventsCmd())
 	cmd.AddCommand(newPipelineRetryCmd())
 	cmd.AddCommand(newPipelineTimeoutCmd())
+	cmd.AddCommand(newPipelineRepairCmd())
 	cmd.AddCommand(newPipelineRunCmd())
 	return cmd
 }
@@ -2522,6 +2523,146 @@ func newPipelineTimeoutCmd() *cobra.Command {
 	return cmd
 }
 
+func newPipelineRepairCmd() *cobra.Command {
+	var (
+		repo             string
+		workspace        string
+		limit            int
+		dryRun           bool
+		previewRoutes    bool
+		jsonOut          bool
+		format           string
+		skipDaemon       bool
+		skipQueue        bool
+		skipAdvance      bool
+		timeoutJobs      bool
+		timeoutPipelines bool
+		retryPipelines   bool
+		allReadySteps    bool
+		timeoutStep      string
+		timeoutMessage   string
+		timeoutTarget    string
+		retryStep        string
+		retryMessage     string
+		retryForce       bool
+		readyTimeout     time.Duration
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "repair <pipeline>",
+		Short: "Recover unhealthy orchestration state for one pipeline.",
+		Long: "Recover unhealthy orchestration state scoped to one pipeline: ensure the daemon is ready, retry pipeline-owned dead-letter queue items, " +
+			"optionally time out stale work, retry failed steps, and advance ready steps. Use --dry-run to preview.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			if readyTimeout < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --ready-timeout must be >= 0.")
+				return exitErr(2)
+			}
+			if previewRoutes && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --preview-routes requires --dry-run.")
+				return exitErr(2)
+			}
+			if retryPipelines && skipDaemon && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --retry-pipelines requires daemon access unless --dry-run is set.")
+				return exitErr(2)
+			}
+			if timeoutJobs && timeoutPipelines {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --timeout-jobs cannot be combined with --timeout-pipelines.")
+				return exitErr(2)
+			}
+			if strings.TrimSpace(timeoutMessage) != "" && !timeoutPipelines && !timeoutJobs {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --timeout-message requires --timeout-pipelines or --timeout-jobs.")
+				return exitErr(2)
+			}
+			if strings.TrimSpace(timeoutStep) != "" && !timeoutPipelines && !timeoutJobs {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --timeout-step requires --timeout-pipelines or --timeout-jobs.")
+				return exitErr(2)
+			}
+			if strings.TrimSpace(timeoutTarget) != "" && !timeoutPipelines && !timeoutJobs {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --timeout-target-agent requires --timeout-pipelines or --timeout-jobs.")
+				return exitErr(2)
+			}
+			if strings.TrimSpace(retryMessage) != "" && !retryPipelines {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --retry-message requires --retry-pipelines.")
+				return exitErr(2)
+			}
+			if strings.TrimSpace(retryStep) != "" && !retryPipelines {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --retry-step requires --retry-pipelines.")
+				return exitErr(2)
+			}
+			if retryForce && !retryPipelines {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --retry-force requires --retry-pipelines.")
+				return exitErr(2)
+			}
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseRepairFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline repair: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			result, err := runPipelineRepair(cmd, repo, teamDir, args[0], pipelineRepairOptions{
+				Workspace:        workspace,
+				Limit:            limit,
+				DryRun:           dryRun,
+				PreviewRoutes:    previewRoutes,
+				SkipDaemon:       skipDaemon,
+				SkipQueue:        skipQueue,
+				SkipAdvance:      skipAdvance,
+				TimeoutJobs:      timeoutJobs,
+				TimeoutPipelines: timeoutPipelines,
+				RetryPipelines:   retryPipelines,
+				AllReadySteps:    allReadySteps,
+				TimeoutStep:      timeoutStep,
+				TimeoutMessage:   timeoutMessage,
+				TimeoutTarget:    timeoutTarget,
+				RetryStep:        retryStep,
+				RetryMessage:     retryMessage,
+				RetryForce:       retryForce,
+				ReadyTimeout:     readyTimeout,
+			})
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline repair: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineRepairResult(cmd.OutOrStdout(), result, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for retried or advanced pipeline steps: auto, worktree, or repo.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Retry at most this many pipeline-owned dead-letter queue items or failed pipeline jobs, and advance at most this many ready jobs or ready steps with --all-ready-steps; 0 means no limit.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview pipeline repair actions without mutating state or starting the daemon.")
+	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include route and dispatch payload previews for retried or ready pipeline steps.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the pipeline repair result with a Go template, e.g. '{{.Pipeline}} {{.Queue.Action}}'.")
+	cmd.Flags().BoolVar(&skipDaemon, "skip-daemon", false, "Do not start or reconcile the daemon.")
+	cmd.Flags().BoolVar(&skipQueue, "skip-queue", false, "Do not retry pipeline-owned dead-letter queue items.")
+	cmd.Flags().BoolVar(&skipAdvance, "skip-advance", false, "Do not advance ready pipeline steps after repair.")
+	cmd.Flags().BoolVar(&timeoutJobs, "timeout-jobs", false, "Mark stale running pipeline job work failed before retrying failed steps.")
+	cmd.Flags().BoolVar(&timeoutPipelines, "timeout-pipelines", false, "Mark stale running pipeline steps failed before retrying failed steps.")
+	cmd.Flags().BoolVar(&retryPipelines, "retry-pipelines", false, "Reset failed pipeline steps and dispatch them before the scoped advance.")
+	cmd.Flags().BoolVar(&allReadySteps, "all-ready-steps", false, "Advance every currently ready independent pipeline step during the scoped repair advance.")
+	cmd.Flags().StringVar(&timeoutStep, "timeout-step", "", "With --timeout-jobs or --timeout-pipelines, mark only stale running steps with this id failed.")
+	cmd.Flags().StringVar(&timeoutMessage, "timeout-message", "", "Audit message to record when pipeline timeout repair marks stale work failed.")
+	cmd.Flags().StringVar(&timeoutTarget, "timeout-target-agent", "", "With --timeout-jobs or --timeout-pipelines, mark only stale work targeting this agent.")
+	cmd.Flags().StringVar(&retryStep, "retry-step", "", "With --retry-pipelines, retry only failed jobs whose next failed step has this id.")
+	cmd.Flags().StringVar(&retryMessage, "retry-message", "", "Audit message to record when --retry-pipelines resets failed pipeline steps.")
+	cmd.Flags().BoolVar(&retryForce, "retry-force", false, "With --retry-pipelines, ignore step max_attempts caps for explicit pipeline repair retry.")
+	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for implicit daemon readiness (0 = no timeout).")
+	return cmd
+}
+
 func newPipelineHoldCmd() *cobra.Command {
 	var (
 		repo     string
@@ -2949,6 +3090,46 @@ type pipelineAdvanceResult struct {
 	Step       *job.Step          `json:"step,omitempty"`
 	Event      *eventResponse     `json:"event,omitempty"`
 	Preview    *jobAdvancePreview `json:"preview,omitempty"`
+}
+
+type pipelineRepairOptions struct {
+	Workspace        string
+	Limit            int
+	DryRun           bool
+	PreviewRoutes    bool
+	SkipDaemon       bool
+	SkipQueue        bool
+	SkipAdvance      bool
+	TimeoutJobs      bool
+	TimeoutPipelines bool
+	RetryPipelines   bool
+	AllReadySteps    bool
+	TimeoutStep      string
+	TimeoutMessage   string
+	TimeoutTarget    string
+	RetryStep        string
+	RetryMessage     string
+	RetryForce       bool
+	ReadyTimeout     time.Duration
+}
+
+type pipelineRepairResult struct {
+	Pipeline        string                    `json:"pipeline"`
+	DryRun          bool                      `json:"dry_run"`
+	StatusBefore    []pipelineStatusRow       `json:"status_before,omitempty"`
+	Daemon          repairStepResult          `json:"daemon"`
+	Queue           repairQueueStep           `json:"queue"`
+	JobTimeout      repairPipelineTimeoutStep `json:"job_timeout"`
+	PipelineTimeout repairPipelineTimeoutStep `json:"pipeline_timeout"`
+	PipelineRetry   repairPipelineRetryStep   `json:"pipeline_retry"`
+	Advance         pipelineRepairAdvanceStep `json:"advance"`
+	StatusAfter     []pipelineStatusRow       `json:"status_after,omitempty"`
+}
+
+type pipelineRepairAdvanceStep struct {
+	Action  string                  `json:"action"`
+	Reason  string                  `json:"reason,omitempty"`
+	Results []pipelineAdvanceResult `json:"results,omitempty"`
 }
 
 type pipelineApproveResult struct {
@@ -4358,18 +4539,22 @@ func runPipelineQueueSummaryWatch(ctx context.Context, w io.Writer, teamDir, pip
 }
 
 func runPipelineQueueRetryAll(w io.Writer, teamDir, pipeline string, filters queueListFilters, limit int, dryRun, jsonOut bool, tmpl *template.Template) error {
-	matches, err := collectPipelineQueueItems(teamDir, pipeline, filters, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	if limit > 0 && len(matches) > limit {
-		matches = matches[:limit]
-	}
-	results, err := retryQueueItemMatches(teamDir, matches, dryRun)
+	results, err := pipelineQueueRetryResults(teamDir, pipeline, filters, limit, dryRun)
 	if err != nil {
 		return err
 	}
 	return renderQueueRetryResults(w, results, jsonOut, tmpl)
+}
+
+func pipelineQueueRetryResults(teamDir, pipeline string, filters queueListFilters, limit int, dryRun bool) ([]queueRetryResult, error) {
+	matches, err := collectPipelineQueueItems(teamDir, pipeline, filters, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(matches) > limit {
+		matches = matches[:limit]
+	}
+	return retryQueueItemMatches(teamDir, matches, dryRun)
 }
 
 func runPipelineQueueDropAll(w io.Writer, teamDir, pipeline string, filters queueListFilters, limit int, dryRun, jsonOut bool, tmpl *template.Template) error {
@@ -5427,6 +5612,201 @@ func timeoutPipelineJobs(teamDir, pipeline, stepFilter, targetFilter, message st
 	return results, nil
 }
 
+func runPipelineRepair(cmd *cobra.Command, repo, teamDir, pipeline string, opts pipelineRepairOptions) (*pipelineRepairResult, error) {
+	pipeline = strings.TrimSpace(pipeline)
+	if pipeline == "" {
+		return nil, fmt.Errorf("pipeline name is required")
+	}
+	before, err := collectPipelineStatusRows(teamDir, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	result := &pipelineRepairResult{
+		Pipeline:     pipeline,
+		DryRun:       opts.DryRun,
+		StatusBefore: before,
+	}
+
+	beforeDaemon := collectDaemonStatus(teamDir)
+	result.Daemon = repairDaemonStepResult(beforeDaemon, repairOptions{
+		DryRun:     opts.DryRun,
+		SkipDaemon: opts.SkipDaemon,
+	})
+	if !opts.SkipDaemon && !opts.DryRun {
+		if err := ensureDaemonReadyWithTimeout(cmd, repo, true, opts.ReadyTimeout); err != nil {
+			return nil, err
+		}
+		dc, err := newDaemonClient(teamDir)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := dc.TopologyReload(); err != nil {
+			return nil, fmt.Errorf("reload topology: %w", err)
+		}
+		rec, err := dc.Reconcile()
+		if err != nil {
+			return nil, err
+		}
+		afterDaemon := collectDaemonStatus(teamDir)
+		result.Daemon.Action = "reconciled"
+		if !beforeDaemon.Running {
+			result.Daemon.Action = "started"
+		}
+		result.Daemon.Running = afterDaemon.Running
+		result.Daemon.Ready = afterDaemon.Ready
+		result.Daemon.PID = afterDaemon.PID
+		result.Daemon.Reconcile = rec
+	}
+
+	if opts.SkipQueue {
+		result.Queue = repairQueueStep{Action: "skipped", Reason: "--skip-queue set"}
+	} else {
+		filters, err := parseQueueListFilters(daemon.QueueStateDead, nil, nil, nil, false, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		retries, err := pipelineQueueRetryResults(teamDir, pipeline, filters, opts.Limit, opts.DryRun)
+		if err != nil {
+			return nil, err
+		}
+		result.Queue = repairQueueStep{Action: "retried", Results: retries}
+		if opts.DryRun {
+			result.Queue.Action = "would_retry"
+		}
+		if len(retries) == 0 {
+			result.Queue.Action = "none"
+		}
+	}
+
+	jobTimeout, err := runPipelineRepairJobTimeoutStep(teamDir, pipeline, opts)
+	if err != nil {
+		return nil, err
+	}
+	result.JobTimeout = jobTimeout
+
+	pipelineTimeout, err := runPipelineRepairPipelineTimeoutStep(teamDir, pipeline, opts)
+	if err != nil {
+		return nil, err
+	}
+	result.PipelineTimeout = pipelineTimeout
+
+	pipelineRetry, err := runPipelineRepairPipelineRetryStep(cmd, teamDir, pipeline, opts)
+	if err != nil {
+		return nil, err
+	}
+	result.PipelineRetry = pipelineRetry
+
+	result.Advance = runPipelineRepairAdvanceStep(cmd, teamDir, pipeline, opts)
+	if result.Advance.Action == "error" {
+		return nil, fmt.Errorf("advance: %s", result.Advance.Reason)
+	}
+
+	if !opts.DryRun {
+		after, err := collectPipelineStatusRows(teamDir, pipeline)
+		if err != nil {
+			return nil, err
+		}
+		result.StatusAfter = after
+	}
+	return result, nil
+}
+
+func runPipelineRepairPipelineRetryStep(cmd *cobra.Command, teamDir, pipeline string, opts pipelineRepairOptions) (repairPipelineRetryStep, error) {
+	if !opts.RetryPipelines {
+		return repairPipelineRetryStep{Action: "skipped", Reason: "--retry-pipelines not set"}, nil
+	}
+	message := strings.TrimSpace(opts.RetryMessage)
+	if message == "" {
+		message = "pipeline repair retry failed step"
+	}
+	results, err := retryPipelineJobs(cmd, teamDir, pipeline, opts.Workspace, runtimeSelection{}, opts.RetryStep, message, opts.Limit, opts.RetryForce, true, opts.DryRun, opts.PreviewRoutes)
+	if err != nil {
+		return repairPipelineRetryStep{Action: "error", Reason: err.Error()}, err
+	}
+	action := "retried"
+	if opts.DryRun {
+		action = "would_dispatch"
+	}
+	if len(results) == 0 {
+		action = "none"
+	}
+	return repairPipelineRetryStep{Action: action, Results: results}, nil
+}
+
+func runPipelineRepairPipelineTimeoutStep(teamDir, pipeline string, opts pipelineRepairOptions) (repairPipelineTimeoutStep, error) {
+	if !opts.TimeoutPipelines {
+		return repairPipelineTimeoutStep{Action: "skipped", Reason: "--timeout-pipelines not set"}, nil
+	}
+	message := strings.TrimSpace(opts.TimeoutMessage)
+	if message == "" {
+		message = "pipeline repair timed out stale step"
+	}
+	results, err := timeoutPipelineJobs(teamDir, pipeline, opts.TimeoutStep, opts.TimeoutTarget, message, opts.Limit, opts.DryRun)
+	if err != nil {
+		return repairPipelineTimeoutStep{Action: "error", Reason: err.Error()}, err
+	}
+	action := "timed_out"
+	if opts.DryRun {
+		action = "would_fail"
+	}
+	if len(results) == 0 {
+		action = "none"
+	}
+	return repairPipelineTimeoutStep{Action: action, Results: results}, nil
+}
+
+func runPipelineRepairJobTimeoutStep(teamDir, pipeline string, opts pipelineRepairOptions) (repairPipelineTimeoutStep, error) {
+	if !opts.TimeoutJobs {
+		return repairPipelineTimeoutStep{Action: "skipped", Reason: "--timeout-jobs not set"}, nil
+	}
+	message := strings.TrimSpace(opts.TimeoutMessage)
+	if message == "" {
+		message = "pipeline repair timed out stale job work"
+	}
+	jobs, err := selectedPipelineJobs(teamDir, pipeline)
+	if err != nil {
+		return repairPipelineTimeoutStep{Action: "error", Reason: err.Error()}, err
+	}
+	staleAfter, err := configuredJobTriageStaleAfter(teamDir)
+	if err != nil {
+		return repairPipelineTimeoutStep{Action: "error", Reason: err.Error()}, err
+	}
+	results, err := timeoutStaleJobWork(teamDir, jobs, opts.TimeoutStep, opts.TimeoutTarget, message, opts.Limit, opts.DryRun, time.Now().UTC(), staleAfter)
+	if err != nil {
+		return repairPipelineTimeoutStep{Action: "error", Reason: err.Error()}, err
+	}
+	action := "timed_out"
+	if opts.DryRun {
+		action = "would_fail"
+	}
+	if len(results) == 0 {
+		action = "none"
+	}
+	return repairPipelineTimeoutStep{Action: action, Results: results}, nil
+}
+
+func runPipelineRepairAdvanceStep(cmd *cobra.Command, teamDir, pipeline string, opts pipelineRepairOptions) pipelineRepairAdvanceStep {
+	if opts.SkipAdvance {
+		return pipelineRepairAdvanceStep{Action: "skipped", Reason: "--skip-advance set"}
+	}
+	status := collectDaemonStatus(teamDir)
+	if !opts.DryRun && (!status.Running || !status.Ready) {
+		return pipelineRepairAdvanceStep{Action: "skipped", Reason: "daemon is not running"}
+	}
+	results, err := advanceReadyPipelineJobs(cmd, teamDir, pipeline, opts.Workspace, runtimeSelection{}, opts.Limit, opts.DryRun, opts.PreviewRoutes, opts.AllReadySteps)
+	if err != nil {
+		return pipelineRepairAdvanceStep{Action: "error", Reason: err.Error()}
+	}
+	action := "advanced"
+	if opts.DryRun {
+		action = "would_advance"
+	}
+	if len(results) == 0 {
+		action = "none"
+	}
+	return pipelineRepairAdvanceStep{Action: action, Results: results}
+}
+
 func timeoutJobRunningSteps(teamDir string, j *job.Job, stepFilter, targetFilter, message string, limit int, dryRun bool, now time.Time, staleAfter time.Duration) ([]pipelineTimeoutResult, error) {
 	if j == nil {
 		return nil, nil
@@ -6153,6 +6533,27 @@ func renderPipelineStatusTable(w io.Writer, rows []pipelineStatusRow) {
 	_ = tw.Flush()
 }
 
+func pipelineRepairStatusSummary(rows []pipelineStatusRow) string {
+	if len(rows) == 0 {
+		return "unavailable"
+	}
+	row := rows[0]
+	parts := []string{
+		fmt.Sprintf("jobs=%d", row.Jobs),
+		fmt.Sprintf("ready=%d", row.ReadySteps),
+		fmt.Sprintf("running=%d", row.RunningSteps),
+		fmt.Sprintf("blocked=%d", row.BlockedSteps),
+		fmt.Sprintf("failed=%d", row.FailedSteps),
+	}
+	if row.StaleRunningSteps > 0 {
+		parts = append(parts, fmt.Sprintf("stale=%d", row.StaleRunningSteps))
+	}
+	if queue := pipelineStatusQueueSummary(row); queue != "-" {
+		parts = append(parts, "queue="+queue)
+	}
+	return strings.Join(parts, " ")
+}
+
 func pipelineStatusQueueSummary(row pipelineStatusRow) string {
 	parts := []string{}
 	if row.QueuePending > 0 {
@@ -6172,6 +6573,51 @@ func pipelineStatusQueueSummary(row pipelineStatusRow) string {
 		return "-"
 	}
 	return strings.Join(parts, ",")
+}
+
+func renderPipelineRepairResult(w io.Writer, result *pipelineRepairResult, jsonOut bool, tmpl *template.Template) error {
+	if result == nil {
+		result = &pipelineRepairResult{}
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(result)
+	}
+	if tmpl != nil {
+		if err := tmpl.Execute(w, result); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(w)
+		return err
+	}
+	fmt.Fprintf(w, "Pipeline: %s\n", result.Pipeline)
+	fmt.Fprintf(w, "Dry run: %t\n", result.DryRun)
+	fmt.Fprintf(w, "Status before: %s\n", pipelineRepairStatusSummary(result.StatusBefore))
+	renderRepairDaemonStep(w, result.Daemon)
+	renderRepairQueueStep(w, result.Queue)
+	renderRepairJobTimeoutStep(w, result.JobTimeout)
+	renderRepairPipelineTimeoutStep(w, result.PipelineTimeout)
+	if err := renderRepairPipelineRetryStep(w, result.PipelineRetry); err != nil {
+		return err
+	}
+	if err := renderPipelineRepairAdvanceStep(w, result.Advance); err != nil {
+		return err
+	}
+	if len(result.StatusAfter) > 0 {
+		fmt.Fprintf(w, "Status after: %s\n", pipelineRepairStatusSummary(result.StatusAfter))
+	}
+	return nil
+}
+
+func renderPipelineRepairAdvanceStep(w io.Writer, step pipelineRepairAdvanceStep) error {
+	fmt.Fprintf(w, "Advance: %s", step.Action)
+	if step.Reason != "" {
+		fmt.Fprintf(w, " (%s)", step.Reason)
+	}
+	fmt.Fprintln(w)
+	if len(step.Results) == 0 {
+		return nil
+	}
+	return renderPipelineAdvanceResults(w, step.Results, false, nil)
 }
 
 func renderPipelineExplainRows(w io.Writer, rows []pipelineExplainRow, jsonOut bool, tmpl *template.Template) error {

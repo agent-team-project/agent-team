@@ -53,6 +53,7 @@ agent-team queue retry --all --dry-run
 
 ```sh
 agent-team pipeline ready --state failed
+agent-team pipeline repair ticket_to_pr --retry-pipelines --dry-run --preview-routes
 agent-team repair --retry-pipelines --dry-run --preview-routes
 agent-team repair --retry-pipelines --retry-pipeline ticket_to_pr --dry-run --preview-routes
 agent-team repair --retry-pipelines --retry-step review --dry-run --preview-routes
@@ -60,7 +61,7 @@ agent-team repair --retry-pipelines --retry-message "retry after fixing credenti
 agent-team repair --retry-pipelines --retry-force --retry-message "override after fixing credentials"
 ```
 
-Use `--retry-pipeline <name>` when a fixed issue only affects one workflow, and `--retry-step <id>` when it only affects one stage. Add `--retry-force` only when an operator intentionally wants to override a step `max_attempts` cap after fixing the underlying cause. For one owned area, use `agent-team team repair <team> --retry-pipelines --dry-run --preview-routes`.
+Use `pipeline repair <pipeline> --retry-pipelines` when a fixed issue only affects one workflow, `--retry-pipeline <name>` for the same scoping in global repair, and `--retry-step <id>` when it only affects one stage. Add `--retry-force` only when an operator intentionally wants to override a step `max_attempts` cap after fixing the underlying cause. For one owned area, use `agent-team team repair <team> --retry-pipelines --dry-run --preview-routes`.
 
 ## If Queue Files Are Quarantined
 

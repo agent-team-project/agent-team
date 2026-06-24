@@ -2932,6 +2932,7 @@ Subcommands:
 - `agent-team pipeline ready` - List ready pipeline jobs.
 - `agent-team pipeline reject` - Reject blocked manual pipeline gates.
 - `agent-team pipeline release` - Release held pipeline jobs so automation can advance them.
+- `agent-team pipeline repair` - Recover unhealthy orchestration state for one pipeline.
 - `agent-team pipeline resume-plan` - Show runtime resume and fallback commands for one pipeline.
 - `agent-team pipeline retry` - Reset failed pipeline steps for another attempt.
 - `agent-team pipeline run` - Create a durable job from a pipeline declaration.
@@ -3540,6 +3541,42 @@ Flags:
       --limit int        Release at most this many held jobs; 0 means no limit.
       --message string   Release message recorded on each job.
       --repo string      Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team pipeline repair`
+
+Recover unhealthy orchestration state for one pipeline.
+
+Recover unhealthy orchestration state scoped to one pipeline: ensure the daemon is ready, retry pipeline-owned dead-letter queue items, optionally time out stale work, retry failed steps, and advance ready steps. Use --dry-run to preview.
+
+```text
+agent-team pipeline repair <pipeline> [flags]
+```
+
+Flags:
+
+```text
+      --all-ready-steps               Advance every currently ready independent pipeline step during the scoped repair advance.
+      --dry-run                       Preview pipeline repair actions without mutating state or starting the daemon.
+      --format string                 Render the pipeline repair result with a Go template, e.g. '{{.Pipeline}} {{.Queue.Action}}'.
+      --json                          Emit machine-readable JSON.
+      --limit int                     Retry at most this many pipeline-owned dead-letter queue items or failed pipeline jobs, and advance at most this many ready jobs or ready steps with --all-ready-steps; 0 means no limit.
+      --preview-routes                With --dry-run, include route and dispatch payload previews for retried or ready pipeline steps.
+      --ready-timeout duration        Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
+      --repo string                   Repo root containing .agent_team. (default "<repo>")
+      --retry-force                   With --retry-pipelines, ignore step max_attempts caps for explicit pipeline repair retry.
+      --retry-message string          Audit message to record when --retry-pipelines resets failed pipeline steps.
+      --retry-pipelines               Reset failed pipeline steps and dispatch them before the scoped advance.
+      --retry-step string             With --retry-pipelines, retry only failed jobs whose next failed step has this id.
+      --skip-advance                  Do not advance ready pipeline steps after repair.
+      --skip-daemon                   Do not start or reconcile the daemon.
+      --skip-queue                    Do not retry pipeline-owned dead-letter queue items.
+      --timeout-jobs                  Mark stale running pipeline job work failed before retrying failed steps.
+      --timeout-message string        Audit message to record when pipeline timeout repair marks stale work failed.
+      --timeout-pipelines             Mark stale running pipeline steps failed before retrying failed steps.
+      --timeout-step string           With --timeout-jobs or --timeout-pipelines, mark only stale running steps with this id failed.
+      --timeout-target-agent string   With --timeout-jobs or --timeout-pipelines, mark only stale work targeting this agent.
+      --workspace string              Workspace mode for retried or advanced pipeline steps: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team pipeline resume-plan`

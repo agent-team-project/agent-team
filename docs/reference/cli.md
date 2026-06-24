@@ -182,6 +182,7 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team pipeline queue <pipeline>` | List, inspect, retry, drop, prune, or recover active/quarantined queue items owned by one pipeline |
 | `agent-team pipeline timeout <pipeline>` | Mark stale running steps failed; add `--target-agent` to scope by role |
 | `agent-team pipeline retry <pipeline>` | Retry failed steps, honoring step `max_attempts` caps; add `--force` for an explicit override |
+| `agent-team pipeline repair <pipeline>` | Scoped repair loop for one pipeline: queue retry, optional timeout/retry, and ready-step advance |
 
 ## Teams
 

@@ -90,6 +90,8 @@ agent-team pipeline retry ticket_to_pr --dry-run
 agent-team pipeline retry ticket_to_pr --step review --dry-run
 agent-team pipeline retry ticket_to_pr --dispatch --dry-run --preview-routes
 agent-team pipeline retry ticket_to_pr --force --message "retry after fixing credentials"
+agent-team pipeline repair ticket_to_pr --dry-run --preview-routes
+agent-team pipeline repair ticket_to_pr --retry-pipelines --dry-run --preview-routes
 agent-team repair --retry-pipelines --dry-run --preview-routes
 agent-team repair --all-ready-steps --dry-run --preview-routes
 agent-team repair --timeout-jobs --dry-run
@@ -151,7 +153,7 @@ Pipeline status also flags `stale_running_steps` when a running step has exceede
 By default, `pipeline advance` dispatches one ready step per job. Use `pipeline advance <pipeline> --all-ready-steps` when a job has multiple currently ready independent steps and you want to fan them out in one command. Dependency checks still use the job file: a downstream step waits until all of its `after` steps are marked done, or failed with `optional = true`.
 Use `agent-team team approve <team>` for the same manual-gate approval flow scoped to one team's declared pipelines, `agent-team team reject <team> --dry-run` before rejecting the team's blocked manual gates, `agent-team team skip <team> --step <id> --dry-run` before bypassing a stage across team-owned jobs, and `agent-team team cancel <team> --dry-run` before cancelling obsolete team-owned jobs.
 Use `agent-team team retry <team>` for the same recovery flow scoped to one team's declared pipelines.
-Use `agent-team repair --retry-pipelines` or `agent-team team repair <team> --retry-pipelines` when failed-step retry should happen inside the broader repair loop after daemon reconciliation and dead-letter queue retry. Add `--dry-run --preview-routes` first to inspect the dispatch routes, `--retry-pipeline <name>` to target one workflow, `--retry-step <id>` to target one failed stage, `--retry-message` to record the operator reason, and `--retry-force` only when intentionally overriding step `max_attempts`.
+Use `agent-team pipeline repair <pipeline> --retry-pipelines` when the broader repair loop should stay inside one workflow, including pipeline-owned dead-letter queue retry and a final scoped advance. Use `agent-team repair --retry-pipelines` or `agent-team team repair <team> --retry-pipelines` when failed-step retry should happen inside a broader global or team repair loop after daemon reconciliation and dead-letter queue retry. Add `--dry-run --preview-routes` first to inspect the dispatch routes, `--retry-pipeline <name>` to target one workflow in global repair, `--retry-step <id>` to target one failed stage, `--retry-message` to record the operator reason, and `--retry-force` only when intentionally overriding step `max_attempts`.
 Pipeline status, health, overview, and next-action hints recommend these retry dry-runs when failed steps are present, and include `pipeline explain ... --state failed` or `team explain ... --state failed` when the operator needs the detailed step diagnostics first.
 
 Supported gates:
