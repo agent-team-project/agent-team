@@ -247,6 +247,7 @@ agent-team job retry <job-id> [--dispatch] [--workspace auto|worktree|repo] [--r
 agent-team job dispatch <job-id> [--source <instance>] [--workspace auto|worktree|repo] [--runtime claude|codex] [--runtime-bin <path>] [--dry-run] [--format <template>] [--json]
 agent-team job adopt <job-id> --pid <pid> [--instance <name>] [--runtime claude|codex] [--session-id <id>] [--dry-run] [--format '{{.Job.ID}} {{.Metadata.Instance}}'] [--json]
 agent-team job advance <job-id> [--workspace auto|worktree|repo] [--runtime claude|codex] [--runtime-bin <path>] [--dry-run] [--format '{{.Job.ID}} {{.Step.ID}}'] [--json]
+agent-team job approve <job-id> [message...] [--step review] [--advance] [--dry-run] [--format '{{.Job.ID}} {{.Step.ID}}'] [--json]
 agent-team job update <job-id> [--status running] [--instance name] [--branch name] [--worktree path] [--pr url] [--clear pr] [--advance] [--workspace auto|worktree|repo] [--runtime claude|codex] [--runtime-bin <path>] [--dry-run] [--format '{{.ID}} {{.Status}}'] [--json]
 agent-team job step <job-id> <step-id> [--status done|failed|blocked|running|queued] [--skip] [--advance] [--workspace auto|worktree|repo] [--runtime claude|codex] [--runtime-bin <path>] [--dry-run] [--format '{{.ID}} {{.Status}}'] [--json]
 agent-team job send <job-id> [message...] [--message "..."] [--message-file <path|->] [--from cli] [--allow-missing] [--format '{{.ID}}'] [--json]

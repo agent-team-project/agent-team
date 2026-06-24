@@ -1510,6 +1510,7 @@ Subcommands:
 
 - `agent-team job adopt` - Adopt a live external process as a job&#39;s owning instance.
 - `agent-team job advance` - Dispatch the next ready step in a pipeline job.
+- `agent-team job approve` - Approve a blocked manual pipeline gate.
 - `agent-team job attach` - Attach to a job&#39;s owning instance.
 - `agent-team job block` - Mark a job blocked with an operator reason.
 - `agent-team job cancel` - Cancel a job as failed.
@@ -1594,6 +1595,32 @@ Flags:
       --runtime string       Runtime profile for the advanced step dispatch (claude or codex). Overrides env and repo config.
       --runtime-bin string   Runtime binary for the advanced step dispatch. Overrides env and repo config.
       --workspace string     Workspace mode for the advanced step: auto, worktree, or repo. (default "auto")
+```
+
+## `agent-team job approve`
+
+Approve a blocked manual pipeline gate.
+
+Approve a blocked manual pipeline gate by marking it queued. By default this selects the next blocked manual gate for the job; pass --step to approve a specific gate.
+
+```text
+agent-team job approve <job-id> [message...] [flags]
+```
+
+Flags:
+
+```text
+      --advance               After approval, dispatch the newly ready step.
+      --dry-run               Preview approval and optional advance dispatch without writing job or daemon state.
+      --format string         Render the updated job or advance result with a Go template, e.g. '{{.ID}} {{.Status}}' or '{{.Job.ID}} {{.Step.ID}}'.
+      --json                  Emit the updated job or advance result as JSON.
+      --message string        Approval message recorded on the job.
+      --message-file string   Read approval message from a file, or '-' for stdin.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --runtime string        Runtime profile for --advance dispatch (claude or codex). Overrides env and repo config.
+      --runtime-bin string    Runtime binary for --advance dispatch. Overrides env and repo config.
+      --step string           Manual gate step id to approve. Defaults to the next blocked manual gate.
+      --workspace string      Workspace mode for an advanced step: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team job attach`

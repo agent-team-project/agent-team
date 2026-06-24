@@ -68,6 +68,7 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobReadyCmd())
 	cmd.AddCommand(newJobTriageCmd())
 	cmd.AddCommand(newJobStepCmd())
+	cmd.AddCommand(newJobApproveCmd())
 	cmd.AddCommand(newJobAdvanceCmd())
 	cmd.AddCommand(newJobReconcileCmd())
 	return cmd
@@ -3868,6 +3869,109 @@ func newJobStepCmd() *cobra.Command {
 	return cmd
 }
 
+func newJobApproveCmd() *cobra.Command {
+	var (
+		repo        string
+		stepID      string
+		message     string
+		messageFile string
+		advance     bool
+		workspace   string
+		runtimeKind string
+		runtimeBin  string
+		dryRun      bool
+		jsonOut     bool
+		format      string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "approve <job-id> [message...]",
+		Short: "Approve a blocked manual pipeline gate.",
+		Long: "Approve a blocked manual pipeline gate by marking it queued. " +
+			"By default this selects the next blocked manual gate for the job; pass --step to approve a specific gate.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job approve: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobStepFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job approve: %v\n", err)
+				return exitErr(2)
+			}
+			approvalMessage, err := optionalSendMessageBody(message, messageFile, args[1:])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job approve: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
+			if err != nil {
+				return err
+			}
+			selectedStep, err := selectManualGateForApproval(j, stepID)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job approve: %v\n", err)
+				return exitErr(2)
+			}
+			if strings.TrimSpace(approvalMessage) == "" {
+				approvalMessage = "approved manual gate " + selectedStep
+			}
+			if err := updateJobStep(j, selectedStep, job.StatusQueued, jobStepUpdate{Message: approvalMessage}); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job approve: %v\n", err)
+				return exitErr(2)
+			}
+			if dryRun {
+				if advance {
+					preview, err := previewJobAdvanceDispatch(teamDir, j, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin})
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job approve: %v\n", err)
+						return exitErr(1)
+					}
+					return renderJobAdvancePreview(cmd.OutOrStdout(), preview, jsonOut, tmpl)
+				}
+				return renderJobStepPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
+			}
+			if err := writeJobWithAudit(teamDir, j, "manual_gate_approved", "cli", approvalMessage, map[string]string{"step": selectedStep}); err != nil {
+				return err
+			}
+			if advance {
+				res, err := advanceJob(cmd, teamDir, j, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin})
+				if err != nil {
+					return err
+				}
+				if jsonOut {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(res)
+				}
+				if tmpl != nil {
+					return renderJobAdvanceResultFormat(cmd.OutOrStdout(), res, tmpl)
+				}
+				return renderJobAdvanceResult(cmd.OutOrStdout(), res)
+			}
+			if jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(j)
+			}
+			if tmpl != nil {
+				return renderJobTemplate(cmd.OutOrStdout(), j, tmpl)
+			}
+			renderJobDetail(cmd.OutOrStdout(), j)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&stepID, "step", "", "Manual gate step id to approve. Defaults to the next blocked manual gate.")
+	cmd.Flags().StringVar(&message, "message", "", "Approval message recorded on the job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read approval message from a file, or '-' for stdin.")
+	cmd.Flags().BoolVar(&advance, "advance", false, "After approval, dispatch the newly ready step.")
+	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for an advanced step: auto, worktree, or repo.")
+	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile for --advance dispatch (claude or codex). Overrides env and repo config.")
+	cmd.Flags().StringVar(&runtimeBin, "runtime-bin", "", "Runtime binary for --advance dispatch. Overrides env and repo config.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview approval and optional advance dispatch without writing job or daemon state.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job or advance result as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or advance result with a Go template, e.g. '{{.ID}} {{.Status}}' or '{{.Job.ID}} {{.Step.ID}}'.")
+	return cmd
+}
+
 func newJobAdvanceCmd() *cobra.Command {
 	var (
 		repo        string
@@ -5922,7 +6026,7 @@ func actionsForJobReadyRow(row jobReadyRow) []string {
 	case "blocked":
 		if row.Gate == job.StepGateManual {
 			if len(row.WaitingFor) == 0 && strings.TrimSpace(row.StepID) != "" {
-				return []string{fmt.Sprintf("agent-team job step %s %s --status queued", row.JobID, row.StepID)}
+				return []string{fmt.Sprintf("agent-team job approve %s --step %s", row.JobID, row.StepID)}
 			}
 			return nil
 		}
@@ -8045,7 +8149,7 @@ func actionsForJobExplainStep(j *job.Job, step *job.Step, state string) []string
 	case state == "ready":
 		return []string{fmt.Sprintf("agent-team job advance %s", j.ID)}
 	case state == "waiting" && step.Gate == job.StepGateManual:
-		return []string{fmt.Sprintf("agent-team job step %s %s --status queued", j.ID, step.ID)}
+		return []string{fmt.Sprintf("agent-team job approve %s --step %s", j.ID, step.ID)}
 	case state == "waiting" && step.Gate == job.StepGatePR:
 		return prGateRecoveryActions(j.ID)
 	case state == "failed":
@@ -8215,6 +8319,45 @@ func advanceableJobSteps(j *job.Job) []*job.Step {
 
 func stepManualGatePending(step *job.Step) bool {
 	return step != nil && step.Status == job.StatusBlocked && step.Gate == job.StepGateManual
+}
+
+func selectManualGateForApproval(j *job.Job, requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if j == nil || len(j.Steps) == 0 {
+		return "", fmt.Errorf("job has no pipeline steps")
+	}
+	if requested != "" {
+		idx := jobStepIndex(j, requested)
+		if idx == -1 {
+			return "", fmt.Errorf("step %q not found", requested)
+		}
+		step := &j.Steps[idx]
+		if step.Gate != job.StepGateManual {
+			return "", fmt.Errorf("step %q is not a manual gate", requested)
+		}
+		if step.Status != job.StatusBlocked {
+			return "", fmt.Errorf("step %q is %s, not blocked", requested, step.Status)
+		}
+		return step.ID, nil
+	}
+	next := inspectNextJobStep(j)
+	if next.Step != nil && next.Step.Gate == job.StepGateManual && next.Step.Status == job.StatusBlocked {
+		return next.Step.ID, nil
+	}
+	for i := range j.Steps {
+		step := &j.Steps[i]
+		if step.Gate == job.StepGateManual && step.Status == job.StatusBlocked {
+			return step.ID, nil
+		}
+	}
+	return "", fmt.Errorf("job has no blocked manual gate")
+}
+
+func optionalSendMessageBody(flagValue, fileValue string, positional []string) (string, error) {
+	if strings.TrimSpace(flagValue) == "" && strings.TrimSpace(fileValue) == "" && len(positional) == 0 {
+		return "", nil
+	}
+	return sendMessageBody(flagValue, fileValue, positional)
 }
 
 func stepPRGatePending(j *job.Job, step *job.Step) bool {
