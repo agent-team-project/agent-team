@@ -7245,6 +7245,10 @@ func teamPipelineActions(teamName string, row pipelineStatusRow) []string {
 		actions = append(actions, fmt.Sprintf("agent-team team explain %s --state blocked", teamName))
 		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state blocked", teamName))
 	}
+	if row.HeldSteps > 0 {
+		actions = append(actions, fmt.Sprintf("agent-team team explain %s --state held", teamName))
+		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state held", teamName))
+	}
 	if row.QueuedSteps > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team team tick %s", teamName))
 	}

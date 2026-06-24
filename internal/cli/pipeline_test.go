@@ -1062,6 +1062,23 @@ pipelines = ["ticket_to_pr", "nightly"]
 		t.Fatalf("team held jobs = %+v", heldJobs)
 	}
 
+	teamNext := NewRootCmd()
+	teamNextOut, teamNextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	teamNext.SetOut(teamNextOut)
+	teamNext.SetErr(teamNextErr)
+	teamNext.SetArgs([]string{"pipeline", "next", "ticket_to_pr", "--team", "delivery", "--repo", root, "--format", "{{.Pipeline}}|{{.Reason}}|{{.Action}}"})
+	if err := teamNext.Execute(); err != nil {
+		t.Fatalf("pipeline next team held: %v\nstderr=%s", err, teamNextErr.String())
+	}
+	for _, want := range []string{
+		"ticket_to_pr|held_steps=1|agent-team team explain delivery --state held",
+		"ticket_to_pr|held_steps=1|agent-team team ready delivery --state held",
+	} {
+		if !strings.Contains(teamNextOut.String(), want) {
+			t.Fatalf("pipeline next team held missing %q:\n%s", want, teamNextOut.String())
+		}
+	}
+
 	retryHeld := NewRootCmd()
 	retryHeldOut, retryHeldErr := &bytes.Buffer{}, &bytes.Buffer{}
 	retryHeld.SetOut(retryHeldOut)
