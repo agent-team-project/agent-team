@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	texttemplate "text/template"
@@ -42,10 +43,74 @@ func newRuntimeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "", "Render runtime info with a Go template, e.g. '{{.Runtime}} {{.Available}}'.")
 	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile to inspect for this invocation (claude or codex). Overrides env and repo config.")
 	cmd.Flags().StringVar(&runtimeBinary, "runtime-bin", "", "Runtime binary to inspect for this invocation. Overrides env and repo config.")
+	cmd.AddCommand(newRuntimeSetCmd())
 	cmd.AddCommand(newRuntimeProfileCmd())
 	cmd.AddCommand(newRuntimeLsCmd())
 	cmd.AddCommand(newRuntimeProbeCmd())
 	cmd.AddCommand(newRuntimeResumePlanCmd())
+	return cmd
+}
+
+func newRuntimeSetCmd() *cobra.Command {
+	var (
+		target        string
+		runtimeBinary string
+		dryRun        bool
+		jsonOut       bool
+		format        string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:     "set <runtime>",
+		Aliases: []string{"configure", "use"},
+		Short:   "Set the repo default runtime profile.",
+		Long: "Set the repo default LLM runtime profile in .agent_team/config.toml. " +
+			"Command flags and AGENT_TEAM_RUNTIME / AGENT_TEAM_RUNTIME_BIN still override this repo default at runtime.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime set: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseRuntimeFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime set: %v\n", err)
+				return exitErr(2)
+			}
+			kind, err := runtimebin.ParseKind(args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime set: runtime must be %q or %q.\n", runtimebin.KindClaude, runtimebin.KindCodex)
+				return exitErr(2)
+			}
+			binary := strings.TrimSpace(runtimeBinary)
+			if binary == "" {
+				binary = runtimebin.DefaultBinaryForKind(kind)
+			}
+			result, err := runRuntimeSetCommand(cmd, target, kind, binary, dryRun)
+			if err != nil {
+				var ec ExitCode
+				if errors.As(err, &ec) {
+					return err
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime set: %v\n", err)
+				return exitErr(2)
+			}
+			if jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			}
+			if tmpl != nil {
+				return renderRuntimeFormat(cmd.OutOrStdout(), result, tmpl)
+			}
+			renderRuntimeSetResult(cmd.OutOrStdout(), result)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&target, "target", cwd, "Repo root or any path under a repo.")
+	cmd.Flags().StringVar(&runtimeBinary, "runtime-bin", "", "Runtime binary or wrapper to store. Defaults to the runtime's built-in binary.")
+	cmd.Flags().StringVar(&runtimeBinary, "binary", "", "Alias for --runtime-bin.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the config change without writing.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the set result with a Go template, e.g. '{{.Runtime}} {{.Binary}}'.")
 	return cmd
 }
 
@@ -110,6 +175,15 @@ func runRuntimeProfileCommand(cmd *cobra.Command, label, target, runtimeKind, ru
 		return exitErr(1)
 	}
 	return nil
+}
+
+type runtimeSetResult struct {
+	ConfigPath string   `json:"config_path"`
+	Runtime    string   `json:"runtime"`
+	Binary     string   `json:"binary"`
+	Changed    bool     `json:"changed"`
+	DryRun     bool     `json:"dry_run,omitempty"`
+	Notes      []string `json:"notes,omitempty"`
 }
 
 type runtimeInfo struct {
@@ -203,6 +277,140 @@ func runtimeFromConfigWithOverrides(configPath string, selection runtimeSelectio
 		rt.Binary = runtimebin.DefaultBinaryForKind(rt.Kind)
 	}
 	return rt, nil
+}
+
+func runRuntimeSetCommand(cmd *cobra.Command, target string, kind runtimebin.Kind, binary string, dryRun bool) (runtimeSetResult, error) {
+	teamDir, err := resolveTeamDir(cmd, target)
+	if err != nil {
+		return runtimeSetResult{}, err
+	}
+	configPath := filepath.Join(teamDir, "config.toml")
+	result := runtimeSetResult{
+		ConfigPath: filepath.ToSlash(configPath),
+		Runtime:    string(kind),
+		Binary:     binary,
+		DryRun:     dryRun,
+	}
+	if strings.TrimSpace(os.Getenv(runtimebin.EnvRuntime)) != "" {
+		result.Notes = append(result.Notes, runtimebin.EnvRuntime+" is set; it overrides repo config in the current environment")
+	}
+	if strings.TrimSpace(os.Getenv(runtimebin.EnvBinary)) != "" {
+		result.Notes = append(result.Notes, runtimebin.EnvBinary+" is set; it overrides repo config in the current environment")
+	}
+	body, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return runtimeSetResult{}, err
+	}
+	current := ""
+	if err == nil {
+		current = string(body)
+	}
+	next := updateRuntimeConfigContent(current, kind, binary)
+	result.Changed = next != current
+	if !dryRun && result.Changed {
+		mode := os.FileMode(0o644)
+		if st, statErr := os.Stat(configPath); statErr == nil {
+			mode = st.Mode().Perm()
+		}
+		if err := os.WriteFile(configPath, []byte(next), mode); err != nil {
+			return runtimeSetResult{}, err
+		}
+	}
+	return result, nil
+}
+
+func updateRuntimeConfigContent(current string, kind runtimebin.Kind, binary string) string {
+	newline := runtimeConfigNewline(current)
+	replacement := []string{
+		"[runtime]" + newline,
+		"kind = " + strconv.Quote(string(kind)) + newline,
+		"binary = " + strconv.Quote(binary) + newline,
+	}
+	lines := splitLinesAfter(current)
+	for i, line := range lines {
+		if !isRuntimeTableHeader(line) {
+			continue
+		}
+		end := i + 1
+		for end < len(lines) && !isTOMLTableHeader(lines[end]) {
+			end++
+		}
+		out := make([]string, 0, len(lines)+len(replacement))
+		out = append(out, lines[:i]...)
+		out = append(out, replacement...)
+		for _, existing := range lines[i+1 : end] {
+			if isRuntimeConfigKeyLine(existing) {
+				continue
+			}
+			out = append(out, existing)
+		}
+		out = append(out, lines[end:]...)
+		return strings.Join(out, "")
+	}
+	if strings.TrimSpace(current) == "" {
+		return strings.Join(replacement, "")
+	}
+	out := current
+	if !strings.HasSuffix(out, "\n") {
+		out += newline
+	}
+	if !strings.HasSuffix(out, newline+newline) {
+		out += newline
+	}
+	out += strings.Join(replacement, "")
+	return out
+}
+
+func splitLinesAfter(value string) []string {
+	if value == "" {
+		return nil
+	}
+	return strings.SplitAfter(value, "\n")
+}
+
+func runtimeConfigNewline(value string) string {
+	if strings.Contains(value, "\r\n") {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+func isRuntimeTableHeader(line string) bool {
+	return normalizedTOMLHeader(line) == "[runtime]"
+}
+
+func isTOMLTableHeader(line string) bool {
+	header := normalizedTOMLHeader(line)
+	return strings.HasPrefix(header, "[") && strings.HasSuffix(header, "]")
+}
+
+func normalizedTOMLHeader(line string) string {
+	line = stripTOMLLineComment(line)
+	return strings.TrimSpace(line)
+}
+
+func stripTOMLLineComment(line string) string {
+	if idx := strings.Index(line, "#"); idx >= 0 {
+		return line[:idx]
+	}
+	return line
+}
+
+func isRuntimeConfigKeyLine(line string) bool {
+	line = strings.TrimSpace(stripTOMLLineComment(line))
+	if line == "" {
+		return false
+	}
+	key, _, ok := strings.Cut(line, "=")
+	if !ok {
+		return false
+	}
+	switch strings.TrimSpace(key) {
+	case "kind", "binary", "bin":
+		return true
+	default:
+		return false
+	}
 }
 
 func collectRuntimeInfo() (runtimeInfo, error) {
@@ -349,6 +557,19 @@ func renderRuntimeInfo(w fmtWriter, info runtimeInfo) {
 	}
 }
 
+func renderRuntimeSetResult(w fmtWriter, result runtimeSetResult) {
+	fmt.Fprintf(w, "config:  %s\n", result.ConfigPath)
+	fmt.Fprintf(w, "runtime: %s\n", result.Runtime)
+	fmt.Fprintf(w, "binary:  %s\n", result.Binary)
+	fmt.Fprintf(w, "changed: %s\n", runtimeYesNo(result.Changed))
+	if result.DryRun {
+		fmt.Fprintln(w, "dry_run: yes")
+	}
+	for _, note := range result.Notes {
+		fmt.Fprintf(w, "note:    %s\n", note)
+	}
+}
+
 func renderRuntimeList(w fmtWriter, rows []runtimeInfo) {
 	if len(rows) == 0 {
 		fmt.Fprintln(w, "(no runtimes)")
@@ -397,8 +618,8 @@ func renderRuntimeListFormat(w fmtWriter, rows []runtimeInfo, tmpl *texttemplate
 	return nil
 }
 
-func renderRuntimeFormat(w fmtWriter, info runtimeInfo, tmpl *texttemplate.Template) error {
-	if err := tmpl.Execute(w, info); err != nil {
+func renderRuntimeFormat(w fmtWriter, data any, tmpl *texttemplate.Template) error {
+	if err := tmpl.Execute(w, data); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintln(w)

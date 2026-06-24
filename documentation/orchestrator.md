@@ -192,8 +192,8 @@ agent-team daemon status [-q] [--wait [--down] --timeout 30s --interval 200ms] [
                                   # process and API-readiness check for agent-teamd
 agent-team daemon logs [-f] [--tail N|all] [--since 10m] [--grep 'error|panic']
 
-agent-team runtime [--format '{{.Runtime}} {{.Available}}'] [--json]
-                                  # selected LLM runtime profile, binary path, and capability flags
+agent-team runtime [--format '{{.Runtime}} {{.Available}}'] [--json] | set <claude|codex> [--runtime-bin <path>] [--dry-run] [--json]
+                                  # inspect or persist selected LLM runtime profile, binary path, and capability flags
 
 agent-team status [-w] [--no-clear] [--summary [--resources] [--plan [--stop-extras] [--action start]] [--events N [--event-action stop] [--since 10m]] [--strict-topology]] [--latest | --last N] [--format '{{.Instance}} {{.Status}}'] [--json] [--interval 2s] [--agent manager] [--instance manager] [--status running] [--runtime codex] [--phase idle] [--stale] [--unhealthy]
                                   # daemon health + instance snapshot; JSON watch emits one object per refresh

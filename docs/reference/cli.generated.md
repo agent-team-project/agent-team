@@ -3940,6 +3940,7 @@ Subcommands:
 - `agent-team runtime probe` - Probe runtime, daemon, and Codex environment health.
 - `agent-team runtime profile` - Show the selected runtime profile.
 - `agent-team runtime resume-plan` - Show runtime resume and fallback commands for daemon metadata.
+- `agent-team runtime set` - Set the repo default runtime profile.
 
 ## `agent-team runtime ls`
 
@@ -4051,6 +4052,35 @@ Flags:
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --summary           Summarize matching resume plans by recommended action, runtime, and status.
       --target string     Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team runtime set`
+
+Set the repo default runtime profile.
+
+Set the repo default LLM runtime profile in .agent_team/config.toml. Command flags and AGENT_TEAM_RUNTIME / AGENT_TEAM_RUNTIME_BIN still override this repo default at runtime.
+
+```text
+agent-team runtime set <runtime> [flags]
+```
+
+Aliases: `configure`, `use`
+
+Flags:
+
+```text
+      --binary string        Alias for --runtime-bin.
+      --dry-run              Preview the config change without writing.
+      --format string        Render the set result with a Go template, e.g. '{{.Runtime}} {{.Binary}}'.
+      --json                 Emit machine-readable JSON.
+      --runtime-bin string   Runtime binary or wrapper to store. Defaults to the runtime's built-in binary.
+      --target string        Repo root or any path under a repo. (default "<repo>")
 ```
 
 Inherited Flags:

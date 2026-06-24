@@ -181,6 +181,121 @@ func TestRuntimeProfileCommand_FormatRejectsJSON(t *testing.T) {
 	}
 }
 
+func TestRuntimeSetUpdatesRepoConfigRuntimeSection(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	cfg := filepath.Join(tmp, ".agent_team", "config.toml")
+	before := `[linear]
+ticket_prefix = "SQU"
+
+[runtime] # existing selection
+# keep runtime notes
+kind = "claude"
+bin = "claude-dev"
+extra = "kept"
+
+[health]
+status_stale_after = "10m"
+`
+	if err := os.WriteFile(cfg, []byte(before), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "set", "codex", "--target", tmp, "--runtime-bin", "codex-dev", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime set failed: %v\nstderr: %s", err, errOut.String())
+	}
+	var result runtimeSetResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("json: %v\n%s", err, out.String())
+	}
+	if !result.Changed || result.Runtime != "codex" || result.Binary != "codex-dev" || result.ConfigPath == "" {
+		t.Fatalf("result = %+v, want changed codex-dev", result)
+	}
+	body, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	content := string(body)
+	for _, want := range []string{
+		`[linear]`,
+		`[runtime]`,
+		`kind = "codex"`,
+		`binary = "codex-dev"`,
+		`# keep runtime notes`,
+		`extra = "kept"`,
+		`[health]`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("config missing %q:\n%s", want, content)
+		}
+	}
+	for _, unwanted := range []string{`kind = "claude"`, `bin = "claude-dev"`} {
+		if strings.Contains(content, unwanted) {
+			t.Fatalf("config still contains %q:\n%s", unwanted, content)
+		}
+	}
+}
+
+func TestRuntimeSetDryRunDoesNotWriteConfig(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "claude")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	cfg := filepath.Join(tmp, ".agent_team", "config.toml")
+	before, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "set", "codex", "--target", tmp, "--dry-run", "--format", "{{.Runtime}} {{.Binary}} {{.Changed}} {{.DryRun}} {{len .Notes}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime set --dry-run failed: %v\nstderr: %s", err, errOut.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "codex codex true true 1" {
+		t.Fatalf("format output = %q", got)
+	}
+	after, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatalf("read config after: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("dry-run changed config:\nbefore:\n%s\nafter:\n%s", string(before), string(after))
+	}
+}
+
+func TestRuntimeSetRejectsInvalidRuntime(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "set", "llama", "--target", tmp})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("runtime set llama succeeded")
+	}
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 2 {
+		t.Fatalf("error = %v, want exit 2", err)
+	}
+	if !strings.Contains(errOut.String(), `runtime must be "claude" or "codex"`) {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+}
+
 func TestRuntimeLsJSONListsSupportedRuntimes(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "")
 	t.Setenv(runtimebin.EnvBinary, "")
