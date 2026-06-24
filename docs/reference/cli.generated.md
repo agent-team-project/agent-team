@@ -2813,6 +2813,7 @@ Subcommands:
 - `agent-team pipeline show` - Show one declared pipeline.
 - `agent-team pipeline snapshot` - Capture a read-only diagnostic snapshot for one pipeline.
 - `agent-team pipeline status` - Summarize pipeline jobs and next steps.
+- `agent-team pipeline timeout` - Mark stale running pipeline steps failed.
 
 ## `agent-team pipeline advance`
 
@@ -3156,6 +3157,29 @@ Flags:
       --format string   Render each row with a Go template, e.g. '{{.Pipeline}} {{.Jobs}} {{.ReadySteps}}'.
       --json            Emit pipeline status rows as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team pipeline timeout`
+
+Mark stale running pipeline steps failed.
+
+Mark stale running pipeline steps failed so they can be retried through the normal retry flow. A running step is stale when it exceeds its step timeout, or [health].job_stale_after when no step timeout is declared.
+
+```text
+agent-team pipeline timeout <pipeline>|--all [flags]
+```
+
+Flags:
+
+```text
+      --all              Mark stale running steps failed across all pipelines.
+      --dry-run          Preview stale-step failures without writing job state.
+      --format string    Render each timeout result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json             Emit timeout results as JSON.
+      --limit int        Maximum stale running steps to mark failed (0 = no limit).
+      --message string   Status message recorded on each timed-out job.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --step string      Mark only stale running steps with this id.
 ```
 
 ## `agent-team plan`

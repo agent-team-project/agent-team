@@ -764,6 +764,7 @@ target = "manager"
 	}
 	if !containsString(ticket.Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") ||
 		!containsString(ticket.Actions, "agent-team job reconcile events --dry-run") ||
+		!containsString(ticket.Actions, "agent-team pipeline timeout ticket_to_pr --dry-run") ||
 		!containsString(ticket.Actions, "agent-team pipeline explain ticket_to_pr --state running") ||
 		!containsString(ticket.Actions, "agent-team pipeline approve ticket_to_pr --dry-run --dispatch --preview-routes") ||
 		!containsString(ticket.Actions, "agent-team pipeline retry ticket_to_pr --dry-run --dispatch --preview-routes") ||
@@ -804,7 +805,7 @@ target = "manager"
 	if err := text.Execute(); err != nil {
 		t.Fatalf("pipeline status text: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"PIPELINE", "STALE_RUNNING", "MANUAL_GATES", "ACTION", "ticket_to_pr", "yes", "running=2,blocked=1,failed=1", "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes", "agent-team job reconcile events --dry-run", "agent-team pipeline approve ticket_to_pr --dry-run --dispatch --preview-routes", "agent-team repair --retry-pipelines --dry-run --preview-routes", "ad_hoc", "no"} {
+	for _, want := range []string{"PIPELINE", "STALE_RUNNING", "MANUAL_GATES", "ACTION", "ticket_to_pr", "yes", "running=2,blocked=1,failed=1", "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes", "agent-team job reconcile events --dry-run", "agent-team pipeline timeout ticket_to_pr --dry-run", "agent-team pipeline approve ticket_to_pr --dry-run --dispatch --preview-routes", "agent-team repair --retry-pipelines --dry-run --preview-routes", "ad_hoc", "no"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("pipeline status text missing %q:\n%s", want, textOut.String())
 		}
@@ -938,6 +939,125 @@ target = "manager"
 	}
 	if !strings.Contains(missingErr.String(), `pipeline "missing" not found`) {
 		t.Fatalf("missing stderr = %q", missingErr.String())
+	}
+}
+
+func TestPipelineTimeoutMarksStaleRunningSteps(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+timeout = "1h"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-700",
+			Ticket:    "SQU-700",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-2 * time.Hour),
+			UpdatedAt: now.Add(-90 * time.Minute),
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-700", StartedAt: now.Add(-90 * time.Minute), Timeout: "1h0m0s"},
+			},
+		},
+		{
+			ID:        "squ-701",
+			Ticket:    "SQU-701",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-30 * time.Minute),
+			UpdatedAt: now.Add(-10 * time.Minute),
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-701", StartedAt: now.Add(-10 * time.Minute), Timeout: "1h0m0s"},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"pipeline", "timeout", "ticket_to_pr", "--repo", root, "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("pipeline timeout dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryRows []pipelineTimeoutResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryRows); err != nil {
+		t.Fatalf("decode dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(dryRows) != 1 || dryRows[0].JobID != "squ-700" || dryRows[0].Action != "would_fail" || dryRows[0].StepStatus != job.StatusRunning || dryRows[0].Timeout != "1h0m0s" {
+		t.Fatalf("dry rows = %+v", dryRows)
+	}
+	unchanged, err := job.Read(teamDir, "squ-700")
+	if err != nil {
+		t.Fatalf("read unchanged job: %v", err)
+	}
+	if unchanged.Status != job.StatusRunning || unchanged.Steps[0].Status != job.StatusRunning || unchanged.Steps[0].Instance != "worker-squ-700" {
+		t.Fatalf("dry-run mutated job: %+v", unchanged)
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"pipeline", "timeout", "ticket_to_pr", "--repo", root, "--message", "operator timed out stale step", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("pipeline timeout apply: %v\nstderr=%s", err, applyErr.String())
+	}
+	var applied []pipelineTimeoutResult
+	if err := json.Unmarshal(applyOut.Bytes(), &applied); err != nil {
+		t.Fatalf("decode apply: %v\nbody=%s", err, applyOut.String())
+	}
+	if len(applied) != 1 || applied[0].Action != "failed" || applied[0].StepStatus != job.StatusFailed || applied[0].Instance != "" {
+		t.Fatalf("applied rows = %+v", applied)
+	}
+	timedOut, err := job.Read(teamDir, "squ-700")
+	if err != nil {
+		t.Fatalf("read timed out job: %v", err)
+	}
+	if timedOut.Status != job.StatusFailed || timedOut.Steps[0].Status != job.StatusFailed || timedOut.Steps[0].Instance != "" || timedOut.LastStatus != "operator timed out stale step" {
+		t.Fatalf("timed out job = %+v", timedOut)
+	}
+	stillRunning, err := job.Read(teamDir, "squ-701")
+	if err != nil {
+		t.Fatalf("read running job: %v", err)
+	}
+	if stillRunning.Status != job.StatusRunning || stillRunning.Steps[0].Status != job.StatusRunning {
+		t.Fatalf("non-stale job changed: %+v", stillRunning)
+	}
+
+	retry := NewRootCmd()
+	retryOut, retryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	retry.SetOut(retryOut)
+	retry.SetErr(retryErr)
+	retry.SetArgs([]string{"pipeline", "retry", "ticket_to_pr", "--repo", root, "--dry-run", "--json"})
+	if err := retry.Execute(); err != nil {
+		t.Fatalf("pipeline retry after timeout: %v\nstderr=%s", err, retryErr.String())
+	}
+	var retryRows []pipelineRetryResult
+	if err := json.Unmarshal(retryOut.Bytes(), &retryRows); err != nil {
+		t.Fatalf("decode retry: %v\nbody=%s", err, retryOut.String())
+	}
+	if len(retryRows) != 1 || retryRows[0].JobID != "squ-700" || retryRows[0].Action != "would_retry" {
+		t.Fatalf("retry rows = %+v", retryRows)
 	}
 }
 

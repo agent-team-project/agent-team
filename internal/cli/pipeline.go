@@ -37,6 +37,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineAdvanceCmd())
 	cmd.AddCommand(newPipelineApproveCmd())
 	cmd.AddCommand(newPipelineRetryCmd())
+	cmd.AddCommand(newPipelineTimeoutCmd())
 	cmd.AddCommand(newPipelineRunCmd())
 	return cmd
 }
@@ -816,6 +817,77 @@ func newPipelineRetryCmd() *cobra.Command {
 	return cmd
 }
 
+func newPipelineTimeoutCmd() *cobra.Command {
+	var (
+		repo    string
+		all     bool
+		limit   int
+		step    string
+		message string
+		dryRun  bool
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "timeout <pipeline>|--all",
+		Short: "Mark stale running pipeline steps failed.",
+		Long: "Mark stale running pipeline steps failed so they can be retried through the normal retry flow. " +
+			"A running step is stale when it exceeds its step timeout, or [health].job_stale_after when no step timeout is declared.",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: pass a pipeline name or --all.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineTimeoutFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline timeout: %v\n", err)
+				return exitErr(2)
+			}
+			pipelineName := ""
+			if len(args) == 1 {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if !all && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: pipeline name is required.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			results, err := timeoutPipelineJobs(teamDir, pipelineName, step, message, limit, dryRun)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline timeout: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineTimeoutResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&all, "all", false, "Mark stale running steps failed across all pipelines.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum stale running steps to mark failed (0 = no limit).")
+	cmd.Flags().StringVar(&step, "step", "", "Mark only stale running steps with this id.")
+	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each timed-out job.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview stale-step failures without writing job state.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit timeout results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each timeout result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
+	return cmd
+}
+
 func newPipelineHoldCmd() *cobra.Command {
 	var (
 		repo     string
@@ -1265,6 +1337,23 @@ type pipelineRetryResult struct {
 	Step       *job.Step          `json:"step,omitempty"`
 	Event      *eventResponse     `json:"event,omitempty"`
 	Preview    *jobAdvancePreview `json:"preview,omitempty"`
+}
+
+type pipelineTimeoutResult struct {
+	JobID      string     `json:"job_id"`
+	Ticket     string     `json:"ticket"`
+	Pipeline   string     `json:"pipeline"`
+	StepID     string     `json:"step_id,omitempty"`
+	Target     string     `json:"target,omitempty"`
+	StepStatus job.Status `json:"step_status,omitempty"`
+	Instance   string     `json:"instance,omitempty"`
+	Action     string     `json:"action"`
+	DryRun     bool       `json:"dry_run,omitempty"`
+	Age        string     `json:"age,omitempty"`
+	Timeout    string     `json:"timeout,omitempty"`
+	Message    string     `json:"message,omitempty"`
+	Job        *job.Job   `json:"job,omitempty"`
+	Step       *job.Step  `json:"step,omitempty"`
 }
 
 type pipelineHoldResult struct {
@@ -1865,6 +1954,7 @@ func finalizePipelineStatusRow(row *pipelineStatusRow) {
 	}
 	if row.StaleRunningSteps > 0 {
 		actions = append(actions, "agent-team job reconcile events --dry-run")
+		actions = append(actions, fmt.Sprintf("agent-team pipeline timeout %s --dry-run", row.Pipeline))
 		actions = append(actions, fmt.Sprintf("agent-team pipeline explain %s --state running", row.Pipeline))
 		actions = append(actions, fmt.Sprintf("agent-team pipeline ready %s --state running", row.Pipeline))
 	}
@@ -1941,7 +2031,9 @@ func pipelineNextActionReason(row pipelineStatusRow, action string) string {
 		return fmt.Sprintf("manual_gates=%d", row.ManualGates)
 	case strings.Contains(action, " --state blocked"):
 		return fmt.Sprintf("blocked_steps=%d", row.BlockedSteps)
-	case strings.Contains(action, " reconcile events "), strings.Contains(action, " --state running"):
+	case strings.Contains(action, " reconcile events "),
+		strings.Contains(action, " timeout "),
+		strings.Contains(action, " --state running"):
 		return fmt.Sprintf("stale_running_steps=%d", row.StaleRunningSteps)
 	case strings.Contains(action, " --state held"):
 		return fmt.Sprintf("held_steps=%d", row.HeldSteps)
@@ -2576,6 +2668,105 @@ func filterPipelineRetryRowsByStep(rows []jobReadyRow, stepFilter string) []jobR
 	return out
 }
 
+func timeoutPipelineJobs(teamDir, pipeline, stepFilter, message string, limit int, dryRun bool) ([]pipelineTimeoutResult, error) {
+	staleAfter, err := configuredJobTriageStaleAfter(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	sortJobs(jobs, "updated")
+	now := time.Now().UTC()
+	pipeline = strings.TrimSpace(pipeline)
+	stepFilter = strings.TrimSpace(stepFilter)
+	results := []pipelineTimeoutResult{}
+	for _, j := range jobs {
+		if j == nil || strings.TrimSpace(j.Pipeline) == "" {
+			continue
+		}
+		if pipeline != "" && strings.TrimSpace(j.Pipeline) != pipeline {
+			continue
+		}
+		for i := range j.Steps {
+			step := &j.Steps[i]
+			if step.Status != job.StatusRunning {
+				continue
+			}
+			if stepFilter != "" && step.ID != stepFilter {
+				continue
+			}
+			timeout := pipelineStepStaleAfter(step, staleAfter)
+			if !pipelineRunningStepIsStale(step, now, staleAfter) {
+				continue
+			}
+			age := now.Sub(step.StartedAt)
+			result := pipelineTimeoutResult{
+				JobID:      j.ID,
+				Ticket:     j.Ticket,
+				Pipeline:   j.Pipeline,
+				StepID:     step.ID,
+				Target:     step.Target,
+				StepStatus: step.Status,
+				Instance:   step.Instance,
+				Action:     "would_fail",
+				DryRun:     dryRun,
+				Age:        roundedDurationString(age),
+				Timeout:    roundedDurationString(timeout),
+				Message:    pipelineTimeoutMessage(step.ID, age, timeout, message),
+				Step:       cloneJobStep(step),
+			}
+			if dryRun {
+				results = append(results, result)
+				if limit > 0 && len(results) >= limit {
+					return results, nil
+				}
+				continue
+			}
+			if err := updateJobStep(j, step.ID, job.StatusFailed, jobStepUpdate{Message: result.Message}); err != nil {
+				return nil, err
+			}
+			if idx := jobStepIndex(j, step.ID); idx >= 0 {
+				j.Steps[idx].Instance = ""
+				result.Step = cloneJobStep(&j.Steps[idx])
+				result.StepStatus = j.Steps[idx].Status
+				result.Instance = j.Steps[idx].Instance
+			}
+			data := map[string]string{
+				"step":    result.StepID,
+				"age":     result.Age,
+				"timeout": result.Timeout,
+			}
+			if err := writeJobWithAudit(teamDir, j, "step_timeout", "cli", result.Message, data); err != nil {
+				return nil, err
+			}
+			result.Action = "failed"
+			result.DryRun = false
+			result.Job = j
+			results = append(results, result)
+			if limit > 0 && len(results) >= limit {
+				return results, nil
+			}
+		}
+	}
+	return results, nil
+}
+
+func pipelineTimeoutMessage(stepID string, age, timeout time.Duration, override string) string {
+	if strings.TrimSpace(override) != "" {
+		return strings.TrimSpace(override)
+	}
+	return fmt.Sprintf("timed out step %s after %s (threshold %s)", stepID, roundedDurationString(age), roundedDurationString(timeout))
+}
+
+func roundedDurationString(duration time.Duration) string {
+	if duration <= 0 {
+		return ""
+	}
+	return duration.Round(time.Second).String()
+}
+
 func filterAdvanceablePipelineRows(rows []jobReadyRow) []jobReadyRow {
 	out := rows[:0]
 	for _, row := range rows {
@@ -2998,6 +3189,17 @@ func parsePipelineRetryFormat(format string) (*template.Template, error) {
 		return nil, nil
 	}
 	tmpl, err := template.New("pipeline-retry-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func parsePipelineTimeoutFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("pipeline-timeout-format").Parse(format)
 	if err != nil {
 		return nil, fmt.Errorf("invalid --format template: %w", err)
 	}
@@ -3482,6 +3684,49 @@ func renderPipelineRetryRoutePreviews(w io.Writer, results []pipelineRetryResult
 		}
 	}
 	return nil
+}
+
+func renderPipelineTimeoutResults(w io.Writer, results []pipelineTimeoutResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := tmpl.Execute(w, result); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	renderPipelineTimeoutTable(w, results)
+	return nil
+}
+
+func renderPipelineTimeoutTable(w io.Writer, results []pipelineTimeoutResult) {
+	if len(results) == 0 {
+		fmt.Fprintln(w, "(no stale running pipeline steps)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "JOB\tPIPELINE\tSTEP\tTARGET\tACTION\tSTATUS\tINSTANCE\tAGE\tTIMEOUT\tMESSAGE")
+	for _, result := range results {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			result.JobID,
+			emptyDash(result.Pipeline),
+			emptyDash(result.StepID),
+			emptyDash(result.Target),
+			result.Action,
+			emptyDash(string(result.StepStatus)),
+			emptyDash(result.Instance),
+			emptyDash(result.Age),
+			emptyDash(result.Timeout),
+			emptyDash(result.Message),
+		)
+	}
+	_ = tw.Flush()
 }
 
 func renderPipelineHoldResults(w io.Writer, results []pipelineHoldResult, jsonOut bool, tmpl *template.Template) error {
