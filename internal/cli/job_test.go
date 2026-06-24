@@ -7350,6 +7350,42 @@ func TestJobReadyListsAdvanceablePipelineJobs(t *testing.T) {
 	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--pipeline", "ticket_to_pr", "--state", "all", "--sort", "updated", "--format", "{{.JobID}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job ready sort updated: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := strings.Split(strings.TrimSpace(out.String()), "\n"); strings.Join(got, ",") != "squ-211,squ-210" {
+		t.Fatalf("sorted ready rows = %q", out.String())
+	}
+
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--pipeline", "ticket_to_pr", "--state", "all", "--step", "implement", "--format", "{{.JobID}} {{.State}} {{.StepID}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job ready step filter: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "squ-211 running implement" {
+		t.Fatalf("step-filtered ready rows = %q", out.String())
+	}
+
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--sort", "priority"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("job ready invalid sort succeeded")
+	}
+	if !strings.Contains(stderr.String(), "--sort must be job") {
+		t.Fatalf("missing sort error:\n%s", stderr.String())
+	}
+
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
 	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--state", ","})
 	if err := cmd.Execute(); err == nil {
 		t.Fatalf("job ready empty state succeeded")

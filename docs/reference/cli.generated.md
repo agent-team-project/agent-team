@@ -2180,7 +2180,9 @@ Flags:
       --json              Emit ready rows as JSON.
       --pipeline string   Filter by pipeline name.
       --repo string       Repo root containing .agent_team. (default "<repo>")
+      --sort string       Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label. (default "job")
       --state strings     Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --step string       Only include rows whose next step has this id.
 ```
 
 ## `agent-team job reconcile`
@@ -3055,7 +3057,9 @@ Flags:
       --format string   Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
       --json            Emit ready rows as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
+      --sort string     Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label. (default "job")
       --state strings   Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --step string     Only include rows whose next step has this id.
 ```
 
 ## `agent-team pipeline release`
@@ -5207,7 +5211,9 @@ Flags:
       --format string   Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
       --json            Emit team ready rows as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
+      --sort string     Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label. (default "job")
       --state strings   Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --step string     Only include rows whose next step has this id.
 ```
 
 ## `agent-team team release`

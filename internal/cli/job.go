@@ -3531,6 +3531,8 @@ func newJobReadyCmd() *cobra.Command {
 		repo     string
 		pipeline string
 		states   []string
+		step     string
+		sortBy   string
 		jsonOut  bool
 		format   string
 	)
@@ -3549,6 +3551,11 @@ func newJobReadyCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job ready: %v\n", err)
 				return exitErr(2)
 			}
+			sortMode, err := parseJobReadySort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job ready: %v\n", err)
+				return exitErr(2)
+			}
 			tmpl, err := parseJobReadyFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job ready: %v\n", err)
@@ -3558,12 +3565,19 @@ func newJobReadyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runJobReady(cmd.OutOrStdout(), teamDir, strings.TrimSpace(pipeline), stateFilter, jsonOut, tmpl)
+			return runJobReady(cmd.OutOrStdout(), teamDir, jobReadyOptions{
+				Pipeline: strings.TrimSpace(pipeline),
+				States:   stateFilter,
+				Step:     step,
+				Sort:     sortMode,
+			}, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&pipeline, "pipeline", "", "Filter by pipeline name.")
 	cmd.Flags().StringSliceVar(&states, "state", nil, "Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&step, "step", "", "Only include rows whose next step has this id.")
+	cmd.Flags().StringVar(&sortBy, "sort", "job", "Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit ready rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.")
 	return cmd
@@ -5596,11 +5610,19 @@ func renderJobRemoveTable(w io.Writer, results []jobRemoveResult) {
 	_ = tw.Flush()
 }
 
-func runJobReady(w io.Writer, teamDir, pipeline string, states map[string]bool, jsonOut bool, tmpl *template.Template) error {
-	rows, err := collectJobReadyRows(teamDir, pipeline, states)
+type jobReadyOptions struct {
+	Pipeline string
+	States   map[string]bool
+	Step     string
+	Sort     string
+}
+
+func runJobReady(w io.Writer, teamDir string, opts jobReadyOptions, jsonOut bool, tmpl *template.Template) error {
+	rows, err := collectJobReadyRows(teamDir, opts.Pipeline, opts.States)
 	if err != nil {
 		return err
 	}
+	rows = prepareJobReadyRows(rows, opts)
 	if jsonOut {
 		return json.NewEncoder(w).Encode(rows)
 	}
@@ -5617,6 +5639,12 @@ func runJobReady(w io.Writer, teamDir, pipeline string, states map[string]bool, 
 	}
 	renderJobReadyTable(w, rows)
 	return nil
+}
+
+func prepareJobReadyRows(rows []jobReadyRow, opts jobReadyOptions) []jobReadyRow {
+	rows = filterJobReadyRowsByStep(rows, opts.Step)
+	sortJobReadyRows(rows, opts.Sort)
+	return rows
 }
 
 func collectJobReadyRows(teamDir, pipeline string, states map[string]bool) ([]jobReadyRow, error) {
@@ -5639,6 +5667,88 @@ func collectJobReadyRows(teamDir, pipeline string, states map[string]bool) ([]jo
 		rows = append(rows, jobReadyRowFromJob(j, next))
 	}
 	return rows, nil
+}
+
+func filterJobReadyRowsByStep(rows []jobReadyRow, step string) []jobReadyRow {
+	step = strings.TrimSpace(step)
+	if step == "" {
+		return rows
+	}
+	filtered := rows[:0]
+	for _, row := range rows {
+		if row.StepID == step {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func sortJobReadyRows(rows []jobReadyRow, sortMode string) {
+	sortMode = strings.ToLower(strings.TrimSpace(sortMode))
+	if sortMode == "" {
+		sortMode = "job"
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		left, right := rows[i], rows[j]
+		switch sortMode {
+		case "state":
+			if rankLeft, rankRight := jobReadyStateSortRank(left.State), jobReadyStateSortRank(right.State); rankLeft != rankRight {
+				return rankLeft < rankRight
+			}
+		case "step":
+			if left.StepID != right.StepID {
+				return left.StepID < right.StepID
+			}
+		case "target":
+			if left.Target != right.Target {
+				return left.Target < right.Target
+			}
+		case "pipeline":
+			if left.Pipeline != right.Pipeline {
+				return left.Pipeline < right.Pipeline
+			}
+		case "updated":
+			if !left.UpdatedAt.Equal(right.UpdatedAt) {
+				return left.UpdatedAt.After(right.UpdatedAt)
+			}
+		case "ticket":
+			if left.Ticket != right.Ticket {
+				return left.Ticket < right.Ticket
+			}
+		case "instance":
+			if left.Instance != right.Instance {
+				return left.Instance < right.Instance
+			}
+		case "label":
+			if left.Label != right.Label {
+				return left.Label < right.Label
+			}
+		}
+		return left.JobID < right.JobID
+	})
+}
+
+func jobReadyStateSortRank(state string) int {
+	switch state {
+	case "ready":
+		return 0
+	case "queued":
+		return 1
+	case "running":
+		return 2
+	case "blocked":
+		return 3
+	case "failed":
+		return 4
+	case "held":
+		return 5
+	case "none":
+		return 6
+	case "done":
+		return 7
+	default:
+		return 8
+	}
 }
 
 func jobReadyRowFromJob(j *job.Job, next jobNextResult) jobReadyRow {
@@ -8629,6 +8739,19 @@ func parseJobReadyFormat(format string) (*template.Template, error) {
 		return nil, fmt.Errorf("invalid --format template: %w", err)
 	}
 	return tmpl, nil
+}
+
+func parseJobReadySort(raw string) (string, error) {
+	sortMode := strings.ToLower(strings.TrimSpace(raw))
+	switch sortMode {
+	case "", "job", "state", "step", "target", "pipeline", "updated", "ticket", "instance", "label":
+		if sortMode == "" {
+			return "job", nil
+		}
+		return sortMode, nil
+	default:
+		return "", fmt.Errorf("--sort must be job, state, step, target, pipeline, updated, ticket, instance, or label")
+	}
 }
 
 func parseJobAdvanceFormat(format string) (*template.Template, error) {

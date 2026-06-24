@@ -521,6 +521,8 @@ func newPipelineReadyCmd() *cobra.Command {
 	var (
 		repo    string
 		states  []string
+		step    string
+		sortBy  string
 		all     bool
 		jsonOut bool
 		format  string
@@ -548,6 +550,11 @@ func newPipelineReadyCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline ready: %v\n", err)
 				return exitErr(2)
 			}
+			sortMode, err := parseJobReadySort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline ready: %v\n", err)
+				return exitErr(2)
+			}
 			tmpl, err := parseJobReadyFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline ready: %v\n", err)
@@ -565,11 +572,18 @@ func newPipelineReadyCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: pipeline name is required.")
 				return exitErr(2)
 			}
-			return runJobReady(cmd.OutOrStdout(), teamDir, pipelineName, stateFilter, jsonOut, tmpl)
+			return runJobReady(cmd.OutOrStdout(), teamDir, jobReadyOptions{
+				Pipeline: pipelineName,
+				States:   stateFilter,
+				Step:     step,
+				Sort:     sortMode,
+			}, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringSliceVar(&states, "state", nil, "Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&step, "step", "", "Only include rows whose next step has this id.")
+	cmd.Flags().StringVar(&sortBy, "sort", "job", "Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label.")
 	cmd.Flags().BoolVar(&all, "all", false, "List ready jobs across all pipelines.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit ready rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.")

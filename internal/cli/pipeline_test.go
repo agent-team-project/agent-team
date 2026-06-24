@@ -1890,7 +1890,7 @@ func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 			Pipeline:  "ticket_to_pr",
 			Status:    job.StatusRunning,
 			CreatedAt: now,
-			UpdatedAt: now,
+			UpdatedAt: now.Add(time.Minute),
 			Steps: []job.Step{
 				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-311"},
 				{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"implement"}},
@@ -1940,6 +1940,30 @@ func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 	}
 	if got := strings.Split(strings.TrimSpace(formatOut.String()), "\n"); strings.Join(got, ",") != "squ-310 ready review,squ-311 running implement" {
 		t.Fatalf("pipeline ready format output = %q", formatOut.String())
+	}
+
+	sorted := NewRootCmd()
+	sortedOut, sortedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sorted.SetOut(sortedOut)
+	sorted.SetErr(sortedErr)
+	sorted.SetArgs([]string{"pipeline", "ready", "ticket_to_pr", "--repo", root, "--state", "all", "--sort", "updated", "--format", "{{.JobID}}"})
+	if err := sorted.Execute(); err != nil {
+		t.Fatalf("pipeline ready sort updated: %v\nstderr=%s", err, sortedErr.String())
+	}
+	if got := strings.Split(strings.TrimSpace(sortedOut.String()), "\n"); strings.Join(got, ",") != "squ-311,squ-310" {
+		t.Fatalf("pipeline ready sorted output = %q", sortedOut.String())
+	}
+
+	step := NewRootCmd()
+	stepOut, stepErr := &bytes.Buffer{}, &bytes.Buffer{}
+	step.SetOut(stepOut)
+	step.SetErr(stepErr)
+	step.SetArgs([]string{"pipeline", "ready", "ticket_to_pr", "--repo", root, "--state", "all", "--step", "implement", "--format", "{{.JobID}} {{.State}} {{.StepID}}"})
+	if err := step.Execute(); err != nil {
+		t.Fatalf("pipeline ready step filter: %v\nstderr=%s", err, stepErr.String())
+	}
+	if got := strings.TrimSpace(stepOut.String()); got != "squ-311 running implement" {
+		t.Fatalf("pipeline ready step-filtered output = %q", stepOut.String())
 	}
 
 	all := NewRootCmd()

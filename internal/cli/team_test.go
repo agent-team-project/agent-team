@@ -317,7 +317,7 @@ since = "2026-06-18T12:00:00Z"
 	readyFormatOut, readyFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	readyFormat.SetOut(readyFormatOut)
 	readyFormat.SetErr(readyFormatErr)
-	readyFormat.SetArgs([]string{"team", "ready", "delivery", "--repo", root, "--state", "all", "--format", "{{.JobID}} {{.State}} {{.StepID}}"})
+	readyFormat.SetArgs([]string{"team", "ready", "delivery", "--repo", root, "--state", "all", "--step", "review", "--sort", "updated", "--format", "{{.JobID}} {{.State}} {{.StepID}}"})
 	if err := readyFormat.Execute(); err != nil {
 		t.Fatalf("team ready format: %v\nstderr=%s", err, readyFormatErr.String())
 	}
