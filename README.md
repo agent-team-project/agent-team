@@ -192,7 +192,7 @@ agent-team next [-w] [--no-clear] [--interval 2s] [--team delivery] [--source qu
                                                 # print the recommended next operator commands from the current overview
 agent-team status [-w] [--no-clear] [--summary [--resources] [--plan [--stop-extras] [--action start]] [--events N [--event-action stop] [--since 10m]] [--strict-topology]] [--latest | --last N] [--format '{{.Instance}} {{.Status}}'] [--json] [--interval 2s] [--agent manager] [--instance manager] [--status running] [--runtime codex] [--phase idle] [--stale] [--unhealthy]
                                                 # show/watch daemon health and current instance snapshot
-agent-team daemon start [--detach=false] [--ready-timeout 3s] [--format '{{.Action}} {{.PID}}'] [--json]
+agent-team daemon start [-q] [--detach=false] [--ready-timeout 3s] [--format '{{.Action}} {{.PID}}'] [--json]
                                                 # boot agent-teamd; detached by default, foreground with --detach=false
 agent-team daemon status [-q] [--wait [--down] --timeout 30s --interval 200ms] [--format '{{.Ready}} {{.PID}}'] [--json]
                                                 # show agent-teamd process, API readiness, pid/socket/log paths

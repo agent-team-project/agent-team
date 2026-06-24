@@ -2851,13 +2851,11 @@ func ensureDaemonReadyWithTimeout(cmd *cobra.Command, target string, quiet bool,
 	}
 
 	start := func() error {
-		return runDaemonStartWithJSON(cmd, target, true, readyTimeout, false)
+		return runDaemonStartWithJSON(cmd, target, true, readyTimeout, false, false)
 	}
 	if quiet {
 		start = func() error {
-			return runMaybeSuppressStdout(cmd, true, func() error {
-				return runDaemonStartWithJSON(cmd, target, true, readyTimeout, false)
-			})
+			return runDaemonStartWithJSON(cmd, target, true, readyTimeout, false, true)
 		}
 	}
 	return start()

@@ -529,6 +529,7 @@ Flags:
       --detach                   Background the daemon (writes log to .agent_team/daemon/agent-teamd.log). (default true)
       --format string            Render daemon start result with a Go template, e.g. '{{.Action}} {{.PID}}'. Requires detached mode.
       --json                     Emit machine-readable JSON. Requires detached mode.
+  -q, --quiet                    Suppress output and use only the exit code. Requires detached mode.
       --ready-timeout duration   Maximum time to wait for detached daemon readiness (0 = no timeout). (default 3s)
       --target string            Repo root. (default "<repo>")
 ```

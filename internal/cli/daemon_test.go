@@ -534,6 +534,30 @@ func TestDaemonStartFormatAlreadyRunning(t *testing.T) {
 	}
 }
 
+func TestDaemonStartQuietAlreadyRunning(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := os.MkdirAll(daemon.DaemonRoot(teamDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(daemon.PidPath(teamDir), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"daemon", "start", "--quiet", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("daemon start --quiet: %v\nstderr=%s", err, stderr.String())
+	}
+	if out.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("quiet start should not write output, stdout=%q stderr=%q", out.String(), stderr.String())
+	}
+}
+
 func TestDaemonStartJSONRejectsForeground(t *testing.T) {
 	cmd := NewRootCmd()
 	stderr := &bytes.Buffer{}
@@ -554,6 +578,9 @@ func TestDaemonLifecycleFormatRejectsConflictingModes(t *testing.T) {
 		args []string
 		want string
 	}{
+		{[]string{"daemon", "start", "--quiet", "--detach=false"}, "--quiet cannot be combined with --detach=false"},
+		{[]string{"daemon", "start", "--quiet", "--json"}, "choose one of --quiet or --json"},
+		{[]string{"daemon", "start", "--format", "{{.Action}}", "--quiet"}, "--format cannot be combined with --quiet"},
 		{[]string{"daemon", "start", "--format", "{{.Action}}", "--json"}, "--format cannot be combined with --json"},
 		{[]string{"daemon", "start", "--format", "{{.Action}}", "--detach=false"}, "--format cannot be combined with --detach=false"},
 		{[]string{"daemon", "start", "--format", "{{"}, "invalid --format template"},

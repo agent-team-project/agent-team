@@ -45,6 +45,7 @@ func newDaemonStartCmd() *cobra.Command {
 		target       string
 		detach       bool
 		readyTimeout time.Duration
+		quiet        bool
 		jsonOut      bool
 		format       string
 	)
@@ -63,6 +64,18 @@ func newDaemonStartCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team daemon start: --json cannot be combined with --detach=false.")
 				return exitErr(2)
 			}
+			if quiet && !detach {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team daemon start: --quiet cannot be combined with --detach=false.")
+				return exitErr(2)
+			}
+			if quiet && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team daemon start: choose one of --quiet or --json.")
+				return exitErr(2)
+			}
+			if format != "" && quiet {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team daemon start: --format cannot be combined with --quiet.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team daemon start: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -79,12 +92,13 @@ func newDaemonStartCmd() *cobra.Command {
 			if formatTemplate != nil {
 				return runDaemonStartWithFormat(cmd, target, detach, readyTimeout, formatTemplate)
 			}
-			return runDaemonStartWithJSON(cmd, target, detach, readyTimeout, jsonOut)
+			return runDaemonStartWithJSON(cmd, target, detach, readyTimeout, jsonOut, quiet)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	cmd.Flags().BoolVar(&detach, "detach", true, "Background the daemon (writes log to .agent_team/daemon/agent-teamd.log).")
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for detached daemon readiness (0 = no timeout).")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code. Requires detached mode.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON. Requires detached mode.")
 	cmd.Flags().StringVar(&format, "format", "", "Render daemon start result with a Go template, e.g. '{{.Action}} {{.PID}}'. Requires detached mode.")
 	return cmd
@@ -418,16 +432,20 @@ func renderDaemonReconcileFormat(w io.Writer, result *daemonReconcileResponse, t
 }
 
 func runDaemonStart(cmd *cobra.Command, target string, detach bool) error {
-	return runDaemonStartWithJSON(cmd, target, detach, defaultDaemonReadyTimeout, false)
+	return runDaemonStartWithJSON(cmd, target, detach, defaultDaemonReadyTimeout, false, false)
 }
 
-func runDaemonStartWithJSON(cmd *cobra.Command, target string, detach bool, readyTimeout time.Duration, jsonOut bool) error {
+func runDaemonStartWithJSON(cmd *cobra.Command, target string, detach bool, readyTimeout time.Duration, jsonOut bool, quiet bool) error {
 	if readyTimeout < 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team daemon start: --ready-timeout must be >= 0.")
 		return exitErr(2)
 	}
 	if jsonOut && !detach {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team daemon start: --json cannot be combined with --detach=false.")
+		return exitErr(2)
+	}
+	if quiet && !detach {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team daemon start: --quiet cannot be combined with --detach=false.")
 		return exitErr(2)
 	}
 	teamDir, err := resolveTeamDir(cmd, target)
@@ -468,6 +486,9 @@ func runDaemonStartWithJSON(cmd *cobra.Command, target string, detach bool, read
 	}
 	if jsonOut {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+	}
+	if quiet {
+		return nil
 	}
 	renderDaemonStartResult(cmd.OutOrStdout(), result)
 	return nil
@@ -732,7 +753,7 @@ func runDaemonRestartWithJSON(cmd *cobra.Command, target string, detach bool, ti
 			return err
 		}
 		renderDaemonStopResult(cmd.OutOrStdout(), stopResult)
-		return runDaemonStartWithJSON(cmd, target, detach, readyTimeout, false)
+		return runDaemonStartWithJSON(cmd, target, detach, readyTimeout, false, false)
 	}
 	startResult, err := daemonStartDetachedOperation(cmd, teamDir, readyTimeout)
 	if err != nil {
