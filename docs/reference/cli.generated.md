@@ -4939,9 +4939,12 @@ agent-team team pipelines <team> [flags]
 Flags:
 
 ```text
-      --format string   Render each pipeline with a Go template, e.g. '{{.Pipeline}} {{.ReadySteps}}'.
-      --json            Emit team pipeline status as JSON.
-      --repo string     Repo root containing .agent_team. (default "<repo>")
+      --format string       Render each pipeline with a Go template, e.g. '{{.Pipeline}} {{.ReadySteps}}'.
+      --interval duration   Refresh interval for --watch. (default 2s)
+      --json                Emit team pipeline status as JSON.
+      --no-clear            With --watch, append snapshots instead of redrawing the terminal.
+      --repo string         Repo root containing .agent_team. (default "<repo>")
+  -w, --watch               Refresh the team pipeline status table until interrupted.
 ```
 
 ## `agent-team team plan`

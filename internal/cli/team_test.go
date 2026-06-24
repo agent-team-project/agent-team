@@ -470,6 +470,33 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team pipelines format = %q", got)
 	}
 
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel()
+	pipelinesWatch := NewRootCmd()
+	pipelinesWatchOut, pipelinesWatchErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipelinesWatch.SetContext(ctx)
+	pipelinesWatch.SetOut(pipelinesWatchOut)
+	pipelinesWatch.SetErr(pipelinesWatchErr)
+	pipelinesWatch.SetArgs([]string{"team", "pipelines", "delivery", "--repo", root, "--watch", "--no-clear", "--interval", "1h", "--format", "{{.Pipeline}} {{.ReadySteps}}"})
+	if err := pipelinesWatch.Execute(); err != nil {
+		t.Fatalf("team pipelines watch: %v\nstderr=%s", err, pipelinesWatchErr.String())
+	}
+	if got := strings.TrimSpace(pipelinesWatchOut.String()); got != "ticket_to_pr 1" || strings.Contains(pipelinesWatchOut.String(), watchClearSequence) {
+		t.Fatalf("team pipelines watch = %q", pipelinesWatchOut.String())
+	}
+
+	pipelinesInterval := NewRootCmd()
+	pipelinesIntervalOut, pipelinesIntervalErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipelinesInterval.SetOut(pipelinesIntervalOut)
+	pipelinesInterval.SetErr(pipelinesIntervalErr)
+	pipelinesInterval.SetArgs([]string{"team", "pipelines", "delivery", "--repo", root, "--watch", "--interval", "-1s"})
+	if err := pipelinesInterval.Execute(); err == nil {
+		t.Fatalf("team pipelines negative interval succeeded")
+	}
+	if !strings.Contains(pipelinesIntervalErr.String(), "--interval must be >= 0") {
+		t.Fatalf("team pipelines negative interval stderr = %q", pipelinesIntervalErr.String())
+	}
+
 	explain := NewRootCmd()
 	explainOut, explainErr := &bytes.Buffer{}, &bytes.Buffer{}
 	explain.SetOut(explainOut)

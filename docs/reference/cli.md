@@ -186,6 +186,7 @@ Shortcuts:
 | `agent-team team queue drop <team> --all` | Drop matching team-owned entries; filter batch actions with `--runtime` |
 | `agent-team team queue prune <team>` | Age-prune team-owned entries; filter prune candidates with `--runtime` |
 | `agent-team team queue quarantine <team>` | Scoped quarantine list |
+| `agent-team team pipelines <team>` | List or watch team-owned pipeline status rows |
 | `agent-team team explain <team>` | Expand or watch team-owned pipeline jobs as per-step diagnostics; add `--step` to focus one stage |
 | `agent-team team ready <team>` | List or watch scoped ready pipeline steps; filter by `--step`, sort by `--sort`, and cap rows with `--limit` |
 | `agent-team team hold <team>` | Hold matching pipeline jobs owned by a team; add `--for` or `--until` for a deadline |
