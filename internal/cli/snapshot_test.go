@@ -250,6 +250,10 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	before := snapshotDiffInput{
 		CapturedAt: "2026-06-18T12:00:00Z",
 		Pipeline:   "ticket_to_pr",
+		Instances: []snapshotDiffInstance{
+			{Instance: "manager", Agent: "manager", Status: "running", Phase: "idle"},
+			{Instance: "worker-squ-801", Agent: "worker", Status: "running", Phase: "blocked", Runtime: "codex", Job: "squ-801"},
+		},
 		Jobs: []snapshotDiffJob{
 			{ID: "squ-801", Status: "running", Pipeline: "ticket_to_pr", Target: "worker"},
 			{ID: "squ-802", Status: "blocked", Pipeline: "ticket_to_pr", Target: "worker"},
@@ -272,6 +276,11 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	after := snapshotDiffInput{
 		CapturedAt: "2026-06-18T12:05:00Z",
 		Pipeline:   "ticket_to_pr",
+		Instances: []snapshotDiffInstance{
+			{Instance: "manager", Agent: "manager", Status: "running", Phase: "idle"},
+			{Instance: "reviewer-squ-803", Agent: "manager", Status: "running", Phase: "working", Runtime: "claude", Job: "squ-803"},
+			{Instance: "worker-squ-801", Agent: "worker", Status: "exited", Phase: "done", Runtime: "codex", Job: "squ-801"},
+		},
 		Jobs: []snapshotDiffJob{
 			{ID: "squ-801", Status: "done", Pipeline: "ticket_to_pr", Target: "worker"},
 			{ID: "squ-803", Status: "queued", Pipeline: "ticket_to_pr", Target: "manager"},
@@ -313,6 +322,9 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	if result.Summary.Jobs.Added != 1 || result.Summary.Jobs.Removed != 1 || result.Summary.Jobs.Changed != 1 {
 		t.Fatalf("job counters = %+v", result.Summary.Jobs)
 	}
+	if result.Summary.Instances.Added != 1 || result.Summary.Instances.Changed != 1 {
+		t.Fatalf("instance counters = %+v", result.Summary.Instances)
+	}
 	if result.Summary.Queue.Added != 1 || result.Summary.Queue.Changed != 1 {
 		t.Fatalf("queue counters = %+v", result.Summary.Queue)
 	}
@@ -325,6 +337,8 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	if !hasSnapshotDiffChange(result.Changes, "jobs", "squ-801", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "jobs", "squ-802", "removed") ||
 		!hasSnapshotDiffChange(result.Changes, "jobs", "squ-803", "added") ||
+		!hasSnapshotDiffChange(result.Changes, "instances", "reviewer-squ-803", "added") ||
+		!hasSnapshotDiffChange(result.Changes, "instances", "worker-squ-801", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "pipelines", "ticket_to_pr.ready_steps", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "advance", "squ-803:review", "added") {
 		t.Fatalf("missing expected changes: %+v", result.Changes)
@@ -340,6 +354,7 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	}
 	for _, want := range []string{
 		"snapshot diff:",
+		"instances: added=1 removed=0 changed=1",
 		"jobs: added=1 removed=1 changed=1",
 		"pipelines:",
 		"queue: added=1 removed=0 changed=1",
@@ -410,7 +425,7 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	if err := invalidSection.Execute(); err == nil {
 		t.Fatalf("snapshot diff invalid section succeeded")
 	}
-	if !strings.Contains(invalidSectionErr.String(), "--section must be jobs") {
+	if !strings.Contains(invalidSectionErr.String(), "--section must be instances") {
 		t.Fatalf("invalid section stderr = %q", invalidSectionErr.String())
 	}
 }

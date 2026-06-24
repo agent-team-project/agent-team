@@ -60,6 +60,7 @@ type snapshotDiffInput struct {
 	Repo            string                  `json:"repo,omitempty"`
 	Team            *teamInfo               `json:"team,omitempty"`
 	Pipeline        string                  `json:"pipeline,omitempty"`
+	Instances       []snapshotDiffInstance  `json:"instances,omitempty"`
 	Jobs            []snapshotDiffJob       `json:"jobs,omitempty"`
 	Queue           []snapshotDiffQueueItem `json:"queue,omitempty"`
 	PipelineStatus  []pipelineStatusRow     `json:"pipeline_status,omitempty"`
@@ -75,6 +76,16 @@ type snapshotDiffJob struct {
 	Pipeline string `json:"pipeline,omitempty"`
 	Target   string `json:"target,omitempty"`
 	Instance string `json:"instance,omitempty"`
+}
+
+type snapshotDiffInstance struct {
+	Instance string `json:"instance"`
+	Agent    string `json:"agent,omitempty"`
+	Status   string `json:"status,omitempty"`
+	Phase    string `json:"phase,omitempty"`
+	Runtime  string `json:"runtime,omitempty"`
+	Job      string `json:"job,omitempty"`
+	Stale    bool   `json:"stale,omitempty"`
 }
 
 type snapshotDiffQueueItem struct {
@@ -108,6 +119,7 @@ type snapshotDiffMeta struct {
 
 type snapshotDiffSummary struct {
 	TotalChanges  int                  `json:"total_changes"`
+	Instances     snapshotDiffCounters `json:"instances"`
 	Jobs          snapshotDiffCounters `json:"jobs"`
 	Pipelines     snapshotDiffCounters `json:"pipelines"`
 	Queue         snapshotDiffCounters `json:"queue"`
@@ -131,6 +143,7 @@ type snapshotDiffChange struct {
 
 type snapshotDiffComparable struct {
 	Meta          snapshotDiffMeta
+	Instances     map[string]string
 	Jobs          map[string]string
 	Pipelines     map[string]string
 	Queue         map[string]string
@@ -154,6 +167,9 @@ func diffSnapshotFiles(beforePath, afterPath string, opts snapshotDiffOptions) (
 	result := &snapshotDiffResult{
 		Before: before.Meta,
 		After:  after.Meta,
+	}
+	if snapshotDiffSectionEnabled(opts.Sections, "instances") {
+		result.Changes = append(result.Changes, diffSnapshotStringMaps("instances", before.Instances, after.Instances, &result.Summary.Instances)...)
 	}
 	if snapshotDiffSectionEnabled(opts.Sections, "jobs") {
 		result.Changes = append(result.Changes, diffSnapshotStringMaps("jobs", before.Jobs, after.Jobs, &result.Summary.Jobs)...)
@@ -179,6 +195,7 @@ func parseSnapshotDiffSections(values []string) (map[string]bool, error) {
 		return nil, nil
 	}
 	valid := map[string]bool{
+		"instances":      true,
 		"jobs":           true,
 		"pipelines":      true,
 		"queue":          true,
@@ -196,7 +213,7 @@ func parseSnapshotDiffSections(values []string) (map[string]bool, error) {
 				return nil, nil
 			}
 			if !valid[name] {
-				return nil, fmt.Errorf("--section must be jobs, pipelines, queue, advance, section_errors, or all")
+				return nil, fmt.Errorf("--section must be instances, jobs, pipelines, queue, advance, section_errors, or all")
 			}
 			out[name] = true
 		}
@@ -233,11 +250,23 @@ func snapshotDiffComparableFromInput(path string, input snapshotDiffInput) snaps
 			CapturedAt: input.CapturedAt,
 			Repo:       input.Repo,
 		},
+		Instances:     map[string]string{},
 		Jobs:          map[string]string{},
 		Pipelines:     map[string]string{},
 		Queue:         map[string]string{},
 		Advance:       map[string]string{},
 		SectionErrors: map[string]string{},
+	}
+	for _, inst := range input.Instances {
+		id := strings.TrimSpace(inst.Instance)
+		if id == "" {
+			continue
+		}
+		stale := ""
+		if inst.Stale {
+			stale = "stale"
+		}
+		out.Instances[id] = compactSnapshotDiffValue(inst.Status, inst.Phase, inst.Agent, inst.Runtime, inst.Job, stale)
 	}
 	for _, j := range input.Jobs {
 		id := strings.TrimSpace(j.ID)
@@ -386,6 +415,7 @@ func renderSnapshotDiff(w io.Writer, result *snapshotDiffResult) {
 	fmt.Fprintf(w, "before: kind=%s scope=%s captured_at=%s\n", result.Before.Kind, emptyDash(result.Before.Scope), emptyDash(result.Before.CapturedAt))
 	fmt.Fprintf(w, "after: kind=%s scope=%s captured_at=%s\n", result.After.Kind, emptyDash(result.After.Scope), emptyDash(result.After.CapturedAt))
 	fmt.Fprintf(w, "changes: total=%d\n", result.Summary.TotalChanges)
+	renderSnapshotDiffCounterLine(w, "instances", result.Summary.Instances)
 	renderSnapshotDiffCounterLine(w, "jobs", result.Summary.Jobs)
 	renderSnapshotDiffCounterLine(w, "pipelines", result.Summary.Pipelines)
 	renderSnapshotDiffCounterLine(w, "queue", result.Summary.Queue)
