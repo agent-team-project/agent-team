@@ -455,7 +455,16 @@ func buildHealthWithDaemonStatus(daemonStatus daemonStatusJSON, rows []instanceR
 			PID:      row.PID,
 		})
 		if row.Lifecycle == string(daemon.StatusCrashed) {
-			result.addIssue("instance_crashed", row.Instance, string(daemon.StatusCrashed), psPhaseKey(row), fmt.Sprintf("instance %q crashed", row.Instance))
+			result.addIssueWithSeverityAndActions(
+				"instance_crashed",
+				"error",
+				row.Instance,
+				job.NormalizeID(row.Job),
+				string(daemon.StatusCrashed),
+				psPhaseKey(row),
+				fmt.Sprintf("instance %q crashed", row.Instance),
+				crashedInstanceHealthActions(row),
+			)
 		}
 		if row.Stale {
 			result.addIssue("status_stale", row.Instance, psStatusKey(row), psPhaseKey(row), fmt.Sprintf("instance %q status is stale", row.Instance))
@@ -896,6 +905,16 @@ func healthRowMatchesFilters(row instanceRow, opts healthOptions) bool {
 		return false
 	}
 	return true
+}
+
+func crashedInstanceHealthActions(row instanceRow) []string {
+	if id := job.NormalizeID(row.Job); id != "" {
+		return []string{fmt.Sprintf("agent-team runtime resume-plan --job %s --status crashed", id)}
+	}
+	if instance := strings.TrimSpace(row.Instance); instance != "" {
+		return []string{fmt.Sprintf("agent-team runtime resume-plan %s --status crashed", instance)}
+	}
+	return []string{"agent-team runtime resume-plan --status crashed"}
 }
 
 func (r *healthResult) addIssue(code, instance, status, phase, message string) {

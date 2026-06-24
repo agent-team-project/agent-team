@@ -93,6 +93,34 @@ func TestHealthReportsCrashedStaleAndMissingDeclared(t *testing.T) {
 	}
 }
 
+func TestHealthCrashedIssueSuggestsRuntimeResumePlan(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	rows := []instanceRow{{
+		Instance:  "worker-squ-46",
+		Agent:     "worker",
+		Lifecycle: string(daemon.StatusCrashed),
+		Phase:     "unknown",
+		Job:       "SQU-46",
+	}}
+	got := buildHealth(true, 123, rows, nil, now)
+	if got.Healthy {
+		t.Fatalf("health should be unhealthy")
+	}
+	var crashed *healthIssue
+	for i := range got.Issues {
+		if got.Issues[i].Code == "instance_crashed" {
+			crashed = &got.Issues[i]
+			break
+		}
+	}
+	if crashed == nil {
+		t.Fatalf("issues = %+v, missing instance_crashed", got.Issues)
+	}
+	if crashed.Job != "squ-46" || !containsString(crashed.Actions, "agent-team runtime resume-plan --job squ-46 --status crashed") {
+		t.Fatalf("crashed issue = %+v", crashed)
+	}
+}
+
 func TestHealthAgentFilterScopesInstanceAndDeclaredIssues(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	topo := &topology.Topology{Instances: map[string]*topology.Instance{

@@ -82,6 +82,9 @@ Health exits nonzero when unhealthy in one-shot mode.
 
 With `--jobs`, stuck or failed jobs can make health fail. This is useful in CI or operator dashboards.
 
+Crashed instance issues include an `action=` hint for `agent-team runtime
+resume-plan`, scoped to the owning job when daemon metadata records one.
+
 ## Monitor and Watch
 
 ```sh
