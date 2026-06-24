@@ -34,6 +34,7 @@ func newRuntimeProbeCmd() *cobra.Command {
 		skipDoctor    bool
 		execProbe     bool
 		execPrompt    string
+		output        string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -58,6 +59,14 @@ func newRuntimeProbeCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime probe: %v\n", err)
 				return exitErr(2)
 			}
+			if strings.TrimSpace(output) != "" {
+				outputPath, err := writeRuntimeProbeOutput(output, result)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime probe: %v\n", err)
+					return exitErr(1)
+				}
+				result.Output = outputPath
+			}
 			if jsonOut {
 				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(result); err != nil {
 					return err
@@ -79,6 +88,7 @@ func newRuntimeProbeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "Skip runtime-native diagnostics such as codex doctor --json.")
 	cmd.Flags().BoolVar(&execProbe, "exec", false, "Run a minimal runtime-native execution probe. Currently supports Codex one-shot execution.")
 	cmd.Flags().StringVar(&execPrompt, "exec-prompt", defaultRuntimeProbeExecPrompt, "Prompt sent to the runtime when --exec is set.")
+	cmd.Flags().StringVar(&output, "output", "", "Write the full probe result as pretty JSON to this file.")
 	return cmd
 }
 
@@ -102,6 +112,7 @@ type runtimeProbeResult struct {
 	ExecProbe   *runtimeExecProbe   `json:"exec_probe,omitempty"`
 	Issues      []runtimeProbeIssue `json:"issues,omitempty"`
 	Actions     []string            `json:"actions,omitempty"`
+	Output      string              `json:"output,omitempty"`
 }
 
 type runtimeProbeIssue struct {
@@ -470,6 +481,36 @@ func runtimeProbeExcerpt(body []byte) string {
 	return text[:max] + "...(truncated)"
 }
 
+func writeRuntimeProbeOutput(path string, result *runtimeProbeResult) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil
+	}
+	if path == "-" {
+		return "", errors.New("--output must be a file path, not -")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("--output: %w", err)
+	}
+	outputPath := filepath.ToSlash(abs)
+	if result != nil {
+		result.Output = outputPath
+	}
+	body, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("--output: encode probe result: %w", err)
+	}
+	body = append(body, '\n')
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return "", fmt.Errorf("--output: mkdir: %w", err)
+	}
+	if err := os.WriteFile(abs, body, 0o644); err != nil {
+		return "", fmt.Errorf("--output: write: %w", err)
+	}
+	return outputPath, nil
+}
+
 func (r *runtimeProbeResult) addIssue(severity, source, id, summary, remediation string) {
 	if r == nil {
 		return
@@ -555,6 +596,9 @@ func renderRuntimeProbe(w io.Writer, result *runtimeProbeResult) {
 	fmt.Fprintf(w, "repo: %s\n", result.Repo)
 	if result.TeamDir != "" {
 		fmt.Fprintf(w, "team_dir: %s\n", result.TeamDir)
+	}
+	if result.Output != "" {
+		fmt.Fprintf(w, "output: %s\n", result.Output)
 	}
 	fmt.Fprintf(w, "runtime: %s binary=%s available=%s\n", result.Runtime.Runtime, result.Runtime.Binary, yesNo(result.Runtime.Available))
 	if result.Runtime.Path != "" {

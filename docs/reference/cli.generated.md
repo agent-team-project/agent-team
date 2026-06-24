@@ -3734,6 +3734,7 @@ Flags:
       --exec                 Run a minimal runtime-native execution probe. Currently supports Codex one-shot execution.
       --exec-prompt string   Prompt sent to the runtime when --exec is set. (default "Reply exactly with: agent-team runtime probe ok")
       --json                 Emit machine-readable JSON.
+      --output string        Write the full probe result as pretty JSON to this file.
       --runtime string       Runtime profile to probe for this invocation (claude or codex). Overrides env and repo config.
       --runtime-bin string   Runtime binary to probe for this invocation. Overrides env and repo config.
       --skip-doctor          Skip runtime-native diagnostics such as codex doctor --json.

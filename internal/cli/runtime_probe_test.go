@@ -151,6 +151,50 @@ func TestRuntimeProbeSkipDoctorWarningsDoNotFail(t *testing.T) {
 	}
 }
 
+func TestRuntimeProbeOutputWritesDiagnosticFile(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "codex")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "codex" {
+			t.Fatalf("look path bin = %q, want codex", bin)
+		}
+		return "/opt/homebrew/bin/codex", nil
+	})
+	withRuntimeProbeRunCommand(t, func(ctx context.Context, binary string, args ...string) runtimeProbeCommandResult {
+		t.Fatalf("codex doctor should be skipped")
+		return runtimeProbeCommandResult{}
+	})
+	outPath := filepath.Join(tmp, "diagnostics", "runtime-probe.json")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"runtime", "probe", "--target", tmp, "--skip-doctor", "--output", outPath})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime probe output failed: %v\nstderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(out.String(), "output: "+filepath.ToSlash(outPath)) {
+		t.Fatalf("text output missing diagnostic path:\n%s", out.String())
+	}
+	body, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	var result runtimeProbeResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("decode output: %v\nbody=%s", err, string(body))
+	}
+	if result.Output != filepath.ToSlash(outPath) || result.Runtime.Runtime != "codex" || !result.Runtime.Available {
+		t.Fatalf("result = %+v", result)
+	}
+	if !containsRuntimeProbeIssue(result.Issues, "warning", "daemon", "not_running") {
+		t.Fatalf("issues = %+v, want daemon warning", result.Issues)
+	}
+}
+
 func TestRuntimeProbeCodexExecProbeSuccess(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "")
 	t.Setenv(runtimebin.EnvBinary, "")
