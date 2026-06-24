@@ -189,6 +189,73 @@ func TestRuntimeProbeRequireDaemonFailsWhenStopped(t *testing.T) {
 	}
 }
 
+func TestRuntimeProbeWaitDaemonTimesOut(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "codex")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "codex" {
+			t.Fatalf("look path bin = %q, want codex", bin)
+		}
+		return "/opt/homebrew/bin/codex", nil
+	})
+	withRuntimeProbeRunCommand(t, func(ctx context.Context, binary string, args ...string) runtimeProbeCommandResult {
+		t.Fatalf("codex doctor should be skipped")
+		return runtimeProbeCommandResult{}
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"runtime", "probe", "--target", tmp, "--skip-doctor", "--require-daemon", "--wait-daemon", "--timeout", "1ms", "--daemon-interval", "1ms", "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("runtime probe wait daemon succeeded, want timeout failure")
+	}
+	var result runtimeProbeResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode result: %v\nbody=%s", err, out.String())
+	}
+	if result.OK || result.Daemon == nil || !strings.Contains(result.Daemon.Error, "timed out waiting for daemon readiness") {
+		t.Fatalf("result = %+v, want daemon timeout", result)
+	}
+	if !containsRuntimeProbeIssue(result.Issues, "fail", "daemon", "not_running") {
+		t.Fatalf("issues = %+v, want daemon not_running failure", result.Issues)
+	}
+}
+
+func TestRuntimeProbeRejectsInvalidWaitFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "negative timeout", args: []string{"runtime", "probe", "--timeout", "-1s"}, want: "--timeout must be >= 0"},
+		{name: "zero daemon interval", args: []string{"runtime", "probe", "--daemon-interval", "0s"}, want: "--daemon-interval must be > 0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("runtime probe succeeded, want validation error")
+			}
+			var ec ExitCode
+			if !errors.As(err, &ec) || int(ec) != 2 {
+				t.Fatalf("error = %v, want exit 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestRuntimeProbeOutputWritesDiagnosticFile(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "codex")
 	t.Setenv(runtimebin.EnvBinary, "")

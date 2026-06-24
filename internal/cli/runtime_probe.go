@@ -26,16 +26,18 @@ const defaultRuntimeProbeExecPrompt = "Reply exactly with: agent-team runtime pr
 
 func newRuntimeProbeCmd() *cobra.Command {
 	var (
-		target        string
-		jsonOut       bool
-		runtimeKind   string
-		runtimeBinary string
-		timeout       time.Duration
-		skipDoctor    bool
-		execProbe     bool
-		execPrompt    string
-		output        string
-		requireDaemon bool
+		target         string
+		jsonOut        bool
+		runtimeKind    string
+		runtimeBinary  string
+		timeout        time.Duration
+		daemonInterval time.Duration
+		skipDoctor     bool
+		execProbe      bool
+		execPrompt     string
+		output         string
+		requireDaemon  bool
+		waitDaemon     bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -47,15 +49,25 @@ func newRuntimeProbeCmd() *cobra.Command {
 			"run a minimal real Codex `exec -` one-shot and verify last-message capture.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if timeout < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime probe: --timeout must be >= 0.")
+				return exitErr(2)
+			}
+			if daemonInterval <= 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime probe: --daemon-interval must be > 0.")
+				return exitErr(2)
+			}
 			result, err := collectRuntimeProbe(cmd, runtimeProbeOptions{
-				Target:        target,
-				RuntimeKind:   runtimeKind,
-				RuntimeBinary: runtimeBinary,
-				Timeout:       timeout,
-				SkipDoctor:    skipDoctor,
-				Exec:          execProbe,
-				ExecPrompt:    execPrompt,
-				RequireDaemon: requireDaemon,
+				Target:         target,
+				RuntimeKind:    runtimeKind,
+				RuntimeBinary:  runtimeBinary,
+				Timeout:        timeout,
+				DaemonInterval: daemonInterval,
+				SkipDoctor:     skipDoctor,
+				Exec:           execProbe,
+				ExecPrompt:     execPrompt,
+				RequireDaemon:  requireDaemon,
+				WaitDaemon:     waitDaemon,
 			})
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime probe: %v\n", err)
@@ -86,24 +98,28 @@ func newRuntimeProbeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile to probe for this invocation (claude or codex). Overrides env and repo config.")
 	cmd.Flags().StringVar(&runtimeBinary, "runtime-bin", "", "Runtime binary to probe for this invocation. Overrides env and repo config.")
-	cmd.Flags().DurationVar(&timeout, "timeout", 20*time.Second, "Maximum time for external runtime diagnostics such as codex doctor --json.")
+	cmd.Flags().DurationVar(&timeout, "timeout", 20*time.Second, "Maximum time for daemon wait and external runtime diagnostics such as codex doctor --json.")
+	cmd.Flags().DurationVar(&daemonInterval, "daemon-interval", 200*time.Millisecond, "Polling interval for --wait-daemon.")
 	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "Skip runtime-native diagnostics such as codex doctor --json.")
 	cmd.Flags().BoolVar(&execProbe, "exec", false, "Run a minimal runtime-native execution probe. Currently supports Codex one-shot execution.")
 	cmd.Flags().StringVar(&execPrompt, "exec-prompt", defaultRuntimeProbeExecPrompt, "Prompt sent to the runtime when --exec is set.")
 	cmd.Flags().StringVar(&output, "output", "", "Write the full probe result as pretty JSON to this file.")
 	cmd.Flags().BoolVar(&requireDaemon, "require-daemon", false, "Fail when the repo daemon is not running and ready.")
+	cmd.Flags().BoolVar(&waitDaemon, "wait-daemon", false, "Wait for the repo daemon to become ready before reporting daemon health.")
 	return cmd
 }
 
 type runtimeProbeOptions struct {
-	Target        string
-	RuntimeKind   string
-	RuntimeBinary string
-	Timeout       time.Duration
-	SkipDoctor    bool
-	Exec          bool
-	ExecPrompt    string
-	RequireDaemon bool
+	Target         string
+	RuntimeKind    string
+	RuntimeBinary  string
+	Timeout        time.Duration
+	DaemonInterval time.Duration
+	SkipDoctor     bool
+	Exec           bool
+	ExecPrompt     string
+	RequireDaemon  bool
+	WaitDaemon     bool
 }
 
 type runtimeProbeResult struct {
@@ -220,6 +236,13 @@ func collectRuntimeProbe(cmd *cobra.Command, opts runtimeProbeOptions) (*runtime
 		teamResolved = true
 		teamDir = resolved
 		status := collectDaemonStatus(teamDir)
+		if opts.WaitDaemon {
+			var timedOut bool
+			status, timedOut = waitForDaemonReady(teamDir, opts.Timeout, opts.DaemonInterval)
+			if timedOut {
+				status.Error = appendStatusError(status.Error, "timed out waiting for daemon readiness")
+			}
+		}
 		result.Daemon = &status
 		if !status.Running {
 			severity := "warning"

@@ -32,6 +32,7 @@ agent-team runtime probe --runtime codex
 agent-team runtime probe --runtime codex --json
 agent-team runtime probe --runtime codex --skip-doctor
 agent-team runtime probe --runtime codex --require-daemon
+agent-team runtime probe --runtime codex --require-daemon --wait-daemon --timeout 10s
 agent-team runtime probe --runtime codex --exec --timeout 2m
 agent-team runtime probe --runtime codex --exec --timeout 2m --output runtime-probe.json
 ```
@@ -42,7 +43,9 @@ timeout, so provider reachability, auth, MCP, and sandbox failures are visible
 before jobs or pipelines queue work against a runtime that cannot start. By
 default, a stopped daemon is a warning because direct runs can still work; add
 `--require-daemon` when the preflight is for daemon-backed dispatch, mailbox, or
-channel flows and should fail until `agent-teamd` is ready.
+channel flows and should fail until `agent-teamd` is ready. Add `--wait-daemon`
+to poll readiness first; `--timeout` bounds both that wait and runtime-native
+diagnostics.
 `--exec` is opt-in because it spends a real runtime call: for Codex it runs
 `codex exec -`, sends a short prompt over stdin, and verifies that
 `--output-last-message` produced a sidecar. Add `--output <file>` to write the
