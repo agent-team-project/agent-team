@@ -108,6 +108,10 @@ Delivery history records:
 - normalized payload
 - timestamps
 
+`agent-team intake doctor` warns when the ledger contains repeated provider
+request IDs, such as duplicate GitHub delivery IDs, while keeping warning-only
+ledgers exit-code clean.
+
 Successful replays mark failed deliveries recovered.
 
 ## Diagnostics

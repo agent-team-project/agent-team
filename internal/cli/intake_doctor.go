@@ -104,6 +104,7 @@ func inspectIntakeDeliveryLedger(r io.Reader) ([]intakeDelivery, []intakeDoctorF
 	var problems []intakeDoctorFinding
 	var warnings []intakeDoctorFinding
 	seenIDs := map[string]int{}
+	seenRequestIDs := map[string]int{}
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 	line := 0
@@ -122,7 +123,7 @@ func inspectIntakeDeliveryLedger(r io.Reader) ([]intakeDelivery, []intakeDoctorF
 			})
 			continue
 		}
-		validateIntakeDeliveryRecord(line, delivery, seenIDs, &problems, &warnings)
+		validateIntakeDeliveryRecord(line, delivery, seenIDs, seenRequestIDs, &problems, &warnings)
 		deliveries = append(deliveries, delivery)
 	}
 	if err := scanner.Err(); err != nil {
@@ -134,7 +135,7 @@ func inspectIntakeDeliveryLedger(r io.Reader) ([]intakeDelivery, []intakeDoctorF
 	return deliveries, problems, warnings
 }
 
-func validateIntakeDeliveryRecord(line int, delivery intakeDelivery, seenIDs map[string]int, problems, warnings *[]intakeDoctorFinding) {
+func validateIntakeDeliveryRecord(line int, delivery intakeDelivery, seenIDs map[string]int, seenRequestIDs map[string]int, problems, warnings *[]intakeDoctorFinding) {
 	id := strings.TrimSpace(delivery.ID)
 	if id == "" {
 		*problems = append(*problems, intakeDoctorFinding{
@@ -151,6 +152,21 @@ func validateIntakeDeliveryRecord(line int, delivery intakeDelivery, seenIDs map
 		})
 	} else {
 		seenIDs[id] = line
+	}
+	provider := strings.ToLower(strings.TrimSpace(delivery.Provider))
+	requestID := strings.TrimSpace(delivery.RequestID)
+	if provider != "" && requestID != "" {
+		key := provider + "\x00" + requestID
+		if firstLine, ok := seenRequestIDs[key]; ok {
+			*warnings = append(*warnings, intakeDoctorFinding{
+				Line:    line,
+				ID:      id,
+				Code:    "duplicate_request_id",
+				Message: fmt.Sprintf("line %d duplicates %s request id %q from line %d", line, provider, requestID, firstLine),
+			})
+		} else {
+			seenRequestIDs[key] = line
+		}
 	}
 	if delivery.Time.IsZero() {
 		*warnings = append(*warnings, intakeDoctorFinding{

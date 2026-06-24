@@ -1874,6 +1874,37 @@ func TestIntakeServeGitHubSignature(t *testing.T) {
 	}
 }
 
+func TestIntakeDoctorWarnsDuplicateProviderRequestID(t *testing.T) {
+	target := t.TempDir()
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(filepath.Join(teamDir, "daemon"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Join([]string{
+		`{"id":"first","time":"2026-06-19T12:00:00Z","provider":"github","request_id":"delivery-1","status":"ok","http_status":200}`,
+		`{"id":"second","time":"2026-06-19T12:01:00Z","provider":"github","request_id":"delivery-1","status":"error","http_status":409}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(intakeDeliveryLogPath(teamDir), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "doctor", "--target", target, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake doctor duplicate request warning: %v\nstderr=%s", err, stderr.String())
+	}
+	var result intakeDoctorResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode intake doctor: %v\nbody=%s", err, out.String())
+	}
+	if !result.OK || len(result.Problems) != 0 || !hasIntakeDoctorFinding(result.Warnings, "duplicate_request_id") {
+		t.Fatalf("doctor result = %+v", result)
+	}
+}
+
 func hmacSHA256Hex(secret string, body []byte, prefix string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write(body)
