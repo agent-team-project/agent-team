@@ -53,6 +53,7 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobRmCmd())
 	cmd.AddCommand(newJobPruneCmd())
 	cmd.AddCommand(newJobNextCmd())
+	cmd.AddCommand(newJobExplainCmd())
 	cmd.AddCommand(newJobReadyCmd())
 	cmd.AddCommand(newJobTriageCmd())
 	cmd.AddCommand(newJobStepCmd())
@@ -2375,6 +2376,42 @@ func newJobNextCmd() *cobra.Command {
 	return cmd
 }
 
+func newJobExplainCmd() *cobra.Command {
+	var (
+		repo    string
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "explain <job-id>",
+		Short: "Explain pipeline step readiness for one job.",
+		Long: "Explain one job's pipeline state from the durable job file, including every step, " +
+			"dependency blockers, gates, ready/running/failed state, and suggested next actions.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job explain: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobExplainFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job explain: %v\n", err)
+				return exitErr(2)
+			}
+			j, err := readJobFromRepo(cmd, repo, args[0])
+			if err != nil {
+				return err
+			}
+			return renderJobExplainResult(cmd.OutOrStdout(), explainJobPipeline(j), jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the pipeline explanation as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the pipeline explanation with a Go template, e.g. '{{.State}} {{len .Steps}}'.")
+	return cmd
+}
+
 func newJobReadyCmd() *cobra.Command {
 	var (
 		repo     string
@@ -3968,6 +4005,9 @@ func actionsForJobTriageItem(item jobTriageItem) []string {
 	}
 	if stringSliceContains(item.Reasons, "cleanup_ready") {
 		add(fmt.Sprintf("agent-team job cleanup %s --dry-run", item.JobID))
+	}
+	if strings.TrimSpace(item.Pipeline) != "" {
+		add(fmt.Sprintf("agent-team job explain %s", item.JobID))
 	}
 	return actions
 }
@@ -5841,6 +5881,47 @@ type jobNextResult struct {
 	Message    string     `json:"message"`
 }
 
+type jobExplainResult struct {
+	JobID     string           `json:"job_id"`
+	Ticket    string           `json:"ticket"`
+	Pipeline  string           `json:"pipeline,omitempty"`
+	JobStatus job.Status       `json:"job_status"`
+	State     string           `json:"state"`
+	Message   string           `json:"message"`
+	Next      jobExplainNext   `json:"next"`
+	Steps     []jobExplainStep `json:"steps,omitempty"`
+	Actions   []string         `json:"actions,omitempty"`
+}
+
+type jobExplainNext struct {
+	State      string     `json:"state"`
+	StepID     string     `json:"step_id,omitempty"`
+	Target     string     `json:"target,omitempty"`
+	Status     job.Status `json:"status,omitempty"`
+	Instance   string     `json:"instance,omitempty"`
+	WaitingFor []string   `json:"waiting_for,omitempty"`
+	Actions    []string   `json:"actions,omitempty"`
+	Message    string     `json:"message"`
+}
+
+type jobExplainStep struct {
+	ID         string     `json:"id"`
+	Target     string     `json:"target"`
+	Status     job.Status `json:"status"`
+	State      string     `json:"state"`
+	Ready      bool       `json:"ready,omitempty"`
+	Instance   string     `json:"instance,omitempty"`
+	After      []string   `json:"after,omitempty"`
+	Gate       string     `json:"gate,omitempty"`
+	WaitingFor []string   `json:"waiting_for,omitempty"`
+	Actions    []string   `json:"actions,omitempty"`
+	Skipped    bool       `json:"skipped,omitempty"`
+	SkipReason string     `json:"skip_reason,omitempty"`
+	StartedAt  string     `json:"started_at,omitempty"`
+	FinishedAt string     `json:"finished_at,omitempty"`
+	Message    string     `json:"message"`
+}
+
 type jobReadyRow struct {
 	JobID              string     `json:"job_id"`
 	Ticket             string     `json:"ticket"`
@@ -6144,6 +6225,173 @@ func actionsForJobNextResult(j *job.Job, res jobNextResult) []string {
 	return row.Actions
 }
 
+func explainJobPipeline(j *job.Job) jobExplainResult {
+	if j == nil {
+		return jobExplainResult{
+			State:   "missing",
+			Message: "job is missing",
+		}
+	}
+	next := inspectNextJobStep(j)
+	res := jobExplainResult{
+		JobID:     next.JobID,
+		Ticket:    next.Ticket,
+		Pipeline:  next.Pipeline,
+		JobStatus: next.JobStatus,
+		State:     next.State,
+		Message:   next.Message,
+		Next:      jobExplainNextFromResult(next),
+		Actions:   append([]string(nil), next.Actions...),
+	}
+	ready := map[string]bool{}
+	for _, step := range advanceableJobSteps(j) {
+		if step != nil {
+			ready[step.ID] = true
+		}
+	}
+	for i := range j.Steps {
+		step := &j.Steps[i]
+		waiting := jobStepWaitingFor(j, step)
+		row := jobExplainStep{
+			ID:         step.ID,
+			Target:     step.Target,
+			Status:     step.Status,
+			Ready:      ready[step.ID],
+			Instance:   step.Instance,
+			After:      append([]string(nil), step.After...),
+			Gate:       step.Gate,
+			WaitingFor: waiting,
+			Skipped:    step.Skipped,
+			SkipReason: step.SkipReason,
+			StartedAt:  jobExplainTime(step.StartedAt),
+			FinishedAt: jobExplainTime(step.FinishedAt),
+		}
+		row.State = explainJobStepState(j, step, row.Ready, waiting)
+		row.Message = explainJobStepMessage(j, step, row.State, waiting)
+		row.Actions = actionsForJobExplainStep(j, step, row.State)
+		res.Steps = append(res.Steps, row)
+	}
+	return res
+}
+
+func jobExplainNextFromResult(next jobNextResult) jobExplainNext {
+	out := jobExplainNext{
+		State:      next.State,
+		WaitingFor: append([]string(nil), next.WaitingFor...),
+		Actions:    append([]string(nil), next.Actions...),
+		Message:    next.Message,
+	}
+	if next.Step != nil {
+		out.StepID = next.Step.ID
+		out.Target = next.Step.Target
+		out.Status = next.Step.Status
+		out.Instance = next.Step.Instance
+	}
+	return out
+}
+
+func explainJobStepState(j *job.Job, step *job.Step, ready bool, waiting []string) string {
+	if step == nil {
+		return "unknown"
+	}
+	if ready {
+		return "ready"
+	}
+	if step.Skipped {
+		return "skipped"
+	}
+	switch step.Status {
+	case job.StatusRunning:
+		return "running"
+	case job.StatusDone:
+		return "done"
+	case job.StatusFailed:
+		return "failed"
+	case job.StatusQueued:
+		if len(waiting) > 0 || stepGatePending(j, step) {
+			return "waiting"
+		}
+		return "queued"
+	case job.StatusBlocked:
+		if len(waiting) > 0 || stepGatePending(j, step) {
+			return "waiting"
+		}
+		return "blocked"
+	default:
+		return string(step.Status)
+	}
+}
+
+func explainJobStepMessage(j *job.Job, step *job.Step, state string, waiting []string) string {
+	if step == nil {
+		return "step is unavailable"
+	}
+	switch state {
+	case "ready":
+		return "ready to advance"
+	case "running":
+		if strings.TrimSpace(step.Instance) != "" {
+			return "running in " + step.Instance
+		}
+		return "running"
+	case "skipped":
+		if strings.TrimSpace(step.SkipReason) != "" {
+			return "skipped: " + step.SkipReason
+		}
+		return "skipped"
+	case "done":
+		return "done"
+	case "failed":
+		return "failed"
+	case "waiting":
+		switch {
+		case step.Gate == job.StepGateManual && len(waiting) > 0:
+			return "waiting for " + strings.Join(waiting, ",") + " before manual approval"
+		case step.Gate == job.StepGateManual:
+			return "waiting for manual approval"
+		case step.Gate == job.StepGatePR && len(waiting) > 0:
+			return "waiting for " + strings.Join(waiting, ",")
+		case step.Gate == job.StepGatePR:
+			return "waiting for PR metadata"
+		case len(waiting) > 0:
+			return "waiting for " + strings.Join(waiting, ",")
+		default:
+			return "waiting"
+		}
+	case "queued":
+		return "queued"
+	case "blocked":
+		return "blocked"
+	default:
+		return state
+	}
+}
+
+func actionsForJobExplainStep(j *job.Job, step *job.Step, state string) []string {
+	if j == nil || step == nil {
+		return nil
+	}
+	switch {
+	case state == "ready":
+		return []string{fmt.Sprintf("agent-team job advance %s", j.ID)}
+	case state == "waiting" && step.Gate == job.StepGateManual:
+		return []string{fmt.Sprintf("agent-team job step %s %s --status queued", j.ID, step.ID)}
+	case state == "waiting" && step.Gate == job.StepGatePR:
+		return []string{fmt.Sprintf("agent-team job update %s --pr <url>", j.ID)}
+	case state == "failed":
+		return []string{fmt.Sprintf("agent-team job retry %s --dry-run --dispatch", j.ID)}
+	default:
+		return nil
+	}
+}
+
+func jobExplainTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 func cloneJobStep(step *job.Step) *job.Step {
 	if step == nil {
 		return nil
@@ -6385,6 +6633,58 @@ func renderJobNextResult(w io.Writer, res jobNextResult, jsonOut bool, tmpl *tem
 	}
 	fmt.Fprintf(w, "Job: %s next step=%s state=%s status=%s target=%s instance=%s after=%s gate=%s waiting_for=%s actions=%s\n",
 		res.JobID, res.Step.ID, res.State, res.Step.Status, res.Step.Target, emptyDash(res.Step.Instance), after, gate, waiting, actions)
+	return nil
+}
+
+func renderJobExplainResult(w io.Writer, res jobExplainResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(res)
+	}
+	if tmpl != nil {
+		if err := tmpl.Execute(w, res); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(w)
+		return err
+	}
+	pipeline := emptyDash(res.Pipeline)
+	fmt.Fprintf(w, "Job: %s ticket=%s pipeline=%s status=%s state=%s\n",
+		res.JobID, res.Ticket, pipeline, res.JobStatus, res.State)
+	if res.Message != "" {
+		fmt.Fprintf(w, "Message: %s\n", res.Message)
+	}
+	if len(res.Steps) == 0 {
+		fmt.Fprintln(w, "Steps: none")
+	} else {
+		fmt.Fprintln(w, "Steps:")
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "ID\tTARGET\tSTATUS\tSTATE\tINSTANCE\tAFTER\tGATE\tWAITING_FOR\tACTION")
+		for _, step := range res.Steps {
+			action := "-"
+			if len(step.Actions) > 0 {
+				action = strings.Join(step.Actions, "; ")
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				step.ID,
+				emptyDash(step.Target),
+				step.Status,
+				emptyDash(step.State),
+				emptyDash(step.Instance),
+				listDash(step.After),
+				emptyDash(step.Gate),
+				listDash(step.WaitingFor),
+				action)
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
+	if len(res.Actions) > 0 {
+		fmt.Fprintln(w, "Actions:")
+		for _, action := range res.Actions {
+			fmt.Fprintf(w, "  %s\n", action)
+		}
+	}
 	return nil
 }
 
@@ -6785,6 +7085,17 @@ func parseJobNextFormat(format string) (*template.Template, error) {
 		return nil, nil
 	}
 	tmpl, err := template.New("job-next-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func parseJobExplainFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("job-explain-format").Parse(format)
 	if err != nil {
 		return nil, fmt.Errorf("invalid --format template: %w", err)
 	}
@@ -7479,6 +7790,7 @@ func jobDetailActions(j *job.Job, teamDir string, queueItems []*daemon.QueueItem
 		}
 	}
 	if len(j.Steps) > 0 {
+		add(fmt.Sprintf("agent-team job explain %s", j.ID))
 		for _, action := range actionsForJobReadyRow(jobReadyRowFromJob(j, inspectNextJobStep(j))) {
 			add(action)
 		}
@@ -7493,4 +7805,21 @@ func emptyDash(value string) string {
 		return "-"
 	}
 	return value
+}
+
+func listDash(values []string) string {
+	if len(values) == 0 {
+		return "-"
+	}
+	var cleaned []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			cleaned = append(cleaned, value)
+		}
+	}
+	if len(cleaned) == 0 {
+		return "-"
+	}
+	return strings.Join(cleaned, ",")
 }

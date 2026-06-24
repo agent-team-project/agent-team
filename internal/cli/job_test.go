@@ -2617,6 +2617,43 @@ func TestJobCreateFromPipeline(t *testing.T) {
 		t.Fatalf("next output = %q", got)
 	}
 
+	explain := NewRootCmd()
+	explainOut, explainErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explain.SetOut(explainOut)
+	explain.SetErr(explainErr)
+	explain.SetArgs([]string{"job", "explain", "squ-214", "--repo", tmp, "--json"})
+	if err := explain.Execute(); err != nil {
+		t.Fatalf("job explain pipeline create: %v\nstderr=%s", err, explainErr.String())
+	}
+	var explained jobExplainResult
+	if err := json.Unmarshal(explainOut.Bytes(), &explained); err != nil {
+		t.Fatalf("decode explain json: %v\nbody=%s", err, explainOut.String())
+	}
+	if explained.State != "queued" || len(explained.Steps) != 2 {
+		t.Fatalf("explained pipeline = %+v", explained)
+	}
+	if explained.Steps[0].ID != "implement" || explained.Steps[0].State != "ready" || !explained.Steps[0].Ready {
+		t.Fatalf("explain first step = %+v", explained.Steps[0])
+	}
+	if explained.Steps[1].ID != "review" || explained.Steps[1].State != "waiting" || strings.Join(explained.Steps[1].WaitingFor, ",") != "implement" {
+		t.Fatalf("explain second step = %+v", explained.Steps[1])
+	}
+	if !containsString(explained.Actions, "agent-team job advance squ-214") {
+		t.Fatalf("explain actions = %+v", explained.Actions)
+	}
+
+	show := NewRootCmd()
+	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
+	show.SetOut(showOut)
+	show.SetErr(showErr)
+	show.SetArgs([]string{"job", "show", "squ-214", "--repo", tmp})
+	if err := show.Execute(); err != nil {
+		t.Fatalf("job show pipeline explain action: %v\nstderr=%s", err, showErr.String())
+	}
+	if !strings.Contains(showOut.String(), "agent-team job explain squ-214") {
+		t.Fatalf("job show missing explain action:\n%s", showOut.String())
+	}
+
 	mismatch := NewRootCmd()
 	mismatchOut, mismatchErr := &bytes.Buffer{}, &bytes.Buffer{}
 	mismatch.SetOut(mismatchOut)

@@ -1481,6 +1481,7 @@ Subcommands:
 - `agent-team job create` - Create a durable job for a ticket.
 - `agent-team job dispatch` - Dispatch a job to its target agent.
 - `agent-team job events` - Show a job&#39;s durable event history.
+- `agent-team job explain` - Explain pipeline step readiness for one job.
 - `agent-team job kill` - Force-stop a job&#39;s owning instance.
 - `agent-team job logs` - Show a job&#39;s owning instance log.
 - `agent-team job ls` - List durable jobs.
@@ -1651,6 +1652,24 @@ Flags:
       --since string        Only show job events since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --tail string         Show only the last N events before returning or following (0 or all = all). (default "0")
       --type strings        Only show job events with this type. Can repeat or comma-separate.
+```
+
+## `agent-team job explain`
+
+Explain pipeline step readiness for one job.
+
+Explain one job&#39;s pipeline state from the durable job file, including every step, dependency blockers, gates, ready/running/failed state, and suggested next actions.
+
+```text
+agent-team job explain <job-id> [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render the pipeline explanation with a Go template, e.g. '{{.State}} {{len .Steps}}'.
+      --json            Emit the pipeline explanation as JSON.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
 ```
 
 ## `agent-team job kill`
