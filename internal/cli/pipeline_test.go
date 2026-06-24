@@ -883,6 +883,144 @@ target = "manager"
 	}
 }
 
+func TestPipelineSnapshotScopesWorkflow(t *testing.T) {
+	target, _, cleanup := setupDispatchCommandRepo(t)
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[pipelines.platform_work]
+trigger.event = "ticket.created"
+trigger.match.team = "platform"
+
+[[pipelines.platform_work.steps]]
+id = "implement"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-704",
+			Ticket:    "SQU-704",
+			Target:    "worker",
+			Kickoff:   "SQU-704: implement",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusBlocked},
+			},
+		},
+		{
+			ID:        "squ-705",
+			Ticket:    "SQU-705",
+			Target:    "worker",
+			Kickoff:   "SQU-705: platform work",
+			Pipeline:  "platform_work",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusBlocked},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"pipeline", "snapshot", "ticket_to_pr", "--repo", target, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline snapshot json: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot pipelineSnapshotResult
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode pipeline snapshot json: %v\nbody=%s", err, out.String())
+	}
+	if snapshot.Pipeline != "ticket_to_pr" || snapshot.Version == "" || snapshot.CapturedAt == "" || snapshot.Repo == "" || snapshot.TeamDir == "" {
+		t.Fatalf("snapshot metadata = %+v", snapshot)
+	}
+	if !snapshot.Redacted {
+		t.Fatalf("snapshot should redact by default")
+	}
+	if snapshot.Status == nil || snapshot.Status.Pipeline != "ticket_to_pr" || !snapshot.Status.Declared || snapshot.Status.Jobs != 1 || snapshot.Status.ReadySteps != 1 {
+		t.Fatalf("snapshot status = %+v", snapshot.Status)
+	}
+	if snapshot.Explain == nil || snapshot.Explain.Pipeline != "ticket_to_pr" || snapshot.Explain.ExplainedJobs != 1 || len(snapshot.Explain.Jobs) != 1 || snapshot.Explain.Jobs[0].JobID != "squ-704" {
+		t.Fatalf("snapshot explain = %+v", snapshot.Explain)
+	}
+	if len(snapshot.Jobs) != 1 || snapshot.Jobs[0].ID != "squ-704" {
+		t.Fatalf("snapshot jobs = %+v", snapshot.Jobs)
+	}
+	if len(snapshot.AdvancePreview) != 1 || snapshot.AdvancePreview[0].JobID != "squ-704" || snapshot.AdvancePreview[0].Action != "would_advance" || !snapshot.AdvancePreview[0].DryRun {
+		t.Fatalf("snapshot advance = %+v", snapshot.AdvancePreview)
+	}
+	preview := snapshot.AdvancePreview[0].Preview
+	if preview == nil || preview.Step == nil || preview.Step.ID != "implement" || preview.Dispatch == nil || preview.Dispatch.RequestedName != "worker-squ-704-implement" {
+		t.Fatalf("snapshot route preview = %+v", preview)
+	}
+	if strings.Contains(out.String(), "platform_work") || strings.Contains(out.String(), "squ-705") {
+		t.Fatalf("pipeline snapshot leaked unrelated workflow:\n%s", out.String())
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"pipeline", "snapshot", "ticket_to_pr", "--repo", target})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("pipeline snapshot text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"pipeline snapshot:", "pipeline: ticket_to_pr", "status: jobs=1 ready_steps=1", "explain: jobs=1 steps=1", "jobs: total=1", "advance: ready=1 route_previews=1"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("pipeline snapshot text missing %q:\n%s", want, textOut.String())
+		}
+	}
+	for _, leak := range []string{"platform_work", "squ-705"} {
+		if strings.Contains(textOut.String(), leak) {
+			t.Fatalf("pipeline snapshot text leaked %q:\n%s", leak, textOut.String())
+		}
+	}
+
+	outputPath := filepath.Join(target, "ticket-to-pr.snapshot.json")
+	fileCmd := NewRootCmd()
+	fileOut, fileErr := &bytes.Buffer{}, &bytes.Buffer{}
+	fileCmd.SetOut(fileOut)
+	fileCmd.SetErr(fileErr)
+	fileCmd.SetArgs([]string{"pipeline", "snapshot", "ticket_to_pr", "--repo", target, "--output", outputPath})
+	if err := fileCmd.Execute(); err != nil {
+		t.Fatalf("pipeline snapshot output: %v\nstderr=%s", err, fileErr.String())
+	}
+	if !strings.Contains(fileOut.String(), "Wrote pipeline snapshot to ") {
+		t.Fatalf("pipeline snapshot output message = %q", fileOut.String())
+	}
+	fileBody, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read pipeline snapshot output: %v", err)
+	}
+	var fileSnapshot pipelineSnapshotResult
+	if err := json.Unmarshal(fileBody, &fileSnapshot); err != nil {
+		t.Fatalf("decode pipeline snapshot output: %v\nbody=%s", err, string(fileBody))
+	}
+	if fileSnapshot.Pipeline != "ticket_to_pr" || len(fileSnapshot.Jobs) != 1 || fileSnapshot.Jobs[0].ID != "squ-704" {
+		t.Fatalf("pipeline snapshot file = %+v", fileSnapshot)
+	}
+}
+
 func TestPipelineNextReportsRecommendedActions(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

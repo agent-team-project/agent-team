@@ -29,6 +29,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineJobsCmd())
 	cmd.AddCommand(newPipelineStatusCmd())
 	cmd.AddCommand(newPipelineExplainCmd())
+	cmd.AddCommand(newPipelineSnapshotCmd())
 	cmd.AddCommand(newPipelineNextCmd())
 	cmd.AddCommand(newPipelineReadyCmd())
 	cmd.AddCommand(newPipelineAdvanceCmd())

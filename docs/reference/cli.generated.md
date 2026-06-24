@@ -2607,6 +2607,7 @@ Subcommands:
 - `agent-team pipeline retry` - Reset failed pipeline steps for another attempt.
 - `agent-team pipeline run` - Create a durable job from a pipeline declaration.
 - `agent-team pipeline show` - Show one declared pipeline.
+- `agent-team pipeline snapshot` - Capture a read-only diagnostic snapshot for one pipeline.
 - `agent-team pipeline status` - Summarize pipeline jobs and next steps.
 
 ## `agent-team pipeline advance`
@@ -2862,6 +2863,25 @@ Flags:
 ```text
       --format string   Render the pipeline with a Go template, e.g. '{{.Name}} {{len .Steps}}'.
       --json            Emit the pipeline as JSON.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team pipeline snapshot`
+
+Capture a read-only diagnostic snapshot for one pipeline.
+
+Capture a compact read-only diagnostic artifact for one pipeline, including status, step explanations, owned jobs, and dry-run advance previews.
+
+```text
+agent-team pipeline snapshot <pipeline> [flags]
+```
+
+Flags:
+
+```text
+      --json            Emit the full pipeline snapshot JSON to stdout.
+      --no-redact       Include raw payload values instead of redacting sensitive keys.
+  -o, --output string   Write the full JSON pipeline snapshot to this file. Use '-' for stdout.
       --repo string     Repo root containing .agent_team. (default "<repo>")
 ```
 
