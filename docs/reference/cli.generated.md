@@ -3724,7 +3724,7 @@ Flags:
       --limit int           Limit rows after sorting; 0 means no limit.
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
-      --sort string         Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, or none. (default "declared")
+      --sort string         Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, or quarantined. (default "declared")
   -w, --watch               Refresh the pipeline status table until interrupted.
 ```
 
@@ -5644,7 +5644,7 @@ Flags:
       --limit int           Limit rows after sorting; 0 means no limit.
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
-      --sort string         Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, or none. (default "declared")
+      --sort string         Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, or quarantined. (default "declared")
   -w, --watch               Refresh the team pipeline status table until interrupted.
 ```
 

@@ -2066,6 +2066,214 @@ pipelines = ["ticket_to_pr"]
 	}
 }
 
+func TestPipelineStatusSurfacesQueueState(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[pipelines.ops_review]
+trigger.event = "ops.created"
+
+[[pipelines.ops_review.steps]]
+id = "audit"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-620",
+			Ticket:    "SQU-620",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Instance:  "worker-squ-620",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "ops-620",
+			Ticket:    "OPS-620",
+			Target:    "worker",
+			Pipeline:  "ops_review",
+			Instance:  "worker-ops-620",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+	queueRoot := daemon.DaemonRoot(teamDir)
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:             "q-ticket-dead",
+			State:          daemon.QueueStateDead,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     "worker-squ-620",
+			Payload:        map[string]any{"job_id": "squ-620", "ticket": "SQU-620"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-3 * time.Hour),
+			UpdatedAt:      now.Add(-2 * time.Hour),
+			DeadLetteredAt: now.Add(-2 * time.Hour),
+		},
+		{
+			ID:         "q-ticket-pending",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-620",
+			Payload:    map[string]any{"job_id": "squ-620", "ticket": "SQU-620"},
+			QueuedAt:   now.Add(-time.Hour),
+			UpdatedAt:  now.Add(-time.Hour),
+		},
+		{
+			ID:             "q-ops-dead",
+			State:          daemon.QueueStateDead,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     "worker-ops-620",
+			Payload:        map[string]any{"job_id": "ops-620", "ticket": "OPS-620"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "foreign",
+			QueuedAt:       now.Add(-3 * time.Hour),
+			UpdatedAt:      now.Add(-2 * time.Hour),
+			DeadLetteredAt: now.Add(-2 * time.Hour),
+		},
+	} {
+		if err := daemon.WriteQueueItem(queueRoot, item); err != nil {
+			t.Fatalf("write queue item %s: %v", item.ID, err)
+		}
+	}
+	stamp := "20260619T030000.000000000Z"
+	writeQuarantinedQueueItem(t, teamDir, stamp, daemon.QueueStatePending, &daemon.QueueItem{
+		ID:         "q-ticket-quarantine-restorable",
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-620",
+		Payload:    map[string]any{"job_id": "squ-620", "ticket": "SQU-620"},
+		QueuedAt:   now.Add(-2 * time.Hour),
+		UpdatedAt:  now.Add(-time.Hour),
+	})
+	writeQuarantinedQueueItem(t, teamDir, stamp, daemon.QueueStateDead, &daemon.QueueItem{
+		ID:        "q-ticket-quarantine-unrestorable",
+		EventType: "agent.dispatch",
+		Instance:  "worker",
+		Payload:   map[string]any{"job_id": "squ-620", "ticket": "SQU-620"},
+		QueuedAt:  now.Add(-3 * time.Hour),
+		UpdatedAt: now.Add(-2 * time.Hour),
+	})
+	writeQuarantinedQueueItem(t, teamDir, stamp, daemon.QueueStateDead, &daemon.QueueItem{
+		ID:             "q-ops-quarantine",
+		EventType:      "agent.dispatch",
+		Instance:       "worker",
+		InstanceID:     "worker-ops-620",
+		Payload:        map[string]any{"job_id": "ops-620", "ticket": "OPS-620"},
+		Attempts:       daemon.MaxQueueAttempts,
+		LastError:      "foreign",
+		QueuedAt:       now.Add(-4 * time.Hour),
+		UpdatedAt:      now.Add(-3 * time.Hour),
+		DeadLetteredAt: now.Add(-3 * time.Hour),
+	})
+
+	status := NewRootCmd()
+	statusOut, statusErr := &bytes.Buffer{}, &bytes.Buffer{}
+	status.SetOut(statusOut)
+	status.SetErr(statusErr)
+	status.SetArgs([]string{"pipeline", "status", "--repo", root, "--json"})
+	if err := status.Execute(); err != nil {
+		t.Fatalf("pipeline status json: %v\nstderr=%s", err, statusErr.String())
+	}
+	var rows []pipelineStatusRow
+	if err := json.Unmarshal(statusOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline status json: %v\nbody=%s", err, statusOut.String())
+	}
+	byName := map[string]pipelineStatusRow{}
+	for _, row := range rows {
+		byName[row.Pipeline] = row
+	}
+	ticket := byName["ticket_to_pr"]
+	if ticket.QueuePending != 1 || ticket.QueueDead != 1 || ticket.QueueQuarantined != 2 || ticket.QueueRestorable != 1 || ticket.QueueUnrestorable != 1 {
+		t.Fatalf("ticket queue status = %+v", ticket)
+	}
+	for _, want := range []string{
+		"agent-team pipeline queue ticket_to_pr --state dead --summary",
+		"agent-team pipeline queue retry ticket_to_pr --all --dry-run",
+		"agent-team pipeline queue quarantine ticket_to_pr",
+		"agent-team pipeline queue quarantine ticket_to_pr --unrestorable",
+		"agent-team pipeline queue quarantine ticket_to_pr --restorable",
+		"agent-team pipeline snapshot ticket_to_pr --json",
+		"agent-team pipeline queue ticket_to_pr --state pending",
+	} {
+		if !containsString(ticket.Actions, want) {
+			t.Fatalf("ticket queue actions missing %q: %+v", want, ticket.Actions)
+		}
+	}
+	ops := byName["ops_review"]
+	if ops.QueuePending != 0 || ops.QueueDead != 1 || ops.QueueQuarantined != 1 || ops.QueueRestorable != 1 || ops.QueueUnrestorable != 0 {
+		t.Fatalf("ops queue status = %+v", ops)
+	}
+
+	sorted := NewRootCmd()
+	sortedOut, sortedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sorted.SetOut(sortedOut)
+	sorted.SetErr(sortedErr)
+	sorted.SetArgs([]string{"pipeline", "status", "--repo", root, "--sort", "queue", "--limit", "1", "--format", "{{.Pipeline}} {{.QueuePending}} {{.QueueDead}} {{.QueueQuarantined}}"})
+	if err := sorted.Execute(); err != nil {
+		t.Fatalf("pipeline status sort queue: %v\nstderr=%s", err, sortedErr.String())
+	}
+	if got, want := strings.TrimSpace(sortedOut.String()), "ticket_to_pr 1 1 2"; got != want {
+		t.Fatalf("pipeline status queue sort = %q, want %q", got, want)
+	}
+
+	next := NewRootCmd()
+	nextOut, nextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	next.SetOut(nextOut)
+	next.SetErr(nextErr)
+	next.SetArgs([]string{"pipeline", "next", "ticket_to_pr", "--repo", root, "--format", "{{.Reason}}|{{.Action}}"})
+	if err := next.Execute(); err != nil {
+		t.Fatalf("pipeline next queue reasons: %v\nstderr=%s", err, nextErr.String())
+	}
+	for _, want := range []string{
+		"queue_dead=1|agent-team pipeline queue ticket_to_pr --state dead --summary",
+		"queue_dead=1|agent-team pipeline queue retry ticket_to_pr --all --dry-run",
+		"queue_quarantined=2|agent-team pipeline queue quarantine ticket_to_pr",
+		"queue_pending=1|agent-team pipeline queue ticket_to_pr --state pending",
+	} {
+		if !strings.Contains(nextOut.String(), want) {
+			t.Fatalf("pipeline next queue reason missing %q:\n%s", want, nextOut.String())
+		}
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"pipeline", "status", "ticket_to_pr", "--repo", root})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("pipeline status text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"QUEUE", "pending=1,dead=1,quarantined=2(restorable=1,unrestorable=1)", "agent-team pipeline queue quarantine ticket_to_pr --restorable"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("pipeline status text missing %q:\n%s", want, textOut.String())
+		}
+	}
+}
+
 func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

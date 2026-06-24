@@ -434,7 +434,7 @@ func newPipelineStatusCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after sorting; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline status rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.Pipeline}} {{.Jobs}} {{.ReadySteps}}'.")
-	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, or none.")
+	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, or quarantined.")
 	return cmd
 }
 
@@ -2908,6 +2908,11 @@ type pipelineStatusRow struct {
 	HeldSteps          int      `json:"held_steps,omitempty"`
 	DoneSteps          int      `json:"done_steps"`
 	NoStep             int      `json:"no_step"`
+	QueuePending       int      `json:"queue_pending,omitempty"`
+	QueueDead          int      `json:"queue_dead,omitempty"`
+	QueueQuarantined   int      `json:"queue_quarantined,omitempty"`
+	QueueRestorable    int      `json:"queue_restorable,omitempty"`
+	QueueUnrestorable  int      `json:"queue_unrestorable,omitempty"`
 	Actions            []string `json:"actions,omitempty"`
 }
 
@@ -3488,6 +3493,7 @@ func collectPipelineStatusRowsAt(teamDir, pipeline string, now time.Time, staleA
 	if err != nil {
 		return nil, err
 	}
+	jobsByPipeline := map[string][]*job.Job{}
 	for _, j := range jobs {
 		if j == nil {
 			continue
@@ -3499,8 +3505,10 @@ func collectPipelineStatusRowsAt(teamDir, pipeline string, now time.Time, staleA
 		if pipeline != "" && name != pipeline {
 			continue
 		}
+		jobsByPipeline[name] = append(jobsByPipeline[name], j)
 		applyPipelineStatusJob(rowFor(name), j, now, staleAfter)
 	}
+	applyPipelineStatusQueueRows(teamDir, rows, jobsByPipeline, now)
 	if pipeline != "" {
 		row := rows[pipeline]
 		if row == nil {
@@ -3537,10 +3545,10 @@ func parsePipelineStatusSort(raw string) (string, error) {
 		return "declared", nil
 	}
 	switch value {
-	case "declared", "pipeline", "steps", "jobs", "queued", "running", "blocked", "done", "failed", "ready", "queued-steps", "running-steps", "stale", "stale-running", "blocked-steps", "manual", "manual-gates", "failed-steps", "held", "done-steps", "none", "no-step":
+	case "declared", "pipeline", "steps", "jobs", "queued", "running", "blocked", "done", "failed", "ready", "queued-steps", "running-steps", "stale", "stale-running", "blocked-steps", "manual", "manual-gates", "failed-steps", "held", "done-steps", "none", "no-step", "queue", "queue-pending", "queue-dead", "quarantine", "quarantined":
 		return value, nil
 	default:
-		return "", fmt.Errorf("--sort must be declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, queued-steps, running-steps, stale, blocked-steps, manual, failed-steps, held, done-steps, or none")
+		return "", fmt.Errorf("--sort must be declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, queued-steps, running-steps, stale, blocked-steps, manual, failed-steps, held, done-steps, none, queue, queue-pending, queue-dead, or quarantined")
 	}
 }
 
@@ -3608,6 +3616,14 @@ func pipelineStatusSortValue(row pipelineStatusRow, sortMode string) int {
 		return row.DoneSteps
 	case "none", "no-step":
 		return row.NoStep
+	case "queue":
+		return row.QueuePending + row.QueueDead + row.QueueQuarantined
+	case "queue-pending":
+		return row.QueuePending
+	case "queue-dead":
+		return row.QueueDead
+	case "quarantine", "quarantined":
+		return row.QueueQuarantined
 	default:
 		return 0
 	}
@@ -3760,7 +3776,54 @@ func finalizePipelineStatusRow(row *pipelineStatusRow) {
 	if row.QueuedSteps > 0 {
 		actions = append(actions, "agent-team tick")
 	}
+	if row.QueueDead > 0 {
+		actions = append(actions, fmt.Sprintf("agent-team pipeline queue %s --state dead --summary", row.Pipeline))
+		actions = append(actions, fmt.Sprintf("agent-team pipeline queue retry %s --all --dry-run", row.Pipeline))
+	}
+	if row.QueueQuarantined > 0 {
+		actions = append(actions, fmt.Sprintf("agent-team pipeline queue quarantine %s", row.Pipeline))
+		if row.QueueUnrestorable > 0 {
+			actions = append(actions, fmt.Sprintf("agent-team pipeline queue quarantine %s --unrestorable", row.Pipeline))
+		}
+		if row.QueueRestorable > 0 {
+			actions = append(actions, fmt.Sprintf("agent-team pipeline queue quarantine %s --restorable", row.Pipeline))
+		}
+		actions = append(actions, fmt.Sprintf("agent-team pipeline snapshot %s --json", row.Pipeline))
+	}
+	if row.QueuePending > 0 {
+		actions = append(actions, fmt.Sprintf("agent-team pipeline queue %s --state pending", row.Pipeline))
+	}
 	row.Actions = actions
+}
+
+func applyPipelineStatusQueueRows(teamDir string, rows map[string]*pipelineStatusRow, jobsByPipeline map[string][]*job.Job, now time.Time) {
+	if len(rows) == 0 {
+		return
+	}
+	if items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir)); err == nil {
+		for pipeline, row := range rows {
+			if row == nil {
+				continue
+			}
+			summary := summarizeQueueItems(queueItemsForJobs(items, jobsByPipeline[pipeline]), now)
+			row.QueuePending = summary.Pending
+			row.QueueDead = summary.Dead
+		}
+	}
+	quarantine, err := listQueueQuarantine(teamDir)
+	if err != nil {
+		return
+	}
+	for pipeline, row := range rows {
+		if row == nil {
+			continue
+		}
+		var summary queueSummary
+		applyQueueQuarantineSummary(&summary, queueQuarantineItemsForJobs(quarantine, jobsByPipeline[pipeline]))
+		row.QueueQuarantined = summary.Quarantined
+		row.QueueRestorable = summary.QuarantineRestorable
+		row.QueueUnrestorable = summary.QuarantineUnrestorable
+	}
 }
 
 func pipelineNextActionsFromStatus(rows []pipelineStatusRow, limit int) []pipelineNextAction {
@@ -3811,6 +3874,15 @@ func pipelineNextActionReason(row pipelineStatusRow, action string) string {
 		return fmt.Sprintf("parallel_ready_steps=%d", row.ParallelReadySteps)
 	case strings.Contains(action, " advance "):
 		return fmt.Sprintf("ready_steps=%d", row.ReadySteps)
+	case strings.Contains(action, " queue quarantine "):
+		return fmt.Sprintf("queue_quarantined=%d", row.QueueQuarantined)
+	case strings.Contains(action, " queue retry ") ||
+		strings.Contains(action, " --state dead"):
+		return fmt.Sprintf("queue_dead=%d", row.QueueDead)
+	case strings.Contains(action, " --state pending"):
+		return fmt.Sprintf("queue_pending=%d", row.QueuePending)
+	case strings.Contains(action, " snapshot ") && row.QueueQuarantined > 0:
+		return fmt.Sprintf("queue_quarantined=%d", row.QueueQuarantined)
 	case strings.Contains(action, " retry "),
 		strings.Contains(action, " --retry-pipelines "),
 		strings.Contains(action, " --state failed"):
@@ -6056,9 +6128,9 @@ func renderPipelineStatusTable(w io.Writer, rows []pipelineStatusRow) {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "PIPELINE\tDECLARED\tSTEPS\tJOBS\tJOB_STATUS\tREADY\tQUEUED\tRUNNING\tSTALE_RUNNING\tBLOCKED\tMANUAL_GATES\tFAILED\tHELD\tDONE\tNONE\tACTION")
+	fmt.Fprintln(tw, "PIPELINE\tDECLARED\tSTEPS\tJOBS\tJOB_STATUS\tREADY\tQUEUED\tRUNNING\tSTALE_RUNNING\tBLOCKED\tMANUAL_GATES\tFAILED\tHELD\tDONE\tNONE\tQUEUE\tACTION")
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
 			row.Pipeline,
 			yesNo(row.Declared),
 			row.Steps,
@@ -6074,10 +6146,32 @@ func renderPipelineStatusTable(w io.Writer, rows []pipelineStatusRow) {
 			row.HeldSteps,
 			row.DoneSteps,
 			row.NoStep,
+			pipelineStatusQueueSummary(row),
 			emptyDash(strings.Join(row.Actions, "; ")),
 		)
 	}
 	_ = tw.Flush()
+}
+
+func pipelineStatusQueueSummary(row pipelineStatusRow) string {
+	parts := []string{}
+	if row.QueuePending > 0 {
+		parts = append(parts, fmt.Sprintf("pending=%d", row.QueuePending))
+	}
+	if row.QueueDead > 0 {
+		parts = append(parts, fmt.Sprintf("dead=%d", row.QueueDead))
+	}
+	if row.QueueQuarantined > 0 {
+		part := fmt.Sprintf("quarantined=%d", row.QueueQuarantined)
+		if row.QueueRestorable > 0 || row.QueueUnrestorable > 0 {
+			part = fmt.Sprintf("%s(restorable=%d,unrestorable=%d)", part, row.QueueRestorable, row.QueueUnrestorable)
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ",")
 }
 
 func renderPipelineExplainRows(w io.Writer, rows []pipelineExplainRow, jsonOut bool, tmpl *template.Template) error {
