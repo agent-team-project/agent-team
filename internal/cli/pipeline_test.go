@@ -4447,6 +4447,8 @@ func TestPipelineRepairScopesQueueAndRetry(t *testing.T) {
 		"--retry-pipelines",
 		"--preview-routes",
 		"--skip-daemon",
+		"--runtime", "codex",
+		"--runtime-bin", "codex-dev",
 		"--json",
 	})
 	if err := dry.Execute(); err != nil {
@@ -4468,6 +4470,10 @@ func TestPipelineRepairScopesQueueAndRetry(t *testing.T) {
 	retryRow := result.PipelineRetry.Results[0]
 	if retryRow.JobID != "squ-921" || retryRow.StepID != "implement" || retryRow.Preview == nil || retryRow.Preview.Dispatch == nil {
 		t.Fatalf("pipeline repair retry row = %+v", retryRow)
+	}
+	payload := retryRow.Preview.Dispatch.Preview.Payload
+	if payload["runtime"] != "codex" || payload["runtime_binary"] != "codex-dev" {
+		t.Fatalf("pipeline repair retry payload = %+v", payload)
 	}
 	if result.Advance.Action != "none" {
 		t.Fatalf("pipeline repair advance = %+v", result.Advance)

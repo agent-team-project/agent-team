@@ -3568,6 +3568,8 @@ Flags:
       --retry-message string          Audit message to record when --retry-pipelines resets failed pipeline steps.
       --retry-pipelines               Reset failed pipeline steps and dispatch them before the scoped advance.
       --retry-step string             With --retry-pipelines, retry only failed jobs whose next failed step has this id.
+      --runtime string                Runtime profile for retried or advanced step dispatches (claude or codex). Overrides env and repo config.
+      --runtime-bin string            Runtime binary for retried or advanced step dispatches. Overrides env and repo config.
       --skip-advance                  Do not advance ready pipeline steps after repair.
       --skip-daemon                   Do not start or reconcile the daemon.
       --skip-queue                    Do not retry pipeline-owned dead-letter queue items.
