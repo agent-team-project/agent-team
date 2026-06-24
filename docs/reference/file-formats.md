@@ -159,7 +159,7 @@ skip_reason = "triage folded into implementation"
 Supported step gates are:
 
 - `manual`: waits for operator approval with `agent-team job step <job-id> <step-id> --status queued`.
-- `pr`: waits until the job has PR metadata, usually from `agent-team job update <job-id> --pr <url> --advance --dry-run` followed by the non-dry-run update, or status reconciliation.
+- `pr`: waits until the job has PR metadata, usually from `agent-team job update <job-id> --pr <url> --advance --dry-run` followed by the non-dry-run update, GitHub intake reconciliation with `agent-team intake github --payload-file github-webhook.json --reconcile-job --advance --dry-run`, or status reconciliation.
 
 Set `optional = true` on a step when its failure should remain visible but should not block downstream `after` dependencies. A job with only optional failures and completed required steps closes as done with `last_status = "all required steps done"`.
 

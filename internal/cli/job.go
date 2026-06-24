@@ -5443,7 +5443,7 @@ func actionsForJobReadyRow(row jobReadyRow) []string {
 			return nil
 		}
 		if row.Gate == job.StepGatePR {
-			return []string{fmt.Sprintf("agent-team job update %s --pr <url> --advance --dry-run", row.JobID)}
+			return prGateRecoveryActions(row.JobID)
 		}
 		return []string{fmt.Sprintf("agent-team job unblock %s <answer...>", row.JobID)}
 	case "held":
@@ -7467,11 +7467,18 @@ func actionsForJobExplainStep(j *job.Job, step *job.Step, state string) []string
 	case state == "waiting" && step.Gate == job.StepGateManual:
 		return []string{fmt.Sprintf("agent-team job step %s %s --status queued", j.ID, step.ID)}
 	case state == "waiting" && step.Gate == job.StepGatePR:
-		return []string{fmt.Sprintf("agent-team job update %s --pr <url> --advance --dry-run", j.ID)}
+		return prGateRecoveryActions(j.ID)
 	case state == "failed":
 		return []string{fmt.Sprintf("agent-team job retry %s --dry-run --dispatch", j.ID)}
 	default:
 		return nil
+	}
+}
+
+func prGateRecoveryActions(jobID string) []string {
+	return []string{
+		fmt.Sprintf("agent-team job update %s --pr <url> --advance --dry-run", jobID),
+		"agent-team intake github --payload-file github-webhook.json --reconcile-job --advance --dry-run",
 	}
 }
 

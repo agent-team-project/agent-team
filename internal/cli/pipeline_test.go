@@ -2001,7 +2001,9 @@ gate = "pr"
 	if err := json.Unmarshal(readyBlockedOut.Bytes(), &rows); err != nil {
 		t.Fatalf("decode ready rows: %v\nbody=%s", err, readyBlockedOut.String())
 	}
-	if len(rows) != 1 || rows[0].Gate != job.StepGatePR || strings.Join(rows[0].WaitingFor, ",") != "pr" || len(rows[0].Actions) != 1 || rows[0].Actions[0] != "agent-team job update squ-902 --pr <url> --advance --dry-run" {
+	if len(rows) != 1 || rows[0].Gate != job.StepGatePR || strings.Join(rows[0].WaitingFor, ",") != "pr" ||
+		!containsString(rows[0].Actions, "agent-team job update squ-902 --pr <url> --advance --dry-run") ||
+		!containsString(rows[0].Actions, "agent-team intake github --payload-file github-webhook.json --reconcile-job --advance --dry-run") {
 		t.Fatalf("blocked ready rows = %+v", rows)
 	}
 
@@ -2017,7 +2019,9 @@ gate = "pr"
 	if err := json.Unmarshal(explainBlockedOut.Bytes(), &explained); err != nil {
 		t.Fatalf("decode explain blocked: %v\nbody=%s", err, explainBlockedOut.String())
 	}
-	if len(explained.Steps) != 2 || !containsString(explained.Steps[1].Actions, "agent-team job update squ-902 --pr <url> --advance --dry-run") {
+	if len(explained.Steps) != 2 ||
+		!containsString(explained.Steps[1].Actions, "agent-team job update squ-902 --pr <url> --advance --dry-run") ||
+		!containsString(explained.Steps[1].Actions, "agent-team intake github --payload-file github-webhook.json --reconcile-job --advance --dry-run") {
 		t.Fatalf("blocked explain actions = %+v", explained)
 	}
 
