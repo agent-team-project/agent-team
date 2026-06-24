@@ -1132,6 +1132,11 @@ func TestRepairRejectsInvalidFlagCombinations(t *testing.T) {
 			want: "--retry-step requires --retry-pipelines",
 		},
 		{
+			name: "retry force without retry pipelines",
+			args: []string{"repair", "--retry-force"},
+			want: "--retry-force requires --retry-pipelines",
+		},
+		{
 			name: "timeout jobs with timeout pipelines",
 			args: []string{"repair", "--timeout-jobs", "--timeout-pipelines"},
 			want: "--timeout-jobs cannot be combined with --timeout-pipelines",

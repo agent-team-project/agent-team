@@ -7957,7 +7957,7 @@ func resetFailedPipelineStepForRetry(j *job.Job) string {
 }
 
 func resetFailedPipelineStepForRetryByID(j *job.Job, stepID string) string {
-	result := resetFailedPipelineStepForRetryByIDWithReason(j, stepID)
+	result := resetFailedPipelineStepForRetryByIDWithReason(j, stepID, false)
 	return result.StepID
 }
 
@@ -7968,7 +7968,7 @@ type pipelineStepRetryReset struct {
 	MaxAttempts int
 }
 
-func resetFailedPipelineStepForRetryByIDWithReason(j *job.Job, stepID string) pipelineStepRetryReset {
+func resetFailedPipelineStepForRetryByIDWithReason(j *job.Job, stepID string, force bool) pipelineStepRetryReset {
 	stepID = strings.TrimSpace(stepID)
 	for i := range j.Steps {
 		step := &j.Steps[i]
@@ -7981,14 +7981,15 @@ func resetFailedPipelineStepForRetryByIDWithReason(j *job.Job, stepID string) pi
 		if len(unmetJobStepDependencies(j, step)) > 0 {
 			continue
 		}
-		if attempts, reason := jobStepRetryLimitReason(step); reason != "" {
+		attempts := effectiveJobStepAttempts(step)
+		if attempts, reason := jobStepRetryLimitReason(step); reason != "" && !force {
 			return pipelineStepRetryReset{Reason: reason, Attempts: attempts, MaxAttempts: step.MaxAttempts}
 		}
 		step.Status = job.StatusBlocked
 		step.Instance = ""
 		step.StartedAt = time.Time{}
 		step.FinishedAt = time.Time{}
-		return pipelineStepRetryReset{StepID: step.ID}
+		return pipelineStepRetryReset{StepID: step.ID, Attempts: attempts, MaxAttempts: step.MaxAttempts}
 	}
 	return pipelineStepRetryReset{Reason: "no retryable failed step"}
 }

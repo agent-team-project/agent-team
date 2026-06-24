@@ -166,6 +166,7 @@ agent-team repair --timeout-pipelines --timeout-pipeline ticket_to_pr --dry-run
 agent-team repair --timeout-pipelines --timeout-target-agent worker --dry-run
 agent-team repair --retry-pipelines --dry-run --preview-routes
 agent-team repair --retry-pipelines --retry-step review --dry-run --preview-routes
+agent-team repair --retry-pipelines --retry-force --retry-message "override after fixing dependency"
 agent-team repair --until-idle
 agent-team team repair delivery --dry-run --jobs
 ```
@@ -186,7 +187,7 @@ stale step-less running jobs; use `--timeout-pipelines` when you only want the
 older pipeline-step expiration scope. Add `--timeout-pipeline` or
 `--timeout-target-agent` with either timeout mode to stay inside one workflow or
 agent role.
-Use `--retry-step <id>` with `--retry-pipelines` when a broad repair pass should target only one failed stage, such as rerunning review jobs after fixing a reviewer prompt.
+Use `--retry-step <id>` with `--retry-pipelines` when a broad repair pass should target only one failed stage, such as rerunning review jobs after fixing a reviewer prompt. Add `--retry-force` only when capped steps should be retried after the underlying external issue has been fixed.
 
 ## Recovery Rules of Thumb
 
@@ -210,6 +211,7 @@ Use `--retry-step <id>` with `--retry-pipelines` when a broad repair pass should
 | Stale workflow or agent-role work | `agent-team repair --timeout-jobs --timeout-pipeline ticket_to_pr --dry-run` |
 | Failed pipeline steps | `agent-team repair --retry-pipelines --dry-run --preview-routes` |
 | Failed stage across jobs | `agent-team repair --retry-pipelines --retry-step review --dry-run --preview-routes` |
+| Capped failed stage after fix | `agent-team repair --retry-pipelines --retry-force --retry-step review --dry-run --preview-routes` |
 | One stuck job | `agent-team job show <job-id> --events all` |
 | One team stuck | `agent-team team overview <team>` |
 | Worker blocked | `agent-team job unblock <job-id> <answer...>` |

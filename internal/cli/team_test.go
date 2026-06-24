@@ -1179,6 +1179,47 @@ pipelines = ["platform_ops"]
 	if platform.Status != job.StatusFailed || platform.Steps[0].Status != job.StatusFailed || platform.Steps[0].Instance != "platform-old" {
 		t.Fatalf("platform job changed = %+v", platform)
 	}
+
+	capped := &job.Job{
+		ID:         "squ-902",
+		Ticket:     "SQU-902",
+		Target:     "worker",
+		Kickoff:    "delivery force retry",
+		Pipeline:   "ticket_to_pr",
+		Status:     job.StatusFailed,
+		LastEvent:  "step_failed",
+		LastStatus: "implement failed",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusFailed, Instance: "worker-capped", Attempts: 1, MaxAttempts: 1, StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+		},
+	}
+	if err := job.Write(teamDir, capped); err != nil {
+		t.Fatalf("write capped team job: %v", err)
+	}
+	force := NewRootCmd()
+	forceOut, forceErr := &bytes.Buffer{}, &bytes.Buffer{}
+	force.SetOut(forceOut)
+	force.SetErr(forceErr)
+	force.SetArgs([]string{"team", "retry", "delivery", "--repo", root, "--force", "--message", "team override", "--json"})
+	if err := force.Execute(); err != nil {
+		t.Fatalf("team retry --force: %v\nstderr=%s", err, forceErr.String())
+	}
+	var forceRows []pipelineRetryResult
+	if err := json.Unmarshal(forceOut.Bytes(), &forceRows); err != nil {
+		t.Fatalf("decode team retry --force: %v\nbody=%s", err, forceOut.String())
+	}
+	if len(forceRows) != 1 || forceRows[0].JobID != "squ-902" || forceRows[0].Action != "retried" || forceRows[0].StepStatus != job.StatusBlocked || forceRows[0].Attempts != 1 || forceRows[0].MaxAttempts != 1 || forceRows[0].Message != "team override" {
+		t.Fatalf("team force rows = %+v", forceRows)
+	}
+	forced, err := job.Read(teamDir, "squ-902")
+	if err != nil {
+		t.Fatalf("read forced team job: %v", err)
+	}
+	if forced.Status != job.StatusQueued || forced.Steps[0].Status != job.StatusBlocked || forced.Steps[0].Instance != "" || forced.LastStatus != "team override" {
+		t.Fatalf("forced team job = %+v", forced)
+	}
 }
 
 func TestTeamRetryStepFilter(t *testing.T) {
@@ -6651,6 +6692,11 @@ func TestTeamRepairRejectsInvalidFormatFlags(t *testing.T) {
 			name: "retry step without retry pipelines",
 			args: []string{"team", "repair", "delivery", "--retry-step", "review"},
 			want: "--retry-step requires --retry-pipelines",
+		},
+		{
+			name: "retry force without retry pipelines",
+			args: []string{"team", "repair", "delivery", "--retry-force"},
+			want: "--retry-force requires --retry-pipelines",
 		},
 		{
 			name: "timeout jobs with timeout pipelines",

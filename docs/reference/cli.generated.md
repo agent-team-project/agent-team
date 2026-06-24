@@ -3096,6 +3096,7 @@ Flags:
       --all                  Retry failed steps across all pipelines.
       --dispatch             Dispatch each reset failed step immediately.
       --dry-run              Preview failed-step resets and optional dispatches without writing job or daemon state.
+      --force                Ignore step max_attempts caps for this explicit retry.
       --format string        Render each retry result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
       --json                 Emit retry results as JSON.
       --limit int            Maximum failed jobs to retry (0 = no limit).
@@ -3725,6 +3726,7 @@ Flags:
       --max-cycles int                With --until-idle, stop after this many cycles if work keeps appearing. (default 20)
       --preview-routes                With --dry-run, include route and dispatch payload previews for retried or ready pipeline steps.
       --ready-timeout duration        Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
+      --retry-force                   With --retry-pipelines, ignore step max_attempts caps for explicit repair retry.
       --retry-message string          Audit message to record when --retry-pipelines resets failed steps.
       --retry-pipelines               Reset failed pipeline steps and dispatch them before the maintenance tick.
       --retry-step string             With --retry-pipelines, retry only failed jobs whose next failed step has this id.
@@ -5251,6 +5253,7 @@ Flags:
       --preview-routes                With --dry-run, include route and dispatch payload previews for retried or ready team pipeline steps.
       --ready-timeout duration        Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
       --repo string                   Repo root containing .agent_team. (default "<repo>")
+      --retry-force                   With --retry-pipelines, ignore step max_attempts caps for explicit team repair retry.
       --retry-message string          Audit message to record when --retry-pipelines resets failed team steps.
       --retry-pipelines               Reset failed team pipeline steps and dispatch them before the scoped team tick.
       --retry-step string             With --retry-pipelines, retry only failed team jobs whose next failed step has this id.
@@ -5310,6 +5313,7 @@ Flags:
 ```text
       --dispatch             Dispatch each reset failed step immediately.
       --dry-run              Preview failed-step resets and optional dispatches without writing job or daemon state.
+      --force                Ignore step max_attempts caps for this explicit team retry.
       --format string        Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
       --json                 Emit retry results as JSON.
       --limit int            Retry at most this many failed team jobs; 0 means no limit.

@@ -3267,6 +3267,21 @@ func TestPipelineRetrySkipsStepsAtMaxAttempts(t *testing.T) {
 				{ID: "implement", Target: "worker", Status: job.StatusFailed, Instance: "worker-squ-617", Attempts: 1, MaxAttempts: 2, StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
 			},
 		},
+		{
+			ID:         "squ-618",
+			Ticket:     "SQU-618",
+			Target:     "worker",
+			Kickoff:    "retry cap override",
+			Pipeline:   "capped_only",
+			Status:     job.StatusFailed,
+			LastEvent:  "step_failed",
+			LastStatus: "implement failed",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusFailed, Instance: "worker-squ-618", Attempts: 1, MaxAttempts: 1, StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+			},
+		},
 	} {
 		if err := job.Write(teamDir, j); err != nil {
 			t.Fatalf("write %s: %v", j.ID, err)
@@ -3302,6 +3317,49 @@ func TestPipelineRetrySkipsStepsAtMaxAttempts(t *testing.T) {
 	}
 	if capped.Status != job.StatusFailed || capped.Steps[0].Status != job.StatusFailed || capped.Steps[0].Instance != "worker-squ-616" {
 		t.Fatalf("dry-run mutated capped job = %+v", capped)
+	}
+
+	forceDry := NewRootCmd()
+	forceDryOut, forceDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	forceDry.SetOut(forceDryOut)
+	forceDry.SetErr(forceDryErr)
+	forceDry.SetArgs([]string{"pipeline", "retry", "ticket_to_pr", "--repo", root, "--force", "--dry-run", "--json"})
+	if err := forceDry.Execute(); err != nil {
+		t.Fatalf("pipeline retry --force dry-run: %v\nstderr=%s", err, forceDryErr.String())
+	}
+	var forceDryRows []pipelineRetryResult
+	if err := json.Unmarshal(forceDryOut.Bytes(), &forceDryRows); err != nil {
+		t.Fatalf("decode force retry dry-run: %v\nbody=%s", err, forceDryOut.String())
+	}
+	forceByJob := map[string]pipelineRetryResult{}
+	for _, row := range forceDryRows {
+		forceByJob[row.JobID] = row
+	}
+	if forceByJob["squ-616"].Action != "would_retry" || forceByJob["squ-616"].StepStatus != job.StatusBlocked || forceByJob["squ-616"].Attempts != 1 || forceByJob["squ-616"].MaxAttempts != 1 {
+		t.Fatalf("forced capped row = %+v", forceByJob["squ-616"])
+	}
+
+	forceRun := NewRootCmd()
+	forceRunOut, forceRunErr := &bytes.Buffer{}, &bytes.Buffer{}
+	forceRun.SetOut(forceRunOut)
+	forceRun.SetErr(forceRunErr)
+	forceRun.SetArgs([]string{"pipeline", "retry", "capped_only", "--repo", root, "--force", "--message", "operator override", "--json"})
+	if err := forceRun.Execute(); err != nil {
+		t.Fatalf("pipeline retry --force: %v\nstderr=%s", err, forceRunErr.String())
+	}
+	var forceRunRows []pipelineRetryResult
+	if err := json.Unmarshal(forceRunOut.Bytes(), &forceRunRows); err != nil {
+		t.Fatalf("decode force retry: %v\nbody=%s", err, forceRunOut.String())
+	}
+	if len(forceRunRows) != 1 || forceRunRows[0].JobID != "squ-618" || forceRunRows[0].Action != "retried" || forceRunRows[0].StepStatus != job.StatusBlocked || forceRunRows[0].Attempts != 1 || forceRunRows[0].MaxAttempts != 1 || forceRunRows[0].Message != "operator override" {
+		t.Fatalf("force run rows = %+v", forceRunRows)
+	}
+	forced, err := job.Read(teamDir, "squ-618")
+	if err != nil {
+		t.Fatalf("read forced: %v", err)
+	}
+	if forced.Status != job.StatusQueued || forced.Steps[0].Status != job.StatusBlocked || forced.Steps[0].Instance != "" || forced.LastStatus != "operator override" {
+		t.Fatalf("forced job = %+v", forced)
 	}
 }
 

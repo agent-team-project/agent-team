@@ -1372,6 +1372,7 @@ func newTeamRetryCmd() *cobra.Command {
 		dispatchNow   bool
 		step          string
 		message       string
+		force         bool
 		dryRun        bool
 		previewRoutes bool
 		jsonOut       bool
@@ -1411,7 +1412,7 @@ func newTeamRetryCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team retry: %v\n", err)
 				return exitErr(1)
 			}
-			results, err := retryTeamPipelineJobs(cmd, teamDir, team, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin}, step, message, limit, dispatchNow, dryRun, previewRoutes)
+			results, err := retryTeamPipelineJobs(cmd, teamDir, team, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin}, step, message, limit, force, dispatchNow, dryRun, previewRoutes)
 			if err != nil {
 				if errors.Is(err, errDaemonNotRunning) {
 					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team retry: daemon is not running — start it with `agent-team start`, or use --dry-run without --dispatch.")
@@ -1431,6 +1432,7 @@ func newTeamRetryCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dispatchNow, "dispatch", false, "Dispatch each reset failed step immediately.")
 	cmd.Flags().StringVar(&step, "step", "", "Retry only failed team jobs whose next failed step has this id.")
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each retried team job.")
+	cmd.Flags().BoolVar(&force, "force", false, "Ignore step max_attempts caps for this explicit team retry.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview failed-step resets and optional dispatches without writing job or daemon state.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run --dispatch, include local topology route and dispatch payload previews.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit retry results as JSON.")
@@ -3519,6 +3521,7 @@ func newTeamRepairCmd() *cobra.Command {
 		timeoutTarget    string
 		retryStep        string
 		retryMessage     string
+		retryForce       bool
 		untilIdle        bool
 		readyTimeout     time.Duration
 		interval         time.Duration
@@ -3596,6 +3599,10 @@ func newTeamRepairCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --retry-step requires --retry-pipelines.")
 				return exitErr(2)
 			}
+			if retryForce && !retryPipelines {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --retry-force requires --retry-pipelines.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -3628,6 +3635,7 @@ func newTeamRepairCmd() *cobra.Command {
 				TimeoutTarget:    timeoutTarget,
 				RetryStep:        retryStep,
 				RetryMessage:     retryMessage,
+				RetryForce:       retryForce,
 				UntilIdle:        untilIdle,
 				ReadyTimeout:     readyTimeout,
 				Interval:         interval,
@@ -3661,6 +3669,7 @@ func newTeamRepairCmd() *cobra.Command {
 	cmd.Flags().StringVar(&timeoutTarget, "timeout-target-agent", "", "With --timeout-jobs or --timeout-pipelines, mark only stale team work targeting this agent.")
 	cmd.Flags().StringVar(&retryStep, "retry-step", "", "With --retry-pipelines, retry only failed team jobs whose next failed step has this id.")
 	cmd.Flags().StringVar(&retryMessage, "retry-message", "", "Audit message to record when --retry-pipelines resets failed team steps.")
+	cmd.Flags().BoolVar(&retryForce, "retry-force", false, "With --retry-pipelines, ignore step max_attempts caps for explicit team repair retry.")
 	cmd.Flags().BoolVar(&untilIdle, "until-idle", false, "Run scoped team ticks until no immediate team queue, schedule, or pipeline work remains.")
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for implicit daemon readiness (0 = no timeout).")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Delay between --until-idle scoped team tick cycles.")
@@ -4491,6 +4500,7 @@ type teamRepairOptions struct {
 	TimeoutTarget    string
 	RetryStep        string
 	RetryMessage     string
+	RetryForce       bool
 	UntilIdle        bool
 	ReadyTimeout     time.Duration
 	Interval         time.Duration
@@ -6522,7 +6532,7 @@ func runTeamRepairPipelineRetryStep(cmd *cobra.Command, teamDir string, team *to
 	if message == "" {
 		message = "team repair retry failed pipeline step"
 	}
-	results, err := retryTeamPipelineJobs(cmd, teamDir, team, opts.Workspace, runtimeSelection{}, opts.RetryStep, message, opts.Limit, true, opts.DryRun, opts.PreviewRoutes)
+	results, err := retryTeamPipelineJobs(cmd, teamDir, team, opts.Workspace, runtimeSelection{}, opts.RetryStep, message, opts.Limit, opts.RetryForce, true, opts.DryRun, opts.PreviewRoutes)
 	if err != nil {
 		return repairPipelineRetryStep{Action: "error", Reason: err.Error()}, err
 	}
@@ -6809,7 +6819,7 @@ func approveTeamPipelineManualGates(cmd *cobra.Command, teamDir string, team *to
 	return results, nil
 }
 
-func retryTeamPipelineJobs(cmd *cobra.Command, teamDir string, team *topology.Team, workspace string, selection runtimeSelection, stepFilter string, message string, limit int, dispatchNow bool, dryRun bool, previewRoutes bool) ([]pipelineRetryResult, error) {
+func retryTeamPipelineJobs(cmd *cobra.Command, teamDir string, team *topology.Team, workspace string, selection runtimeSelection, stepFilter string, message string, limit int, force bool, dispatchNow bool, dryRun bool, previewRoutes bool) ([]pipelineRetryResult, error) {
 	if team == nil || len(team.Pipelines) == 0 {
 		return []pipelineRetryResult{}, nil
 	}
@@ -6823,7 +6833,7 @@ func retryTeamPipelineJobs(cmd *cobra.Command, teamDir string, team *topology.Te
 		if limit > 0 {
 			batchLimit = remaining
 		}
-		retried, err := retryPipelineJobs(cmd, teamDir, pipeline, workspace, selection, stepFilter, message, batchLimit, dispatchNow, dryRun, previewRoutes)
+		retried, err := retryPipelineJobs(cmd, teamDir, pipeline, workspace, selection, stepFilter, message, batchLimit, force, dispatchNow, dryRun, previewRoutes)
 		if err != nil {
 			return nil, err
 		}
