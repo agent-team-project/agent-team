@@ -231,6 +231,7 @@ func newPipelineJobsCmd() *cobra.Command {
 		watch          bool
 		noClear        bool
 		interval       time.Duration
+		limit          int
 		held           bool
 		unheld         bool
 		expiredHold    bool
@@ -252,6 +253,14 @@ func newPipelineJobsCmd() *cobra.Command {
 			}
 			if format != "" && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if summary && cmd.Flags().Changed("limit") {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --limit cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --limit must be >= 0.")
 				return exitErr(2)
 			}
 			if interval < 0 {
@@ -284,6 +293,7 @@ func newPipelineJobsCmd() *cobra.Command {
 			filters.Held = jobHeldFilter(held, unheld)
 			filters.HoldExpired = jobHoldExpiredFilter(expiredHold, activeHold)
 			filters.Sort = sortMode
+			filters.Limit = limit
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -318,6 +328,7 @@ func newPipelineJobsCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh pipeline jobs until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
 	cmd.Flags().BoolVar(&held, "held", false, "Only show held jobs.")
 	cmd.Flags().BoolVar(&unheld, "unheld", false, "Only show jobs that are not held.")
 	cmd.Flags().BoolVar(&expiredHold, "expired-hold", false, "Only show held jobs whose hold_until has passed.")

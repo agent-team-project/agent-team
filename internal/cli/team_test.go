@@ -1018,6 +1018,30 @@ instances = ["platform-worker"]
 	if !strings.Contains(invalidIntervalErr.String(), "--interval must be >= 0") {
 		t.Fatalf("negative interval stderr = %q", invalidIntervalErr.String())
 	}
+
+	invalidLimit := NewRootCmd()
+	invalidLimitOut, invalidLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidLimit.SetOut(invalidLimitOut)
+	invalidLimit.SetErr(invalidLimitErr)
+	invalidLimit.SetArgs([]string{"team", "jobs", "delivery", "--repo", root, "--limit", "-1"})
+	if err := invalidLimit.Execute(); err == nil {
+		t.Fatalf("team jobs negative limit succeeded")
+	}
+	if !strings.Contains(invalidLimitErr.String(), "--limit must be >= 0") {
+		t.Fatalf("negative limit stderr = %q", invalidLimitErr.String())
+	}
+
+	summaryLimit := NewRootCmd()
+	summaryLimitOut, summaryLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryLimit.SetOut(summaryLimitOut)
+	summaryLimit.SetErr(summaryLimitErr)
+	summaryLimit.SetArgs([]string{"team", "jobs", "delivery", "--repo", root, "--summary", "--limit", "1"})
+	if err := summaryLimit.Execute(); err == nil {
+		t.Fatalf("team jobs summary limit succeeded")
+	}
+	if !strings.Contains(summaryLimitErr.String(), "--limit cannot be combined with --summary") {
+		t.Fatalf("summary limit stderr = %q", summaryLimitErr.String())
+	}
 }
 
 func TestTeamStatusIncludesJobRuntimeSummary(t *testing.T) {

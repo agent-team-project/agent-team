@@ -3903,6 +3903,18 @@ func TestJobListSortsRows(t *testing.T) {
 		t.Fatalf("updated sort = %+v", got)
 	}
 
+	limited := NewRootCmd()
+	limitedOut, limitedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	limited.SetOut(limitedOut)
+	limited.SetErr(limitedErr)
+	limited.SetArgs([]string{"job", "ls", "--repo", tmp, "--sort", "updated", "--limit", "2", "--format", "{{.ID}}"})
+	if err := limited.Execute(); err != nil {
+		t.Fatalf("job ls limit: %v\nstderr=%s", err, limitedErr.String())
+	}
+	if got := strings.Split(strings.TrimSpace(limitedOut.String()), "\n"); strings.Join(got, ",") != "squ-73,squ-74" {
+		t.Fatalf("limited output = %q", limitedOut.String())
+	}
+
 	status := NewRootCmd()
 	statusOut, statusErr := &bytes.Buffer{}, &bytes.Buffer{}
 	status.SetOut(statusOut)
@@ -3925,6 +3937,30 @@ func TestJobListSortsRows(t *testing.T) {
 	}
 	if !strings.Contains(invalidErr.String(), "--sort must be") {
 		t.Fatalf("invalid sort stderr = %q", invalidErr.String())
+	}
+
+	invalidLimit := NewRootCmd()
+	invalidLimitOut, invalidLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidLimit.SetOut(invalidLimitOut)
+	invalidLimit.SetErr(invalidLimitErr)
+	invalidLimit.SetArgs([]string{"job", "ls", "--repo", tmp, "--limit", "-1"})
+	if err := invalidLimit.Execute(); err == nil {
+		t.Fatalf("job ls negative limit succeeded unexpectedly")
+	}
+	if !strings.Contains(invalidLimitErr.String(), "--limit must be >= 0") {
+		t.Fatalf("invalid limit stderr = %q", invalidLimitErr.String())
+	}
+
+	summaryLimit := NewRootCmd()
+	summaryLimitOut, summaryLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryLimit.SetOut(summaryLimitOut)
+	summaryLimit.SetErr(summaryLimitErr)
+	summaryLimit.SetArgs([]string{"job", "ls", "--repo", tmp, "--summary", "--limit", "1"})
+	if err := summaryLimit.Execute(); err == nil {
+		t.Fatalf("job ls summary limit succeeded unexpectedly")
+	}
+	if !strings.Contains(summaryLimitErr.String(), "--limit cannot be combined with --summary") {
+		t.Fatalf("summary limit stderr = %q", summaryLimitErr.String())
 	}
 }
 

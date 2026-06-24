@@ -625,6 +625,18 @@ func TestPipelineJobsListsMatchingJobs(t *testing.T) {
 		t.Fatalf("pipeline jobs sorted output = %q", sortOut.String())
 	}
 
+	limited := NewRootCmd()
+	limitedOut, limitedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	limited.SetOut(limitedOut)
+	limited.SetErr(limitedErr)
+	limited.SetArgs([]string{"pipeline", "jobs", "ticket_to_pr", "--repo", root, "--sort", "target", "--limit", "1", "--format", "{{.ID}} {{.Target}}"})
+	if err := limited.Execute(); err != nil {
+		t.Fatalf("pipeline jobs limit: %v\nstderr=%s", err, limitedErr.String())
+	}
+	if got := strings.TrimSpace(limitedOut.String()); got != "squ-303 manager" {
+		t.Fatalf("pipeline jobs limited output = %q", limitedOut.String())
+	}
+
 	runtimeCmd := NewRootCmd()
 	runtimeOut, runtimeErr := &bytes.Buffer{}, &bytes.Buffer{}
 	runtimeCmd.SetOut(runtimeOut)
@@ -691,6 +703,18 @@ func TestPipelineJobsListsMatchingJobs(t *testing.T) {
 	}
 	if !strings.Contains(invalidIntervalErr.String(), "--interval must be >= 0") {
 		t.Fatalf("negative interval stderr = %q", invalidIntervalErr.String())
+	}
+
+	summaryLimit := NewRootCmd()
+	summaryLimitOut, summaryLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryLimit.SetOut(summaryLimitOut)
+	summaryLimit.SetErr(summaryLimitErr)
+	summaryLimit.SetArgs([]string{"pipeline", "jobs", "ticket_to_pr", "--repo", root, "--summary", "--limit", "1"})
+	if err := summaryLimit.Execute(); err == nil {
+		t.Fatalf("pipeline jobs summary limit succeeded")
+	}
+	if !strings.Contains(summaryLimitErr.String(), "--limit cannot be combined with --summary") {
+		t.Fatalf("summary limit stderr = %q", summaryLimitErr.String())
 	}
 }
 

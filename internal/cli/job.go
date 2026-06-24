@@ -1010,6 +1010,7 @@ func newJobLsCmd() *cobra.Command {
 		unheld         bool
 		expiredHold    bool
 		activeHold     bool
+		limit          int
 		watch          bool
 		noClear        bool
 		summary        bool
@@ -1030,6 +1031,14 @@ func newJobLsCmd() *cobra.Command {
 			}
 			if format != "" && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if summary && cmd.Flags().Changed("limit") {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --limit cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --limit must be >= 0.")
 				return exitErr(2)
 			}
 			if interval < 0 {
@@ -1062,6 +1071,7 @@ func newJobLsCmd() *cobra.Command {
 			filters.Held = jobHeldFilter(held, unheld)
 			filters.HoldExpired = jobHoldExpiredFilter(expiredHold, activeHold)
 			filters.Sort = sortMode
+			filters.Limit = limit
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -1093,6 +1103,7 @@ func newJobLsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&unheld, "unheld", false, "Only show jobs that are not held.")
 	cmd.Flags().BoolVar(&expiredHold, "expired-hold", false, "Only show held jobs whose hold_until has passed.")
 	cmd.Flags().BoolVar(&activeHold, "active-hold", false, "Only show held jobs whose hold is still active or has no deadline.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the job table until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate job counts instead of job rows.")
@@ -4431,6 +4442,7 @@ type jobListFilters struct {
 	Branch      string
 	PR          string
 	Sort        string
+	Limit       int
 	Runtimes    map[string]bool
 	Held        *bool
 	HoldExpired *bool
@@ -6219,7 +6231,14 @@ func filteredJobs(teamDir string, filters jobListFilters) ([]*job.Job, error) {
 		}
 	}
 	sortJobs(filtered, filters.Sort)
-	return filtered, nil
+	return limitJobRows(filtered, filters.Limit), nil
+}
+
+func limitJobRows(jobs []*job.Job, limit int) []*job.Job {
+	if limit <= 0 || limit >= len(jobs) {
+		return jobs
+	}
+	return jobs[:limit]
 }
 
 func jobRuntimeIndex(teamDir string, filters jobListFilters) (map[string]string, error) {

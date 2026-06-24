@@ -1885,6 +1885,7 @@ Flags:
       --instance string       Filter by owning instance.
       --interval duration     Refresh interval for --watch. (default 2s)
       --json                  Emit machine-readable JSON.
+      --limit int             Limit rows after filtering and sorting; 0 means no limit.
       --no-clear              With --watch, append snapshots instead of redrawing the terminal.
       --pipeline string       Filter by pipeline name.
       --pr string             Filter by PR URL or number substring.
@@ -3014,6 +3015,7 @@ Flags:
       --held                Only show held jobs.
       --interval duration   Refresh interval for --watch. (default 2s)
       --json                Emit jobs as JSON.
+      --limit int           Limit rows after filtering and sorting; 0 means no limit.
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --runtime strings     Only show jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.
@@ -4790,6 +4792,7 @@ Flags:
       --held                Only show held jobs.
       --interval duration   Refresh interval for --watch. (default 2s)
       --json                Emit team jobs as JSON.
+      --limit int           Limit rows after filtering and sorting; 0 means no limit.
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --runtime strings     Only show team-owned jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.
