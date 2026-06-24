@@ -8229,6 +8229,23 @@ func teamPipelineActions(teamName string, row pipelineStatusRow) []string {
 	if row.QueuedSteps > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team team tick %s", teamName))
 	}
+	if row.QueueDead > 0 {
+		actions = append(actions, fmt.Sprintf("agent-team team queue %s --state dead --summary", teamName))
+		actions = append(actions, fmt.Sprintf("agent-team team queue retry %s --all --dry-run", teamName))
+	}
+	if row.QueueQuarantined > 0 {
+		actions = append(actions, fmt.Sprintf("agent-team team queue quarantine %s", teamName))
+		if row.QueueUnrestorable > 0 {
+			actions = append(actions, fmt.Sprintf("agent-team team queue quarantine %s --unrestorable", teamName))
+		}
+		if row.QueueRestorable > 0 {
+			actions = append(actions, fmt.Sprintf("agent-team team queue quarantine %s --restorable", teamName))
+		}
+		actions = append(actions, fmt.Sprintf("agent-team team snapshot %s --json", teamName))
+	}
+	if row.QueuePending > 0 {
+		actions = append(actions, fmt.Sprintf("agent-team team queue %s --state pending", teamName))
+	}
 	return actions
 }
 

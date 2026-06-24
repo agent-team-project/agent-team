@@ -454,8 +454,24 @@ since = "2026-06-18T12:00:00Z"
 	if err := json.Unmarshal(pipelinesOut.Bytes(), &pipelineRows); err != nil {
 		t.Fatalf("decode team pipelines: %v\nbody=%s", err, pipelinesOut.String())
 	}
-	if len(pipelineRows) != 1 || pipelineRows[0].Pipeline != "ticket_to_pr" || pipelineRows[0].ReadySteps != 1 {
+	if len(pipelineRows) != 1 || pipelineRows[0].Pipeline != "ticket_to_pr" || pipelineRows[0].ReadySteps != 1 || pipelineRows[0].QueueDead != 1 || pipelineRows[0].QueueQuarantined != 1 || pipelineRows[0].QueueRestorable != 1 {
 		t.Fatalf("team pipeline rows = %+v", pipelineRows)
+	}
+	for _, want := range []string{
+		"agent-team team queue delivery --state dead --summary",
+		"agent-team team queue retry delivery --all --dry-run",
+		"agent-team team queue quarantine delivery",
+		"agent-team team queue quarantine delivery --restorable",
+		"agent-team team snapshot delivery --json",
+	} {
+		if !containsString(pipelineRows[0].Actions, want) {
+			t.Fatalf("team pipeline actions missing %q: %+v", want, pipelineRows[0].Actions)
+		}
+	}
+	for _, action := range pipelineRows[0].Actions {
+		if strings.Contains(action, "agent-team pipeline queue") {
+			t.Fatalf("team pipeline action leaked pipeline queue namespace: %+v", pipelineRows[0].Actions)
+		}
 	}
 
 	pipelinesFormat := NewRootCmd()

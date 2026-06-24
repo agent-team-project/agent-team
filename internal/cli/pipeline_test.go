@@ -2086,6 +2086,10 @@ trigger.event = "ops.created"
 [[pipelines.ops_review.steps]]
 id = "audit"
 target = "worker"
+
+[teams.delivery]
+instances = ["worker"]
+pipelines = ["ticket_to_pr"]
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2256,6 +2260,25 @@ target = "worker"
 	} {
 		if !strings.Contains(nextOut.String(), want) {
 			t.Fatalf("pipeline next queue reason missing %q:\n%s", want, nextOut.String())
+		}
+	}
+
+	teamNext := NewRootCmd()
+	teamNextOut, teamNextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	teamNext.SetOut(teamNextOut)
+	teamNext.SetErr(teamNextErr)
+	teamNext.SetArgs([]string{"pipeline", "next", "ticket_to_pr", "--team", "delivery", "--repo", root, "--format", "{{.Reason}}|{{.Action}}"})
+	if err := teamNext.Execute(); err != nil {
+		t.Fatalf("pipeline next team queue reasons: %v\nstderr=%s", err, teamNextErr.String())
+	}
+	for _, want := range []string{
+		"queue_dead=1|agent-team team queue delivery --state dead --summary",
+		"queue_dead=1|agent-team team queue retry delivery --all --dry-run",
+		"queue_quarantined=2|agent-team team queue quarantine delivery",
+		"queue_pending=1|agent-team team queue delivery --state pending",
+	} {
+		if !strings.Contains(teamNextOut.String(), want) {
+			t.Fatalf("pipeline next team queue reason missing %q:\n%s", want, teamNextOut.String())
 		}
 	}
 
