@@ -2690,65 +2690,86 @@ func timeoutPipelineJobs(teamDir, pipeline, stepFilter, message string, limit in
 		if pipeline != "" && strings.TrimSpace(j.Pipeline) != pipeline {
 			continue
 		}
-		for i := range j.Steps {
-			step := &j.Steps[i]
-			if step.Status != job.StatusRunning {
-				continue
-			}
-			if stepFilter != "" && step.ID != stepFilter {
-				continue
-			}
-			timeout := pipelineStepStaleAfter(step, staleAfter)
-			if !pipelineRunningStepIsStale(step, now, staleAfter) {
-				continue
-			}
-			age := now.Sub(step.StartedAt)
-			result := pipelineTimeoutResult{
-				JobID:      j.ID,
-				Ticket:     j.Ticket,
-				Pipeline:   j.Pipeline,
-				StepID:     step.ID,
-				Target:     step.Target,
-				StepStatus: step.Status,
-				Instance:   step.Instance,
-				Action:     "would_fail",
-				DryRun:     dryRun,
-				Age:        roundedDurationString(age),
-				Timeout:    roundedDurationString(timeout),
-				Message:    pipelineTimeoutMessage(step.ID, age, timeout, message),
-				Step:       cloneJobStep(step),
-			}
-			if dryRun {
-				results = append(results, result)
-				if limit > 0 && len(results) >= limit {
-					return results, nil
-				}
-				continue
-			}
-			if err := updateJobStep(j, step.ID, job.StatusFailed, jobStepUpdate{Message: result.Message}); err != nil {
-				return nil, err
-			}
-			if idx := jobStepIndex(j, step.ID); idx >= 0 {
-				j.Steps[idx].Instance = ""
-				result.Step = cloneJobStep(&j.Steps[idx])
-				result.StepStatus = j.Steps[idx].Status
-				result.Instance = j.Steps[idx].Instance
-			}
-			data := map[string]string{
-				"step":    result.StepID,
-				"age":     result.Age,
-				"timeout": result.Timeout,
-			}
-			if err := writeJobWithAudit(teamDir, j, "step_timeout", "cli", result.Message, data); err != nil {
-				return nil, err
-			}
-			result.Action = "failed"
-			result.DryRun = false
-			result.Job = j
+		batchLimit := 0
+		if limit > 0 {
+			batchLimit = limit - len(results)
+		}
+		timedOut, err := timeoutJobRunningSteps(teamDir, j, stepFilter, message, batchLimit, dryRun, now, staleAfter)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, timedOut...)
+		if limit > 0 && len(results) >= limit {
+			return results, nil
+		}
+	}
+	return results, nil
+}
+
+func timeoutJobRunningSteps(teamDir string, j *job.Job, stepFilter, message string, limit int, dryRun bool, now time.Time, staleAfter time.Duration) ([]pipelineTimeoutResult, error) {
+	if j == nil {
+		return nil, nil
+	}
+	stepFilter = strings.TrimSpace(stepFilter)
+	results := []pipelineTimeoutResult{}
+	for i := range j.Steps {
+		step := &j.Steps[i]
+		if step.Status != job.StatusRunning {
+			continue
+		}
+		if stepFilter != "" && step.ID != stepFilter {
+			continue
+		}
+		timeout := pipelineStepStaleAfter(step, staleAfter)
+		if !pipelineRunningStepIsStale(step, now, staleAfter) {
+			continue
+		}
+		age := now.Sub(step.StartedAt)
+		result := pipelineTimeoutResult{
+			JobID:      j.ID,
+			Ticket:     j.Ticket,
+			Pipeline:   j.Pipeline,
+			StepID:     step.ID,
+			Target:     step.Target,
+			StepStatus: step.Status,
+			Instance:   step.Instance,
+			Action:     "would_fail",
+			DryRun:     dryRun,
+			Age:        roundedDurationString(age),
+			Timeout:    roundedDurationString(timeout),
+			Message:    pipelineTimeoutMessage(step.ID, age, timeout, message),
+			Step:       cloneJobStep(step),
+		}
+		if dryRun {
 			results = append(results, result)
 			if limit > 0 && len(results) >= limit {
 				return results, nil
 			}
+			continue
+		}
+		if err := updateJobStep(j, step.ID, job.StatusFailed, jobStepUpdate{Message: result.Message}); err != nil {
+			return nil, err
+		}
+		if idx := jobStepIndex(j, step.ID); idx >= 0 {
+			j.Steps[idx].Instance = ""
+			result.Step = cloneJobStep(&j.Steps[idx])
+			result.StepStatus = j.Steps[idx].Status
+			result.Instance = j.Steps[idx].Instance
+		}
+		data := map[string]string{
+			"step":    result.StepID,
+			"age":     result.Age,
+			"timeout": result.Timeout,
+		}
+		if err := writeJobWithAudit(teamDir, j, "step_timeout", "cli", result.Message, data); err != nil {
+			return nil, err
+		}
+		result.Action = "failed"
+		result.DryRun = false
+		result.Job = j
+		results = append(results, result)
+		if limit > 0 && len(results) >= limit {
+			return results, nil
 		}
 	}
 	return results, nil

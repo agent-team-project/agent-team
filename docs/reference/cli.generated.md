@@ -1536,6 +1536,7 @@ Subcommands:
 - `agent-team job start` - Start or resume a job&#39;s owning instance.
 - `agent-team job step` - Update a pipeline job step status.
 - `agent-team job stop` - Stop a job&#39;s owning instance.
+- `agent-team job timeout` - Mark stale running job work failed.
 - `agent-team job triage` - Show jobs that need operator attention.
 - `agent-team job unblock` - Answer a blocked job and mark it ready to continue.
 - `agent-team job update` - Update job metadata.
@@ -2482,6 +2483,27 @@ Flags:
       --timeout duration        Grace before --force kills. With --wait and no --wait-timeout, also used as the wait deadline.
       --wait                    Wait for the owning instance to reach a terminal state.
       --wait-timeout duration   Maximum time to wait for terminal state with --wait.
+```
+
+## `agent-team job timeout`
+
+Mark stale running job work failed.
+
+Mark or preview stale running work for one durable job. Pipeline steps use their step timeout first, then [health].job_stale_after. A step-less running job uses [health].job_stale_after.
+
+```text
+agent-team job timeout <job-id> [flags]
+```
+
+Flags:
+
+```text
+      --dry-run          Preview stale-step failure without writing job state.
+      --format string    Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json             Emit timeout results as JSON.
+      --message string   Status message recorded on the timed-out job.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --step string      Mark only a stale running step with this id failed.
 ```
 
 ## `agent-team job triage`

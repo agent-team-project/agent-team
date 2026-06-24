@@ -2100,6 +2100,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		"stale_running",
 		"running_without_instance",
 		"agent-team job reconcile status",
+		"agent-team job timeout squ-202 --dry-run",
 		"agent-team job adopt squ-202 --pid <pid> --dry-run",
 		"squ-203",
 		"stale_queued",
@@ -2156,6 +2157,9 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		t.Fatalf("squ-201 actions = %v", actions["squ-201"])
 	}
 	if !containsString(actions["squ-202"], "agent-team job adopt squ-202 --pid <pid> --dry-run") {
+		t.Fatalf("squ-202 actions = %v", actions["squ-202"])
+	}
+	if !containsString(actions["squ-202"], "agent-team job timeout squ-202 --dry-run") {
 		t.Fatalf("squ-202 actions = %v", actions["squ-202"])
 	}
 	if !containsString(reasons["squ-206"], "cleanup_ready") {
@@ -2247,6 +2251,118 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	}
 	if len(cleanupReasonSnapshot.Attention) != 1 || cleanupReasonSnapshot.Attention[0].JobID != "squ-206" {
 		t.Fatalf("cleanup reason triage attention = %+v", cleanupReasonSnapshot.Attention)
+	}
+}
+
+func TestJobTimeoutMarksStaleRunningStepsAndJobs(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	stepJob := &job.Job{
+		ID:        "squ-840",
+		Ticket:    "SQU-840",
+		Target:    "worker",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		CreatedAt: now.Add(-2 * time.Hour),
+		UpdatedAt: now.Add(-90 * time.Minute),
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-840", StartedAt: now.Add(-90 * time.Minute), Timeout: "1h0m0s"},
+		},
+	}
+	if err := job.Write(teamDir, stepJob); err != nil {
+		t.Fatalf("write step job: %v", err)
+	}
+	lifecycleJob := &job.Job{
+		ID:        "squ-841",
+		Ticket:    "SQU-841",
+		Target:    "worker",
+		Instance:  "worker-squ-841",
+		Status:    job.StatusRunning,
+		CreatedAt: now.Add(-48 * time.Hour),
+		UpdatedAt: now.Add(-48 * time.Hour),
+	}
+	if err := job.Write(teamDir, lifecycleJob); err != nil {
+		t.Fatalf("write lifecycle job: %v", err)
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"job", "timeout", "squ-840", "--repo", root, "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("job timeout dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryRows []pipelineTimeoutResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryRows); err != nil {
+		t.Fatalf("decode dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(dryRows) != 1 || dryRows[0].JobID != "squ-840" || dryRows[0].StepID != "implement" || dryRows[0].Action != "would_fail" || dryRows[0].StepStatus != job.StatusRunning {
+		t.Fatalf("dry rows = %+v", dryRows)
+	}
+	unchanged, err := job.Read(teamDir, "squ-840")
+	if err != nil {
+		t.Fatalf("read unchanged job: %v", err)
+	}
+	if unchanged.Status != job.StatusRunning || unchanged.Steps[0].Status != job.StatusRunning || unchanged.Steps[0].Instance != "worker-squ-840" {
+		t.Fatalf("dry-run mutated job = %+v", unchanged)
+	}
+
+	applyStep := NewRootCmd()
+	applyStepOut, applyStepErr := &bytes.Buffer{}, &bytes.Buffer{}
+	applyStep.SetOut(applyStepOut)
+	applyStep.SetErr(applyStepErr)
+	applyStep.SetArgs([]string{"job", "timeout", "squ-840", "--repo", root, "--message", "job step timed out", "--json"})
+	if err := applyStep.Execute(); err != nil {
+		t.Fatalf("job timeout step apply: %v\nstderr=%s", err, applyStepErr.String())
+	}
+	var stepRows []pipelineTimeoutResult
+	if err := json.Unmarshal(applyStepOut.Bytes(), &stepRows); err != nil {
+		t.Fatalf("decode step apply: %v\nbody=%s", err, applyStepOut.String())
+	}
+	if len(stepRows) != 1 || stepRows[0].Action != "failed" || stepRows[0].StepStatus != job.StatusFailed || stepRows[0].Instance != "" {
+		t.Fatalf("step rows = %+v", stepRows)
+	}
+	timedOutStep, err := job.Read(teamDir, "squ-840")
+	if err != nil {
+		t.Fatalf("read timed out step job: %v", err)
+	}
+	if timedOutStep.Status != job.StatusFailed || timedOutStep.Steps[0].Status != job.StatusFailed || timedOutStep.Steps[0].Instance != "" || timedOutStep.LastStatus != "job step timed out" {
+		t.Fatalf("timed out step job = %+v", timedOutStep)
+	}
+
+	applyLifecycle := NewRootCmd()
+	lifecycleOut, lifecycleErr := &bytes.Buffer{}, &bytes.Buffer{}
+	applyLifecycle.SetOut(lifecycleOut)
+	applyLifecycle.SetErr(lifecycleErr)
+	applyLifecycle.SetArgs([]string{"job", "timeout", "squ-841", "--repo", root, "--message", "job lifecycle timed out", "--json"})
+	if err := applyLifecycle.Execute(); err != nil {
+		t.Fatalf("job timeout lifecycle apply: %v\nstderr=%s", err, lifecycleErr.String())
+	}
+	var lifecycleRows []pipelineTimeoutResult
+	if err := json.Unmarshal(lifecycleOut.Bytes(), &lifecycleRows); err != nil {
+		t.Fatalf("decode lifecycle apply: %v\nbody=%s", err, lifecycleOut.String())
+	}
+	if len(lifecycleRows) != 1 || lifecycleRows[0].Action != "failed" || lifecycleRows[0].StepID != "" || lifecycleRows[0].StepStatus != job.StatusFailed {
+		t.Fatalf("lifecycle rows = %+v", lifecycleRows)
+	}
+	timedOutJob, err := job.Read(teamDir, "squ-841")
+	if err != nil {
+		t.Fatalf("read timed out lifecycle job: %v", err)
+	}
+	if timedOutJob.Status != job.StatusFailed || timedOutJob.LastEvent != "job_timeout" || timedOutJob.LastStatus != "job lifecycle timed out" || timedOutJob.Instance != "worker-squ-841" {
+		t.Fatalf("timed out lifecycle job = %+v", timedOutJob)
+	}
+	events, err := job.ListEvents(teamDir, "squ-841")
+	if err != nil {
+		t.Fatalf("list lifecycle events: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "job_timeout" || events[0].Message != "job lifecycle timed out" {
+		t.Fatalf("lifecycle events = %+v", events)
 	}
 }
 

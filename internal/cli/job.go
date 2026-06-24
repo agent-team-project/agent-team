@@ -53,6 +53,7 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobKillCmd())
 	cmd.AddCommand(newJobCloseCmd())
 	cmd.AddCommand(newJobCancelCmd())
+	cmd.AddCommand(newJobTimeoutCmd())
 	cmd.AddCommand(newJobUpdateCmd())
 	cmd.AddCommand(newJobHoldCmd())
 	cmd.AddCommand(newJobReleaseCmd())
@@ -2317,6 +2318,120 @@ func renderJobCancelResult(w io.Writer, result jobCancelResult, jsonOut bool, tm
 		}
 	}
 	return nil
+}
+
+func newJobTimeoutCmd() *cobra.Command {
+	var (
+		repo    string
+		step    string
+		message string
+		dryRun  bool
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "timeout <job-id>",
+		Short: "Mark stale running job work failed.",
+		Long: "Mark or preview stale running work for one durable job. " +
+			"Pipeline steps use their step timeout first, then [health].job_stale_after. " +
+			"A step-less running job uses [health].job_stale_after.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineTimeoutFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeout: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
+			if err != nil {
+				return err
+			}
+			staleAfter, err := configuredJobTriageStaleAfter(teamDir)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeout: %v\n", err)
+				return exitErr(2)
+			}
+			now := time.Now().UTC()
+			results, err := timeoutJobRunningSteps(teamDir, j, step, message, 0, dryRun, now, staleAfter)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeout: %v\n", err)
+				return exitErr(1)
+			}
+			if len(results) == 0 && strings.TrimSpace(step) == "" {
+				lifecycle, err := timeoutJobLifecycle(teamDir, j, message, dryRun, now, staleAfter)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeout: %v\n", err)
+					return exitErr(1)
+				}
+				results = append(results, lifecycle...)
+			}
+			return renderPipelineTimeoutResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&step, "step", "", "Mark only a stale running step with this id failed.")
+	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on the timed-out job.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview stale-step failure without writing job state.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit timeout results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
+	return cmd
+}
+
+func timeoutJobLifecycle(teamDir string, j *job.Job, message string, dryRun bool, now time.Time, staleAfter time.Duration) ([]pipelineTimeoutResult, error) {
+	if j == nil || j.Status != job.StatusRunning || staleAfter <= 0 || j.UpdatedAt.IsZero() {
+		return nil, nil
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	age := now.Sub(j.UpdatedAt)
+	if age <= staleAfter {
+		return nil, nil
+	}
+	result := pipelineTimeoutResult{
+		JobID:      j.ID,
+		Ticket:     j.Ticket,
+		Pipeline:   j.Pipeline,
+		Target:     j.Target,
+		StepStatus: j.Status,
+		Instance:   j.Instance,
+		Action:     "would_fail",
+		DryRun:     dryRun,
+		Age:        roundedDurationString(age),
+		Timeout:    roundedDurationString(staleAfter),
+		Message:    jobTimeoutMessage(j.ID, age, staleAfter, message),
+	}
+	if dryRun {
+		return []pipelineTimeoutResult{result}, nil
+	}
+	j.Status = job.StatusFailed
+	j.LastEvent = "job_timeout"
+	j.LastStatus = result.Message
+	j.UpdatedAt = now.UTC()
+	data := map[string]string{
+		"age":     result.Age,
+		"timeout": result.Timeout,
+	}
+	if err := writeJobWithAudit(teamDir, j, "job_timeout", "cli", result.Message, data); err != nil {
+		return nil, err
+	}
+	result.Action = "failed"
+	result.DryRun = false
+	result.StepStatus = j.Status
+	result.Job = j
+	return []pipelineTimeoutResult{result}, nil
+}
+
+func jobTimeoutMessage(jobID string, age, timeout time.Duration, override string) string {
+	if strings.TrimSpace(override) != "" {
+		return strings.TrimSpace(override)
+	}
+	return fmt.Sprintf("timed out job %s after %s (threshold %s)", jobID, roundedDurationString(age), roundedDurationString(timeout))
 }
 
 func newJobUpdateCmd() *cobra.Command {
@@ -5018,6 +5133,9 @@ func actionsForJobTriageItem(item jobTriageItem) []string {
 	}
 	if stringSliceContains(item.Reasons, "stale_running") || stringSliceContains(item.Reasons, "running_without_instance") {
 		add("agent-team job reconcile status")
+	}
+	if stringSliceContains(item.Reasons, "stale_running") {
+		add(fmt.Sprintf("agent-team job timeout %s --dry-run", item.JobID))
 	}
 	if stringSliceContains(item.Reasons, "running_without_instance") {
 		add(fmt.Sprintf("agent-team job adopt %s --pid <pid> --dry-run", item.JobID))
