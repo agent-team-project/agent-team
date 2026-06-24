@@ -3803,6 +3803,7 @@ Subcommands:
 
 - `agent-team runtime ls` - List supported runtime profiles.
 - `agent-team runtime probe` - Probe runtime, daemon, and Codex environment health.
+- `agent-team runtime resume-plan` - Show runtime resume and fallback commands for daemon metadata.
 
 ## `agent-team runtime ls`
 
@@ -3856,6 +3857,33 @@ Flags:
       --target string              Repo root or any path under a repo. (default "<repo>")
       --timeout duration           Maximum time for daemon wait and external runtime diagnostics such as codex doctor --json. (default 20s)
       --wait-daemon                Wait for the repo daemon to become ready before reporting daemon health.
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team runtime resume-plan`
+
+Show runtime resume and fallback commands for daemon metadata.
+
+Show runtime resume and fallback commands for daemon metadata without contacting the daemon. This explains whether an instance can be resumed through agent-team, which direct runtime command is available, and which log commands are safest for runtimes without managed resume.
+
+```text
+agent-team runtime resume-plan [<instance>...] [flags]
+```
+
+Flags:
+
+```text
+      --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedCommand}}'.
+      --job string        Select the instance recorded on or associated with this job id.
+      --json              Emit machine-readable JSON.
+      --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
+      --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
+      --target string     Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 
 Inherited Flags:

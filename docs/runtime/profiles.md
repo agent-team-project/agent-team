@@ -205,6 +205,23 @@ command plus `logs --follow` and `logs --last-message` fallbacks. Non-dry-run
 `attach` still refuses Codex managed handoff so it does not stop a child it
 cannot later supervise with the same session contract.
 
+Use `runtime resume-plan` when you want the same guidance without contacting
+the daemon:
+
+```sh
+agent-team runtime resume-plan
+agent-team runtime resume-plan worker-squ-42
+agent-team runtime resume-plan --job squ-42
+agent-team runtime resume-plan --runtime codex --status exited
+agent-team runtime resume-plan --json
+```
+
+The command reads `.agent_team/daemon/*/meta.json` directly and prints the
+recommended managed start, attach dry-run, unmanaged runtime resume, log
+follow, and Codex last-message commands. Job-linked metadata also includes
+`job attach` and `job logs` variants so recovery can stay scoped to the durable
+work unit.
+
 The Codex adapter sets `AGENT_TEAM_*` variables through Codex shell-environment policy options, so status, inbox, and channel scripts can find the repo team root and state directory without broadly inheriting the parent process environment.
 
 ## Codex Limitations

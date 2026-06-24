@@ -9,7 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/jamesaud/agent-team/internal/runtimebin"
 )
 
@@ -337,6 +340,169 @@ func TestRuntimeCommand_RepoFlagOverridesTarget(t *testing.T) {
 	wantConfig := filepath.ToSlash(filepath.Join(wantRoot, ".agent_team", "config.toml"))
 	if info.Binary != "codex-wrapper" || info.ConfigPath != wantConfig {
 		t.Fatalf("info = %+v, want config from --repo %s", info, wantConfig)
+	}
+}
+
+func TestRuntimeResumePlanClaudeText(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance:      "manager",
+		Agent:         "manager",
+		Runtime:       string(runtimebin.KindClaude),
+		RuntimeBinary: "claude-dev",
+		Workspace:     tmp,
+		PID:           1234,
+		SessionID:     "sid-manager",
+		StartedAt:     time.Now().UTC(),
+		Status:        daemon.StatusStopped,
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "resume-plan", "manager", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan: %v\nstderr=%s", err, errOut.String())
+	}
+	for _, want := range []string{
+		"instance:                 manager",
+		"runtime:                  claude",
+		"managed_resume:           yes",
+		"can_managed_resume:       yes",
+		"recommended_command:      agent-team start manager",
+		"resume_command:           claude-dev --resume sid-manager",
+		"start_command:            agent-team start manager",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("resume plan missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestRuntimeResumePlanCodexJobJSON(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-42",
+		Ticket:    "SQU-42",
+		Target:    "worker",
+		Instance:  "worker-squ-42",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance:      "worker-squ-42",
+		Agent:         "worker",
+		Runtime:       string(runtimebin.KindCodex),
+		RuntimeBinary: "codex",
+		Workspace:     tmp,
+		PID:           4321,
+		SessionID:     "codex-session",
+		StartedAt:     now,
+		Status:        daemon.StatusExited,
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--job", "SQU-42", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan --job --json: %v\nstderr=%s", err, errOut.String())
+	}
+	var plans []runtimeResumePlan
+	if err := json.Unmarshal(out.Bytes(), &plans); err != nil {
+		t.Fatalf("decode resume plans: %v\nbody=%s", err, out.String())
+	}
+	if len(plans) != 1 {
+		t.Fatalf("plans = %+v, want one", plans)
+	}
+	plan := plans[0]
+	if plan.Instance != "worker-squ-42" || plan.Job != "squ-42" || plan.Runtime != "codex" || plan.ManagedResume || plan.CanManagedResume || !plan.DirectResume {
+		t.Fatalf("plan = %+v", plan)
+	}
+	if plan.RecommendedCommand != "codex resume codex-session" || plan.JobLogsCommand != "agent-team job logs squ-42 --follow" || plan.JobLastMessageCommand != "agent-team job logs squ-42 --last-message" {
+		t.Fatalf("commands = %+v", plan)
+	}
+	if !strings.Contains(plan.Detail, `runtime "codex" does not support managed resume`) {
+		t.Fatalf("detail = %q", plan.Detail)
+	}
+}
+
+func TestRuntimeResumePlanFormatAndFilters(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{
+			Instance:      "manager",
+			Agent:         "manager",
+			Runtime:       string(runtimebin.KindClaude),
+			RuntimeBinary: "claude",
+			Workspace:     tmp,
+			SessionID:     "sid-manager",
+			StartedAt:     now,
+			Status:        daemon.StatusStopped,
+		},
+		{
+			Instance:      "worker",
+			Agent:         "worker",
+			Runtime:       string(runtimebin.KindCodex),
+			RuntimeBinary: "codex",
+			Workspace:     tmp,
+			SessionID:     "sid-worker",
+			StartedAt:     now,
+			Status:        daemon.StatusExited,
+		},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata: %v", err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--runtime", "codex", "--status", "exited", "--format", "{{.Instance}} {{.Runtime}} {{.RecommendedCommand}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan --format: %v\nstderr=%s", err, errOut.String())
+	}
+	got := strings.TrimSpace(out.String())
+	if got != "worker codex codex resume sid-worker" {
+		t.Fatalf("formatted resume plan = %q", got)
+	}
+}
+
+func TestRuntimeResumePlanRejectsJSONFormat(t *testing.T) {
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "resume-plan", "--target", t.TempDir(), "--json", "--format", "{{.Instance}}"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("runtime resume-plan --json --format succeeded")
+	}
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 2 {
+		t.Fatalf("error = %v, want exit 2", err)
+	}
+	if !strings.Contains(errOut.String(), "--format cannot be combined with --json") {
+		t.Fatalf("stderr = %q", errOut.String())
 	}
 }
 

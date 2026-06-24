@@ -75,6 +75,7 @@ func newRuntimeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtimeBinary, "runtime-bin", "", "Runtime binary to inspect for this invocation. Overrides env and repo config.")
 	cmd.AddCommand(newRuntimeLsCmd())
 	cmd.AddCommand(newRuntimeProbeCmd())
+	cmd.AddCommand(newRuntimeResumePlanCmd())
 	return cmd
 }
 
