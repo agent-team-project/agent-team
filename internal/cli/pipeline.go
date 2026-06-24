@@ -37,6 +37,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineExplainCmd())
 	cmd.AddCommand(newPipelineSnapshotCmd())
 	cmd.AddCommand(newPipelineNextCmd())
+	cmd.AddCommand(newPipelineWaitCmd())
 	cmd.AddCommand(newPipelineReadyCmd())
 	cmd.AddCommand(newPipelineHoldCmd())
 	cmd.AddCommand(newPipelineReleaseCmd())
@@ -605,6 +606,137 @@ func newPipelineNextCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit recommended actions as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each action with a Go template, e.g. '{{.Pipeline}} {{.Action}}'.")
+	return cmd
+}
+
+func newPipelineWaitCmd() *cobra.Command {
+	var (
+		repo         string
+		jobFilters   []string
+		statuses     []string
+		events       []string
+		timeout      time.Duration
+		interval     time.Duration
+		failOnFailed bool
+		quiet        bool
+		jsonOut      bool
+		format       string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "wait <pipeline>",
+		Short: "Wait for pipeline jobs to reach a lifecycle status or event.",
+		Long: "Wait for every selected job in one pipeline to reach one of the requested lifecycle statuses and/or last events. " +
+			"By default this waits for terminal statuses: done or failed. When --event is set without --status, any status is accepted.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline wait: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if timeout < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline wait: --timeout must be >= 0.")
+				return exitErr(2)
+			}
+			if quiet && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline wait: choose one of --quiet or --json.")
+				return exitErr(2)
+			}
+			if format != "" && (quiet || jsonOut) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline wait: --format cannot be combined with --quiet or --json.")
+				return exitErr(2)
+			}
+			waitEvents := parseJobWaitEvents(events)
+			waitStatuses, err := parseJobWaitStatuses(statuses, !cmd.Flags().Changed("status") && len(waitEvents) == 0)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline wait: %v\n", err)
+				return exitErr(2)
+			}
+			if len(waitStatuses) == 0 && len(waitEvents) == 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline wait: pass at least one non-empty --status or --event.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline wait: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			pipelineName := strings.TrimSpace(args[0])
+			jobs, err := selectedPipelineJobs(teamDir, pipelineName)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline wait: %v\n", err)
+				return exitErr(1)
+			}
+			jobs, err = filterPipelineWaitJobs(jobs, jobFilters)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline wait: %v\n", err)
+				return exitErr(2)
+			}
+			if len(jobs) == 0 {
+				if jsonOut {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode([]*job.Job{})
+				}
+				if !quiet && tmpl == nil {
+					fmt.Fprintln(cmd.OutOrStdout(), "(no jobs)")
+				}
+				return nil
+			}
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			defer stop()
+			cancel := func() {}
+			if timeout > 0 {
+				ctx, cancel = context.WithTimeout(ctx, timeout)
+			}
+			defer cancel()
+			finalJobs, err := runPipelineWait(ctx, teamDir, jobs, waitStatuses, waitEvents, interval)
+			if err != nil {
+				if timeoutErr, ok := err.(*pipelineWaitTimeoutError); ok {
+					if !quiet {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline wait: timed out waiting for %s to reach %s: %s\n",
+							pipelineName, jobWaitConditionList(waitStatuses, waitEvents), pipelineWaitPendingSummary(timeoutErr.Pending))
+					}
+					return exitErr(1)
+				}
+				if err == context.Canceled {
+					return nil
+				}
+				return err
+			}
+			if jsonOut {
+				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(finalJobs); err != nil {
+					return err
+				}
+			} else if tmpl != nil {
+				for _, j := range finalJobs {
+					if err := renderJobTemplate(cmd.OutOrStdout(), j, tmpl); err != nil {
+						return err
+					}
+				}
+			} else if !quiet {
+				for _, j := range finalJobs {
+					fmt.Fprintf(cmd.OutOrStdout(), "  wait   %-20s %s\n", j.ID, j.Status)
+				}
+			}
+			if failOnFailed && pipelineWaitHasFailed(finalJobs) {
+				return exitErr(1)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringSliceVar(&jobFilters, "job", nil, "Only wait for these pipeline-owned job ids. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&statuses, "status", nil, "Status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&events, "event", nil, "Last event to wait for, e.g. closed, adopted, or pipeline_done. Can repeat or comma-separate.")
+	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait (0 = no timeout).")
+	cmd.Flags().DurationVar(&interval, "interval", 500*time.Millisecond, "Polling interval.")
+	cmd.Flags().BoolVar(&failOnFailed, "fail-on-failed", false, "Exit 1 if any selected job resolves to failed.")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit final pipeline jobs as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each final job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
 }
 
@@ -3225,6 +3357,134 @@ func selectedPipelineJobs(teamDir, pipeline string) ([]*job.Job, error) {
 		out = append(out, j)
 	}
 	return out, nil
+}
+
+type pipelineWaitTimeoutError struct {
+	Jobs    []*job.Job
+	Pending []*job.Job
+}
+
+func (e *pipelineWaitTimeoutError) Error() string {
+	return "pipeline wait timed out"
+}
+
+func filterPipelineWaitJobs(jobs []*job.Job, filters []string) ([]*job.Job, error) {
+	values := splitFilterValues(filters)
+	if len(values) == 0 {
+		return jobs, nil
+	}
+	byID := map[string]*job.Job{}
+	for _, j := range jobs {
+		if j == nil {
+			continue
+		}
+		byID[job.NormalizeID(j.ID)] = j
+	}
+	out := make([]*job.Job, 0, len(values))
+	missing := []string{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		id := job.NormalizeID(value)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		j := byID[id]
+		if j == nil {
+			missing = append(missing, id)
+			continue
+		}
+		out = append(out, j)
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, fmt.Errorf("job(s) not owned by pipeline: %s", strings.Join(missing, ", "))
+	}
+	return out, nil
+}
+
+func runPipelineWait(ctx context.Context, teamDir string, jobs []*job.Job, statuses map[job.Status]bool, events map[string]bool, interval time.Duration) ([]*job.Job, error) {
+	if interval <= 0 {
+		interval = 500 * time.Millisecond
+	}
+	ids := make([]string, 0, len(jobs))
+	for _, j := range jobs {
+		if j == nil {
+			continue
+		}
+		ids = append(ids, job.NormalizeID(j.ID))
+	}
+	last := make([]*job.Job, 0, len(ids))
+	pending := make([]*job.Job, 0, len(ids))
+	for {
+		last = last[:0]
+		pending = pending[:0]
+		for _, id := range ids {
+			j, err := job.Read(teamDir, id)
+			if err != nil {
+				return nil, err
+			}
+			last = append(last, j)
+			if !pipelineWaitJobMatches(j, statuses, events) {
+				pending = append(pending, j)
+			}
+		}
+		if len(pending) == 0 {
+			return append([]*job.Job(nil), last...), nil
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			if ctx.Err() == context.DeadlineExceeded {
+				return append([]*job.Job(nil), last...), &pipelineWaitTimeoutError{
+					Jobs:    append([]*job.Job(nil), last...),
+					Pending: append([]*job.Job(nil), pending...),
+				}
+			}
+			return append([]*job.Job(nil), last...), ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func pipelineWaitJobMatches(j *job.Job, statuses map[job.Status]bool, events map[string]bool) bool {
+	if j == nil {
+		return false
+	}
+	statusMatched := len(statuses) == 0 || statuses[j.Status]
+	eventMatched := len(events) == 0 || events[strings.TrimSpace(j.LastEvent)]
+	return statusMatched && eventMatched
+}
+
+func pipelineWaitPendingSummary(jobs []*job.Job) string {
+	if len(jobs) == 0 {
+		return "(none)"
+	}
+	parts := make([]string, 0, len(jobs))
+	for _, j := range jobs {
+		if j == nil {
+			continue
+		}
+		part := fmt.Sprintf("%s=%s", j.ID, j.Status)
+		if event := strings.TrimSpace(j.LastEvent); event != "" {
+			part += " event=" + event
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return "(none)"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func pipelineWaitHasFailed(jobs []*job.Job) bool {
+	for _, j := range jobs {
+		if j != nil && j.Status == job.StatusFailed {
+			return true
+		}
+	}
+	return false
 }
 
 type pipelineOwnedMetadata struct {

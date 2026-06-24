@@ -2940,6 +2940,7 @@ Subcommands:
 - `agent-team pipeline snapshot` - Capture a read-only diagnostic snapshot for one pipeline.
 - `agent-team pipeline status` - Summarize pipeline jobs and next steps.
 - `agent-team pipeline timeout` - Mark stale running pipeline steps failed.
+- `agent-team pipeline wait` - Wait for pipeline jobs to reach a lifecycle status or event.
 
 ## `agent-team pipeline advance`
 
@@ -3530,6 +3531,31 @@ Flags:
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --step string           Mark only stale running steps with this id.
       --target-agent string   Mark only stale running steps targeting this agent.
+```
+
+## `agent-team pipeline wait`
+
+Wait for pipeline jobs to reach a lifecycle status or event.
+
+Wait for every selected job in one pipeline to reach one of the requested lifecycle statuses and/or last events. By default this waits for terminal statuses: done or failed. When --event is set without --status, any status is accepted.
+
+```text
+agent-team pipeline wait <pipeline> [flags]
+```
+
+Flags:
+
+```text
+      --event strings       Last event to wait for, e.g. closed, adopted, or pipeline_done. Can repeat or comma-separate.
+      --fail-on-failed      Exit 1 if any selected job resolves to failed.
+      --format string       Render each final job with a Go template, e.g. '{{.ID}} {{.Status}}'.
+      --interval duration   Polling interval. (default 500ms)
+      --job strings         Only wait for these pipeline-owned job ids. Can repeat or comma-separate.
+      --json                Emit final pipeline jobs as JSON.
+  -q, --quiet               Suppress output and use only the exit code.
+      --repo string         Repo root containing .agent_team. (default "<repo>")
+      --status strings      Status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --timeout duration    Maximum time to wait (0 = no timeout).
 ```
 
 ## `agent-team plan`

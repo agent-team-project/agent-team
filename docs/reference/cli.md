@@ -164,6 +164,7 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team pipeline explain <pipeline>` | Expand or watch pipeline jobs as per-step readiness, blockers, gates, and actions; add `--step` to focus one stage |
 | `agent-team pipeline snapshot <pipeline>` | Capture one pipeline's status, explained jobs, queue ownership, and dry-run advance previews |
 | `agent-team pipeline next` | Print or watch recommended pipeline actions |
+| `agent-team pipeline wait <pipeline>` | Wait for pipeline jobs to reach a lifecycle status or event |
 | `agent-team pipeline jobs <pipeline>` | List, summarize, or watch pipeline jobs; filter held state, hold deadlines, mixed-runtime ownership, sort rows, and cap output with `--limit` |
 | `agent-team pipeline ready` | List or watch ready steps; filter by `--step`, sort by `--sort`, and cap rows with `--limit` |
 | `agent-team pipeline hold <pipeline>` | Hold matching pipeline jobs without changing lifecycle status; add `--for` or `--until` for a deadline |

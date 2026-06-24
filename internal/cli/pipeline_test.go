@@ -3639,6 +3639,279 @@ func TestPipelineCleanupRejectsFormatCombinations(t *testing.T) {
 	}
 }
 
+func TestPipelineWaitPollsScopedJobs(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[pipelines.ops_review]
+trigger.event = "ops.created"
+
+[[pipelines.ops_review.steps]]
+id = "audit"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-801",
+			Ticket:    "SQU-801",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "squ-802",
+			Ticket:    "SQU-802",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusBlocked,
+			CreatedAt: now.Add(time.Second),
+			UpdatedAt: now.Add(time.Second),
+		},
+		{
+			ID:        "ops-801",
+			Ticket:    "OPS-801",
+			Target:    "worker",
+			Pipeline:  "ops_review",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		time.Sleep(25 * time.Millisecond)
+		updates := []struct {
+			id     string
+			status job.Status
+			event  string
+		}{
+			{id: "squ-801", status: job.StatusDone, event: "pipeline_done"},
+			{id: "squ-802", status: job.StatusFailed, event: "pipeline_failed"},
+			{id: "ops-801", status: job.StatusDone, event: "foreign_done"},
+		}
+		for _, update := range updates {
+			updated, err := job.Read(teamDir, update.id)
+			if err != nil {
+				t.Errorf("read job %s in updater: %v", update.id, err)
+				return
+			}
+			updated.Status = update.status
+			updated.LastEvent = update.event
+			updated.UpdatedAt = time.Now().UTC()
+			if err := job.Write(teamDir, updated); err != nil {
+				t.Errorf("write job %s in updater: %v", update.id, err)
+				return
+			}
+		}
+	}()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"pipeline", "wait", "ticket_to_pr", "--repo", root, "--timeout", "2s", "--interval", "10ms", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline wait: %v\nstderr=%s", err, stderr.String())
+	}
+	<-done
+	var got []job.Job
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode pipeline wait json: %v\nbody=%s", err, out.String())
+	}
+	statuses := map[string]job.Status{}
+	events := map[string]string{}
+	for _, j := range got {
+		statuses[j.ID] = j.Status
+		events[j.ID] = j.LastEvent
+	}
+	if len(got) != 2 || statuses["squ-801"] != job.StatusDone || statuses["squ-802"] != job.StatusFailed || events["ops-801"] != "" {
+		t.Fatalf("pipeline wait jobs = %+v", got)
+	}
+
+	formatted := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatted.SetOut(formatOut)
+	formatted.SetErr(formatErr)
+	formatted.SetArgs([]string{"pipeline", "wait", "ticket_to_pr", "--repo", root, "--job", "SQU-801", "--status", "done", "--format", "{{.ID}} {{.Status}}"})
+	if err := formatted.Execute(); err != nil {
+		t.Fatalf("pipeline wait format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if got, want := formatOut.String(), "squ-801 done\n"; got != want {
+		t.Fatalf("pipeline wait format = %q, want %q", got, want)
+	}
+}
+
+func TestPipelineWaitTimesOut(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-803",
+		Ticket:    "SQU-803",
+		Target:    "worker",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		LastEvent: "dispatched",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"pipeline", "wait", "ticket_to_pr", "--repo", root, "--timeout", "1ms", "--interval", "10ms"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("pipeline wait succeeded unexpectedly")
+	}
+	if !strings.Contains(stderr.String(), "timed out waiting for ticket_to_pr") || !strings.Contains(stderr.String(), "squ-803=running event=dispatched") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestPipelineWaitFailOnFailed(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-804",
+		Ticket:    "SQU-804",
+		Target:    "worker",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusFailed,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"pipeline", "wait", "ticket_to_pr", "--repo", root, "--quiet", "--fail-on-failed"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("pipeline wait succeeded unexpectedly")
+	}
+	if out.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("quiet wait produced stdout=%q stderr=%q", out.String(), stderr.String())
+	}
+}
+
+func TestPipelineWaitRejectsValidation(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-805",
+		Ticket:    "SQU-805",
+		Target:    "worker",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusDone,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "format with json",
+			args: []string{"pipeline", "wait", "ticket_to_pr", "--repo", root, "--format", "{{.ID}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "missing job",
+			args: []string{"pipeline", "wait", "ticket_to_pr", "--repo", root, "--job", "squ-missing"},
+			want: "job(s) not owned by pipeline: squ-missing",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("pipeline wait validation succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("pipeline wait err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestPipelinePRGateWaitsForJobPR(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
