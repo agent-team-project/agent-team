@@ -166,7 +166,7 @@ func runSync(cmd *cobra.Command, target string, opts syncOptions) error {
 		renderPlan(cmd.OutOrStdout(), result)
 		return nil
 	}
-	if err := ensureDaemonReadyWithTimeout(cmd, target, opts.JSON || opts.Quiet, opts.ReadyTimeout); err != nil {
+	if err := ensureDaemonReadyWithTimeout(cmd, target, opts.JSON || opts.Quiet || opts.Summary || opts.Format != nil, opts.ReadyTimeout); err != nil {
 		return err
 	}
 	dc, err := newDaemonClient(teamDir)

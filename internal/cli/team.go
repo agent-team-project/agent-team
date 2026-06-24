@@ -3244,7 +3244,7 @@ func newTeamUpCmd() *cobra.Command {
 				return writeEmptyTeamLifecycleStart(cmd, args[0], "up", dryRun, wait, summary, quiet, jsonOut, formatTemplate)
 			}
 			if !dryRun {
-				if err := ensureDaemonReadyWithTimeout(cmd, repo, jsonOut || quiet, readyTimeout); err != nil {
+				if err := ensureDaemonReadyWithTimeout(cmd, repo, jsonOut || quiet || summary || formatTemplate != nil, readyTimeout); err != nil {
 					return err
 				}
 			}
@@ -3416,7 +3416,7 @@ func newTeamRestartCmd() *cobra.Command {
 				return writeEmptyTeamLifecycleStart(cmd, args[0], "restart", dryRun, wait, summary, quiet, jsonOut, formatTemplate)
 			}
 			if !dryRun {
-				if err := ensureDaemonReadyWithTimeout(cmd, repo, jsonOut || quiet, readyTimeout); err != nil {
+				if err := ensureDaemonReadyWithTimeout(cmd, repo, jsonOut || quiet || summary || formatTemplate != nil, readyTimeout); err != nil {
 					return err
 				}
 			}
@@ -4157,7 +4157,7 @@ func runTeamSync(cmd *cobra.Command, repo, name string, opts syncOptions) error 
 		}
 		return renderTeamSyncDryRun(cmd.OutOrStdout(), snapshot, opts)
 	}
-	if err := ensureDaemonReadyWithTimeout(cmd, repo, opts.JSON || opts.Quiet, opts.ReadyTimeout); err != nil {
+	if err := ensureDaemonReadyWithTimeout(cmd, repo, opts.JSON || opts.Quiet || opts.Summary || opts.Format != nil, opts.ReadyTimeout); err != nil {
 		return err
 	}
 	dc, err := newDaemonClient(teamDir)

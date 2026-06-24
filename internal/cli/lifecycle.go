@@ -168,7 +168,7 @@ func newStartCmd() *cobra.Command {
 				return exitErr(2)
 			}
 			if !dryRun {
-				if err := ensureDaemonReadyWithTimeout(cmd, target, jsonOut || quiet, readyTimeout); err != nil {
+				if err := ensureDaemonReadyWithTimeout(cmd, target, jsonOut || quiet || summary || formatTemplate != nil, readyTimeout); err != nil {
 					return err
 				}
 			}
@@ -561,7 +561,7 @@ func newRestartCmd() *cobra.Command {
 				return exitErr(2)
 			}
 			if !dryRun {
-				if err := ensureDaemonReadyWithTimeout(cmd, target, jsonOut || quiet, readyTimeout); err != nil {
+				if err := ensureDaemonReadyWithTimeout(cmd, target, jsonOut || quiet || summary || formatTemplate != nil, readyTimeout); err != nil {
 					return err
 				}
 			}

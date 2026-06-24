@@ -4549,7 +4549,7 @@ func runJobInstanceUp(cmd *cobra.Command, repo, id string, opts instanceUpOption
 	}
 	repoRoot := filepath.Dir(teamDir)
 	if !opts.DryRun {
-		if err := ensureDaemonReadyWithTimeout(cmd, repoRoot, opts.JSON || opts.Quiet, readyTimeout); err != nil {
+		if err := ensureDaemonReadyWithTimeout(cmd, repoRoot, opts.JSON || opts.Quiet || opts.Summary || opts.Format != nil, readyTimeout); err != nil {
 			return err
 		}
 	}
