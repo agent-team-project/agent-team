@@ -823,6 +823,7 @@ func newPipelineTimeoutCmd() *cobra.Command {
 		all     bool
 		limit   int
 		step    string
+		target  string
 		message string
 		dryRun  bool
 		jsonOut bool
@@ -869,7 +870,7 @@ func newPipelineTimeoutCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			results, err := timeoutPipelineJobs(teamDir, pipelineName, step, message, limit, dryRun)
+			results, err := timeoutPipelineJobs(teamDir, pipelineName, step, target, message, limit, dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline timeout: %v\n", err)
 				return exitErr(1)
@@ -881,6 +882,7 @@ func newPipelineTimeoutCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&all, "all", false, "Mark stale running steps failed across all pipelines.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum stale running steps to mark failed (0 = no limit).")
 	cmd.Flags().StringVar(&step, "step", "", "Mark only stale running steps with this id.")
+	cmd.Flags().StringVar(&target, "target-agent", "", "Mark only stale running steps targeting this agent.")
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each timed-out job.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview stale-step failures without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit timeout results as JSON.")
@@ -2669,7 +2671,7 @@ func filterPipelineRetryRowsByStep(rows []jobReadyRow, stepFilter string) []jobR
 	return out
 }
 
-func timeoutPipelineJobs(teamDir, pipeline, stepFilter, message string, limit int, dryRun bool) ([]pipelineTimeoutResult, error) {
+func timeoutPipelineJobs(teamDir, pipeline, stepFilter, targetFilter, message string, limit int, dryRun bool) ([]pipelineTimeoutResult, error) {
 	staleAfter, err := configuredJobTriageStaleAfter(teamDir)
 	if err != nil {
 		return nil, err
@@ -2682,6 +2684,7 @@ func timeoutPipelineJobs(teamDir, pipeline, stepFilter, message string, limit in
 	now := time.Now().UTC()
 	pipeline = strings.TrimSpace(pipeline)
 	stepFilter = strings.TrimSpace(stepFilter)
+	targetFilter = strings.TrimSpace(targetFilter)
 	results := []pipelineTimeoutResult{}
 	for _, j := range jobs {
 		if j == nil || strings.TrimSpace(j.Pipeline) == "" {
@@ -2694,7 +2697,7 @@ func timeoutPipelineJobs(teamDir, pipeline, stepFilter, message string, limit in
 		if limit > 0 {
 			batchLimit = limit - len(results)
 		}
-		timedOut, err := timeoutJobRunningSteps(teamDir, j, stepFilter, "", message, batchLimit, dryRun, now, staleAfter)
+		timedOut, err := timeoutJobRunningSteps(teamDir, j, stepFilter, targetFilter, message, batchLimit, dryRun, now, staleAfter)
 		if err != nil {
 			return nil, err
 		}

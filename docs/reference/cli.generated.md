@@ -3198,14 +3198,15 @@ agent-team pipeline timeout <pipeline>|--all [flags]
 Flags:
 
 ```text
-      --all              Mark stale running steps failed across all pipelines.
-      --dry-run          Preview stale-step failures without writing job state.
-      --format string    Render each timeout result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
-      --json             Emit timeout results as JSON.
-      --limit int        Maximum stale running steps to mark failed (0 = no limit).
-      --message string   Status message recorded on each timed-out job.
-      --repo string      Repo root containing .agent_team. (default "<repo>")
-      --step string      Mark only stale running steps with this id.
+      --all                   Mark stale running steps failed across all pipelines.
+      --dry-run               Preview stale-step failures without writing job state.
+      --format string         Render each timeout result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json                  Emit timeout results as JSON.
+      --limit int             Maximum stale running steps to mark failed (0 = no limit).
+      --message string        Status message recorded on each timed-out job.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --step string           Mark only stale running steps with this id.
+      --target-agent string   Mark only stale running steps targeting this agent.
 ```
 
 ## `agent-team plan`
@@ -3736,7 +3737,7 @@ Flags:
       --timeout-pipeline string       With --timeout-jobs or --timeout-pipelines, mark only stale work owned by this pipeline.
       --timeout-pipelines             Mark stale running pipeline steps failed before retrying failed pipeline steps.
       --timeout-step string           With --timeout-jobs or --timeout-pipelines, mark only stale running steps with this id failed.
-      --timeout-target-agent string   With --timeout-jobs, mark only stale work targeting this agent.
+      --timeout-target-agent string   With --timeout-jobs or --timeout-pipelines, mark only stale work targeting this agent.
       --until-idle                    Run maintenance ticks until no immediate queue, schedule, or pipeline work remains.
       --workspace string              Workspace mode for retried or advanced pipeline steps: auto, worktree, or repo. (default "auto")
 ```
@@ -5261,7 +5262,7 @@ Flags:
       --timeout-pipeline string       With --timeout-jobs or --timeout-pipelines, mark only stale team work owned by this pipeline.
       --timeout-pipelines             Mark stale running team pipeline steps failed before retrying failed pipeline steps.
       --timeout-step string           With --timeout-jobs or --timeout-pipelines, mark only stale running team steps with this id failed.
-      --timeout-target-agent string   With --timeout-jobs, mark only stale team work targeting this agent.
+      --timeout-target-agent string   With --timeout-jobs or --timeout-pipelines, mark only stale team work targeting this agent.
       --until-idle                    Run scoped team ticks until no immediate team queue, schedule, or pipeline work remains.
       --workspace string              Workspace mode for retried or advanced team pipeline steps: auto, worktree, or repo. (default "auto")
 ```

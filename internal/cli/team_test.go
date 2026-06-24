@@ -1612,6 +1612,7 @@ pipelines = ["ticket_to_pr"]
 		"--repo", root,
 		"--timeout-pipelines",
 		"--timeout-pipeline", "ticket_to_pr",
+		"--timeout-target-agent", "worker",
 		"--timeout-message", "team repair timeout approved",
 		"--skip-daemon",
 		"--skip-queue",
@@ -6557,9 +6558,9 @@ func TestTeamRepairRejectsInvalidFormatFlags(t *testing.T) {
 			want: "--timeout-pipeline requires --timeout-pipelines or --timeout-jobs",
 		},
 		{
-			name: "timeout target without timeout jobs",
+			name: "timeout target without timeout mode",
 			args: []string{"team", "repair", "delivery", "--timeout-target-agent", "worker"},
-			want: "--timeout-target-agent requires --timeout-jobs",
+			want: "--timeout-target-agent requires --timeout-pipelines or --timeout-jobs",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

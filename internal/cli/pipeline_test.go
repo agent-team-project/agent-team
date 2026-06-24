@@ -1062,6 +1062,75 @@ timeout = "1h"
 	}
 }
 
+func TestPipelineTimeoutFiltersByTargetAgent(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-702",
+			Ticket:    "SQU-702",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-2 * time.Hour),
+			UpdatedAt: now.Add(-90 * time.Minute),
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-702", StartedAt: now.Add(-90 * time.Minute), Timeout: "1h0m0s"},
+			},
+		},
+		{
+			ID:        "squ-703",
+			Ticket:    "SQU-703",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-2 * time.Hour),
+			UpdatedAt: now.Add(-90 * time.Minute),
+			Steps: []job.Step{
+				{ID: "review", Target: "manager", Status: job.StatusRunning, Instance: "manager-squ-703", StartedAt: now.Add(-90 * time.Minute), Timeout: "1h0m0s"},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"pipeline", "timeout", "ticket_to_pr", "--repo", root, "--target-agent", "manager", "--message", "manager timeout", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline timeout --target-agent: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []pipelineTimeoutResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode target timeout: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].JobID != "squ-703" || rows[0].Target != "manager" || rows[0].Action != "failed" {
+		t.Fatalf("rows = %+v", rows)
+	}
+	worker, err := job.Read(teamDir, "squ-702")
+	if err != nil {
+		t.Fatalf("read worker job: %v", err)
+	}
+	if worker.Status != job.StatusRunning || worker.Steps[0].Status != job.StatusRunning || worker.Steps[0].Instance != "worker-squ-702" {
+		t.Fatalf("worker job changed = %+v", worker)
+	}
+	manager, err := job.Read(teamDir, "squ-703")
+	if err != nil {
+		t.Fatalf("read manager job: %v", err)
+	}
+	if manager.Status != job.StatusFailed || manager.Steps[0].Status != job.StatusFailed || manager.Steps[0].Instance != "" || manager.LastStatus != "manager timeout" {
+		t.Fatalf("manager job = %+v", manager)
+	}
+}
+
 func TestPipelineAndTeamHoldReleaseJobs(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

@@ -639,6 +639,7 @@ timeout = "1h"
 		"--dry-run",
 		"--timeout-pipelines",
 		"--timeout-pipeline", "ticket_to_pr",
+		"--timeout-target-agent", "worker",
 		"--skip-daemon",
 		"--skip-queue",
 		"--skip-tick",
@@ -671,6 +672,7 @@ timeout = "1h"
 		"--target", root,
 		"--timeout-pipelines",
 		"--timeout-pipeline", "ticket_to_pr",
+		"--timeout-target-agent", "worker",
 		"--timeout-message", "repair timeout approved",
 		"--skip-daemon",
 		"--skip-queue",
@@ -1140,9 +1142,9 @@ func TestRepairRejectsInvalidFlagCombinations(t *testing.T) {
 			want: "--timeout-pipeline requires --timeout-pipelines or --timeout-jobs",
 		},
 		{
-			name: "timeout target without timeout jobs",
+			name: "timeout target without timeout mode",
 			args: []string{"repair", "--timeout-target-agent", "worker"},
-			want: "--timeout-target-agent requires --timeout-jobs",
+			want: "--timeout-target-agent requires --timeout-pipelines or --timeout-jobs",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
