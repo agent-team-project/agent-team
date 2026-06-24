@@ -3305,7 +3305,7 @@ Inherited Flags:
 
 Restart or resume instances.
 
-Restart declared persistent instances through the daemon. Running instances are stopped and resumed; stopped instances are resumed; instances with no daemon metadata are started fresh. Explicit names may also target daemon-known ad-hoc instances.
+Restart declared persistent instances through the daemon. Running instances are stopped and resumed; stopped instances are resumed; instances with no daemon metadata are started fresh. Explicit names may also target daemon-known ad-hoc instances. Runtimes without managed resume support are reported as unsupported and left untouched.
 
 ```text
 agent-team restart [<instance>...] [flags]

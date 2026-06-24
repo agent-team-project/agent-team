@@ -225,7 +225,7 @@ func TestStartAndRestartRuntimeDryRunUseLocalMetadataWhenDaemonStopped(t *testin
 	root := daemon.DaemonRoot(teamDir)
 	now := time.Now().UTC()
 	for _, meta := range []*daemon.Metadata{
-		{Instance: "codex-stopped", Agent: "worker", Runtime: "codex", Status: daemon.StatusStopped, StartedAt: now.Add(-time.Minute)},
+		{Instance: "codex-stopped", Agent: "worker", Runtime: "codex", RuntimeBinary: "codex", SessionID: "sid-codex", Status: daemon.StatusStopped, StartedAt: now.Add(-time.Minute)},
 		{Instance: "claude-stopped", Agent: "manager", Runtime: "claude", Status: daemon.StatusStopped, StartedAt: now},
 	} {
 		if err := daemon.WriteMetadata(root, meta); err != nil {
@@ -238,7 +238,7 @@ func TestStartAndRestartRuntimeDryRunUseLocalMetadataWhenDaemonStopped(t *testin
 		action  string
 	}{
 		{command: "start", action: lifecycleActionUnsupported},
-		{command: "restart", action: "restart"},
+		{command: "restart", action: lifecycleActionUnsupported},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			cmd := NewRootCmd()
@@ -255,6 +255,15 @@ func TestStartAndRestartRuntimeDryRunUseLocalMetadataWhenDaemonStopped(t *testin
 			}
 			if len(rows) != 1 || rows[0].Instance != "codex-stopped" || rows[0].Action != tc.action || !rows[0].DryRun {
 				t.Fatalf("%s rows = %+v, want codex-stopped %s dry-run", tc.command, rows, tc.action)
+			}
+			for _, want := range []string{
+				`runtime "codex" does not support managed resume`,
+				`agent-team logs codex-stopped --last-message`,
+				`codex resume sid-codex`,
+			} {
+				if !strings.Contains(rows[0].Detail, want) {
+					t.Fatalf("%s detail = %q, want %q", tc.command, rows[0].Detail, want)
+				}
 			}
 		})
 	}
@@ -2392,6 +2401,64 @@ func TestRestartDryRunUsesLocalMetadataWhenDaemonStopped(t *testing.T) {
 	}
 	if _, err := os.Stat(daemon.PidPath(teamDir)); !os.IsNotExist(err) {
 		t.Fatalf("dry-run should not create daemon pidfile, stat err=%v", err)
+	}
+}
+
+func TestRestartReportsUnsupportedCodexResumeWithoutStoppingInstance(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	repo := tmp
+	if eval, err := filepath.EvalSymlinks(tmp); err == nil {
+		repo = eval
+	}
+	teamDir := filepath.Join(repo, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	mgr := daemon.NewInstanceManager(root, fakeSpawnerForTest(t, 2*time.Second))
+	meta, err := mgr.Dispatch(daemon.DispatchInput{
+		Agent:         "manager",
+		Name:          "manager",
+		Workspace:     repo,
+		Runtime:       string(runtimebin.KindCodex),
+		RuntimeBinary: runtimebin.DefaultBinaryForKind(runtimebin.KindCodex),
+		Prompt:        "hello from codex",
+	})
+	if err != nil {
+		t.Fatalf("dispatch manager: %v", err)
+	}
+	defer stopAndWaitForTest(t, mgr, "manager")
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	if _, err := newDaemonClient(teamDir); err != nil {
+		t.Fatalf("test daemon client: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	formatTemplate, err := parseLifecycleActionFormat("{{.Instance}}:{{.Action}}:{{.Status}}:{{.PID}}:{{.Detail}}")
+	if err != nil {
+		t.Fatalf("parse format: %v", err)
+	}
+	if err := runInstanceRestart(cmd, repo, "", []string{"manager"}, instanceRestartOptions{Format: formatTemplate}); err != nil {
+		t.Fatalf("restart manager --format: %v\nstderr: %s", err, stderr.String())
+	}
+	got := strings.TrimSpace(out.String())
+	if !strings.HasPrefix(got, "manager:unsupported:running:") || !strings.Contains(got, `:runtime "codex" does not support managed resume`) {
+		t.Fatalf("restart output = %q, want unsupported running Codex row", got)
+	}
+	for _, want := range []string{
+		`runtime "codex" does not support managed resume`,
+		`agent-team logs manager --follow`,
+		`agent-team logs manager --last-message`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("restart output = %q, want %q", got, want)
+		}
+	}
+	after := metadataByInstanceForTest(mgr.List(), "manager")
+	if after == nil || after.Status != daemon.StatusRunning || after.PID != meta.PID {
+		t.Fatalf("manager metadata = %+v, want running metadata unchanged", after)
 	}
 }
 

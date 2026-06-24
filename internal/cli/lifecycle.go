@@ -439,7 +439,8 @@ func newRestartCmd() *cobra.Command {
 		Short: "Restart or resume instances.",
 		Long: "Restart declared persistent instances through the daemon. Running instances are stopped " +
 			"and resumed; stopped instances are resumed; instances with no daemon metadata are started fresh. " +
-			"Explicit names may also target daemon-known ad-hoc instances.",
+			"Explicit names may also target daemon-known ad-hoc instances. Runtimes without managed " +
+			"resume support are reported as unsupported and left untouched.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --all cannot be combined with instance names.")
@@ -2663,6 +2664,14 @@ func runInstanceRestart(cmd *cobra.Command, target, prompt string, names []strin
 			continue
 		}
 		if lt.meta != nil {
+			if !lifecycleMetadataSupportsManagedResume(lt.meta) {
+				result := lifecycleTargetUnsupportedResumeResult(lt)
+				results = append(results, result)
+				if !cfg.JSON && !cfg.Quiet && cfg.Format == nil && !cfg.Summary {
+					fmt.Fprintf(out, "  %-7s %-20s %s\n", result.Action, lt.name, result.Detail)
+				}
+				continue
+			}
 			if err := dc.RestartInstanceWithOptions(lt.name, cfg.Force, cfg.Timeout); err != nil {
 				results = append(results, lifecycleActionResult{Action: "error", Instance: lt.name, Agent: lt.agent, Status: "error", Error: err.Error()})
 				if !cfg.JSON && !cfg.Quiet && cfg.Format == nil && !cfg.Summary {

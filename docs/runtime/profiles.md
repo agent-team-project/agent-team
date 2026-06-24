@@ -161,6 +161,7 @@ That means:
 - native runtime subagents are not registered
 - direct `codex resume` is available only outside agent-team managed instance ownership
 - stopped Codex metadata cannot be resumed with `start`
+- Codex metadata cannot be restarted through managed daemon resume; `restart` reports `unsupported` and leaves running Codex children untouched
 - `plan` and `sync` report stopped Codex instances as `unsupported` instead of trying to resume them
 - daemon dispatch requires `--prompt`, because Codex one-shot work needs an explicit task for `codex exec`
 
@@ -173,7 +174,7 @@ Use jobs, queue, and pipeline commands for orchestration around Codex runs inste
 | `available: no` | Runtime binary is not in `PATH` | `agent-team runtime`, then `which codex` or `which claude` |
 | Config binary ignored | `--runtime`, `AGENT_TEAM_RUNTIME`, or `AGENT_TEAM_RUNTIME_BIN` is taking precedence | Check `agent-team runtime --json`, then unset the env override or pass `--runtime-bin` |
 | `codex daemon dispatch requires --prompt` | Codex daemon runs need an explicit one-shot task | Add `--prompt "..."` |
-| `runtime "codex" does not support managed resume` | Stopped Codex metadata cannot be resumed | Re-run with a fresh `--prompt`, or remove stale metadata after inspection |
+| `runtime "codex" does not support managed resume` | Codex metadata cannot be started or restarted through managed daemon resume | Inspect logs or last message, then re-run with a fresh `--prompt` when more work is needed |
 | Tool scripts cannot find state | Missing `AGENT_TEAM_*` environment in runtime shell | Check `agent-team runtime` and inspect the daemon child log |
 
 ## Adapter Design Notes

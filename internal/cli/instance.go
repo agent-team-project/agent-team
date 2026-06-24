@@ -2026,8 +2026,13 @@ func dryRunRestartResult(target lifecycleTarget) lifecycleActionResult {
 	}
 	if target.meta != nil {
 		result.PID = target.meta.PID
-		result.Action = "restart"
-		result.Detail = "would restart"
+		if lifecycleMetadataSupportsManagedResume(target.meta) {
+			result.Action = "restart"
+			result.Detail = "would restart"
+		} else {
+			result.Action = lifecycleActionUnsupported
+			result.Detail = lifecycleUnsupportedResumeDetailForInstance(target.meta, target.name)
+		}
 	}
 	return result
 }
