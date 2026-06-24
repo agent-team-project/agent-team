@@ -3533,6 +3533,7 @@ func newJobReadyCmd() *cobra.Command {
 		states   []string
 		step     string
 		sortBy   string
+		limit    int
 		jsonOut  bool
 		format   string
 	)
@@ -3556,6 +3557,10 @@ func newJobReadyCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job ready: %v\n", err)
 				return exitErr(2)
 			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ready: --limit must be >= 0.")
+				return exitErr(2)
+			}
 			tmpl, err := parseJobReadyFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job ready: %v\n", err)
@@ -3570,6 +3575,7 @@ func newJobReadyCmd() *cobra.Command {
 				States:   stateFilter,
 				Step:     step,
 				Sort:     sortMode,
+				Limit:    limit,
 			}, jsonOut, tmpl)
 		},
 	}
@@ -3578,6 +3584,7 @@ func newJobReadyCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&states, "state", nil, "Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&step, "step", "", "Only include rows whose next step has this id.")
 	cmd.Flags().StringVar(&sortBy, "sort", "job", "Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit ready rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.")
 	return cmd
@@ -5615,6 +5622,7 @@ type jobReadyOptions struct {
 	States   map[string]bool
 	Step     string
 	Sort     string
+	Limit    int
 }
 
 func runJobReady(w io.Writer, teamDir string, opts jobReadyOptions, jsonOut bool, tmpl *template.Template) error {
@@ -5644,6 +5652,7 @@ func runJobReady(w io.Writer, teamDir string, opts jobReadyOptions, jsonOut bool
 func prepareJobReadyRows(rows []jobReadyRow, opts jobReadyOptions) []jobReadyRow {
 	rows = filterJobReadyRowsByStep(rows, opts.Step)
 	sortJobReadyRows(rows, opts.Sort)
+	rows = limitJobReadyRows(rows, opts.Limit)
 	return rows
 }
 
@@ -5726,6 +5735,13 @@ func sortJobReadyRows(rows []jobReadyRow, sortMode string) {
 		}
 		return left.JobID < right.JobID
 	})
+}
+
+func limitJobReadyRows(rows []jobReadyRow, limit int) []jobReadyRow {
+	if limit <= 0 || limit >= len(rows) {
+		return rows
+	}
+	return rows[:limit]
 }
 
 func jobReadyStateSortRank(state string) int {

@@ -2178,6 +2178,7 @@ Flags:
 ```text
       --format string     Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
       --json              Emit ready rows as JSON.
+      --limit int         Limit rows after filtering and sorting; 0 means no limit.
       --pipeline string   Filter by pipeline name.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --sort string       Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label. (default "job")
@@ -3056,6 +3057,7 @@ Flags:
       --all             List ready jobs across all pipelines.
       --format string   Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
       --json            Emit ready rows as JSON.
+      --limit int       Limit rows after filtering and sorting; 0 means no limit.
       --repo string     Repo root containing .agent_team. (default "<repo>")
       --sort string     Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label. (default "job")
       --state strings   Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
@@ -5210,6 +5212,7 @@ Flags:
 ```text
       --format string   Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
       --json            Emit team ready rows as JSON.
+      --limit int       Limit rows after filtering and sorting; 0 means no limit.
       --repo string     Repo root containing .agent_team. (default "<repo>")
       --sort string     Sort rows by job, state, step, target, pipeline, updated, ticket, instance, or label. (default "job")
       --state strings   Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.

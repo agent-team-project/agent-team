@@ -1954,6 +1954,18 @@ func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 		t.Fatalf("pipeline ready sorted output = %q", sortedOut.String())
 	}
 
+	limited := NewRootCmd()
+	limitedOut, limitedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	limited.SetOut(limitedOut)
+	limited.SetErr(limitedErr)
+	limited.SetArgs([]string{"pipeline", "ready", "--all", "--repo", root, "--state", "all", "--sort", "updated", "--limit", "1", "--format", "{{.JobID}}"})
+	if err := limited.Execute(); err != nil {
+		t.Fatalf("pipeline ready limit: %v\nstderr=%s", err, limitedErr.String())
+	}
+	if got := strings.TrimSpace(limitedOut.String()); got != "squ-311" {
+		t.Fatalf("pipeline ready limited output = %q", limitedOut.String())
+	}
+
 	step := NewRootCmd()
 	stepOut, stepErr := &bytes.Buffer{}, &bytes.Buffer{}
 	step.SetOut(stepOut)

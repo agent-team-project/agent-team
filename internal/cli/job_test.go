@@ -7362,6 +7362,18 @@ func TestJobReadyListsAdvanceablePipelineJobs(t *testing.T) {
 	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--pipeline", "ticket_to_pr", "--state", "all", "--sort", "updated", "--limit", "1", "--format", "{{.JobID}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job ready limit: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "squ-211" {
+		t.Fatalf("limited ready rows = %q", out.String())
+	}
+
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
 	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--pipeline", "ticket_to_pr", "--state", "all", "--step", "implement", "--format", "{{.JobID}} {{.State}} {{.StepID}}"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("job ready step filter: %v\nstderr=%s", err, stderr.String())
@@ -7380,6 +7392,18 @@ func TestJobReadyListsAdvanceablePipelineJobs(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--sort must be job") {
 		t.Fatalf("missing sort error:\n%s", stderr.String())
+	}
+
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--limit", "-1"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("job ready negative limit succeeded")
+	}
+	if !strings.Contains(stderr.String(), "--limit must be >= 0") {
+		t.Fatalf("missing limit error:\n%s", stderr.String())
 	}
 
 	cmd = NewRootCmd()
