@@ -50,6 +50,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamReleaseCmd())
 	cmd.AddCommand(newTeamAdvanceCmd())
 	cmd.AddCommand(newTeamApproveCmd())
+	cmd.AddCommand(newTeamRejectCmd())
 	cmd.AddCommand(newTeamRetryCmd())
 	cmd.AddCommand(newTeamTimeoutCmd())
 	cmd.AddCommand(newTeamQueueCmd())
@@ -1429,6 +1430,64 @@ func newTeamApproveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview manual gate approvals and optional dispatches without writing job or daemon state.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run --dispatch, include local topology route and dispatch payload previews.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit approval results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
+	return cmd
+}
+
+func newTeamRejectCmd() *cobra.Command {
+	var (
+		repo    string
+		limit   int
+		step    string
+		message string
+		dryRun  bool
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "reject <team>",
+		Short: "Reject manual pipeline gates owned by one team.",
+		Long: "Reject or preview blocked manual-gate steps for jobs in one team's declared pipelines. " +
+			"Rejected gates are marked failed and record a manual_gate_rejected audit event.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team reject: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team reject: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineApproveFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team reject: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			_, team, err := loadTopologyTeam(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team reject: %v\n", err)
+				return exitErr(1)
+			}
+			results, err := rejectTeamPipelineManualGates(teamDir, team, step, message, limit, dryRun)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team reject: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineApproveResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().IntVar(&limit, "limit", 0, "Reject at most this many manual gates; 0 means no limit.")
+	cmd.Flags().StringVar(&step, "step", "", "Reject only manual gates whose next blocked step has this id.")
+	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each rejected team job.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview manual gate rejections without writing job state.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit rejection results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd
 }
@@ -7093,6 +7152,32 @@ func approveTeamPipelineManualGates(cmd *cobra.Command, teamDir string, team *to
 		results = append(results, approved...)
 		if limit > 0 {
 			remaining -= len(approved)
+		}
+	}
+	return results, nil
+}
+
+func rejectTeamPipelineManualGates(teamDir string, team *topology.Team, stepFilter string, message string, limit int, dryRun bool) ([]pipelineApproveResult, error) {
+	if team == nil || len(team.Pipelines) == 0 {
+		return []pipelineApproveResult{}, nil
+	}
+	results := []pipelineApproveResult{}
+	remaining := limit
+	for _, pipeline := range team.Pipelines {
+		if limit > 0 && remaining <= 0 {
+			break
+		}
+		batchLimit := 0
+		if limit > 0 {
+			batchLimit = remaining
+		}
+		rejected, err := rejectPipelineManualGates(teamDir, pipeline, stepFilter, message, batchLimit, dryRun)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, rejected...)
+		if limit > 0 {
+			remaining -= len(rejected)
 		}
 	}
 	return results, nil

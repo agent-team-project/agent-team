@@ -204,6 +204,7 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team team timeout <team>` | Timeout stale team pipeline steps; add `--jobs` for stale step-less team jobs and `--target-agent` to scope by role |
 | `agent-team team advance <team>` | Scoped pipeline advance; use `--runtime` for dispatched steps |
 | `agent-team team approve <team>` | Scoped manual-gate approval |
+| `agent-team team reject <team>` | Scoped manual-gate rejection |
 | `agent-team team retry <team>` | Scoped failed-step retry, honoring step `max_attempts` caps; add `--force` for an explicit override |
 | `agent-team team cleanup <team>` | Scoped job cleanup, optionally verifying PRs with `gh` |
 | `agent-team team snapshot <team>` | Scoped diagnostic artifact |

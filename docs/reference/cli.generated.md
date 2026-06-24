@@ -4736,6 +4736,7 @@ Subcommands:
 - `agent-team team ps` - List instances owned by one team.
 - `agent-team team queue` - List or control queue items scoped to one team.
 - `agent-team team ready` - List ready pipeline jobs owned by one team.
+- `agent-team team reject` - Reject manual pipeline gates owned by one team.
 - `agent-team team release` - Release held pipeline jobs owned by one team.
 - `agent-team team repair` - Recover unhealthy orchestration state for one team.
 - `agent-team team restart` - Restart or resume a team&#39;s declared persistent instances.
@@ -5503,6 +5504,28 @@ Flags:
       --state strings       Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
       --step string         Only include rows whose next step has this id.
   -w, --watch               Refresh the team ready-step table until interrupted.
+```
+
+## `agent-team team reject`
+
+Reject manual pipeline gates owned by one team.
+
+Reject or preview blocked manual-gate steps for jobs in one team&#39;s declared pipelines. Rejected gates are marked failed and record a manual_gate_rejected audit event.
+
+```text
+agent-team team reject <team> [flags]
+```
+
+Flags:
+
+```text
+      --dry-run          Preview manual gate rejections without writing job state.
+      --format string    Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json             Emit rejection results as JSON.
+      --limit int        Reject at most this many manual gates; 0 means no limit.
+      --message string   Status message recorded on each rejected team job.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --step string      Reject only manual gates whose next blocked step has this id.
 ```
 
 ## `agent-team team release`

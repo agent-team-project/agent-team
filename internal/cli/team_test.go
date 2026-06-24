@@ -2294,6 +2294,142 @@ pipelines = ["ticket_to_pr"]
 	}
 }
 
+func TestTeamRejectManualGateScopesToTeam(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[[instances.manager.triggers]]
+event        = "agent.dispatch"
+match.target = "manager"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+gate = "manual"
+
+[pipelines.ops_review]
+trigger.event = "ticket.created"
+
+[[pipelines.ops_review.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ops_review.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+gate = "manual"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-932",
+			Ticket:    "SQU-932",
+			Target:    "worker",
+			Kickoff:   "delivery rejection",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusBlocked,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusDone, StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+				{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"implement"}, Gate: job.StepGateManual},
+			},
+		},
+		{
+			ID:        "squ-933",
+			Ticket:    "SQU-933",
+			Target:    "worker",
+			Kickoff:   "ops rejection",
+			Pipeline:  "ops_review",
+			Status:    job.StatusBlocked,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusDone, StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+				{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"implement"}, Gate: job.StepGateManual},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	dryRun := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryRun.SetOut(dryOut)
+	dryRun.SetErr(dryErr)
+	dryRun.SetArgs([]string{"team", "reject", "delivery", "--repo", root, "--dry-run", "--json"})
+	if err := dryRun.Execute(); err != nil {
+		t.Fatalf("team reject dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview []pipelineApproveResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode team reject dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(preview) != 1 || preview[0].JobID != "squ-932" || preview[0].Action != "would_reject" || preview[0].StepStatus != job.StatusFailed {
+		t.Fatalf("team reject preview = %+v", preview)
+	}
+	if strings.Contains(dryOut.String(), "squ-933") {
+		t.Fatalf("team reject leaked foreign job:\n%s", dryOut.String())
+	}
+	unchanged, err := job.Read(teamDir, "squ-932")
+	if err != nil {
+		t.Fatalf("read unchanged job: %v", err)
+	}
+	if unchanged.Status != job.StatusBlocked || unchanged.Steps[1].Status != job.StatusBlocked {
+		t.Fatalf("dry-run mutated delivery job = %+v", unchanged)
+	}
+
+	run := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	run.SetOut(out)
+	run.SetErr(stderr)
+	run.SetArgs([]string{"team", "reject", "delivery", "--repo", root, "--message", "delivery manual rejection", "--json"})
+	if err := run.Execute(); err != nil {
+		t.Fatalf("team reject: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []pipelineApproveResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode team reject: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].JobID != "squ-932" || rows[0].Action != "rejected" || rows[0].Message != "delivery manual rejection" {
+		t.Fatalf("team reject rows = %+v", rows)
+	}
+	delivery, err := job.Read(teamDir, "squ-932")
+	if err != nil {
+		t.Fatalf("read delivery job: %v", err)
+	}
+	if delivery.Status != job.StatusFailed || delivery.Steps[1].Status != job.StatusFailed || delivery.LastEvent != "manual_gate_rejected" {
+		t.Fatalf("delivery job = %+v", delivery)
+	}
+	foreign, err := job.Read(teamDir, "squ-933")
+	if err != nil {
+		t.Fatalf("read foreign job: %v", err)
+	}
+	if foreign.Status != job.StatusBlocked || foreign.Steps[1].Status != job.StatusBlocked {
+		t.Fatalf("foreign job changed = %+v", foreign)
+	}
+}
+
 func TestTeamRepairRetryPipelinesStepFilter(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
