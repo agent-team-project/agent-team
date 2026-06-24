@@ -75,6 +75,42 @@ func TestOverviewReportsAttentionAndActions(t *testing.T) {
 	}
 }
 
+func TestOverviewRecommendsParallelReadyFanout(t *testing.T) {
+	root := writeOverviewParallelReadyFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview parallel ready: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview parallel ready: %v\nbody=%s", err, out.String())
+	}
+	if overview.Pipelines.ParallelReadySteps != 2 || !stringSliceContains(overview.Actions, "agent-team pipeline advance --all --all-ready-steps --dry-run --preview-routes") {
+		t.Fatalf("overview parallel actions = %+v pipelines=%+v", overview.Actions, overview.Pipelines)
+	}
+
+	team := NewRootCmd()
+	teamOut, teamErr := &bytes.Buffer{}, &bytes.Buffer{}
+	team.SetOut(teamOut)
+	team.SetErr(teamErr)
+	team.SetArgs([]string{"team", "overview", "delivery", "--repo", root, "--json"})
+	if err := team.Execute(); err != nil {
+		t.Fatalf("team overview parallel ready: %v\nstderr=%s", err, teamErr.String())
+	}
+	var teamOverview overviewResult
+	if err := json.Unmarshal(teamOut.Bytes(), &teamOverview); err != nil {
+		t.Fatalf("decode team overview parallel ready: %v\nbody=%s", err, teamOut.String())
+	}
+	if teamOverview.Pipelines.ParallelReadySteps != 2 || !stringSliceContains(teamOverview.Actions, "agent-team team advance delivery --all-ready-steps --dry-run --preview-routes") {
+		t.Fatalf("team overview parallel actions = %+v pipelines=%+v", teamOverview.Actions, teamOverview.Pipelines)
+	}
+}
+
 func TestOverviewTextRendersOperatorSummary(t *testing.T) {
 	root := writeOverviewAttentionFixture(t)
 
@@ -703,6 +739,70 @@ schedules = ["nightly"]
 		QueuedAt:   now.Add(-2 * time.Hour),
 		UpdatedAt:  now.Add(-2 * time.Hour),
 	})
+	return root
+}
+
+func writeOverviewParallelReadyFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	instances := `
+[instances.manager]
+agent = "manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[pipelines.parallel_checks]
+trigger.event = "ticket.created"
+
+[[pipelines.parallel_checks.steps]]
+id = "lint"
+target = "worker"
+
+[[pipelines.parallel_checks.steps]]
+id = "test"
+target = "worker"
+
+[[pipelines.parallel_checks.steps]]
+id = "review"
+target = "manager"
+after = ["lint", "test"]
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["parallel_checks"]
+`
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(instances), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	j := &job.Job{
+		ID:        "squ-740",
+		Ticket:    "SQU-740",
+		Target:    "worker",
+		Kickoff:   "parallel checks",
+		Pipeline:  "parallel_checks",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "lint", Target: "worker", Status: job.StatusQueued},
+			{ID: "test", Target: "worker", Status: job.StatusBlocked},
+			{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"lint", "test"}},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("job.Write: %v", err)
+	}
 	return root
 }
 

@@ -185,15 +185,16 @@ type overviewJobSummary struct {
 }
 
 type overviewPipelineSummary struct {
-	Total        int `json:"total"`
-	Jobs         int `json:"jobs"`
-	ReadySteps   int `json:"ready_steps"`
-	QueuedSteps  int `json:"queued_steps"`
-	RunningSteps int `json:"running_steps"`
-	BlockedSteps int `json:"blocked_steps"`
-	ManualGates  int `json:"manual_gates"`
-	FailedSteps  int `json:"failed_steps"`
-	DoneSteps    int `json:"done_steps"`
+	Total              int `json:"total"`
+	Jobs               int `json:"jobs"`
+	ReadySteps         int `json:"ready_steps"`
+	ParallelReadySteps int `json:"parallel_ready_steps,omitempty"`
+	QueuedSteps        int `json:"queued_steps"`
+	RunningSteps       int `json:"running_steps"`
+	BlockedSteps       int `json:"blocked_steps"`
+	ManualGates        int `json:"manual_gates"`
+	FailedSteps        int `json:"failed_steps"`
+	DoneSteps          int `json:"done_steps"`
 }
 
 type overviewScheduleSummary struct {
@@ -439,6 +440,7 @@ func overviewPipelinesFromRows(rows []pipelineStatusRow) overviewPipelineSummary
 	for _, row := range rows {
 		out.Jobs += row.Jobs
 		out.ReadySteps += row.ReadySteps
+		out.ParallelReadySteps += row.ParallelReadySteps
 		out.QueuedSteps += row.QueuedSteps
 		out.RunningSteps += row.RunningSteps
 		out.BlockedSteps += row.BlockedSteps
@@ -571,6 +573,14 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 			add(fmt.Sprintf("agent-team team advance %s --dry-run --preview-routes", teamName), "pipelines", reason)
 		} else {
 			add("agent-team pipeline advance --all --dry-run --preview-routes", "pipelines", reason)
+		}
+	}
+	if out.Pipelines.ParallelReadySteps > 1 {
+		reason := fmt.Sprintf("parallel_ready_steps=%d", out.Pipelines.ParallelReadySteps)
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team advance %s --all-ready-steps --dry-run --preview-routes", teamName), "pipelines", reason)
+		} else {
+			add("agent-team pipeline advance --all --all-ready-steps --dry-run --preview-routes", "pipelines", reason)
 		}
 	}
 	if out.Pipelines.ManualGates > 0 {
