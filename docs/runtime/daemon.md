@@ -72,6 +72,11 @@ Adoption writes `.agent_team/daemon/<instance>/meta.json`, appends an `adopt`
 lifecycle event, and asks a running daemon to reconcile so `ps`, `inspect`,
 `monitor`, `stop`, and `health` see the process immediately.
 
+When `--job <id>` points at an existing durable job, adoption also updates that
+job with the adopted instance, branch, PR, and running status, then appends an
+`adopted` job audit event. Dry-runs include the planned job update in JSON
+without writing metadata or the job file.
+
 The daemon did not spawn adopted processes, so it cannot wait on their final
 exit. A later `agent-team daemon reconcile`, `agent-team health`, or
 `agent-team repair` pass observes whether the PID is still live and marks stale

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/job"
 )
 
 func TestDaemonStatus_NotRunning(t *testing.T) {
@@ -285,6 +286,117 @@ func TestDaemonAdoptDryRunDoesNotWriteMetadata(t *testing.T) {
 		t.Fatalf("dry-run result = %+v", result)
 	}
 	if _, err := daemon.ReadMetadata(daemon.DaemonRoot(filepath.Join(tmp, ".agent_team")), "external-worker"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("metadata should not exist after dry-run: %v", err)
+	}
+}
+
+func TestDaemonAdoptUpdatesOwningJob(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-66",
+		Ticket:    "SQU-66",
+		Target:    "worker",
+		Status:    job.StatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"daemon", "adopt", "worker-squ-66",
+		"--target", tmp,
+		"--agent", "worker",
+		"--pid", strconv.Itoa(os.Getpid()),
+		"--job", "squ-66",
+		"--ticket", "SQU-66",
+		"--branch", "squ-66-adopted",
+		"--pr", "https://github.com/example/repo/pull/66",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("daemon adopt job: %v", err)
+	}
+	var result daemonAdoptResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode daemon adopt job json: %v\nbody=%s", err, out.String())
+	}
+	if result.Metadata == nil || result.Metadata.Job != "squ-66" || result.Job == nil || !result.JobChanged {
+		t.Fatalf("adopt result = %+v", result)
+	}
+	if result.Job.Status != job.StatusRunning || result.Job.Instance != "worker-squ-66" || result.Job.Branch != "squ-66-adopted" || result.Job.PR != "https://github.com/example/repo/pull/66" || result.Job.LastEvent != "adopted" {
+		t.Fatalf("adopted job result = %+v", result.Job)
+	}
+	updated, err := job.Read(teamDir, "squ-66")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if updated.Status != job.StatusRunning || updated.Instance != "worker-squ-66" || updated.Branch != "squ-66-adopted" || updated.PR != "https://github.com/example/repo/pull/66" || updated.LastEvent != "adopted" {
+		t.Fatalf("updated job = %+v", updated)
+	}
+	events, err := job.ListEvents(teamDir, "squ-66")
+	if err != nil {
+		t.Fatalf("job events: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "adopted" || events[0].Data["instance"] != "worker-squ-66" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestDaemonAdoptDryRunPreviewsOwningJobUpdate(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-67",
+		Ticket:    "SQU-67",
+		Target:    "worker",
+		Status:    job.StatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"daemon", "adopt", "worker-squ-67",
+		"--target", tmp,
+		"--agent", "worker",
+		"--pid", strconv.Itoa(os.Getpid()),
+		"--job", "squ-67",
+		"--dry-run",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("daemon adopt dry-run job: %v", err)
+	}
+	var result daemonAdoptResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode daemon adopt dry-run job json: %v\nbody=%s", err, out.String())
+	}
+	if !result.DryRun || result.Job == nil || !result.JobChanged || result.Job.Status != job.StatusRunning || result.Job.Instance != "worker-squ-67" {
+		t.Fatalf("dry-run result = %+v", result)
+	}
+	unchanged, err := job.Read(teamDir, "squ-67")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if unchanged.Status != job.StatusQueued || unchanged.Instance != "" || unchanged.LastEvent != "" {
+		t.Fatalf("dry-run mutated job = %+v", unchanged)
+	}
+	if _, err := daemon.ReadMetadata(daemon.DaemonRoot(teamDir), "worker-squ-67"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("metadata should not exist after dry-run: %v", err)
 	}
 }

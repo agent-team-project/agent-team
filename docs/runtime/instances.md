@@ -85,6 +85,11 @@ If the instance is declared in `instances.toml`, `--agent` is inferred. Include
 `--session-id` for Claude-compatible processes when you want future
 managed-resume attempts to have the session identifier available.
 
+Add `--job <id>` when the external process owns a durable job. If that job file
+exists, adoption records the instance, branch, PR, running status, and an
+`adopted` audit event on the job so `job show`, `job logs`, and scoped triage
+commands immediately point at the recovered process.
+
 ## Remove and Prune
 
 ```sh

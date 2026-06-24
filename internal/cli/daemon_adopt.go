@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"text/template"
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
 )
@@ -38,8 +40,10 @@ type daemonAdoptResult struct {
 	Changed    bool             `json:"changed"`
 	DryRun     bool             `json:"dry_run,omitempty"`
 	Reconciled bool             `json:"reconciled,omitempty"`
+	JobChanged bool             `json:"job_changed,omitempty"`
 	Message    string           `json:"message,omitempty"`
 	Metadata   *daemon.Metadata `json:"metadata"`
+	Job        *job.Job         `json:"job,omitempty"`
 }
 
 func newDaemonAdoptCmd() *cobra.Command {
@@ -198,6 +202,13 @@ func runDaemonAdopt(cmd *cobra.Command, target, instance string, opts daemonAdop
 		DryRun:   opts.DryRun,
 		Metadata: meta,
 	}
+	if meta != nil {
+		result.Job, result.JobChanged, err = updateJobAfterDaemonAdopt(teamDir, meta, opts.DryRun, time.Now().UTC())
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "agent-team daemon adopt: %v\n", err)
+			return exitErr(1)
+		}
+	}
 	if !opts.DryRun {
 		result.Reconciled, result.Message, err = reconcileAfterDaemonAdopt(teamDir)
 		if err != nil {
@@ -206,6 +217,64 @@ func runDaemonAdopt(cmd *cobra.Command, target, instance string, opts daemonAdop
 		}
 	}
 	return renderDaemonAdoptResult(cmd.OutOrStdout(), result, opts)
+}
+
+func updateJobAfterDaemonAdopt(teamDir string, meta *daemon.Metadata, dryRun bool, now time.Time) (*job.Job, bool, error) {
+	if meta == nil {
+		return nil, false, nil
+	}
+	id := job.IDFromInput(meta.Job)
+	if id == "" {
+		return nil, false, nil
+	}
+	j, err := job.Read(teamDir, id)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	before := *j
+	if strings.TrimSpace(meta.Instance) != "" {
+		j.Instance = strings.TrimSpace(meta.Instance)
+	}
+	if strings.TrimSpace(meta.Ticket) != "" && strings.TrimSpace(j.Ticket) == "" {
+		j.Ticket = strings.TrimSpace(meta.Ticket)
+	}
+	if strings.TrimSpace(meta.Branch) != "" {
+		j.Branch = strings.TrimSpace(meta.Branch)
+	}
+	if strings.TrimSpace(meta.PR) != "" {
+		j.PR = strings.TrimSpace(meta.PR)
+	}
+	if j.Status != job.StatusDone {
+		j.Status = job.StatusRunning
+	}
+	j.LastEvent = "adopted"
+	j.LastStatus = "adopted external process " + strings.TrimSpace(meta.Instance)
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	j.UpdatedAt = now.UTC()
+	changed := jobEventReconcileChanged(&before, j)
+	if !changed || dryRun {
+		return j, changed, nil
+	}
+	data := map[string]string{
+		"instance": strings.TrimSpace(meta.Instance),
+		"pid":      fmt.Sprintf("%d", meta.PID),
+		"runtime":  strings.TrimSpace(meta.Runtime),
+	}
+	if strings.TrimSpace(meta.Branch) != "" {
+		data["branch"] = strings.TrimSpace(meta.Branch)
+	}
+	if strings.TrimSpace(meta.PR) != "" {
+		data["pr"] = strings.TrimSpace(meta.PR)
+	}
+	if err := writeJobWithAudit(teamDir, j, "adopted", "cli", j.LastStatus, data); err != nil {
+		return nil, false, err
+	}
+	return j, true, nil
 }
 
 func inferDaemonAdoptAgent(teamDir, instance, explicit string) (string, error) {
@@ -282,6 +351,20 @@ func renderDaemonAdoptResult(w fmtWriter, result daemonAdoptResult, opts daemonA
 	)
 	if result.Message != "" {
 		fmt.Fprintf(w, "%s\n", result.Message)
+	}
+	if result.Job != nil {
+		prefix := "job unchanged"
+		if result.DryRun && result.JobChanged {
+			prefix = "would update job"
+		} else if result.JobChanged {
+			prefix = "updated job"
+		}
+		fmt.Fprintf(w, "%s %s (status=%s, instance=%s)\n",
+			prefix,
+			result.Job.ID,
+			result.Job.Status,
+			result.Job.Instance,
+		)
 	}
 	return nil
 }
