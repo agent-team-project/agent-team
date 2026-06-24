@@ -814,6 +814,100 @@ func TestHealthCommandSuggestsJobScopedQueueQuarantine(t *testing.T) {
 	}
 }
 
+func TestHealthCommandSuggestsPipelineScopedQueueRecovery(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		mustNewJob(t, "SQU-93", "worker"),
+		mustNewJob(t, "SQU-94", "worker"),
+	} {
+		j.Pipeline = "ticket_to_pr"
+		j.Instance = "worker-" + j.ID
+		j.Status = job.StatusRunning
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("job.Write: %v", err)
+		}
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), &daemon.QueueItem{
+			ID:             "q-health-" + j.ID + "-dead",
+			State:          daemon.QueueStateDead,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     j.Instance,
+			Payload:        map[string]any{"target": "worker", "ticket": j.Ticket, "job_id": j.ID},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-2 * time.Hour),
+			UpdatedAt:      now.Add(-time.Hour),
+			DeadLetteredAt: now.Add(-time.Hour),
+		}); err != nil {
+			t.Fatalf("WriteQueueItem: %v", err)
+		}
+		writeQuarantinedQueueItem(t, teamDir, "20260619T020000.000000000Z", daemon.QueueStatePending, &daemon.QueueItem{
+			ID:         "q-health-" + j.ID + "-quarantined",
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: j.Instance,
+			Payload:    map[string]any{"target": "worker", "ticket": j.Ticket, "job_id": j.ID},
+			QueuedAt:   now.Add(-time.Minute),
+			UpdatedAt:  now,
+		})
+	}
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"health", "--json", "--target", tmp})
+	err := cmd.Execute()
+	var code ExitCode
+	if !errors.As(err, &code) || code != 1 {
+		t.Fatalf("err = %v, want exit 1\nstderr=%s", err, stderr.String())
+	}
+	var body healthResult
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode health json: %v\nbody=%s", err, stdout.String())
+	}
+	var deadIssue, quarantineIssue *healthIssue
+	for i := range body.Issues {
+		switch body.Issues[i].Code {
+		case "queue_dead_letter":
+			deadIssue = &body.Issues[i]
+		case "queue_quarantined":
+			quarantineIssue = &body.Issues[i]
+		}
+	}
+	if deadIssue == nil || quarantineIssue == nil {
+		t.Fatalf("issues = %+v, want queue dead and quarantine issues", body.Issues)
+	}
+	if !containsString(deadIssue.Actions, "agent-team pipeline queue retry ticket_to_pr --all") || containsString(deadIssue.Actions, "agent-team queue retry --all") || containsString(deadIssue.Actions, "agent-team job queue retry") {
+		t.Fatalf("dead issue actions = %+v", deadIssue.Actions)
+	}
+	for _, want := range []string{
+		"agent-team pipeline queue quarantine ticket_to_pr",
+		"agent-team pipeline queue quarantine ticket_to_pr --restorable",
+		"agent-team pipeline snapshot ticket_to_pr --json",
+	} {
+		if !containsString(quarantineIssue.Actions, want) {
+			t.Fatalf("quarantine issue actions missing %q: %+v", want, quarantineIssue.Actions)
+		}
+	}
+	if containsString(quarantineIssue.Actions, "agent-team queue quarantine ls") || containsString(quarantineIssue.Actions, "agent-team job queue quarantine") {
+		t.Fatalf("quarantine issue should use pipeline-scoped actions: %+v", quarantineIssue.Actions)
+	}
+}
+
 func TestHealthCommandReportsIntakeFailures(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

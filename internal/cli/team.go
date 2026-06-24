@@ -5779,7 +5779,7 @@ func addTeamQueueHealth(result *healthResult, teamDir string, top *topology.Topo
 			"",
 			"",
 			fmt.Sprintf("team %q queue has %d quarantined file(s) (%d restorable, %d unrestorable)", team.Name, result.Queue.Quarantined, result.Queue.QuarantineRestorable, result.Queue.QuarantineUnrestorable),
-			queueQuarantineHealthActions(result.Queue, team.Name, ""),
+			queueQuarantineHealthActions(result.Queue, team.Name, "", ""),
 		)
 	}
 	return nil
@@ -8310,7 +8310,7 @@ func teamStatusActionsWithOptions(top *topology.Topology, team *topology.Team, s
 		}
 	}
 	if snapshot.Queue.Quarantined > 0 {
-		for _, action := range queueQuarantineHealthActions(snapshot.Queue, team.Name, "") {
+		for _, action := range queueQuarantineHealthActions(snapshot.Queue, team.Name, "", "") {
 			add(action)
 		}
 	}

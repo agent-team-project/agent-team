@@ -543,6 +543,11 @@ func addQueueHealth(result *healthResult, teamDir string, now time.Time) error {
 		)
 	}
 	if result.Queue.Quarantined > 0 {
+		jobID := singleQueueQuarantineJobID(teamDir, quarantine)
+		pipelineName := ""
+		if jobID == "" {
+			pipelineName = singleQueueQuarantinePipeline(teamDir, quarantine)
+		}
 		result.addIssueWithSeverityAndActions(
 			"queue_quarantined",
 			"warning",
@@ -551,7 +556,7 @@ func addQueueHealth(result *healthResult, teamDir string, now time.Time) error {
 			"",
 			"",
 			fmt.Sprintf("queue has %d quarantined file(s) (%d restorable, %d unrestorable)", result.Queue.Quarantined, result.Queue.QuarantineRestorable, result.Queue.QuarantineUnrestorable),
-			queueQuarantineHealthActions(result.Queue, "", singleQueueQuarantineJobID(teamDir, quarantine)),
+			queueQuarantineHealthActions(result.Queue, "", pipelineName, jobID),
 		)
 	}
 	return nil
@@ -561,6 +566,8 @@ func queueDeadLetterHealthActions(teamDir string, items []*daemon.QueueItem) []s
 	retry := "agent-team queue retry --all"
 	if id := singleDeadQueueJobID(teamDir, items); id != "" {
 		retry = fmt.Sprintf("agent-team job queue retry %s --all", id)
+	} else if pipelineName := singleDeadQueuePipeline(teamDir, items); pipelineName != "" {
+		retry = fmt.Sprintf("agent-team pipeline queue retry %s --all", pipelineName)
 	}
 	return []string{retry, "agent-team repair --skip-tick"}
 }
@@ -611,6 +618,59 @@ func singleDeadQueueJobIDForJobs(items []*daemon.QueueItem, jobs []*job.Job) str
 	return found
 }
 
+func singleDeadQueuePipeline(teamDir string, items []*daemon.QueueItem) string {
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return ""
+	}
+	pipelineName := singleDeadQueuePipelineForJobs(items, jobs)
+	if pipelineName == "" {
+		return ""
+	}
+	if _, err := loadPipelineInfo(teamDir, pipelineName); err != nil {
+		return ""
+	}
+	return pipelineName
+}
+
+func singleDeadQueuePipelineForJobs(items []*daemon.QueueItem, jobs []*job.Job) string {
+	var found string
+	var dead int
+	for _, item := range items {
+		if item == nil || item.State != daemon.QueueStateDead {
+			continue
+		}
+		dead++
+		matches := map[string]bool{}
+		for _, j := range jobs {
+			if j == nil || strings.TrimSpace(j.Pipeline) == "" {
+				continue
+			}
+			if queueItemMatchesJob(item, j) {
+				matches[j.Pipeline] = true
+			}
+		}
+		if len(matches) != 1 {
+			return ""
+		}
+		var pipelineName string
+		for match := range matches {
+			pipelineName = match
+		}
+		if found == "" {
+			found = pipelineName
+			continue
+		}
+		if found != pipelineName {
+			return ""
+		}
+	}
+	if dead == 0 {
+		return ""
+	}
+	return found
+}
+
 func singleQueueQuarantineJobID(teamDir string, items []queueQuarantineItem) string {
 	jobs, err := job.List(teamDir)
 	if err != nil {
@@ -652,7 +712,55 @@ func singleQueueQuarantineJobIDForJobs(items []queueQuarantineItem, jobs []*job.
 	return found
 }
 
-func queueQuarantineHealthActions(summary queueSummary, teamName, jobID string) []string {
+func singleQueueQuarantinePipeline(teamDir string, items []queueQuarantineItem) string {
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return ""
+	}
+	pipelineName := singleQueueQuarantinePipelineForJobs(items, jobs)
+	if pipelineName == "" {
+		return ""
+	}
+	if _, err := loadPipelineInfo(teamDir, pipelineName); err != nil {
+		return ""
+	}
+	return pipelineName
+}
+
+func singleQueueQuarantinePipelineForJobs(items []queueQuarantineItem, jobs []*job.Job) string {
+	var found string
+	if len(items) == 0 {
+		return ""
+	}
+	for _, item := range items {
+		matches := map[string]bool{}
+		for _, j := range jobs {
+			if j == nil || strings.TrimSpace(j.Pipeline) == "" {
+				continue
+			}
+			if queueQuarantineItemMatchesJob(item, j) {
+				matches[j.Pipeline] = true
+			}
+		}
+		if len(matches) != 1 {
+			return ""
+		}
+		var pipelineName string
+		for match := range matches {
+			pipelineName = match
+		}
+		if found == "" {
+			found = pipelineName
+			continue
+		}
+		if found != pipelineName {
+			return ""
+		}
+	}
+	return found
+}
+
+func queueQuarantineHealthActions(summary queueSummary, teamName, pipelineName, jobID string) []string {
 	var listAction, detailAction, restorableAction, unrestorableAction string
 	switch {
 	case teamName != "":
@@ -665,6 +773,11 @@ func queueQuarantineHealthActions(summary queueSummary, teamName, jobID string) 
 		detailAction = fmt.Sprintf("agent-team job show %s", jobID)
 		restorableAction = fmt.Sprintf("agent-team job queue quarantine %s --restorable", jobID)
 		unrestorableAction = fmt.Sprintf("agent-team job queue quarantine %s --unrestorable", jobID)
+	case pipelineName != "":
+		listAction = fmt.Sprintf("agent-team pipeline queue quarantine %s", pipelineName)
+		detailAction = fmt.Sprintf("agent-team pipeline snapshot %s --json", pipelineName)
+		restorableAction = fmt.Sprintf("agent-team pipeline queue quarantine %s --restorable", pipelineName)
+		unrestorableAction = fmt.Sprintf("agent-team pipeline queue quarantine %s --unrestorable", pipelineName)
 	default:
 		listAction = "agent-team queue quarantine ls"
 		detailAction = "agent-team snapshot --json"
