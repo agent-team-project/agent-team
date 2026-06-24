@@ -51,6 +51,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamAdvanceCmd())
 	cmd.AddCommand(newTeamApproveCmd())
 	cmd.AddCommand(newTeamRejectCmd())
+	cmd.AddCommand(newTeamSkipCmd())
 	cmd.AddCommand(newTeamRetryCmd())
 	cmd.AddCommand(newTeamTimeoutCmd())
 	cmd.AddCommand(newTeamQueueCmd())
@@ -1488,6 +1489,68 @@ func newTeamRejectCmd() *cobra.Command {
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each rejected team job.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview manual gate rejections without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit rejection results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
+	return cmd
+}
+
+func newTeamSkipCmd() *cobra.Command {
+	var (
+		repo    string
+		limit   int
+		step    string
+		message string
+		dryRun  bool
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "skip <team> --step <id>",
+		Short: "Mark matching team pipeline steps intentionally skipped.",
+		Long: "Mark matching non-running pipeline steps as done with skipped metadata for jobs in one team's declared pipelines. " +
+			"The step id is required to prevent accidental broad bypasses.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team skip: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if strings.TrimSpace(step) == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team skip: --step is required.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team skip: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineSkipFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team skip: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			_, team, err := loadTopologyTeam(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team skip: %v\n", err)
+				return exitErr(1)
+			}
+			results, err := skipTeamPipelineSteps(teamDir, team, step, message, limit, dryRun)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team skip: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineSkipResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().IntVar(&limit, "limit", 0, "Skip or report at most this many matching team steps; 0 means no limit.")
+	cmd.Flags().StringVar(&step, "step", "", "Required pipeline step id to mark skipped.")
+	cmd.Flags().StringVar(&message, "message", "", "Skip reason recorded on each updated team job.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview skipped team steps without writing job state.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit skip results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd
 }
@@ -7178,6 +7241,32 @@ func rejectTeamPipelineManualGates(teamDir string, team *topology.Team, stepFilt
 		results = append(results, rejected...)
 		if limit > 0 {
 			remaining -= len(rejected)
+		}
+	}
+	return results, nil
+}
+
+func skipTeamPipelineSteps(teamDir string, team *topology.Team, stepID string, message string, limit int, dryRun bool) ([]pipelineSkipResult, error) {
+	if team == nil || len(team.Pipelines) == 0 {
+		return []pipelineSkipResult{}, nil
+	}
+	results := []pipelineSkipResult{}
+	remaining := limit
+	for _, pipeline := range team.Pipelines {
+		if limit > 0 && remaining <= 0 {
+			break
+		}
+		batchLimit := 0
+		if limit > 0 {
+			batchLimit = remaining
+		}
+		skipped, err := skipPipelineSteps(teamDir, pipeline, stepID, message, batchLimit, dryRun)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, skipped...)
+		if limit > 0 {
+			remaining -= len(skipped)
 		}
 	}
 	return results, nil

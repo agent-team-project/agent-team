@@ -2664,6 +2664,132 @@ gate = "manual"
 	}
 }
 
+func TestPipelineSkipStepBatch(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-905",
+			Ticket:    "SQU-905",
+			Target:    "worker",
+			Kickoff:   "skip review",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusBlocked,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusDone, StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+				{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"implement"}},
+			},
+		},
+		{
+			ID:        "squ-906",
+			Ticket:    "SQU-906",
+			Target:    "worker",
+			Kickoff:   "running review",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusDone, StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+				{ID: "review", Target: "manager", Status: job.StatusRunning, After: []string{"implement"}, Instance: "manager-squ-906-review", StartedAt: now.Add(-10 * time.Minute)},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	missingStep := NewRootCmd()
+	missingStepOut, missingStepErr := &bytes.Buffer{}, &bytes.Buffer{}
+	missingStep.SetOut(missingStepOut)
+	missingStep.SetErr(missingStepErr)
+	missingStep.SetArgs([]string{"pipeline", "skip", "ticket_to_pr", "--repo", root})
+	if err := missingStep.Execute(); err == nil {
+		t.Fatal("pipeline skip without --step succeeded")
+	}
+
+	dryRun := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryRun.SetOut(dryOut)
+	dryRun.SetErr(dryErr)
+	dryRun.SetArgs([]string{"pipeline", "skip", "ticket_to_pr", "--repo", root, "--step", "review", "--message", "review covered elsewhere", "--dry-run", "--json"})
+	if err := dryRun.Execute(); err != nil {
+		t.Fatalf("pipeline skip dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview []pipelineSkipResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode skip dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(preview) != 2 || preview[0].JobID != "squ-905" || preview[0].Action != "would_skip" || preview[0].StepStatus != job.StatusDone || !preview[0].Skipped || preview[0].SkipReason != "review covered elsewhere" {
+		t.Fatalf("skip preview[0] = %+v", preview)
+	}
+	if preview[1].JobID != "squ-906" || preview[1].Action != "skipped" || preview[1].StepStatus != job.StatusRunning || preview[1].Skipped {
+		t.Fatalf("skip preview[1] = %+v", preview)
+	}
+	unchanged, err := job.Read(teamDir, "squ-905")
+	if err != nil {
+		t.Fatalf("read unchanged job: %v", err)
+	}
+	if unchanged.Status != job.StatusBlocked || unchanged.Steps[1].Status != job.StatusBlocked || unchanged.Steps[1].Skipped {
+		t.Fatalf("dry-run mutated skipped job = %+v", unchanged)
+	}
+
+	run := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	run.SetOut(out)
+	run.SetErr(stderr)
+	run.SetArgs([]string{"pipeline", "skip", "ticket_to_pr", "--repo", root, "--step", "review", "--message", "review covered elsewhere", "--format", "{{.JobID}} {{.Action}} {{.StepID}} {{.Skipped}} {{.Message}}"})
+	if err := run.Execute(); err != nil {
+		t.Fatalf("pipeline skip: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := out.String(); got != "squ-905 skipped review true review covered elsewhere\nsqu-906 skipped review false step is running; timeout or stop the owner before skipping\n" {
+		t.Fatalf("skip format = %q", got)
+	}
+	skipped, err := job.Read(teamDir, "squ-905")
+	if err != nil {
+		t.Fatalf("read skipped job: %v", err)
+	}
+	if skipped.Status != job.StatusDone || skipped.Steps[1].Status != job.StatusDone || !skipped.Steps[1].Skipped || skipped.Steps[1].SkipReason != "review covered elsewhere" {
+		t.Fatalf("skipped job = %+v", skipped)
+	}
+	events, err := job.ListEvents(teamDir, "squ-905")
+	if err != nil {
+		t.Fatalf("list skip events: %v", err)
+	}
+	if len(events) == 0 || events[len(events)-1].Type != "step_skipped" || events[len(events)-1].Message != "review covered elsewhere" {
+		t.Fatalf("skip events = %+v", events)
+	}
+	running, err := job.Read(teamDir, "squ-906")
+	if err != nil {
+		t.Fatalf("read running job: %v", err)
+	}
+	if running.Status != job.StatusRunning || running.Steps[1].Status != job.StatusRunning || running.Steps[1].Skipped {
+		t.Fatalf("running job changed = %+v", running)
+	}
+}
+
 func TestPipelinePRGateWaitsForJobPR(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

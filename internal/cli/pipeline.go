@@ -40,6 +40,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineAdvanceCmd())
 	cmd.AddCommand(newPipelineApproveCmd())
 	cmd.AddCommand(newPipelineRejectCmd())
+	cmd.AddCommand(newPipelineSkipCmd())
 	cmd.AddCommand(newPipelineRetryCmd())
 	cmd.AddCommand(newPipelineTimeoutCmd())
 	cmd.AddCommand(newPipelineRunCmd())
@@ -929,6 +930,81 @@ func newPipelineRejectCmd() *cobra.Command {
 	return cmd
 }
 
+func newPipelineSkipCmd() *cobra.Command {
+	var (
+		repo    string
+		all     bool
+		limit   int
+		step    string
+		message string
+		dryRun  bool
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "skip <pipeline>|--all --step <id>",
+		Short: "Mark matching pipeline steps intentionally skipped.",
+		Long: "Mark matching non-running pipeline steps as done with skipped metadata for jobs in one pipeline, or all pipelines with --all. " +
+			"The step id is required to prevent accidental broad bypasses.",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline skip: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline skip: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline skip: pass a pipeline name or --all.")
+				return exitErr(2)
+			}
+			if strings.TrimSpace(step) == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline skip: --step is required.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline skip: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineSkipFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline skip: %v\n", err)
+				return exitErr(2)
+			}
+			pipelineName := ""
+			if len(args) == 1 {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if !all && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline skip: pipeline name is required.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			results, err := skipPipelineSteps(teamDir, pipelineName, step, message, limit, dryRun)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline skip: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineSkipResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&all, "all", false, "Skip matching steps across all pipelines.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum matching steps to skip or report (0 = no limit).")
+	cmd.Flags().StringVar(&step, "step", "", "Required pipeline step id to mark skipped.")
+	cmd.Flags().StringVar(&message, "message", "", "Skip reason recorded on each updated job.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview skipped steps without writing job state.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit skip results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each skip result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
+	return cmd
+}
+
 func newPipelineRetryCmd() *cobra.Command {
 	var (
 		repo          string
@@ -1529,6 +1605,23 @@ type pipelineApproveResult struct {
 	Event      *eventResponse     `json:"event,omitempty"`
 	Preview    *jobAdvancePreview `json:"preview,omitempty"`
 	WaitingFor []string           `json:"waiting_for,omitempty"`
+}
+
+type pipelineSkipResult struct {
+	JobID      string     `json:"job_id"`
+	Ticket     string     `json:"ticket"`
+	Pipeline   string     `json:"pipeline"`
+	StepID     string     `json:"step_id,omitempty"`
+	Target     string     `json:"target,omitempty"`
+	StepStatus job.Status `json:"step_status,omitempty"`
+	Instance   string     `json:"instance,omitempty"`
+	Action     string     `json:"action"`
+	DryRun     bool       `json:"dry_run,omitempty"`
+	Message    string     `json:"message,omitempty"`
+	Skipped    bool       `json:"skipped,omitempty"`
+	SkipReason string     `json:"skip_reason,omitempty"`
+	Job        *job.Job   `json:"job,omitempty"`
+	Step       *job.Step  `json:"step,omitempty"`
 }
 
 type pipelineRetryResult struct {
@@ -2931,6 +3024,82 @@ func rejectPipelineManualGates(teamDir, pipeline, stepFilter, message string, li
 	return results, nil
 }
 
+func skipPipelineSteps(teamDir, pipeline, stepID, message string, limit int, dryRun bool) ([]pipelineSkipResult, error) {
+	stepID = strings.TrimSpace(stepID)
+	if stepID == "" {
+		return nil, fmt.Errorf("step id is required")
+	}
+	jobs, err := selectedPipelineJobs(teamDir, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	reason := strings.TrimSpace(message)
+	if reason == "" {
+		reason = "skipped step " + stepID
+	}
+	results := []pipelineSkipResult{}
+	for _, j := range jobs {
+		if limit > 0 && len(results) >= limit {
+			break
+		}
+		if j == nil {
+			continue
+		}
+		idx := jobStepIndex(j, stepID)
+		if idx < 0 {
+			continue
+		}
+		step := &j.Steps[idx]
+		if step.Status == job.StatusDone {
+			continue
+		}
+		result := pipelineSkipResult{
+			JobID:      j.ID,
+			Ticket:     j.Ticket,
+			Pipeline:   j.Pipeline,
+			StepID:     step.ID,
+			Target:     step.Target,
+			StepStatus: step.Status,
+			Instance:   step.Instance,
+			Action:     "would_skip",
+			DryRun:     dryRun,
+			Message:    reason,
+			Step:       cloneJobStep(step),
+		}
+		if step.Status == job.StatusRunning {
+			result.Action = "skipped"
+			result.Message = "step is running; timeout or stop the owner before skipping"
+			results = append(results, result)
+			continue
+		}
+		if err := updateJobStep(j, stepID, job.StatusDone, jobStepUpdate{Message: reason, Skip: true}); err != nil {
+			return nil, err
+		}
+		result.Job = j
+		result.Message = reason
+		if idx := jobStepIndex(j, stepID); idx >= 0 {
+			result.Step = cloneJobStep(&j.Steps[idx])
+			result.StepID = j.Steps[idx].ID
+			result.Target = j.Steps[idx].Target
+			result.StepStatus = j.Steps[idx].Status
+			result.Instance = j.Steps[idx].Instance
+			result.Skipped = j.Steps[idx].Skipped
+			result.SkipReason = j.Steps[idx].SkipReason
+		}
+		if dryRun {
+			results = append(results, result)
+			continue
+		}
+		if err := writeJobWithAudit(teamDir, j, "step_skipped", "cli", reason, map[string]string{"step": stepID}); err != nil {
+			return nil, err
+		}
+		result.Action = "skipped"
+		result.DryRun = false
+		results = append(results, result)
+	}
+	return results, nil
+}
+
 func filterPipelineApproveRows(rows []jobReadyRow, stepFilter string) []jobReadyRow {
 	stepFilter = strings.TrimSpace(stepFilter)
 	out := rows[:0]
@@ -3674,6 +3843,17 @@ func parsePipelineApproveFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
+func parsePipelineSkipFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("pipeline-skip-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
 func parsePipelineRetryFormat(format string) (*template.Template, error) {
 	if strings.TrimSpace(format) == "" {
 		return nil, nil
@@ -4216,6 +4396,52 @@ func renderPipelineApproveRoutePreviews(w io.Writer, results []pipelineApproveRe
 		}
 	}
 	return nil
+}
+
+func renderPipelineSkipResults(w io.Writer, results []pipelineSkipResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := tmpl.Execute(w, result); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	renderPipelineSkipTable(w, results)
+	return nil
+}
+
+func renderPipelineSkipTable(w io.Writer, results []pipelineSkipResult) {
+	if len(results) == 0 {
+		fmt.Fprintln(w, "(no matching pipeline steps)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "JOB\tPIPELINE\tSTEP\tTARGET\tACTION\tSTATUS\tINSTANCE\tSKIPPED\tMESSAGE")
+	for _, result := range results {
+		skipped := "-"
+		if result.Skipped {
+			skipped = "yes"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			result.JobID,
+			emptyDash(result.Pipeline),
+			emptyDash(result.StepID),
+			emptyDash(result.Target),
+			result.Action,
+			emptyDash(string(result.StepStatus)),
+			emptyDash(result.Instance),
+			skipped,
+			emptyDash(result.Message),
+		)
+	}
+	_ = tw.Flush()
 }
 
 func renderPipelineRetryResults(w io.Writer, results []pipelineRetryResult, jsonOut bool, tmpl *template.Template) error {

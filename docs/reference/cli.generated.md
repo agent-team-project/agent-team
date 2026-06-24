@@ -2930,6 +2930,7 @@ Subcommands:
 - `agent-team pipeline retry` - Reset failed pipeline steps for another attempt.
 - `agent-team pipeline run` - Create a durable job from a pipeline declaration.
 - `agent-team pipeline show` - Show one declared pipeline.
+- `agent-team pipeline skip` - Mark matching pipeline steps intentionally skipped.
 - `agent-team pipeline snapshot` - Capture a read-only diagnostic snapshot for one pipeline.
 - `agent-team pipeline status` - Summarize pipeline jobs and next steps.
 - `agent-team pipeline timeout` - Mark stale running pipeline steps failed.
@@ -3282,6 +3283,29 @@ Flags:
       --format string   Render the pipeline with a Go template, e.g. '{{.Name}} {{len .Steps}}'.
       --json            Emit the pipeline as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team pipeline skip`
+
+Mark matching pipeline steps intentionally skipped.
+
+Mark matching non-running pipeline steps as done with skipped metadata for jobs in one pipeline, or all pipelines with --all. The step id is required to prevent accidental broad bypasses.
+
+```text
+agent-team pipeline skip <pipeline>|--all --step <id> [flags]
+```
+
+Flags:
+
+```text
+      --all              Skip matching steps across all pipelines.
+      --dry-run          Preview skipped steps without writing job state.
+      --format string    Render each skip result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json             Emit skip results as JSON.
+      --limit int        Maximum matching steps to skip or report (0 = no limit).
+      --message string   Skip reason recorded on each updated job.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --step string      Required pipeline step id to mark skipped.
 ```
 
 ## `agent-team pipeline snapshot`
@@ -4746,6 +4770,7 @@ Subcommands:
 - `agent-team team schedules` - List schedules owned by one team.
 - `agent-team team send` - Send a mailbox message to team-owned instances.
 - `agent-team team show` - Show one declared team.
+- `agent-team team skip` - Mark matching team pipeline steps intentionally skipped.
 - `agent-team team snapshot` - Capture a team-scoped diagnostic report.
 - `agent-team team stats` - Show CPU and memory usage for team-owned instances.
 - `agent-team team status` - Summarize one team&#39;s instances, jobs, and pipelines.
@@ -5776,6 +5801,28 @@ Flags:
 ```text
       --json          Emit the team as JSON.
       --repo string   Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team team skip`
+
+Mark matching team pipeline steps intentionally skipped.
+
+Mark matching non-running pipeline steps as done with skipped metadata for jobs in one team&#39;s declared pipelines. The step id is required to prevent accidental broad bypasses.
+
+```text
+agent-team team skip <team> --step <id> [flags]
+```
+
+Flags:
+
+```text
+      --dry-run          Preview skipped team steps without writing job state.
+      --format string    Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json             Emit skip results as JSON.
+      --limit int        Skip or report at most this many matching team steps; 0 means no limit.
+      --message string   Skip reason recorded on each updated team job.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --step string      Required pipeline step id to mark skipped.
 ```
 
 ## `agent-team team snapshot`
