@@ -21,6 +21,7 @@ import (
 
 var runtimeProbeRunCommand = defaultRuntimeProbeRunCommand
 var runtimeProbeRunExecCommand = defaultRuntimeProbeRunExecCommand
+var runtimeProbeStartDaemon = daemonStartDetachedOperation
 
 const defaultRuntimeProbeExecPrompt = "Reply exactly with: agent-team runtime probe ok"
 
@@ -38,6 +39,7 @@ func newRuntimeProbeCmd() *cobra.Command {
 		output         string
 		requireDaemon  bool
 		waitDaemon     bool
+		startDaemon    bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -68,6 +70,7 @@ func newRuntimeProbeCmd() *cobra.Command {
 				ExecPrompt:     execPrompt,
 				RequireDaemon:  requireDaemon,
 				WaitDaemon:     waitDaemon,
+				StartDaemon:    startDaemon,
 			})
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime probe: %v\n", err)
@@ -106,6 +109,7 @@ func newRuntimeProbeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&output, "output", "", "Write the full probe result as pretty JSON to this file.")
 	cmd.Flags().BoolVar(&requireDaemon, "require-daemon", false, "Fail when the repo daemon is not running and ready.")
 	cmd.Flags().BoolVar(&waitDaemon, "wait-daemon", false, "Wait for the repo daemon to become ready before reporting daemon health.")
+	cmd.Flags().BoolVar(&startDaemon, "start-daemon", false, "Start the detached repo daemon before reporting daemon health when it is not ready.")
 	return cmd
 }
 
@@ -120,19 +124,21 @@ type runtimeProbeOptions struct {
 	ExecPrompt     string
 	RequireDaemon  bool
 	WaitDaemon     bool
+	StartDaemon    bool
 }
 
 type runtimeProbeResult struct {
-	OK          bool                `json:"ok"`
-	Repo        string              `json:"repo"`
-	TeamDir     string              `json:"team_dir,omitempty"`
-	Runtime     runtimeInfo         `json:"runtime"`
-	Daemon      *daemonStatusJSON   `json:"daemon,omitempty"`
-	CodexDoctor *codexDoctorProbe   `json:"codex_doctor,omitempty"`
-	ExecProbe   *runtimeExecProbe   `json:"exec_probe,omitempty"`
-	Issues      []runtimeProbeIssue `json:"issues,omitempty"`
-	Actions     []string            `json:"actions,omitempty"`
-	Output      string              `json:"output,omitempty"`
+	OK          bool                 `json:"ok"`
+	Repo        string               `json:"repo"`
+	TeamDir     string               `json:"team_dir,omitempty"`
+	Runtime     runtimeInfo          `json:"runtime"`
+	Daemon      *daemonStatusJSON    `json:"daemon,omitempty"`
+	DaemonStart *daemonLifecycleJSON `json:"daemon_start,omitempty"`
+	CodexDoctor *codexDoctorProbe    `json:"codex_doctor,omitempty"`
+	ExecProbe   *runtimeExecProbe    `json:"exec_probe,omitempty"`
+	Issues      []runtimeProbeIssue  `json:"issues,omitempty"`
+	Actions     []string             `json:"actions,omitempty"`
+	Output      string               `json:"output,omitempty"`
 }
 
 type runtimeProbeIssue struct {
@@ -236,6 +242,18 @@ func collectRuntimeProbe(cmd *cobra.Command, opts runtimeProbeOptions) (*runtime
 		teamResolved = true
 		teamDir = resolved
 		status := collectDaemonStatus(teamDir)
+		if opts.StartDaemon && !status.Ready {
+			startResult, err := runtimeProbeStartDaemon(cmd, teamDir, opts.Timeout)
+			if err != nil {
+				result.addIssue("fail", "daemon", "start_failed", err.Error(), "Run `agent-team daemon start` and inspect the daemon log.")
+			} else {
+				result.DaemonStart = &startResult
+				status = startResult.Status
+				if !status.Ready {
+					status = collectDaemonStatus(teamDir)
+				}
+			}
+		}
 		if opts.WaitDaemon {
 			var timedOut bool
 			status, timedOut = waitForDaemonReady(teamDir, opts.Timeout, opts.DaemonInterval)

@@ -3740,6 +3740,7 @@ Flags:
       --runtime string             Runtime profile to probe for this invocation (claude or codex). Overrides env and repo config.
       --runtime-bin string         Runtime binary to probe for this invocation. Overrides env and repo config.
       --skip-doctor                Skip runtime-native diagnostics such as codex doctor --json.
+      --start-daemon               Start the detached repo daemon before reporting daemon health when it is not ready.
       --target string              Repo root or any path under a repo. (default "<repo>")
       --timeout duration           Maximum time for daemon wait and external runtime diagnostics such as codex doctor --json. (default 20s)
       --wait-daemon                Wait for the repo daemon to become ready before reporting daemon health.

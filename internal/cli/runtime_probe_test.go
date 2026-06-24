@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jamesaud/agent-team/internal/runtimebin"
+	"github.com/spf13/cobra"
 )
 
 func withRuntimeProbeRunCommand(t *testing.T, fn func(context.Context, string, ...string) runtimeProbeCommandResult) {
@@ -26,6 +28,13 @@ func withRuntimeProbeRunExecCommand(t *testing.T, fn func(context.Context, strin
 	old := runtimeProbeRunExecCommand
 	runtimeProbeRunExecCommand = fn
 	t.Cleanup(func() { runtimeProbeRunExecCommand = old })
+}
+
+func withRuntimeProbeStartDaemon(t *testing.T, fn func(*cobra.Command, string, time.Duration) (daemonLifecycleJSON, error)) {
+	t.Helper()
+	old := runtimeProbeStartDaemon
+	runtimeProbeStartDaemon = fn
+	t.Cleanup(func() { runtimeProbeStartDaemon = old })
 }
 
 func TestRuntimeProbeCodexDoctorFailureJSON(t *testing.T) {
@@ -223,6 +232,96 @@ func TestRuntimeProbeWaitDaemonTimesOut(t *testing.T) {
 	}
 	if !containsRuntimeProbeIssue(result.Issues, "fail", "daemon", "not_running") {
 		t.Fatalf("issues = %+v, want daemon not_running failure", result.Issues)
+	}
+}
+
+func TestRuntimeProbeStartDaemon(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "codex")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "codex" {
+			t.Fatalf("look path bin = %q, want codex", bin)
+		}
+		return "/opt/homebrew/bin/codex", nil
+	})
+	withRuntimeProbeRunCommand(t, func(ctx context.Context, binary string, args ...string) runtimeProbeCommandResult {
+		t.Fatalf("codex doctor should be skipped")
+		return runtimeProbeCommandResult{}
+	})
+	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration) (daemonLifecycleJSON, error) {
+		if timeout != 20*time.Second {
+			t.Fatalf("timeout = %s, want default 20s", timeout)
+		}
+		return daemonLifecycleJSON{
+			Action:  "start",
+			Changed: true,
+			PID:     1234,
+			Log:     filepath.Join(teamDir, "daemon", "agent-teamd.log"),
+			Message: "started",
+			Status: daemonStatusJSON{
+				Running: true,
+				Ready:   true,
+				PID:     1234,
+				TeamDir: filepath.ToSlash(teamDir),
+				Socket:  filepath.Join(teamDir, "daemon.sock"),
+				Log:     filepath.Join(teamDir, "daemon", "agent-teamd.log"),
+			},
+		}, nil
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"runtime", "probe", "--target", tmp, "--skip-doctor", "--start-daemon", "--require-daemon", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime probe start daemon failed: %v\nstderr=%s", err, stderr.String())
+	}
+	var result runtimeProbeResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode result: %v\nbody=%s", err, out.String())
+	}
+	if !result.OK || result.Daemon == nil || !result.Daemon.Ready || result.DaemonStart == nil || !result.DaemonStart.Changed {
+		t.Fatalf("result = %+v, want started ready daemon", result)
+	}
+}
+
+func TestRuntimeProbeStartDaemonFailure(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "codex")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "codex" {
+			t.Fatalf("look path bin = %q, want codex", bin)
+		}
+		return "/opt/homebrew/bin/codex", nil
+	})
+	withRuntimeProbeRunCommand(t, func(ctx context.Context, binary string, args ...string) runtimeProbeCommandResult {
+		t.Fatalf("codex doctor should be skipped")
+		return runtimeProbeCommandResult{}
+	})
+	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration) (daemonLifecycleJSON, error) {
+		return daemonLifecycleJSON{}, errors.New("spawn failed")
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"runtime", "probe", "--target", tmp, "--skip-doctor", "--start-daemon", "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("runtime probe start daemon succeeded, want failure")
+	}
+	var result runtimeProbeResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode result: %v\nbody=%s", err, out.String())
+	}
+	if result.OK || !containsRuntimeProbeIssue(result.Issues, "fail", "daemon", "start_failed") {
+		t.Fatalf("result = %+v, want start_failed issue", result)
 	}
 }
 
