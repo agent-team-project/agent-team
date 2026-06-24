@@ -39,6 +39,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineReleaseCmd())
 	cmd.AddCommand(newPipelineAdvanceCmd())
 	cmd.AddCommand(newPipelineApproveCmd())
+	cmd.AddCommand(newPipelineRejectCmd())
 	cmd.AddCommand(newPipelineRetryCmd())
 	cmd.AddCommand(newPipelineTimeoutCmd())
 	cmd.AddCommand(newPipelineRunCmd())
@@ -854,6 +855,77 @@ func newPipelineApproveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run --dispatch, include route and payload previews.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit approval results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each approval result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
+	return cmd
+}
+
+func newPipelineRejectCmd() *cobra.Command {
+	var (
+		repo    string
+		all     bool
+		limit   int
+		step    string
+		message string
+		dryRun  bool
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "reject <pipeline>|--all",
+		Short: "Reject blocked manual pipeline gates.",
+		Long: "Reject blocked manual-gate steps for jobs in one pipeline, or all pipelines with --all. " +
+			"Rejected gates are marked failed and record a manual_gate_rejected audit event.",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline reject: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline reject: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline reject: pass a pipeline name or --all.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline reject: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineApproveFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline reject: %v\n", err)
+				return exitErr(2)
+			}
+			pipelineName := ""
+			if len(args) == 1 {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if !all && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline reject: pipeline name is required.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			results, err := rejectPipelineManualGates(teamDir, pipelineName, step, message, limit, dryRun)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline reject: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineApproveResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&all, "all", false, "Reject manual gates across all pipelines.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum manual gates to reject (0 = no limit).")
+	cmd.Flags().StringVar(&step, "step", "", "Reject only manual gates whose next blocked step has this id.")
+	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each rejected job.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview manual gate rejections without writing job state.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit rejection results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each rejection result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd
 }
 
@@ -2783,6 +2855,77 @@ func approvePipelineManualGates(cmd *cobra.Command, teamDir, pipeline, workspace
 				result.Instance = advanced.Step.Instance
 			}
 		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func rejectPipelineManualGates(teamDir, pipeline, stepFilter, message string, limit int, dryRun bool) ([]pipelineApproveResult, error) {
+	rows, err := collectJobReadyRows(teamDir, pipeline, map[string]bool{"blocked": true})
+	if err != nil {
+		return nil, err
+	}
+	rows = filterPipelineApproveRows(rows, stepFilter)
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	results := make([]pipelineApproveResult, 0, len(rows))
+	for _, row := range rows {
+		j, err := job.Read(teamDir, row.JobID)
+		if err != nil {
+			return nil, err
+		}
+		result := pipelineApproveResult{
+			JobID:      j.ID,
+			Ticket:     j.Ticket,
+			Pipeline:   j.Pipeline,
+			StepID:     row.StepID,
+			Target:     row.Target,
+			StepStatus: row.StepStatus,
+			Instance:   row.Instance,
+			Action:     "would_reject",
+			DryRun:     dryRun,
+			Message:    row.Message,
+			WaitingFor: append([]string(nil), row.WaitingFor...),
+		}
+		if strings.TrimSpace(row.StepID) == "" {
+			result.Action = "skipped"
+			result.Message = "no blocked manual gate"
+			results = append(results, result)
+			continue
+		}
+		if len(row.WaitingFor) > 0 {
+			result.Action = "skipped"
+			result.Message = "waiting for " + strings.Join(row.WaitingFor, ",")
+			results = append(results, result)
+			continue
+		}
+		rejectionMessage := strings.TrimSpace(message)
+		if rejectionMessage == "" {
+			rejectionMessage = "rejected manual gate " + row.StepID
+		}
+		if err := updateJobStep(j, row.StepID, job.StatusFailed, jobStepUpdate{Message: rejectionMessage}); err != nil {
+			return nil, err
+		}
+		j.LastEvent = "manual_gate_rejected"
+		result.Job = j
+		result.Message = j.LastStatus
+		if idx := jobStepIndex(j, row.StepID); idx >= 0 {
+			result.Step = cloneJobStep(&j.Steps[idx])
+			result.StepID = j.Steps[idx].ID
+			result.Target = j.Steps[idx].Target
+			result.StepStatus = j.Steps[idx].Status
+			result.Instance = j.Steps[idx].Instance
+		}
+		if dryRun {
+			results = append(results, result)
+			continue
+		}
+		if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"step": row.StepID}); err != nil {
+			return nil, err
+		}
+		result.Action = "rejected"
+		result.DryRun = false
 		results = append(results, result)
 	}
 	return results, nil

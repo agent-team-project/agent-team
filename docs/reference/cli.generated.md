@@ -2925,6 +2925,7 @@ Subcommands:
 - `agent-team pipeline ls` - List declared pipelines.
 - `agent-team pipeline next` - Print recommended next actions for pipeline jobs.
 - `agent-team pipeline ready` - List ready pipeline jobs.
+- `agent-team pipeline reject` - Reject blocked manual pipeline gates.
 - `agent-team pipeline release` - Release held pipeline jobs so automation can advance them.
 - `agent-team pipeline retry` - Reset failed pipeline steps for another attempt.
 - `agent-team pipeline run` - Create a durable job from a pipeline declaration.
@@ -3165,6 +3166,29 @@ Flags:
       --state strings       Next-step state to include: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
       --step string         Only include rows whose next step has this id.
   -w, --watch               Refresh the ready-step table until interrupted.
+```
+
+## `agent-team pipeline reject`
+
+Reject blocked manual pipeline gates.
+
+Reject blocked manual-gate steps for jobs in one pipeline, or all pipelines with --all. Rejected gates are marked failed and record a manual_gate_rejected audit event.
+
+```text
+agent-team pipeline reject <pipeline>|--all [flags]
+```
+
+Flags:
+
+```text
+      --all              Reject manual gates across all pipelines.
+      --dry-run          Preview manual gate rejections without writing job state.
+      --format string    Render each rejection result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json             Emit rejection results as JSON.
+      --limit int        Maximum manual gates to reject (0 = no limit).
+      --message string   Status message recorded on each rejected job.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --step string      Reject only manual gates whose next blocked step has this id.
 ```
 
 ## `agent-team pipeline release`
