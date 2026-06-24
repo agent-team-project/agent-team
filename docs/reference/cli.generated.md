@@ -3217,8 +3217,10 @@ Flags:
       --format string       Render each row with a Go template, e.g. '{{.Pipeline}} {{.Jobs}} {{.ReadySteps}}'.
       --interval duration   Refresh interval for --watch. (default 2s)
       --json                Emit pipeline status rows as JSON.
+      --limit int           Limit rows after sorting; 0 means no limit.
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
+      --sort string         Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, or none. (default "declared")
   -w, --watch               Refresh the pipeline status table until interrupted.
 ```
 
@@ -4951,8 +4953,10 @@ Flags:
       --format string       Render each pipeline with a Go template, e.g. '{{.Pipeline}} {{.ReadySteps}}'.
       --interval duration   Refresh interval for --watch. (default 2s)
       --json                Emit team pipeline status as JSON.
+      --limit int           Limit rows after sorting; 0 means no limit.
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
+      --sort string         Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, or none. (default "declared")
   -w, --watch               Refresh the team pipeline status table until interrupted.
 ```
 

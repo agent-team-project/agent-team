@@ -347,8 +347,10 @@ func newPipelineStatusCmd() *cobra.Command {
 		watch    bool
 		noClear  bool
 		interval time.Duration
+		limit    int
 		jsonOut  bool
 		format   string
+		sortBy   string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -372,6 +374,15 @@ func newPipelineStatusCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline status: --interval must be >= 0.")
 				return exitErr(2)
 			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline status: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			sortMode, err := parsePipelineStatusSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline status: %v\n", err)
+				return exitErr(2)
+			}
 			tmpl, err := parsePipelineStatusFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline status: %v\n", err)
@@ -392,9 +403,9 @@ func newPipelineStatusCmd() *cobra.Command {
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
-				return runPipelineStatusWatch(ctx, cmd.OutOrStdout(), teamDir, pipelineName, jsonOut, tmpl, interval, !noClear && !jsonOut)
+				return runPipelineStatusWatch(ctx, cmd.OutOrStdout(), teamDir, pipelineName, sortMode, limit, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
-			if err := runPipelineStatus(cmd.OutOrStdout(), teamDir, pipelineName, jsonOut, tmpl); err != nil {
+			if err := runPipelineStatus(cmd.OutOrStdout(), teamDir, pipelineName, sortMode, limit, jsonOut, tmpl); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline status: %v\n", err)
 				return exitErr(1)
 			}
@@ -406,8 +417,10 @@ func newPipelineStatusCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the pipeline status table until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after sorting; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline status rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.Pipeline}} {{.Jobs}} {{.ReadySteps}}'.")
+	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, or none.")
 	return cmd
 }
 
@@ -1982,6 +1995,88 @@ func collectPipelineStatusRowsAt(teamDir, pipeline string, now time.Time, staleA
 	return out, nil
 }
 
+func parsePipelineStatusSort(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return "declared", nil
+	}
+	switch value {
+	case "declared", "pipeline", "steps", "jobs", "queued", "running", "blocked", "done", "failed", "ready", "queued-steps", "running-steps", "stale", "stale-running", "blocked-steps", "manual", "manual-gates", "failed-steps", "held", "done-steps", "none", "no-step":
+		return value, nil
+	default:
+		return "", fmt.Errorf("--sort must be declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, queued-steps, running-steps, stale, blocked-steps, manual, failed-steps, held, done-steps, or none")
+	}
+}
+
+func applyPipelineStatusRowOptions(rows []pipelineStatusRow, sortMode string, limit int) []pipelineStatusRow {
+	sortPipelineStatusRows(rows, sortMode)
+	if limit <= 0 || limit >= len(rows) {
+		return rows
+	}
+	return rows[:limit]
+}
+
+func sortPipelineStatusRows(rows []pipelineStatusRow, sortMode string) {
+	switch sortMode {
+	case "", "declared":
+		return
+	case "pipeline":
+		sort.SliceStable(rows, func(i, j int) bool {
+			return rows[i].Pipeline < rows[j].Pipeline
+		})
+	default:
+		sort.SliceStable(rows, func(i, j int) bool {
+			left := pipelineStatusSortValue(rows[i], sortMode)
+			right := pipelineStatusSortValue(rows[j], sortMode)
+			if left == right {
+				return false
+			}
+			return left > right
+		})
+	}
+}
+
+func pipelineStatusSortValue(row pipelineStatusRow, sortMode string) int {
+	switch sortMode {
+	case "steps":
+		return row.Steps
+	case "jobs":
+		return row.Jobs
+	case "queued":
+		return row.Queued
+	case "running":
+		return row.Running
+	case "blocked":
+		return row.Blocked
+	case "done":
+		return row.Done
+	case "failed":
+		return row.Failed
+	case "ready":
+		return row.ReadySteps
+	case "queued-steps":
+		return row.QueuedSteps
+	case "running-steps":
+		return row.RunningSteps
+	case "stale", "stale-running":
+		return row.StaleRunningSteps
+	case "blocked-steps":
+		return row.BlockedSteps
+	case "manual", "manual-gates":
+		return row.ManualGates
+	case "failed-steps":
+		return row.FailedSteps
+	case "held":
+		return row.HeldSteps
+	case "done-steps":
+		return row.DoneSteps
+	case "none", "no-step":
+		return row.NoStep
+	default:
+		return 0
+	}
+}
+
 func collectPipelineExplainRows(teamDir, pipeline string, limit int, stateFilter map[string]bool, stepFilter string) ([]pipelineExplainRow, error) {
 	statusRows, err := collectPipelineStatusRows(teamDir, pipeline)
 	if err != nil {
@@ -3520,15 +3615,16 @@ func renderPipelineStatusRows(w io.Writer, rows []pipelineStatusRow, jsonOut boo
 	return nil
 }
 
-func runPipelineStatus(w io.Writer, teamDir, pipeline string, jsonOut bool, tmpl *template.Template) error {
+func runPipelineStatus(w io.Writer, teamDir, pipeline, sortMode string, limit int, jsonOut bool, tmpl *template.Template) error {
 	rows, err := collectPipelineStatusRows(teamDir, pipeline)
 	if err != nil {
 		return err
 	}
+	rows = applyPipelineStatusRowOptions(rows, sortMode, limit)
 	return renderPipelineStatusRows(w, rows, jsonOut, tmpl)
 }
 
-func runPipelineStatusWatch(ctx context.Context, w io.Writer, teamDir, pipeline string, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+func runPipelineStatusWatch(ctx context.Context, w io.Writer, teamDir, pipeline, sortMode string, limit int, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
@@ -3540,7 +3636,7 @@ func runPipelineStatusWatch(ctx context.Context, w io.Writer, teamDir, pipeline 
 				return err
 			}
 		}
-		if err := runPipelineStatus(w, teamDir, pipeline, jsonOut, tmpl); err != nil {
+		if err := runPipelineStatus(w, teamDir, pipeline, sortMode, limit, jsonOut, tmpl); err != nil {
 			return err
 		}
 		select {

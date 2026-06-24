@@ -873,6 +873,30 @@ target = "manager"
 		t.Fatalf("ad_hoc status = %+v", adHoc)
 	}
 
+	sorted := NewRootCmd()
+	sortedOut, sortedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sorted.SetOut(sortedOut)
+	sorted.SetErr(sortedErr)
+	sorted.SetArgs([]string{"pipeline", "status", "--repo", root, "--sort", "jobs", "--limit", "1", "--format", "{{.Pipeline}} {{.Jobs}}"})
+	if err := sorted.Execute(); err != nil {
+		t.Fatalf("pipeline status sort/limit: %v\nstderr=%s", err, sortedErr.String())
+	}
+	if got := strings.TrimSpace(sortedOut.String()); got != "ticket_to_pr 4" {
+		t.Fatalf("sorted pipeline status = %q", got)
+	}
+
+	alpha := NewRootCmd()
+	alphaOut, alphaErr := &bytes.Buffer{}, &bytes.Buffer{}
+	alpha.SetOut(alphaOut)
+	alpha.SetErr(alphaErr)
+	alpha.SetArgs([]string{"pipeline", "status", "--repo", root, "--sort", "pipeline", "--limit", "2", "--format", "{{.Pipeline}}"})
+	if err := alpha.Execute(); err != nil {
+		t.Fatalf("pipeline status alpha sort: %v\nstderr=%s", err, alphaErr.String())
+	}
+	if got := strings.Split(strings.TrimSpace(alphaOut.String()), "\n"); strings.Join(got, ",") != "ad_hoc,nightly" {
+		t.Fatalf("alpha pipeline status = %q", alphaOut.String())
+	}
+
 	one := NewRootCmd()
 	oneOut, oneErr := &bytes.Buffer{}, &bytes.Buffer{}
 	one.SetOut(oneOut)
@@ -1090,6 +1114,30 @@ target = "manager"
 	}
 	if !strings.Contains(invalidIntervalErr.String(), "--interval must be >= 0") {
 		t.Fatalf("invalid interval stderr = %q", invalidIntervalErr.String())
+	}
+
+	invalidLimit := NewRootCmd()
+	invalidLimitOut, invalidLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidLimit.SetOut(invalidLimitOut)
+	invalidLimit.SetErr(invalidLimitErr)
+	invalidLimit.SetArgs([]string{"pipeline", "status", "--repo", root, "--limit", "-1"})
+	if err := invalidLimit.Execute(); err == nil {
+		t.Fatalf("pipeline status negative limit succeeded")
+	}
+	if !strings.Contains(invalidLimitErr.String(), "--limit must be >= 0") {
+		t.Fatalf("invalid limit stderr = %q", invalidLimitErr.String())
+	}
+
+	invalidSort := NewRootCmd()
+	invalidSortOut, invalidSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSort.SetOut(invalidSortOut)
+	invalidSort.SetErr(invalidSortErr)
+	invalidSort.SetArgs([]string{"pipeline", "status", "--repo", root, "--sort", "age"})
+	if err := invalidSort.Execute(); err == nil {
+		t.Fatalf("pipeline status invalid sort succeeded")
+	}
+	if !strings.Contains(invalidSortErr.String(), "--sort must be declared") {
+		t.Fatalf("invalid sort stderr = %q", invalidSortErr.String())
 	}
 
 	missing := NewRootCmd()

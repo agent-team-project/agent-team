@@ -470,6 +470,18 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team pipelines format = %q", got)
 	}
 
+	pipelinesLimited := NewRootCmd()
+	pipelinesLimitedOut, pipelinesLimitedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipelinesLimited.SetOut(pipelinesLimitedOut)
+	pipelinesLimited.SetErr(pipelinesLimitedErr)
+	pipelinesLimited.SetArgs([]string{"team", "pipelines", "delivery", "--repo", root, "--sort", "ready", "--limit", "1", "--format", "{{.Pipeline}} {{.ReadySteps}}"})
+	if err := pipelinesLimited.Execute(); err != nil {
+		t.Fatalf("team pipelines sort/limit: %v\nstderr=%s", err, pipelinesLimitedErr.String())
+	}
+	if got := strings.TrimSpace(pipelinesLimitedOut.String()); got != "ticket_to_pr 1" {
+		t.Fatalf("team pipelines sort/limit = %q", got)
+	}
+
 	ctx, cancel = context.WithCancel(context.Background())
 	cancel()
 	pipelinesWatch := NewRootCmd()
@@ -495,6 +507,30 @@ since = "2026-06-18T12:00:00Z"
 	}
 	if !strings.Contains(pipelinesIntervalErr.String(), "--interval must be >= 0") {
 		t.Fatalf("team pipelines negative interval stderr = %q", pipelinesIntervalErr.String())
+	}
+
+	pipelinesLimit := NewRootCmd()
+	pipelinesLimitOut, pipelinesLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipelinesLimit.SetOut(pipelinesLimitOut)
+	pipelinesLimit.SetErr(pipelinesLimitErr)
+	pipelinesLimit.SetArgs([]string{"team", "pipelines", "delivery", "--repo", root, "--limit", "-1"})
+	if err := pipelinesLimit.Execute(); err == nil {
+		t.Fatalf("team pipelines negative limit succeeded")
+	}
+	if !strings.Contains(pipelinesLimitErr.String(), "--limit must be >= 0") {
+		t.Fatalf("team pipelines negative limit stderr = %q", pipelinesLimitErr.String())
+	}
+
+	pipelinesSort := NewRootCmd()
+	pipelinesSortOut, pipelinesSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipelinesSort.SetOut(pipelinesSortOut)
+	pipelinesSort.SetErr(pipelinesSortErr)
+	pipelinesSort.SetArgs([]string{"team", "pipelines", "delivery", "--repo", root, "--sort", "age"})
+	if err := pipelinesSort.Execute(); err == nil {
+		t.Fatalf("team pipelines invalid sort succeeded")
+	}
+	if !strings.Contains(pipelinesSortErr.String(), "--sort must be declared") {
+		t.Fatalf("team pipelines invalid sort stderr = %q", pipelinesSortErr.String())
 	}
 
 	explain := NewRootCmd()
