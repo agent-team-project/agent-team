@@ -176,6 +176,7 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team pipeline resume-plan <pipeline>` | Pipeline-scoped runtime recovery commands; filter by `--action` or summarize with `--summary` |
 | `agent-team pipeline send <pipeline>` | Send a mailbox message to pipeline-owned daemon-known instances |
 | `agent-team pipeline logs <pipeline>` | Read daemon-captured logs for pipeline-owned instances |
+| `agent-team pipeline events <pipeline>` | Read lifecycle events for pipeline-owned instances |
 | `agent-team pipeline timeout <pipeline>` | Mark stale running steps failed; add `--target-agent` to scope by role |
 | `agent-team pipeline retry <pipeline>` | Retry failed steps, honoring step `max_attempts` caps; add `--force` for an explicit override |
 

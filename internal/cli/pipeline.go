@@ -47,6 +47,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineResumePlanCmd())
 	cmd.AddCommand(newPipelineSendCmd())
 	cmd.AddCommand(newPipelineLogsCmd())
+	cmd.AddCommand(newPipelineEventsCmd())
 	cmd.AddCommand(newPipelineRetryCmd())
 	cmd.AddCommand(newPipelineTimeoutCmd())
 	cmd.AddCommand(newPipelineRunCmd())
@@ -1431,6 +1432,83 @@ func newPipelineLogsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&since, "since", "", "Only include log streams modified since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	cmd.Flags().StringVar(&grep, "grep", "", "Only print log lines matching this regular expression. One-shot reads only.")
 	cmd.Flags().StringVar(&format, "format", "", "With --list, render each log stream with a Go template, e.g. '{{.Instance}} {{.LogPath}}'.")
+	return cmd
+}
+
+func newPipelineEventsCmd() *cobra.Command {
+	var (
+		repo           string
+		follow         bool
+		tail           int
+		jsonOut        bool
+		summary        bool
+		format         string
+		actionFilters  []string
+		statusFilters  []string
+		runtimeFilters []string
+		sinceRaw       string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "events <pipeline>",
+		Short: "Show lifecycle events scoped to one pipeline.",
+		Long:  "Show or follow daemon lifecycle events for daemon-known instances owned by jobs in one declared pipeline.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if tail < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline events: --tail must be >= 0.")
+				return exitErr(2)
+			}
+			if summary && follow {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline events: --summary cannot be combined with --follow.")
+				return exitErr(2)
+			}
+			if format != "" && (jsonOut || summary) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline events: --format cannot be combined with --json or --summary.")
+				return exitErr(2)
+			}
+			formatTemplate, err := parseEventFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline events: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			filters, err := pipelineEventFilters(teamDir, args[0], actionFilters, statusFilters, sinceRaw, time.Now)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline events: %v\n", err)
+				return exitErr(2)
+			}
+			filters, err = pipelineEventRuntimeFilter(teamDir, args[0], filters, runtimeFilters)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline events: %v\n", err)
+				return exitErr(2)
+			}
+			var client eventsClient
+			if dc, err := newDaemonClient(teamDir); err == nil {
+				client = dc
+			} else if errors.Is(err, errDaemonNotRunning) {
+				client = localEventsClient{daemonRoot: daemon.DaemonRoot(teamDir)}
+			} else {
+				return err
+			}
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			defer stop()
+			return runEvents(ctx, cmd.OutOrStdout(), client, eventsOptions{Follow: follow, Tail: tail, JSON: jsonOut, Summary: summary, Format: formatTemplate, Filters: filters})
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Keep streaming new lifecycle events.")
+	cmd.Flags().IntVar(&tail, "tail", 0, "Show only the last N matching pipeline events before returning or following (0 = all).")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit raw JSONL events.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching pipeline events by action, status, agent, and instance.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each event with a Go template, e.g. '{{.Action}} {{.Instance}} {{.Status}}'.")
+	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only show events with this action. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show events with this lifecycle status. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show pipeline events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&sinceRaw, "since", "", "Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	return cmd
 }
 
@@ -3271,6 +3349,87 @@ func collectPipelineLogRows(teamDir, pipeline string, opts logListOptions, since
 		return []logListRow{}, nil
 	}
 	return rows, nil
+}
+
+func pipelineEventFilters(teamDir, pipeline string, actionFilters, statusFilters []string, sinceRaw string, now func() time.Time) (eventFilters, error) {
+	filters, err := newEventFilters(actionFilters, nil, nil, statusFilters, sinceRaw, now)
+	if err != nil {
+		return eventFilters{}, err
+	}
+	jobs, err := selectedPipelineJobs(teamDir, pipeline)
+	if err != nil {
+		return eventFilters{}, err
+	}
+	instances := map[string]bool{}
+	for _, j := range jobs {
+		if j == nil {
+			continue
+		}
+		if instance := strings.TrimSpace(j.Instance); instance != "" {
+			instances[instance] = true
+		}
+		for _, step := range j.Steps {
+			if instance := strings.TrimSpace(step.Instance); instance != "" {
+				instances[instance] = true
+			}
+		}
+	}
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return eventFilters{}, err
+	}
+	owned, err := collectPipelineOwnedMetadata(teamDir, pipeline, metas)
+	if err != nil {
+		return eventFilters{}, err
+	}
+	for _, meta := range owned.Metadata {
+		if meta == nil || strings.TrimSpace(meta.Instance) == "" {
+			continue
+		}
+		instances[meta.Instance] = true
+	}
+	if len(instances) == 0 {
+		instances[""] = false
+	}
+	filters.instances = instances
+	filters.instancePrefixes = nil
+	return filters, nil
+}
+
+func pipelineEventRuntimeFilter(teamDir, pipeline string, filters eventFilters, runtimeFilters []string) (eventFilters, error) {
+	if len(runtimeFilters) == 0 {
+		return filters, nil
+	}
+	runtimes, err := lifecycleRuntimeFilterSet(runtimeFilters)
+	if err != nil {
+		return filters, err
+	}
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return filters, err
+	}
+	owned, err := collectPipelineOwnedMetadata(teamDir, pipeline, metas)
+	if err != nil {
+		return filters, err
+	}
+	selected := map[string]bool{}
+	for _, meta := range owned.Metadata {
+		if meta == nil {
+			continue
+		}
+		if !eventFilterMatchesInstance(filters, meta.Instance) {
+			continue
+		}
+		if runtimes[metadataRuntimeKey(meta)] {
+			selected[meta.Instance] = true
+		}
+	}
+	if len(selected) == 0 {
+		selected[""] = false
+	}
+	filters.instances = selected
+	filters.instancePrefixes = nil
+	return filters, nil
 }
 
 func holdStateSelected(state string, stateFilter map[string]bool, stateDefault bool) bool {

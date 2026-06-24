@@ -3331,6 +3331,145 @@ target = "worker"
 	}
 }
 
+func TestPipelineEventsScopesLifecycleEvents(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+
+[pipelines.ops_review]
+trigger.event = "ops.created"
+
+[[pipelines.ops_review.steps]]
+id = "audit"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-995",
+			Ticket:    "SQU-995",
+			Target:    "worker",
+			Kickoff:   "pipeline events",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-995",
+			CreatedAt: base,
+			UpdatedAt: base,
+		},
+		{
+			ID:        "squ-996",
+			Ticket:    "SQU-996",
+			Target:    "worker",
+			Kickoff:   "foreign pipeline",
+			Pipeline:  "ops_review",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-996",
+			CreatedAt: base,
+			UpdatedAt: base,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager-squ-995", Job: "squ-995", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: base},
+		{Instance: "worker-squ-995", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusStopped, PID: os.Getpid(), Workspace: root, StartedAt: base.Add(2 * time.Minute), StoppedAt: base.Add(4 * time.Minute)},
+		{Instance: "worker-squ-996", Job: "squ-996", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusStopped, PID: os.Getpid(), Workspace: root, StartedAt: base.Add(time.Minute), StoppedAt: base.Add(time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(daemonRoot, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	for _, ev := range []*daemon.LifecycleEvent{
+		{TS: base, Action: "start", Instance: "manager-squ-995", Agent: "manager", Status: daemon.StatusRunning, Message: "manager up"},
+		{TS: base.Add(time.Minute), Action: "stop", Instance: "worker-squ-996", Agent: "worker", Status: daemon.StatusStopped, Message: "foreign stop"},
+		{TS: base.Add(2 * time.Minute), Action: "dispatch", Instance: "worker-squ-995", Agent: "worker", Status: daemon.StatusRunning, Message: "pipeline worker"},
+		{TS: base.Add(4 * time.Minute), Action: "stop", Instance: "worker-squ-995", Agent: "worker", Status: daemon.StatusStopped, Message: "pipeline done"},
+	} {
+		if err := daemon.AppendLifecycleEvent(daemonRoot, ev); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+
+	list := NewRootCmd()
+	listOut, listErr := &bytes.Buffer{}, &bytes.Buffer{}
+	list.SetOut(listOut)
+	list.SetErr(listErr)
+	list.SetArgs([]string{"pipeline", "events", "ticket_to_pr", "--repo", root, "--json"})
+	if err := list.Execute(); err != nil {
+		t.Fatalf("pipeline events json: %v\nstderr=%s", err, listErr.String())
+	}
+	events := decodeLifecycleEventJSONL(t, listOut.String())
+	if got := lifecycleEventInstances(events); strings.Join(got, ",") != "manager-squ-995,worker-squ-995,worker-squ-995" {
+		t.Fatalf("pipeline events instances = %v\nbody=%s", got, listOut.String())
+	}
+	if strings.Contains(listOut.String(), "foreign stop") {
+		t.Fatalf("pipeline events leaked unrelated event:\n%s", listOut.String())
+	}
+
+	formatted := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatted.SetOut(formatOut)
+	formatted.SetErr(formatErr)
+	formatted.SetArgs([]string{"pipeline", "events", "ticket_to_pr", "--repo", root, "--tail", "1", "--format", "{{.Instance}} {{.Action}}"})
+	if err := formatted.Execute(); err != nil {
+		t.Fatalf("pipeline events format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if got := strings.TrimSpace(formatOut.String()); got != "worker-squ-995 stop" {
+		t.Fatalf("pipeline events tail format = %q", got)
+	}
+
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"pipeline", "events", "ticket_to_pr", "--repo", root, "--summary", "--action", "stop", "--json"})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("pipeline events summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var eventSummary eventSummaryJSON
+	if err := json.Unmarshal(summaryOut.Bytes(), &eventSummary); err != nil {
+		t.Fatalf("decode pipeline events summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if eventSummary.Total != 1 || eventSummary.Actions["stop"] != 1 || eventSummary.Instances["worker-squ-995"] != 1 {
+		t.Fatalf("pipeline events summary = %+v", eventSummary)
+	}
+
+	codex := NewRootCmd()
+	codexOut, codexErr := &bytes.Buffer{}, &bytes.Buffer{}
+	codex.SetOut(codexOut)
+	codex.SetErr(codexErr)
+	codex.SetArgs([]string{"pipeline", "events", "ticket_to_pr", "--repo", root, "--runtime", "codex", "--json"})
+	if err := codex.Execute(); err != nil {
+		t.Fatalf("pipeline events runtime: %v\nstderr=%s", err, codexErr.String())
+	}
+	events = decodeLifecycleEventJSONL(t, codexOut.String())
+	if got := lifecycleEventInstances(events); strings.Join(got, ",") != "worker-squ-995,worker-squ-995" {
+		t.Fatalf("pipeline events runtime instances = %v\nbody=%s", got, codexOut.String())
+	}
+	if strings.Contains(codexOut.String(), "manager up") || strings.Contains(codexOut.String(), "foreign stop") {
+		t.Fatalf("pipeline events runtime leaked unrelated event:\n%s", codexOut.String())
+	}
+}
+
 func TestPipelinePRGateWaitsForJobPR(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

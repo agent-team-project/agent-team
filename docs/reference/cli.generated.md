@@ -2919,6 +2919,7 @@ Subcommands:
 - `agent-team pipeline approve` - Approve blocked manual pipeline gates.
 - `agent-team pipeline cancel` - Cancel non-terminal pipeline jobs.
 - `agent-team pipeline doctor` - Validate pipeline workflow wiring.
+- `agent-team pipeline events` - Show lifecycle events scoped to one pipeline.
 - `agent-team pipeline explain` - Explain pipeline jobs and step blockers.
 - `agent-team pipeline graph` - Render a declared pipeline step graph.
 - `agent-team pipeline hold` - Hold pipeline jobs so automation will not advance them.
@@ -3033,6 +3034,31 @@ Flags:
       --format string   Render the doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.
       --json            Emit pipeline doctor findings as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team pipeline events`
+
+Show lifecycle events scoped to one pipeline.
+
+Show or follow daemon lifecycle events for daemon-known instances owned by jobs in one declared pipeline.
+
+```text
+agent-team pipeline events <pipeline> [flags]
+```
+
+Flags:
+
+```text
+      --action strings    Only show events with this action. Can repeat or comma-separate.
+  -f, --follow            Keep streaming new lifecycle events.
+      --format string     Render each event with a Go template, e.g. '{{.Action}} {{.Instance}} {{.Status}}'.
+      --json              Emit raw JSONL events.
+      --repo string       Repo root containing .agent_team. (default "<repo>")
+      --runtime strings   Only show pipeline events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --since string      Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
+      --status strings    Only show events with this lifecycle status. Can repeat or comma-separate.
+      --summary           Summarize matching pipeline events by action, status, agent, and instance.
+      --tail int          Show only the last N matching pipeline events before returning or following (0 = all).
 ```
 
 ## `agent-team pipeline explain`
