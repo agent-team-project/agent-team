@@ -2923,6 +2923,7 @@ Subcommands:
 - `agent-team pipeline graph` - Render a declared pipeline step graph.
 - `agent-team pipeline hold` - Hold pipeline jobs so automation will not advance them.
 - `agent-team pipeline jobs` - List jobs for one pipeline.
+- `agent-team pipeline logs` - Show daemon-captured logs for one pipeline.
 - `agent-team pipeline ls` - List declared pipelines.
 - `agent-team pipeline next` - Print recommended next actions for pipeline jobs.
 - `agent-team pipeline ready` - List ready pipeline jobs.
@@ -3129,6 +3130,37 @@ Flags:
       --summary             Show aggregate pipeline job counts instead of job rows.
       --unheld              Only show jobs that are not held.
   -w, --watch               Refresh pipeline jobs until interrupted.
+```
+
+## `agent-team pipeline logs`
+
+Show daemon-captured logs for one pipeline.
+
+```text
+agent-team pipeline logs <pipeline> [flags]
+```
+
+Flags:
+
+```text
+      --clean             Hide known Codex runtime diagnostic noise when printing raw pipeline logs.
+  -f, --follow            Tail selected pipeline logs.
+      --format string     With --list, render each log stream with a Go template, e.g. '{{.Instance}} {{.LogPath}}'.
+      --grep string       Only print log lines matching this regular expression. One-shot reads only.
+      --json              Emit machine-readable JSON with --list.
+  -n, --last int          Show logs for the N most recently started pipeline instances (0 = all).
+      --last-message      Show clean final Codex response sidecars instead of raw runtime logs.
+      --latest            Show the most recently started pipeline instance log.
+      --list              List pipeline log streams instead of printing log content.
+      --no-prefix         Do not prefix lines when streaming multiple pipeline logs.
+      --phase strings     Only show logs for work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
+      --repo string       Repo root containing .agent_team. (default "<repo>")
+      --runtime strings   Only show logs for pipeline-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --since string      Only include log streams modified since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
+      --stale             Only show logs for pipeline instances whose status.toml is stale.
+      --status strings    Only show logs for lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
+      --tail string       Show only the last N lines before returning or following (0 or all = all). (default "0")
+      --unhealthy         Only show logs for crashed or stale pipeline instances.
 ```
 
 ## `agent-team pipeline ls`

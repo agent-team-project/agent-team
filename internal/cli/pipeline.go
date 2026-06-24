@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -45,6 +46,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineCancelCmd())
 	cmd.AddCommand(newPipelineResumePlanCmd())
 	cmd.AddCommand(newPipelineSendCmd())
+	cmd.AddCommand(newPipelineLogsCmd())
 	cmd.AddCommand(newPipelineRetryCmd())
 	cmd.AddCommand(newPipelineTimeoutCmd())
 	cmd.AddCommand(newPipelineRunCmd())
@@ -1259,6 +1261,176 @@ func newPipelineSendCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching recipients without appending mailbox messages.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each send result with a Go template, e.g. '{{.To}} {{.ID}}'.")
+	return cmd
+}
+
+func newPipelineLogsCmd() *cobra.Command {
+	var (
+		repo      string
+		follow    bool
+		latest    bool
+		last      int
+		list      bool
+		jsonOut   bool
+		noPrefix  bool
+		statuses  []string
+		runtimes  []string
+		phases    []string
+		staleOnly bool
+		unhealthy bool
+		lastMsg   bool
+		clean     bool
+		tail      string
+		since     string
+		grep      string
+		format    string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "logs <pipeline>",
+		Short: "Show daemon-captured logs for one pipeline.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if latest && last > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: choose one of --latest or --last.")
+				return exitErr(2)
+			}
+			if last < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --last must be >= 0.")
+				return exitErr(2)
+			}
+			if jsonOut && !list {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --json requires --list.")
+				return exitErr(2)
+			}
+			if format != "" && !list {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --format requires --list.")
+				return exitErr(2)
+			}
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if list && (follow || cmd.Flags().Changed("tail")) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --list cannot be combined with --follow or --tail.")
+				return exitErr(2)
+			}
+			if lastMsg {
+				if follow {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --last-message cannot be combined with --follow.")
+					return exitErr(2)
+				}
+				if list {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --last-message cannot be combined with --list.")
+					return exitErr(2)
+				}
+				if jsonOut {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --last-message cannot be combined with --json.")
+					return exitErr(2)
+				}
+				if format != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --last-message cannot be combined with --format.")
+					return exitErr(2)
+				}
+				if cmd.Flags().Changed("tail") {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --last-message cannot be combined with --tail.")
+					return exitErr(2)
+				}
+				if strings.TrimSpace(since) != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --last-message cannot be combined with --since.")
+					return exitErr(2)
+				}
+				if strings.TrimSpace(grep) != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --last-message cannot be combined with --grep.")
+					return exitErr(2)
+				}
+				if clean {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --last-message cannot be combined with --clean.")
+					return exitErr(2)
+				}
+			}
+			if clean && list {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --clean cannot be combined with --list.")
+				return exitErr(2)
+			}
+			formatTemplate, err := parseLogListFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline logs: %v\n", err)
+				return exitErr(2)
+			}
+			tailLines, err := parseLogTail(tail)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline logs: %v\n", err)
+				return exitErr(2)
+			}
+			sinceCutoff, err := parseLogSince(since, time.Now)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline logs: %v\n", err)
+				return exitErr(2)
+			}
+			grepPattern, err := parseLogGrep(grep)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline logs: %v\n", err)
+				return exitErr(2)
+			}
+			if sinceCutoff != nil && follow {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --since cannot be combined with --follow because captured logs are not timestamped.")
+				return exitErr(2)
+			}
+			if grepPattern != nil && follow {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --grep cannot be combined with --follow.")
+				return exitErr(2)
+			}
+			if grepPattern != nil && list {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --grep cannot be combined with --list.")
+				return exitErr(2)
+			}
+			listOpts, err := newLogListOptionsWithRuntimeAndUnhealthy(statuses, runtimes, nil, phases, staleOnly, unhealthy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline logs: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			opts := logsOptions{
+				Follow:      follow,
+				Latest:      latest,
+				Limit:       last,
+				List:        list,
+				JSON:        jsonOut,
+				NoPrefix:    noPrefix,
+				Tail:        tailLines,
+				TailSet:     cmd.Flags().Changed("tail"),
+				Since:       sinceCutoff,
+				Grep:        grepPattern,
+				Format:      formatTemplate,
+				Unhealthy:   unhealthy,
+				LastMessage: lastMsg,
+				Clean:       clean,
+			}
+			return runPipelineLogs(cmd, teamDir, args[0], opts, listOpts)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Tail selected pipeline logs.")
+	cmd.Flags().BoolVar(&latest, "latest", false, "Show the most recently started pipeline instance log.")
+	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show logs for the N most recently started pipeline instances (0 = all).")
+	cmd.Flags().BoolVar(&list, "list", false, "List pipeline log streams instead of printing log content.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON with --list.")
+	cmd.Flags().BoolVar(&noPrefix, "no-prefix", false, "Do not prefix lines when streaming multiple pipeline logs.")
+	cmd.Flags().StringSliceVar(&statuses, "status", nil, "Only show logs for lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Only show logs for pipeline-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&phases, "phase", nil, "Only show logs for work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show logs for pipeline instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&unhealthy, "unhealthy", false, "Only show logs for crashed or stale pipeline instances.")
+	cmd.Flags().BoolVar(&lastMsg, "last-message", false, "Show clean final Codex response sidecars instead of raw runtime logs.")
+	cmd.Flags().BoolVar(&clean, "clean", false, "Hide known Codex runtime diagnostic noise when printing raw pipeline logs.")
+	cmd.Flags().StringVar(&tail, "tail", "0", "Show only the last N lines before returning or following (0 or all = all).")
+	cmd.Flags().StringVar(&since, "since", "", "Only include log streams modified since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
+	cmd.Flags().StringVar(&grep, "grep", "", "Only print log lines matching this regular expression. One-shot reads only.")
+	cmd.Flags().StringVar(&format, "format", "", "With --list, render each log stream with a Go template, e.g. '{{.Instance}} {{.LogPath}}'.")
 	return cmd
 }
 
@@ -3017,6 +3189,88 @@ func (c pipelineSendClient) Instances() ([]*daemon.Metadata, error) {
 		return nil, err
 	}
 	return owned.Metadata, nil
+}
+
+func runPipelineLogs(cmd *cobra.Command, teamDir, pipeline string, opts logsOptions, listOpts logListOptions) error {
+	rows, err := collectPipelineLogRows(teamDir, pipeline, listOpts, opts.Since, opts.Limit)
+	if err != nil {
+		return err
+	}
+	if opts.Latest {
+		rows = latestLogListRowsLimit(rows, 1)
+	}
+	if opts.List {
+		if opts.JSON {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(rows)
+		}
+		if opts.Format != nil {
+			return renderLogListFormat(cmd.OutOrStdout(), rows, opts.Format)
+		}
+		renderLogList(cmd.OutOrStdout(), rows)
+		return nil
+	}
+	if len(rows) == 0 {
+		if opts.Since != nil || opts.Grep != nil {
+			fmt.Fprintln(cmd.OutOrStdout(), "(no matching logs)")
+			return nil
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "(no instances)")
+		return nil
+	}
+	if opts.LastMessage {
+		if len(rows) == 1 {
+			return streamSelectedLastMessageWithPrefix(cmd, teamDir, rows[0], "agent-team pipeline logs")
+		}
+		return streamLastMessageRows(cmd.OutOrStdout(), teamDir, rows, !opts.NoPrefix)
+	}
+	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	defer cancel()
+	if len(rows) == 1 {
+		if opts.Follow {
+			if err := streamLocalLog(ctx, cmd.OutOrStdout(), rows[0].path, true, opts.Tail, nil, opts.Clean); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline logs: log not found at %s.\n", rows[0].LogPath)
+					return exitErr(1)
+				}
+				return err
+			}
+			return nil
+		}
+		if err := streamLogRowOnce(ctx, cmd.OutOrStdout(), rows[0], opts); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline logs: log not found at %s.\n", rows[0].LogPath)
+				return exitErr(1)
+			}
+			return err
+		}
+		return nil
+	}
+	if opts.Follow {
+		return streamLocalLogRowsFollow(ctx, cmd.OutOrStdout(), rows, opts.Tail, !opts.NoPrefix, opts.Clean)
+	}
+	return streamLocalLogRowsOnce(ctx, cmd.OutOrStdout(), rows, opts.Tail, !opts.NoPrefix, opts.Grep, opts.Clean)
+}
+
+func collectPipelineLogRows(teamDir, pipeline string, opts logListOptions, since *time.Time, limit int) ([]logListRow, error) {
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return nil, err
+	}
+	owned, err := collectPipelineOwnedMetadata(teamDir, pipeline, metas)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := logListRowsFromMetadata(teamDir, owned.Metadata)
+	if err != nil {
+		return nil, err
+	}
+	rows = filterLogListRows(rows, opts)
+	rows = filterLogListRowsSince(rows, since)
+	rows = latestLogListRowsLimit(rows, limit)
+	if rows == nil {
+		return []logListRow{}, nil
+	}
+	return rows, nil
 }
 
 func holdStateSelected(state string, stateFilter map[string]bool, stateDefault bool) bool {

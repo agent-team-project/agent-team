@@ -3176,6 +3176,161 @@ target = "worker"
 	}
 }
 
+func TestPipelineLogsScopesRowsAndStreams(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+
+[pipelines.ops_review]
+trigger.event = "ops.created"
+
+[[pipelines.ops_review.steps]]
+id = "audit"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-980",
+			Ticket:    "SQU-980",
+			Target:    "worker",
+			Kickoff:   "pipeline logs",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-980",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "squ-981",
+			Ticket:    "SQU-981",
+			Target:    "worker",
+			Kickoff:   "foreign pipeline",
+			Pipeline:  "ops_review",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-981",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager-squ-980", Job: "squ-980", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(time.Minute)},
+		{Instance: "worker-squ-980", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(2 * time.Minute)},
+		{Instance: "worker-squ-981", Job: "squ-981", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(3 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(daemonRoot, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	writeChildLogForTest(t, daemonRoot, "manager-squ-980", "manager first\nmanager latest\n")
+	writeChildLogForTest(t, daemonRoot, "worker-squ-980", "worker first\nworker latest\n")
+	writeChildLogForTest(t, daemonRoot, "worker-squ-981", "foreign first\nforeign latest\n")
+	writeLastMessageForTest(t, teamDir, "manager-squ-980", "manager final")
+	writeLastMessageForTest(t, teamDir, "worker-squ-980", "worker final")
+	writeLastMessageForTest(t, teamDir, "worker-squ-981", "foreign final")
+
+	list := NewRootCmd()
+	listOut, listErr := &bytes.Buffer{}, &bytes.Buffer{}
+	list.SetOut(listOut)
+	list.SetErr(listErr)
+	list.SetArgs([]string{"pipeline", "logs", "ticket_to_pr", "--repo", root, "--list", "--json"})
+	if err := list.Execute(); err != nil {
+		t.Fatalf("pipeline logs list: %v\nstderr=%s", err, listErr.String())
+	}
+	var rows []logListRow
+	if err := json.Unmarshal(listOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline logs list: %v\nbody=%s", err, listOut.String())
+	}
+	if got := logRowInstances(rows); strings.Join(got, ",") != "manager-squ-980,worker-squ-980" {
+		t.Fatalf("pipeline log rows = %v", got)
+	}
+
+	codexList := NewRootCmd()
+	codexListOut, codexListErr := &bytes.Buffer{}, &bytes.Buffer{}
+	codexList.SetOut(codexListOut)
+	codexList.SetErr(codexListErr)
+	codexList.SetArgs([]string{"pipeline", "logs", "ticket_to_pr", "--repo", root, "--runtime", "codex", "--list", "--json"})
+	if err := codexList.Execute(); err != nil {
+		t.Fatalf("pipeline logs runtime list: %v\nstderr=%s", err, codexListErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(codexListOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline runtime logs list: %v\nbody=%s", err, codexListOut.String())
+	}
+	if got := logRowInstances(rows); strings.Join(got, ",") != "worker-squ-980" {
+		t.Fatalf("pipeline runtime log rows = %v", got)
+	}
+
+	logs := NewRootCmd()
+	logsOut, logsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	logs.SetOut(logsOut)
+	logs.SetErr(logsErr)
+	logs.SetArgs([]string{"pipeline", "logs", "ticket_to_pr", "--repo", root, "--tail", "1"})
+	if err := logs.Execute(); err != nil {
+		t.Fatalf("pipeline logs: %v\nstderr=%s", err, logsErr.String())
+	}
+	body := logsOut.String()
+	for _, want := range []string{"manager-squ-980      | manager latest", "worker-squ-980       | worker latest"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("pipeline logs missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "foreign latest") {
+		t.Fatalf("pipeline logs leaked unrelated content:\n%s", body)
+	}
+
+	runtimeLogs := NewRootCmd()
+	runtimeLogsOut, runtimeLogsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeLogs.SetOut(runtimeLogsOut)
+	runtimeLogs.SetErr(runtimeLogsErr)
+	runtimeLogs.SetArgs([]string{"pipeline", "logs", "ticket_to_pr", "--repo", root, "--runtime", "codex", "--tail", "1"})
+	if err := runtimeLogs.Execute(); err != nil {
+		t.Fatalf("pipeline logs runtime: %v\nstderr=%s", err, runtimeLogsErr.String())
+	}
+	if got := runtimeLogsOut.String(); got != "worker latest\n" {
+		t.Fatalf("pipeline logs runtime = %q", got)
+	}
+
+	lastMessages := NewRootCmd()
+	lastOut, lastErr := &bytes.Buffer{}, &bytes.Buffer{}
+	lastMessages.SetOut(lastOut)
+	lastMessages.SetErr(lastErr)
+	lastMessages.SetArgs([]string{"pipeline", "logs", "ticket_to_pr", "--repo", root, "--last-message"})
+	if err := lastMessages.Execute(); err != nil {
+		t.Fatalf("pipeline logs last-message: %v\nstderr=%s", err, lastErr.String())
+	}
+	lastBody := lastOut.String()
+	for _, want := range []string{"manager-squ-980      | manager final", "worker-squ-980       | worker final"} {
+		if !strings.Contains(lastBody, want) {
+			t.Fatalf("pipeline last-message missing %q:\n%s", want, lastBody)
+		}
+	}
+	if strings.Contains(lastBody, "foreign final") {
+		t.Fatalf("pipeline last-message leaked unrelated content:\n%s", lastBody)
+	}
+}
+
 func TestPipelinePRGateWaitsForJobPR(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
