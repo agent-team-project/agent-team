@@ -1973,6 +1973,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		"stale_running",
 		"running_without_instance",
 		"agent-team job reconcile status",
+		"agent-team job adopt squ-202 --instance <name> --pid <pid> --dry-run",
 		"squ-203",
 		"stale_queued",
 		"agent-team job dispatch squ-203",
@@ -2026,6 +2027,9 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	}
 	if !containsString(actions["squ-201"], "agent-team job retry squ-201 --dispatch") {
 		t.Fatalf("squ-201 actions = %v", actions["squ-201"])
+	}
+	if !containsString(actions["squ-202"], "agent-team job adopt squ-202 --instance <name> --pid <pid> --dry-run") {
+		t.Fatalf("squ-202 actions = %v", actions["squ-202"])
 	}
 	if !containsString(reasons["squ-206"], "cleanup_ready") {
 		t.Fatalf("squ-206 reasons = %v", reasons["squ-206"])
