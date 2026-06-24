@@ -2489,18 +2489,20 @@ Flags:
 
 Mark stale running job work failed.
 
-Mark or preview stale running work for one durable job. Pipeline steps use their step timeout first, then [health].job_stale_after. A step-less running job uses [health].job_stale_after.
+Mark or preview stale running work for one durable job, or across all jobs with --all. Pipeline steps use their step timeout first, then [health].job_stale_after. A step-less running job uses [health].job_stale_after.
 
 ```text
-agent-team job timeout <job-id> [flags]
+agent-team job timeout <job-id>|--all [flags]
 ```
 
 Flags:
 
 ```text
-      --dry-run          Preview stale-step failure without writing job state.
+      --all              Mark stale running work across all jobs.
+      --dry-run          Preview stale-work failure without writing job state.
       --format string    Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
       --json             Emit timeout results as JSON.
+      --limit int        With --all, mark at most this many stale running jobs or steps failed; 0 means no limit.
       --message string   Status message recorded on the timed-out job.
       --repo string      Repo root containing .agent_team. (default "<repo>")
       --step string      Mark only a stale running step with this id failed.

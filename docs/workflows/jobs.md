@@ -217,12 +217,15 @@ For pipeline jobs it resets the first failed step whose dependencies are satisfi
 agent-team job timeout squ-42 --dry-run
 agent-team job timeout squ-42 --message "worker exceeded stage timeout"
 agent-team job timeout squ-42 --step implement --dry-run
+agent-team job timeout --all --dry-run
+agent-team job timeout --all --limit 5 --message "maintenance timeout sweep"
 ```
 
 Use `job timeout` after reconciling status when a running job or running
 pipeline step is still stale. The command marks only stale running work failed:
 pipeline steps use their step `timeout` first, then `[health].job_stale_after`;
-step-less jobs use `[health].job_stale_after`. It does not stop a process.
+step-less jobs use `[health].job_stale_after`. Use `--all` for a direct batch
+sweep; add `--limit` for bounded operator passes. It does not stop a process.
 Use `job stop`, `job kill`, or `job cancel --stop/--kill` when instance
 lifecycle control should happen in the same operator pass.
 

@@ -2325,19 +2325,33 @@ func newJobTimeoutCmd() *cobra.Command {
 		repo    string
 		step    string
 		message string
+		all     bool
+		limit   int
 		dryRun  bool
 		jsonOut bool
 		format  string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "timeout <job-id>",
+		Use:   "timeout <job-id>|--all",
 		Short: "Mark stale running job work failed.",
-		Long: "Mark or preview stale running work for one durable job. " +
+		Long: "Mark or preview stale running work for one durable job, or across all jobs with --all. " +
 			"Pipeline steps use their step timeout first, then [health].job_stale_after. " +
 			"A step-less running job uses [health].job_stale_after.",
-		Args: cobra.ExactArgs(1),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: --all cannot be combined with a job id.")
+				return exitErr(2)
+			}
+			if !all && len(args) != 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: pass a job id or --all.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -2347,16 +2361,7 @@ func newJobTimeoutCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeout: %v\n", err)
 				return exitErr(2)
 			}
-			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
-			if err != nil {
-				return err
-			}
-			staleAfter, err := configuredJobTriageStaleAfter(teamDir)
-			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeout: %v\n", err)
-				return exitErr(2)
-			}
-			results, err := timeoutStaleJobWork(teamDir, []*job.Job{j}, step, message, 0, dryRun, time.Now().UTC(), staleAfter)
+			results, err := runJobTimeoutCommand(cmd, repo, args, all, step, message, limit, dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeout: %v\n", err)
 				return exitErr(1)
@@ -2367,10 +2372,31 @@ func newJobTimeoutCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&step, "step", "", "Mark only a stale running step with this id failed.")
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on the timed-out job.")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview stale-step failure without writing job state.")
+	cmd.Flags().BoolVar(&all, "all", false, "Mark stale running work across all jobs.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, mark at most this many stale running jobs or steps failed; 0 means no limit.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview stale-work failure without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit timeout results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd
+}
+
+func runJobTimeoutCommand(cmd *cobra.Command, repo string, args []string, all bool, step, message string, limit int, dryRun bool) ([]pipelineTimeoutResult, error) {
+	if all {
+		teamDir, err := resolveTeamDir(cmd, repo)
+		if err != nil {
+			return nil, err
+		}
+		return timeoutAllStaleJobWork(teamDir, step, message, limit, dryRun)
+	}
+	teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
+	if err != nil {
+		return nil, err
+	}
+	staleAfter, err := configuredJobTriageStaleAfter(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	return timeoutStaleJobWork(teamDir, []*job.Job{j}, step, message, 0, dryRun, time.Now().UTC(), staleAfter)
 }
 
 func timeoutAllStaleJobWork(teamDir, stepFilter, message string, limit int, dryRun bool) ([]pipelineTimeoutResult, error) {

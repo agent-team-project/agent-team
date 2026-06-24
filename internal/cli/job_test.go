@@ -2366,6 +2366,152 @@ func TestJobTimeoutMarksStaleRunningStepsAndJobs(t *testing.T) {
 	}
 }
 
+func TestJobTimeoutAllMarksStaleRunningWork(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-842",
+			Ticket:    "SQU-842",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-2 * time.Hour),
+			UpdatedAt: now.Add(-90 * time.Minute),
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-842", StartedAt: now.Add(-90 * time.Minute), Timeout: "1h0m0s"},
+			},
+		},
+		{
+			ID:        "squ-843",
+			Ticket:    "SQU-843",
+			Target:    "worker",
+			Instance:  "worker-squ-843",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-48 * time.Hour),
+			UpdatedAt: now.Add(-48 * time.Hour),
+		},
+		{
+			ID:        "squ-844",
+			Ticket:    "SQU-844",
+			Target:    "worker",
+			Instance:  "worker-squ-844",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-30 * time.Minute),
+			UpdatedAt: now.Add(-30 * time.Minute),
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	limited := NewRootCmd()
+	limitedOut, limitedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	limited.SetOut(limitedOut)
+	limited.SetErr(limitedErr)
+	limited.SetArgs([]string{"job", "timeout", "--all", "--repo", root, "--dry-run", "--limit", "1", "--json"})
+	if err := limited.Execute(); err != nil {
+		t.Fatalf("job timeout --all limited dry-run: %v\nstderr=%s", err, limitedErr.String())
+	}
+	var limitedRows []pipelineTimeoutResult
+	if err := json.Unmarshal(limitedOut.Bytes(), &limitedRows); err != nil {
+		t.Fatalf("decode limited dry-run: %v\nbody=%s", err, limitedOut.String())
+	}
+	if len(limitedRows) != 1 || limitedRows[0].Action != "would_fail" {
+		t.Fatalf("limited rows = %+v", limitedRows)
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"job", "timeout", "--all", "--repo", root, "--message", "batch timeout", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("job timeout --all apply: %v\nstderr=%s", err, applyErr.String())
+	}
+	var rows []pipelineTimeoutResult
+	if err := json.Unmarshal(applyOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode apply: %v\nbody=%s", err, applyOut.String())
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	stepJob, err := job.Read(teamDir, "squ-842")
+	if err != nil {
+		t.Fatalf("read step job: %v", err)
+	}
+	if stepJob.Status != job.StatusFailed || stepJob.Steps[0].Status != job.StatusFailed || stepJob.Steps[0].Instance != "" || stepJob.LastStatus != "batch timeout" {
+		t.Fatalf("step job = %+v", stepJob)
+	}
+	lifecycleJob, err := job.Read(teamDir, "squ-843")
+	if err != nil {
+		t.Fatalf("read lifecycle job: %v", err)
+	}
+	if lifecycleJob.Status != job.StatusFailed || lifecycleJob.Instance != "worker-squ-843" || lifecycleJob.LastEvent != "job_timeout" || lifecycleJob.LastStatus != "batch timeout" {
+		t.Fatalf("lifecycle job = %+v", lifecycleJob)
+	}
+	fresh, err := job.Read(teamDir, "squ-844")
+	if err != nil {
+		t.Fatalf("read fresh job: %v", err)
+	}
+	if fresh.Status != job.StatusRunning || fresh.Instance != "worker-squ-844" {
+		t.Fatalf("fresh job changed = %+v", fresh)
+	}
+}
+
+func TestJobTimeoutRejectsInvalidArgs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "missing target",
+			args: []string{"job", "timeout"},
+			want: "pass a job id or --all",
+		},
+		{
+			name: "all with job id",
+			args: []string{"job", "timeout", "squ-1", "--all"},
+			want: "--all cannot be combined with a job id",
+		},
+		{
+			name: "negative limit",
+			args: []string{"job", "timeout", "--all", "--limit", "-1"},
+			want: "--limit must be >= 0",
+		},
+		{
+			name: "format with json",
+			args: []string{"job", "timeout", "squ-1", "--json", "--format", "{{.JobID}}"},
+			want: "--format cannot be combined with --json",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("job timeout invalid args succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("job timeout err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestJobTriageIncludesBlockedStatusPreview(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
