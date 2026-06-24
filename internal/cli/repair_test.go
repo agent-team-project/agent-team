@@ -580,6 +580,105 @@ func TestRepairRetryPipelinesDispatchesAndAudits(t *testing.T) {
 	stopAndWaitForTest(t, mgr, "worker-squ-124-implement")
 }
 
+func TestRepairTimeoutPipelinesMarksStaleRunningSteps(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+timeout = "1h"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	stale := &job.Job{
+		ID:        "squ-820",
+		Ticket:    "SQU-820",
+		Target:    "worker",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		CreatedAt: now.Add(-2 * time.Hour),
+		UpdatedAt: now.Add(-90 * time.Minute),
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-820", StartedAt: now.Add(-90 * time.Minute), Timeout: "1h0m0s"},
+		},
+	}
+	if err := job.Write(teamDir, stale); err != nil {
+		t.Fatalf("write stale job: %v", err)
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{
+		"repair",
+		"--target", root,
+		"--dry-run",
+		"--timeout-pipelines",
+		"--skip-daemon",
+		"--skip-queue",
+		"--skip-tick",
+		"--json",
+	})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("repair timeout dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryResult repairResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryResult); err != nil {
+		t.Fatalf("decode dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if dryResult.PipelineTimeout.Action != "would_fail" || len(dryResult.PipelineTimeout.Results) != 1 || dryResult.PipelineTimeout.Results[0].JobID != "squ-820" {
+		t.Fatalf("dry pipeline timeout = %+v", dryResult.PipelineTimeout)
+	}
+	unchanged, err := job.Read(teamDir, "squ-820")
+	if err != nil {
+		t.Fatalf("read unchanged job: %v", err)
+	}
+	if unchanged.Status != job.StatusRunning || unchanged.Steps[0].Status != job.StatusRunning || unchanged.Steps[0].Instance != "worker-squ-820" {
+		t.Fatalf("dry-run mutated job = %+v", unchanged)
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{
+		"repair",
+		"--target", root,
+		"--timeout-pipelines",
+		"--timeout-message", "repair timeout approved",
+		"--skip-daemon",
+		"--skip-queue",
+		"--skip-tick",
+		"--json",
+	})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("repair timeout apply: %v\nstderr=%s", err, applyErr.String())
+	}
+	var result repairResult
+	if err := json.Unmarshal(applyOut.Bytes(), &result); err != nil {
+		t.Fatalf("decode apply: %v\nbody=%s", err, applyOut.String())
+	}
+	if result.PipelineTimeout.Action != "timed_out" || len(result.PipelineTimeout.Results) != 1 {
+		t.Fatalf("apply pipeline timeout = %+v", result.PipelineTimeout)
+	}
+	updated, err := job.Read(teamDir, "squ-820")
+	if err != nil {
+		t.Fatalf("read updated job: %v", err)
+	}
+	if updated.Status != job.StatusFailed || updated.Steps[0].Status != job.StatusFailed || updated.Steps[0].Instance != "" || updated.LastStatus != "repair timeout approved" {
+		t.Fatalf("updated job = %+v", updated)
+	}
+}
+
 func TestRepairRetryPipelinesStepFilter(t *testing.T) {
 	target, _, cleanup := setupDispatchCommandRepo(t)
 	defer cleanup()

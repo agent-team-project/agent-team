@@ -3705,6 +3705,9 @@ Flags:
       --skip-queue               Do not retry dead-letter queue items.
       --skip-tick                Do not run a maintenance tick after queue retry.
       --target string            Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --timeout-message string   Audit message to record when --timeout-pipelines marks stale steps failed.
+      --timeout-pipelines        Mark stale running pipeline steps failed before retrying failed pipeline steps.
+      --timeout-step string      With --timeout-pipelines, mark only stale running steps with this id failed.
       --until-idle               Run maintenance ticks until no immediate queue, schedule, or pipeline work remains.
       --workspace string         Workspace mode for retried or advanced pipeline steps: auto, worktree, or repo. (default "auto")
 ```
@@ -5224,6 +5227,9 @@ Flags:
       --skip-daemon              Do not start or reconcile the daemon.
       --skip-queue               Do not retry team-owned dead-letter queue items.
       --skip-tick                Do not run a scoped team tick after queue retry.
+      --timeout-message string   Audit message to record when --timeout-pipelines marks stale team steps failed.
+      --timeout-pipelines        Mark stale running team pipeline steps failed before retrying failed pipeline steps.
+      --timeout-step string      With --timeout-pipelines, mark only stale running team steps with this id failed.
       --until-idle               Run scoped team ticks until no immediate team queue, schedule, or pipeline work remains.
       --workspace string         Workspace mode for retried or advanced team pipeline steps: auto, worktree, or repo. (default "auto")
 ```

@@ -73,6 +73,7 @@ agent-team pipeline retry ticket_to_pr --step review --dry-run
 agent-team pipeline retry ticket_to_pr --dispatch --dry-run --preview-routes
 agent-team repair --retry-pipelines --dry-run --preview-routes
 agent-team repair --all-ready-steps --dry-run --preview-routes
+agent-team repair --timeout-pipelines --dry-run
 agent-team repair --retry-pipelines --retry-step review --dry-run --preview-routes
 ```
 
@@ -113,7 +114,7 @@ When a step waits on a manual gate, `agent-team pipeline approve <pipeline>` mar
 If an event-triggered pipeline starts with a manual or PR-gated step, the daemon creates the job and returns a `blocked` event outcome instead of spawning an agent. Use `job next`, `job explain`, or the scoped `pipeline ready --state blocked` view to see the approval or metadata action.
 When a step fails, `agent-team pipeline retry <pipeline>` resets retryable failed steps to a blocked-but-ready state so the next `pipeline advance`, `team advance`, or `tick` can dispatch another attempt. Add `--step <id>` to target one failed stage, add `--dispatch` to retry and dispatch in one command, use `--dry-run --preview-routes` before a batch retry to inspect the resolved routes and payloads, and pass `--message` to record why the retry happened.
 Pipeline and team-scoped dispatch commands accept `--runtime` and `--runtime-bin` for one-off Claude/Codex selection; the selected runtime is stored in the dispatch payload so queued or delayed starts keep the same intent.
-Pipeline status also flags `stale_running_steps` when a running step has exceeded its step `timeout`, or the repo job stale threshold (`[health].job_stale_after`, default 24h) when no step timeout is declared. Start recovery with `agent-team job reconcile events --dry-run` so finished or crashed runtime metadata can update the job. If the step is still running after reconciliation, use `agent-team pipeline timeout <pipeline> --dry-run` to preview marking stale steps failed, then `pipeline retry` when another attempt should run.
+Pipeline status also flags `stale_running_steps` when a running step has exceeded its step `timeout`, or the repo job stale threshold (`[health].job_stale_after`, default 24h) when no step timeout is declared. Start recovery with `agent-team job reconcile events --dry-run` so finished or crashed runtime metadata can update the job. If the step is still running after reconciliation, use `agent-team pipeline timeout <pipeline> --dry-run` to preview marking stale steps failed, then `pipeline retry` when another attempt should run. For broader maintenance, `agent-team repair --timeout-pipelines --retry-pipelines --dry-run --preview-routes` previews the timeout and retry phases in one repair report.
 By default, `pipeline advance` dispatches one ready step per job. Use `pipeline advance <pipeline> --all-ready-steps` when a job has multiple currently ready independent steps and you want to fan them out in one command. Dependency checks still use the job file: a downstream step waits until all of its `after` steps are marked done, or failed with `optional = true`.
 Use `agent-team team approve <team>` for the same manual-gate approval flow scoped to one team's declared pipelines.
 Use `agent-team team retry <team>` for the same recovery flow scoped to one team's declared pipelines.
@@ -163,6 +164,7 @@ agent-team team tick delivery --dry-run
 agent-team team tick delivery --all-ready-steps --dry-run
 agent-team team repair delivery --dry-run --jobs
 agent-team team repair delivery --all-ready-steps --dry-run --preview-routes
+agent-team team repair delivery --timeout-pipelines --dry-run
 agent-team team repair delivery --retry-pipelines --dry-run --preview-routes
 agent-team team repair delivery --retry-pipelines --retry-step review --dry-run --preview-routes
 agent-team team drain delivery --all-ready-steps

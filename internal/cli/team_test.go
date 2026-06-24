@@ -1391,6 +1391,108 @@ pipelines = ["ticket_to_pr"]
 	}
 }
 
+func TestTeamRepairTimeoutPipelinesScopesToTeam(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+timeout = "1h"
+
+[pipelines.other]
+trigger.event = "ticket.created"
+trigger.match.project = "Other"
+
+[[pipelines.other.steps]]
+id = "implement"
+target = "worker"
+timeout = "1h"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-830",
+			Ticket:    "SQU-830",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-2 * time.Hour),
+			UpdatedAt: now.Add(-90 * time.Minute),
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-830", StartedAt: now.Add(-90 * time.Minute), Timeout: "1h0m0s"},
+			},
+		},
+		{
+			ID:        "oth-830",
+			Ticket:    "OTH-830",
+			Target:    "worker",
+			Pipeline:  "other",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-2 * time.Hour),
+			UpdatedAt: now.Add(-90 * time.Minute),
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-oth-830", StartedAt: now.Add(-90 * time.Minute), Timeout: "1h0m0s"},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"team", "repair", "delivery",
+		"--repo", root,
+		"--timeout-pipelines",
+		"--timeout-message", "team repair timeout approved",
+		"--skip-daemon",
+		"--skip-queue",
+		"--skip-tick",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team repair timeout: %v\nstderr=%s", err, stderr.String())
+	}
+	var result teamRepairResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode team repair timeout: %v\nbody=%s", err, out.String())
+	}
+	if result.PipelineTimeout.Action != "timed_out" || len(result.PipelineTimeout.Results) != 1 || result.PipelineTimeout.Results[0].JobID != "squ-830" {
+		t.Fatalf("team repair timeout = %+v", result.PipelineTimeout)
+	}
+	owned, err := job.Read(teamDir, "squ-830")
+	if err != nil {
+		t.Fatalf("read owned job: %v", err)
+	}
+	if owned.Status != job.StatusFailed || owned.LastStatus != "team repair timeout approved" || owned.Steps[0].Instance != "" {
+		t.Fatalf("owned job = %+v", owned)
+	}
+	unowned, err := job.Read(teamDir, "oth-830")
+	if err != nil {
+		t.Fatalf("read unowned job: %v", err)
+	}
+	if unowned.Status != job.StatusRunning || unowned.Steps[0].Status != job.StatusRunning || unowned.Steps[0].Instance != "worker-oth-830" {
+		t.Fatalf("unowned job changed: %+v", unowned)
+	}
+}
+
 func TestTeamApproveManualGateScopesToTeam(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

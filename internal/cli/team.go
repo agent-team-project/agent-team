@@ -3493,25 +3493,28 @@ func newTeamDrainCmd() *cobra.Command {
 
 func newTeamRepairCmd() *cobra.Command {
 	var (
-		repo           string
-		workspace      string
-		limit          int
-		dryRun         bool
-		previewRoutes  bool
-		jsonOut        bool
-		format         string
-		skipDaemon     bool
-		skipQueue      bool
-		skipTick       bool
-		includeJobs    bool
-		retryPipelines bool
-		allReadySteps  bool
-		retryStep      string
-		retryMessage   string
-		untilIdle      bool
-		readyTimeout   time.Duration
-		interval       time.Duration
-		maxCycles      int
+		repo             string
+		workspace        string
+		limit            int
+		dryRun           bool
+		previewRoutes    bool
+		jsonOut          bool
+		format           string
+		skipDaemon       bool
+		skipQueue        bool
+		skipTick         bool
+		includeJobs      bool
+		timeoutPipelines bool
+		retryPipelines   bool
+		allReadySteps    bool
+		timeoutStep      string
+		timeoutMessage   string
+		retryStep        string
+		retryMessage     string
+		untilIdle        bool
+		readyTimeout     time.Duration
+		interval         time.Duration
+		maxCycles        int
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -3557,6 +3560,14 @@ func newTeamRepairCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --retry-pipelines requires daemon access unless --dry-run is set.")
 				return exitErr(2)
 			}
+			if strings.TrimSpace(timeoutMessage) != "" && !timeoutPipelines {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --timeout-message requires --timeout-pipelines.")
+				return exitErr(2)
+			}
+			if strings.TrimSpace(timeoutStep) != "" && !timeoutPipelines {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --timeout-step requires --timeout-pipelines.")
+				return exitErr(2)
+			}
 			if strings.TrimSpace(retryMessage) != "" && !retryPipelines {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --retry-message requires --retry-pipelines.")
 				return exitErr(2)
@@ -3579,22 +3590,25 @@ func newTeamRepairCmd() *cobra.Command {
 				return err
 			}
 			result, err := runTeamRepair(cmd, repo, teamDir, args[0], teamRepairOptions{
-				Workspace:      workspace,
-				Limit:          limit,
-				DryRun:         dryRun,
-				PreviewRoutes:  previewRoutes,
-				SkipDaemon:     skipDaemon,
-				SkipQueue:      skipQueue,
-				SkipTick:       skipTick,
-				IncludeJobs:    includeJobs,
-				RetryPipelines: retryPipelines,
-				AllReadySteps:  allReadySteps,
-				RetryStep:      retryStep,
-				RetryMessage:   retryMessage,
-				UntilIdle:      untilIdle,
-				ReadyTimeout:   readyTimeout,
-				Interval:       interval,
-				MaxCycles:      maxCycles,
+				Workspace:        workspace,
+				Limit:            limit,
+				DryRun:           dryRun,
+				PreviewRoutes:    previewRoutes,
+				SkipDaemon:       skipDaemon,
+				SkipQueue:        skipQueue,
+				SkipTick:         skipTick,
+				IncludeJobs:      includeJobs,
+				TimeoutPipelines: timeoutPipelines,
+				RetryPipelines:   retryPipelines,
+				AllReadySteps:    allReadySteps,
+				TimeoutStep:      timeoutStep,
+				TimeoutMessage:   timeoutMessage,
+				RetryStep:        retryStep,
+				RetryMessage:     retryMessage,
+				UntilIdle:        untilIdle,
+				ReadyTimeout:     readyTimeout,
+				Interval:         interval,
+				MaxCycles:        maxCycles,
 			})
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team repair: %v\n", err)
@@ -3614,8 +3628,11 @@ func newTeamRepairCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipQueue, "skip-queue", false, "Do not retry team-owned dead-letter queue items.")
 	cmd.Flags().BoolVar(&skipTick, "skip-tick", false, "Do not run a scoped team tick after queue retry.")
 	cmd.Flags().BoolVar(&includeJobs, "jobs", false, "Include team-owned durable job and pipeline health.")
+	cmd.Flags().BoolVar(&timeoutPipelines, "timeout-pipelines", false, "Mark stale running team pipeline steps failed before retrying failed pipeline steps.")
 	cmd.Flags().BoolVar(&retryPipelines, "retry-pipelines", false, "Reset failed team pipeline steps and dispatch them before the scoped team tick.")
 	cmd.Flags().BoolVar(&allReadySteps, "all-ready-steps", false, "Advance every currently ready independent team pipeline step during the scoped repair tick.")
+	cmd.Flags().StringVar(&timeoutStep, "timeout-step", "", "With --timeout-pipelines, mark only stale running team steps with this id failed.")
+	cmd.Flags().StringVar(&timeoutMessage, "timeout-message", "", "Audit message to record when --timeout-pipelines marks stale team steps failed.")
 	cmd.Flags().StringVar(&retryStep, "retry-step", "", "With --retry-pipelines, retry only failed team jobs whose next failed step has this id.")
 	cmd.Flags().StringVar(&retryMessage, "retry-message", "", "Audit message to record when --retry-pipelines resets failed team steps.")
 	cmd.Flags().BoolVar(&untilIdle, "until-idle", false, "Run scoped team ticks until no immediate team queue, schedule, or pipeline work remains.")
@@ -4430,33 +4447,37 @@ type teamTickUntilIdleResult struct {
 }
 
 type teamRepairOptions struct {
-	Workspace      string
-	Limit          int
-	DryRun         bool
-	PreviewRoutes  bool
-	SkipDaemon     bool
-	SkipQueue      bool
-	SkipTick       bool
-	IncludeJobs    bool
-	RetryPipelines bool
-	AllReadySteps  bool
-	RetryStep      string
-	RetryMessage   string
-	UntilIdle      bool
-	ReadyTimeout   time.Duration
-	Interval       time.Duration
-	MaxCycles      int
+	Workspace        string
+	Limit            int
+	DryRun           bool
+	PreviewRoutes    bool
+	SkipDaemon       bool
+	SkipQueue        bool
+	SkipTick         bool
+	IncludeJobs      bool
+	TimeoutPipelines bool
+	RetryPipelines   bool
+	AllReadySteps    bool
+	TimeoutStep      string
+	TimeoutMessage   string
+	RetryStep        string
+	RetryMessage     string
+	UntilIdle        bool
+	ReadyTimeout     time.Duration
+	Interval         time.Duration
+	MaxCycles        int
 }
 
 type teamRepairResult struct {
-	Team          teamInfo                `json:"team"`
-	DryRun        bool                    `json:"dry_run,omitempty"`
-	HealthBefore  *healthResult           `json:"health_before,omitempty"`
-	Daemon        repairStepResult        `json:"daemon"`
-	Queue         repairQueueStep         `json:"queue"`
-	PipelineRetry repairPipelineRetryStep `json:"pipeline_retry"`
-	Tick          teamRepairTickStep      `json:"tick"`
-	HealthAfter   *healthResult           `json:"health_after,omitempty"`
+	Team            teamInfo                  `json:"team"`
+	DryRun          bool                      `json:"dry_run,omitempty"`
+	HealthBefore    *healthResult             `json:"health_before,omitempty"`
+	Daemon          repairStepResult          `json:"daemon"`
+	Queue           repairQueueStep           `json:"queue"`
+	PipelineTimeout repairPipelineTimeoutStep `json:"pipeline_timeout"`
+	PipelineRetry   repairPipelineRetryStep   `json:"pipeline_retry"`
+	Tick            teamRepairTickStep        `json:"tick"`
+	HealthAfter     *healthResult             `json:"health_after,omitempty"`
 }
 
 type teamRepairTickStep struct {
@@ -6430,6 +6451,12 @@ func runTeamRepair(cmd *cobra.Command, repo, teamDir, name string, opts teamRepa
 		}
 	}
 
+	pipelineTimeout, err := runTeamRepairPipelineTimeoutStep(teamDir, team, opts)
+	if err != nil {
+		return nil, err
+	}
+	result.PipelineTimeout = pipelineTimeout
+
 	pipelineRetry, err := runTeamRepairPipelineRetryStep(cmd, teamDir, team, opts)
 	if err != nil {
 		return nil, err
@@ -6471,6 +6498,28 @@ func runTeamRepairPipelineRetryStep(cmd *cobra.Command, teamDir string, team *to
 		action = "none"
 	}
 	return repairPipelineRetryStep{Action: action, Results: results}, nil
+}
+
+func runTeamRepairPipelineTimeoutStep(teamDir string, team *topology.Team, opts teamRepairOptions) (repairPipelineTimeoutStep, error) {
+	if !opts.TimeoutPipelines {
+		return repairPipelineTimeoutStep{Action: "skipped", Reason: "--timeout-pipelines not set"}, nil
+	}
+	message := strings.TrimSpace(opts.TimeoutMessage)
+	if message == "" {
+		message = "team repair timed out stale pipeline step"
+	}
+	results, err := timeoutTeamPipelineJobs(teamDir, team, opts.TimeoutStep, message, opts.Limit, opts.DryRun)
+	if err != nil {
+		return repairPipelineTimeoutStep{Action: "error", Reason: err.Error()}, err
+	}
+	action := "timed_out"
+	if opts.DryRun {
+		action = "would_fail"
+	}
+	if len(results) == 0 {
+		action = "none"
+	}
+	return repairPipelineTimeoutStep{Action: action, Results: results}, nil
 }
 
 func runTeamRepairTickStep(cmd *cobra.Command, teamDir, name string, opts teamRepairOptions) teamRepairTickStep {
@@ -6840,6 +6889,8 @@ func renderTeamRepairResult(w io.Writer, result *teamRepairResult, jsonOut bool,
 	renderRepairDaemonStep(w, result.Daemon)
 	fmt.Fprintln(w)
 	renderRepairQueueStep(w, result.Queue)
+	fmt.Fprintln(w)
+	renderRepairPipelineTimeoutStep(w, result.PipelineTimeout)
 	fmt.Fprintln(w)
 	if err := renderRepairPipelineRetryStep(w, result.PipelineRetry); err != nil {
 		return err
