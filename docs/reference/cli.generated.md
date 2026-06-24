@@ -4466,7 +4466,7 @@ Subcommands:
 - `agent-team team status` - Summarize one team&#39;s instances, jobs, and pipelines.
 - `agent-team team sync` - Sync one team&#39;s declared persistent instances.
 - `agent-team team tick` - Run one team&#39;s orchestration maintenance work.
-- `agent-team team timeout` - Mark stale running pipeline steps owned by one team failed.
+- `agent-team team timeout` - Mark stale running work owned by one team failed.
 - `agent-team team triage` - Show team-owned jobs that need operator attention.
 - `agent-team team up` - Start or resume a team&#39;s declared persistent instances.
 - `agent-team team wait` - Wait for team-owned instances to reach a lifecycle condition.
@@ -5575,9 +5575,9 @@ Flags:
 
 ## `agent-team team timeout`
 
-Mark stale running pipeline steps owned by one team failed.
+Mark stale running work owned by one team failed.
 
-Mark or preview stale running steps for jobs in one team&#39;s declared pipelines. Timed-out steps become failed so the normal team retry flow can reopen them.
+Mark or preview stale running steps for jobs in one team&#39;s declared pipelines. Add --jobs to include stale step-less jobs whose target instance belongs to the team. Timed-out work becomes failed so the normal team retry flow can reopen it.
 
 ```text
 agent-team team timeout <team> [flags]
@@ -5586,10 +5586,11 @@ agent-team team timeout <team> [flags]
 Flags:
 
 ```text
-      --dry-run          Preview stale-step failures without writing job state.
+      --dry-run          Preview stale-work failures without writing job state.
       --format string    Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --jobs             Include stale step-less jobs whose target instance belongs to the team.
       --json             Emit timeout results as JSON.
-      --limit int        Mark at most this many stale running team steps failed; 0 means no limit.
+      --limit int        Mark at most this many stale running team jobs or steps failed; 0 means no limit.
       --message string   Status message recorded on each timed-out team job.
       --repo string      Repo root containing .agent_team. (default "<repo>")
       --step string      Mark only stale running team steps with this id.
