@@ -47,6 +47,7 @@ It intentionally does not try to be a full DAG workflow engine yet.
 agent-team pipeline ls
 agent-team pipeline show ticket_to_pr
 agent-team pipeline graph ticket_to_pr --format mermaid --routes
+agent-team team graph delivery --format mermaid --routes
 agent-team pipeline doctor --all
 agent-team pipeline run ticket_to_pr SQU-42 --dry-run --dispatch
 agent-team pipeline status
@@ -74,6 +75,8 @@ agent-team job advance squ-42 --dry-run --preview-routes
 agent-team job step squ-42 implement --advance --dry-run
 agent-team job step squ-42 review --skip --message "review folded into implementation"
 ```
+
+Use `pipeline graph` when you only need one workflow's dependency graph. Use `team graph --routes` when you want the owned instances, schedules, pipelines, and dispatch routes in one read-only map.
 
 ## Step State
 
