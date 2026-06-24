@@ -3932,6 +3932,7 @@ func finalizePipelineStatusRow(row *pipelineStatusRow) {
 	}
 	if row.FailedSteps > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team pipeline retry %s --dry-run --dispatch --preview-routes", row.Pipeline))
+		actions = append(actions, fmt.Sprintf("agent-team pipeline repair %s --retry-pipelines --dry-run --preview-routes", row.Pipeline))
 		actions = append(actions, "agent-team repair --retry-pipelines --dry-run --preview-routes")
 		actions = append(actions, fmt.Sprintf("agent-team pipeline explain %s --state failed", row.Pipeline))
 		actions = append(actions, fmt.Sprintf("agent-team pipeline ready %s --state failed", row.Pipeline))
@@ -3939,6 +3940,7 @@ func finalizePipelineStatusRow(row *pipelineStatusRow) {
 	if row.StaleRunningSteps > 0 {
 		actions = append(actions, "agent-team job reconcile events --dry-run")
 		actions = append(actions, fmt.Sprintf("agent-team pipeline timeout %s --dry-run", row.Pipeline))
+		actions = append(actions, fmt.Sprintf("agent-team pipeline repair %s --timeout-jobs --dry-run --preview-routes", row.Pipeline))
 		actions = append(actions, "agent-team repair --timeout-jobs --dry-run")
 		actions = append(actions, fmt.Sprintf("agent-team pipeline explain %s --state running", row.Pipeline))
 		actions = append(actions, fmt.Sprintf("agent-team pipeline ready %s --state running", row.Pipeline))
@@ -4074,6 +4076,7 @@ func pipelineNextActionReason(row pipelineStatusRow, action string) string {
 		return fmt.Sprintf("blocked_steps=%d", row.BlockedSteps)
 	case strings.Contains(action, " reconcile events "),
 		strings.Contains(action, " timeout "),
+		strings.Contains(action, " --timeout-jobs "),
 		strings.Contains(action, " --state running"):
 		return fmt.Sprintf("stale_running_steps=%d", row.StaleRunningSteps)
 	case strings.Contains(action, " --state held"):

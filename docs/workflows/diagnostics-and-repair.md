@@ -162,10 +162,12 @@ agent-team repair --skip-daemon
 agent-team repair --skip-queue
 agent-team repair --skip-tick
 agent-team repair --timeout-jobs --dry-run
+agent-team pipeline repair ticket_to_pr --timeout-jobs --dry-run --preview-routes
 agent-team repair --timeout-jobs --timeout-pipeline ticket_to_pr --dry-run
 agent-team repair --timeout-jobs --timeout-target-agent worker --dry-run
 agent-team repair --timeout-pipelines --timeout-pipeline ticket_to_pr --dry-run
 agent-team repair --timeout-pipelines --timeout-target-agent worker --dry-run
+agent-team pipeline repair ticket_to_pr --retry-pipelines --dry-run --preview-routes
 agent-team repair --retry-pipelines --dry-run --preview-routes
 agent-team repair --retry-pipelines --retry-step review --dry-run --preview-routes
 agent-team repair --retry-pipelines --retry-force --retry-message "override after fixing dependency"
@@ -210,8 +212,10 @@ Use `--retry-step <id>` with `--retry-pipelines` when a broad repair pass should
 | Dead queue entries | `agent-team repair --dry-run --jobs` |
 | Crashed runtime metadata | `agent-team runtime resume-plan --status crashed` |
 | Stale running jobs | `agent-team repair --timeout-jobs --dry-run` |
-| Stale workflow or agent-role work | `agent-team repair --timeout-jobs --timeout-pipeline ticket_to_pr --dry-run` |
-| Failed pipeline steps | `agent-team repair --retry-pipelines --dry-run --preview-routes` |
+| Stale workflow work | `agent-team pipeline repair ticket_to_pr --timeout-jobs --dry-run --preview-routes` |
+| Stale agent-role work across workflows | `agent-team repair --timeout-jobs --timeout-target-agent worker --dry-run` |
+| Failed pipeline steps in one workflow | `agent-team pipeline repair ticket_to_pr --retry-pipelines --dry-run --preview-routes` |
+| Failed pipeline steps across workflows | `agent-team repair --retry-pipelines --dry-run --preview-routes` |
 | Failed stage across jobs | `agent-team repair --retry-pipelines --retry-step review --dry-run --preview-routes` |
 | Capped failed stage after fix | `agent-team repair --retry-pipelines --retry-force --retry-step review --dry-run --preview-routes` |
 | One stuck job | `agent-team job show <job-id> --events all` |
