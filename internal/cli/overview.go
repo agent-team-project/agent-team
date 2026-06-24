@@ -586,6 +586,9 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 			add("agent-team repair --dry-run --jobs", "health", "unhealthy")
 		}
 	}
+	if out.Runtime.Crashed > 0 {
+		add(overviewRuntimeResumePlanAction(out.Runtime, teamName), "runtime", fmt.Sprintf("crashed=%d", out.Runtime.Crashed))
+	}
 	if health != nil {
 		for _, issue := range health.Issues {
 			if issue.Code == "daemon_not_running" || issue.Code == "daemon_not_ready" {
@@ -649,9 +652,6 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 	}
 	if out.Jobs.StatusChanges > 0 {
 		add("agent-team job reconcile status", "jobs", fmt.Sprintf("status_changes=%d", out.Jobs.StatusChanges))
-	}
-	if out.Runtime.Crashed > 0 {
-		add(overviewRuntimeResumePlanAction(out.Runtime, teamName), "runtime", fmt.Sprintf("crashed=%d", out.Runtime.Crashed))
 	}
 	if out.Jobs.ReadySteps > 0 || out.Pipelines.ReadySteps > 0 {
 		reason := fmt.Sprintf("ready_steps=%d", out.Jobs.ReadySteps+out.Pipelines.ReadySteps)

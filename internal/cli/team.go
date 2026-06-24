@@ -4931,14 +4931,27 @@ func scopeTeamHealthIssueActions(result *healthResult, teamName string) {
 	if result == nil || strings.TrimSpace(teamName) == "" {
 		return
 	}
-	scopedSync := fmt.Sprintf("agent-team team sync %s --dry-run", strings.TrimSpace(teamName))
+	teamName = strings.TrimSpace(teamName)
+	scopedSync := fmt.Sprintf("agent-team team sync %s --dry-run", teamName)
+	scopedRuntimeResume := fmt.Sprintf("agent-team team runtime resume-plan %s --status crashed", teamName)
 	for i := range result.Issues {
 		for j, action := range result.Issues[i].Actions {
-			if strings.TrimSpace(action) == "agent-team sync --dry-run" {
+			action = strings.TrimSpace(action)
+			switch {
+			case action == "agent-team sync --dry-run":
 				result.Issues[i].Actions[j] = scopedSync
+			case teamHealthActionIsInstanceRuntimeResumePlan(action):
+				result.Issues[i].Actions[j] = scopedRuntimeResume
 			}
 		}
 	}
+}
+
+func teamHealthActionIsInstanceRuntimeResumePlan(action string) bool {
+	action = strings.TrimSpace(action)
+	return strings.HasPrefix(action, "agent-team runtime resume-plan ") &&
+		!strings.Contains(action, " --job ") &&
+		strings.HasSuffix(action, " --status crashed")
 }
 
 func collectTeamPsRows(teamDir, name string, now time.Time) ([]instanceRow, error) {
