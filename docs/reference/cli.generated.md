@@ -5250,9 +5250,35 @@ Inherited Flags:
 
 Subcommands:
 
+- `agent-team topology graph` - Render a full topology graph.
 - `agent-team topology reload` - Re-read instances.toml from disk (daemon must be running).
 - `agent-team topology show` - Print the resolved topology (declared instances + triggers).
 - `agent-team topology summary` - Summarize declared topology and workflow health.
+
+## `agent-team topology graph`
+
+Render a full topology graph.
+
+Render a read-only graph of declared teams, instances, pipelines, schedules, and dispatch wiring.
+
+```text
+agent-team topology graph [flags]
+```
+
+Flags:
+
+```text
+      --format string   Graph output format: text, mermaid, or dot. (default "text")
+      --json            Emit graph nodes and edges as JSON.
+      --routes          Annotate pipeline steps with matching agent.dispatch routes.
+      --target string   Repo root. (default "<repo>")
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root for commands that read .agent_team; overrides legacy repo-root --target flags.
+```
 
 ## `agent-team topology reload`
 

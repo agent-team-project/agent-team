@@ -48,7 +48,7 @@ Built or substantially implemented:
 - topology gallery examples
 - local orchestration demo harness with fake runtime
 - repo-configurable health stale thresholds
-- pipeline and team graph visualization commands
+- topology, pipeline, and team graph visualization commands
 - template smoke validation command
 - optional GitHub PR merge verification for job/team cleanup
 - intake server deployment guide

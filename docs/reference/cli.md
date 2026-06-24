@@ -68,6 +68,7 @@ Shortcuts:
 | Command | Purpose |
 | --- | --- |
 | `agent-team topology show` | Render loaded topology |
+| `agent-team topology graph` | Render full topology graph |
 | `agent-team topology summary` | Summarize topology health |
 | `agent-team topology reload` | Reload daemon topology |
 | `agent-team plan` | Preview desired instance state |

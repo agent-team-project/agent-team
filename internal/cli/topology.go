@@ -24,6 +24,7 @@ func newTopologyCmd() *cobra.Command {
 		Short: "Show declared instances and triggers (reads .agent_team/instances.toml).",
 	}
 	cmd.AddCommand(newTopologyShowCmd())
+	cmd.AddCommand(newTopologyGraphCmd())
 	cmd.AddCommand(newTopologySummaryCmd())
 	cmd.AddCommand(newTopologyReloadCmd())
 	return cmd
@@ -48,6 +49,48 @@ func newTopologyShowCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&target, "target", cwd, "Repo root.")
 	c.Flags().BoolVar(&asJSON, "json", false, "Emit raw JSON.")
+	return c
+}
+
+func newTopologyGraphCmd() *cobra.Command {
+	var (
+		target        string
+		graphFormat   string
+		includeRoutes bool
+		jsonOut       bool
+	)
+	cwd, _ := os.Getwd()
+	c := &cobra.Command{
+		Use:   "graph",
+		Short: "Render a full topology graph.",
+		Long:  "Render a read-only graph of declared teams, instances, pipelines, schedules, and dispatch wiring.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if jsonOut && cmd.Flags().Changed("format") {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team topology graph: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			format, err := parsePipelineGraphFormat(graphFormat)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team topology graph: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, target)
+			if err != nil {
+				return err
+			}
+			graph, err := collectTopologyGraph(teamDir, includeRoutes)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team topology graph: %v\n", err)
+				return exitErr(1)
+			}
+			return renderTopologyGraph(cmd.OutOrStdout(), graph, format, jsonOut)
+		},
+	}
+	c.Flags().StringVar(&target, "target", cwd, "Repo root.")
+	c.Flags().StringVar(&graphFormat, "format", "text", "Graph output format: text, mermaid, or dot.")
+	c.Flags().BoolVar(&includeRoutes, "routes", false, "Annotate pipeline steps with matching agent.dispatch routes.")
+	c.Flags().BoolVar(&jsonOut, "json", false, "Emit graph nodes and edges as JSON.")
 	return c
 }
 
@@ -160,6 +203,119 @@ type topologySummary struct {
 	TeamWarnings     int  `json:"team_warnings"`
 }
 
+type topologyGraph struct {
+	Instances []teamGraphInstance `json:"instances,omitempty"`
+	Pipelines []pipelineGraph     `json:"pipelines,omitempty"`
+	Schedules []teamGraphSchedule `json:"schedules,omitempty"`
+	Teams     []teamInfo          `json:"teams,omitempty"`
+	Edges     []teamGraphEdge     `json:"edges,omitempty"`
+}
+
+const topologyGraphRootNode = "topology"
+
+func collectTopologyGraph(teamDir string, includeRoutes bool) (topologyGraph, error) {
+	top, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil {
+		return topologyGraph{}, err
+	}
+	graph := topologyGraph{}
+	if top == nil {
+		return graph, nil
+	}
+	for _, inst := range top.SortedInstances() {
+		if inst == nil {
+			continue
+		}
+		graph.Instances = append(graph.Instances, teamGraphInstance{
+			Name:      inst.Name,
+			Agent:     strings.TrimSpace(inst.Agent),
+			Ephemeral: inst.Ephemeral,
+		})
+		graph.Edges = append(graph.Edges, teamGraphEdge{From: topologyGraphRootNode, To: "instance:" + inst.Name, Kind: "declares_instance"})
+	}
+	for _, pipeline := range top.SortedPipelines() {
+		if pipeline == nil {
+			continue
+		}
+		pg := pipelineGraphFromTopology(top, pipeline, includeRoutes)
+		graph.Pipelines = append(graph.Pipelines, pg)
+		graph.Edges = append(graph.Edges, teamGraphEdge{From: topologyGraphRootNode, To: "pipeline:" + pipeline.Name, Kind: "declares_pipeline"})
+		graph.Edges = append(graph.Edges, teamGraphEdge{From: "pipeline:" + pipeline.Name, To: "pipeline:" + pipeline.Name + ":trigger", Kind: "has_trigger"})
+		for _, edge := range pg.Edges {
+			graph.Edges = append(graph.Edges, teamGraphEdge{
+				From: namespacedPipelineGraphNode(pipeline.Name, edge.From),
+				To:   namespacedPipelineGraphNode(pipeline.Name, edge.To),
+				Kind: "pipeline_dependency",
+			})
+		}
+		for _, node := range pg.Nodes {
+			if node.Missing {
+				continue
+			}
+			targets := node.Routes
+			if len(targets) == 0 && strings.TrimSpace(node.Target) != "" {
+				targets = []string{strings.TrimSpace(node.Target)}
+			}
+			for _, target := range targets {
+				target = strings.TrimSpace(target)
+				if target == "" {
+					continue
+				}
+				graph.Edges = append(graph.Edges, teamGraphEdge{
+					From: "pipeline:" + pipeline.Name + ":step:" + node.ID,
+					To:   "instance:" + target,
+					Kind: "dispatches_to",
+				})
+			}
+		}
+	}
+	for _, schedule := range top.SortedSchedules() {
+		if schedule == nil {
+			continue
+		}
+		graph.Schedules = append(graph.Schedules, teamGraphSchedule{
+			Name:       schedule.Name,
+			Every:      schedule.Every.String(),
+			RunOnStart: schedule.RunOnStart,
+		})
+		graph.Edges = append(graph.Edges, teamGraphEdge{From: topologyGraphRootNode, To: "schedule:" + schedule.Name, Kind: "declares_schedule"})
+		payload := schedule.EventPayload()
+		for _, pipeline := range top.SortedPipelines() {
+			if pipeline == nil || pipeline.Trigger == nil || pipeline.Trigger.Event != topology.EventSchedule || !pipeline.Trigger.Matches(payload) {
+				continue
+			}
+			graph.Edges = append(graph.Edges, teamGraphEdge{From: "schedule:" + schedule.Name, To: "pipeline:" + pipeline.Name, Kind: "triggers_pipeline"})
+		}
+	}
+	for _, team := range top.SortedTeams() {
+		if team == nil {
+			continue
+		}
+		graph.Teams = append(graph.Teams, teamInfoFromTopology(team))
+		teamNode := "team:" + team.Name
+		graph.Edges = append(graph.Edges, teamGraphEdge{From: topologyGraphRootNode, To: teamNode, Kind: "declares_team"})
+		for _, name := range team.Instances {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				graph.Edges = append(graph.Edges, teamGraphEdge{From: teamNode, To: "instance:" + name, Kind: "owns_instance"})
+			}
+		}
+		for _, name := range team.Pipelines {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				graph.Edges = append(graph.Edges, teamGraphEdge{From: teamNode, To: "pipeline:" + name, Kind: "owns_pipeline"})
+			}
+		}
+		for _, name := range team.Schedules {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				graph.Edges = append(graph.Edges, teamGraphEdge{From: teamNode, To: "schedule:" + name, Kind: "owns_schedule"})
+			}
+		}
+	}
+	return graph, nil
+}
+
 func collectTopologySummary(teamDir string) (*topologySummary, error) {
 	top, err := topology.LoadFromTeamDir(teamDir)
 	if err != nil {
@@ -234,6 +390,156 @@ func renderTopologySummary(w io.Writer, summary *topologySummary, asJSON bool) e
 		summary.TeamProblems,
 		summary.TeamWarnings)
 	return nil
+}
+
+func renderTopologyGraph(w io.Writer, graph topologyGraph, format pipelineGraphFormat, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(graph)
+	}
+	switch format {
+	case pipelineGraphMermaid:
+		renderTopologyGraphMermaid(w, graph)
+	case pipelineGraphDOT:
+		renderTopologyGraphDOT(w, graph)
+	default:
+		renderTopologyGraphText(w, graph)
+	}
+	return nil
+}
+
+func renderTopologyGraphText(w io.Writer, graph topologyGraph) {
+	fmt.Fprintln(w, "Topology")
+	if len(graph.Instances) == 0 {
+		fmt.Fprintln(w, "Instances: -")
+	} else {
+		fmt.Fprintln(w, "Instances:")
+		for _, inst := range graph.Instances {
+			fmt.Fprintf(w, "  %s agent=%s ephemeral=%t\n", inst.Name, emptyDash(inst.Agent), inst.Ephemeral)
+		}
+	}
+	if len(graph.Teams) == 0 {
+		fmt.Fprintln(w, "Teams: -")
+	} else {
+		fmt.Fprintln(w, "Teams:")
+		for _, team := range graph.Teams {
+			fmt.Fprintf(w, "  %s instances=%d pipelines=%d schedules=%d\n", team.Name, len(team.Instances), len(team.Pipelines), len(team.Schedules))
+		}
+	}
+	if len(graph.Pipelines) == 0 {
+		fmt.Fprintln(w, "Pipelines: -")
+	} else {
+		fmt.Fprintln(w, "Pipelines:")
+		for _, pipeline := range graph.Pipelines {
+			fmt.Fprintf(w, "  %s trigger=%s steps=%d\n", pipeline.Name, emptyDash(pipeline.Summary), len(pipeline.Nodes))
+			for _, node := range pipeline.Nodes {
+				after := "-"
+				if len(node.After) > 0 {
+					after = strings.Join(node.After, ",")
+				}
+				routes := ""
+				if len(node.Routes) > 0 {
+					routes = " routes=" + strings.Join(node.Routes, ",")
+				}
+				gate := ""
+				if node.Gate != "" {
+					gate = " gate=" + node.Gate
+				}
+				missing := ""
+				if node.Missing {
+					missing = " missing=true"
+				}
+				fmt.Fprintf(w, "    %s target=%s after=%s%s%s%s\n", node.ID, emptyDash(node.Target), after, gate, routes, missing)
+			}
+		}
+	}
+	if len(graph.Schedules) == 0 {
+		fmt.Fprintln(w, "Schedules: -")
+	} else {
+		fmt.Fprintln(w, "Schedules:")
+		for _, schedule := range graph.Schedules {
+			fmt.Fprintf(w, "  %s every=%s run_on_start=%t\n", schedule.Name, emptyDash(schedule.Every), schedule.RunOnStart)
+		}
+	}
+	if len(graph.Edges) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "Edges:")
+	for _, edge := range graph.Edges {
+		kind := ""
+		if edge.Kind != "" {
+			kind = " kind=" + edge.Kind
+		}
+		fmt.Fprintf(w, "  %s -> %s%s\n", edge.From, edge.To, kind)
+	}
+}
+
+func renderTopologyGraphMermaid(w io.Writer, graph topologyGraph) {
+	fmt.Fprintln(w, "flowchart TD")
+	for _, node := range topologyGraphNodeLabels(graph) {
+		label := strings.ReplaceAll(node.Label, "\n", "<br/>")
+		fmt.Fprintf(w, "  %s[%q]\n", pipelineGraphMermaidID(node.ID), pipelineMermaidLabel(label))
+	}
+	for _, edge := range graph.Edges {
+		fmt.Fprintf(w, "  %s --> %s\n", pipelineGraphMermaidID(edge.From), pipelineGraphMermaidID(edge.To))
+	}
+}
+
+func renderTopologyGraphDOT(w io.Writer, graph topologyGraph) {
+	fmt.Fprintln(w, `digraph "topology" {`)
+	fmt.Fprintln(w, "  rankdir=TB;")
+	for _, node := range topologyGraphNodeLabels(graph) {
+		fmt.Fprintf(w, "  %q [label=%q];\n", node.ID, node.Label)
+	}
+	for _, edge := range graph.Edges {
+		fmt.Fprintf(w, "  %q -> %q", edge.From, edge.To)
+		if edge.Kind != "" {
+			fmt.Fprintf(w, " [label=%q]", edge.Kind)
+		}
+		fmt.Fprintln(w, ";")
+	}
+	fmt.Fprintln(w, "}")
+}
+
+func topologyGraphNodeLabels(graph topologyGraph) []teamGraphLabel {
+	labels := []teamGraphLabel{{ID: topologyGraphRootNode, Label: "topology"}}
+	for _, inst := range graph.Instances {
+		parts := []string{"instance: " + inst.Name}
+		if inst.Agent != "" {
+			parts = append(parts, "agent: "+inst.Agent)
+		}
+		if inst.Ephemeral {
+			parts = append(parts, "ephemeral")
+		}
+		labels = append(labels, teamGraphLabel{ID: "instance:" + inst.Name, Label: strings.Join(parts, "\n")})
+	}
+	for _, team := range graph.Teams {
+		parts := []string{"team: " + team.Name}
+		if team.Description != "" {
+			parts = append(parts, team.Description)
+		}
+		labels = append(labels, teamGraphLabel{ID: "team:" + team.Name, Label: strings.Join(parts, "\n")})
+	}
+	for _, pipeline := range graph.Pipelines {
+		labels = append(labels, teamGraphLabel{ID: "pipeline:" + pipeline.Name, Label: "pipeline: " + pipeline.Name})
+		labels = append(labels, teamGraphLabel{ID: "pipeline:" + pipeline.Name + ":trigger", Label: "trigger: " + emptyDash(pipeline.Summary)})
+		for _, node := range pipeline.Nodes {
+			labels = append(labels, teamGraphLabel{
+				ID:    "pipeline:" + pipeline.Name + ":step:" + node.ID,
+				Label: pipelineGraphNodeLabel(node, "\n"),
+			})
+		}
+	}
+	for _, schedule := range graph.Schedules {
+		parts := []string{"schedule: " + schedule.Name}
+		if schedule.Every != "" {
+			parts = append(parts, "every: "+schedule.Every)
+		}
+		if schedule.RunOnStart {
+			parts = append(parts, "run_on_start")
+		}
+		labels = append(labels, teamGraphLabel{ID: "schedule:" + schedule.Name, Label: strings.Join(parts, "\n")})
+	}
+	return labels
 }
 
 func toResponseLike(top *topology.Topology) map[string]any {

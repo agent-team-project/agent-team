@@ -247,6 +247,105 @@ schedules = ["nightly"]
 	}
 }
 
+func TestTopologyGraphRendersFullTopology(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := topoFixture + `
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+
+[schedules.nightly]
+every = "1h"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+schedules = ["nightly"]
+`
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"topology", "graph", "--target", root, "--routes", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("topology graph json: %v\nstderr=%s", err, stderr.String())
+	}
+	var graph topologyGraph
+	if err := json.Unmarshal(out.Bytes(), &graph); err != nil {
+		t.Fatalf("decode topology graph: %v\nbody=%s", err, out.String())
+	}
+	if len(graph.Instances) != 2 || len(graph.Pipelines) != 1 || len(graph.Schedules) != 1 || len(graph.Teams) != 1 {
+		t.Fatalf("topology graph summary = %+v", graph)
+	}
+	foundDispatchEdge := false
+	foundTeamEdge := false
+	for _, edge := range graph.Edges {
+		if edge.From == "pipeline:ticket_to_pr:step:implement" && edge.To == "instance:worker" && edge.Kind == "dispatches_to" {
+			foundDispatchEdge = true
+		}
+		if edge.From == "team:delivery" && edge.To == "pipeline:ticket_to_pr" && edge.Kind == "owns_pipeline" {
+			foundTeamEdge = true
+		}
+	}
+	if !foundDispatchEdge || !foundTeamEdge {
+		t.Fatalf("topology graph edges missing dispatch=%t team=%t: %+v", foundDispatchEdge, foundTeamEdge, graph.Edges)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"topology", "graph", "--target", root, "--routes"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("topology graph text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"Topology", "Teams:", "delivery instances=2 pipelines=1 schedules=1", "implement target=worker after=- routes=worker", "dispatches_to"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("topology graph text missing %q:\n%s", want, textOut.String())
+		}
+	}
+
+	mermaid := NewRootCmd()
+	mermaidOut, mermaidErr := &bytes.Buffer{}, &bytes.Buffer{}
+	mermaid.SetOut(mermaidOut)
+	mermaid.SetErr(mermaidErr)
+	mermaid.SetArgs([]string{"topology", "graph", "--target", root, "--format", "mermaid"})
+	if err := mermaid.Execute(); err != nil {
+		t.Fatalf("topology graph mermaid: %v\nstderr=%s", err, mermaidErr.String())
+	}
+	if !strings.Contains(mermaidOut.String(), "flowchart TD") || !strings.Contains(mermaidOut.String(), "team_delivery") {
+		t.Fatalf("topology graph mermaid output:\n%s", mermaidOut.String())
+	}
+
+	dot := NewRootCmd()
+	dotOut, dotErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dot.SetOut(dotOut)
+	dot.SetErr(dotErr)
+	dot.SetArgs([]string{"topology", "graph", "--target", root, "--format", "dot"})
+	if err := dot.Execute(); err != nil {
+		t.Fatalf("topology graph dot: %v\nstderr=%s", err, dotErr.String())
+	}
+	if !strings.Contains(dotOut.String(), `digraph "topology"`) || !strings.Contains(dotOut.String(), `"topology" -> "team:delivery"`) {
+		t.Fatalf("topology graph dot output:\n%s", dotOut.String())
+	}
+}
+
 func TestTopologySummaryReportsAttention(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
