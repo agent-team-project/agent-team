@@ -107,10 +107,13 @@ trigger.event = "ticket.created"
 
 [[pipelines.ticket_to_pr.steps]]
 id     = "implement"
+label  = "Implementation"
 target = "worker"
 
 [[pipelines.ticket_to_pr.steps]]
 id     = "review"
+label  = "Review"
+description = "Check the branch and request PR follow-up."
 target = "manager"
 after  = ["implement"]
 gate   = "manual"
@@ -147,6 +150,8 @@ Pipelines live under `[pipelines.<name>]`. A pipeline trigger creates or updates
 | `trigger.event` | yes | — | Event type that creates or updates a pipeline job. |
 | `trigger.match.<key>` | no | — | Payload filters using the same match syntax as instance triggers. |
 | `steps[].id` | yes | — | Unique step identifier within the pipeline. |
+| `steps[].label` | no | empty | Human-readable step name for CLI, graph, and job diagnostics. The stable `id` is still used for commands. |
+| `steps[].description` | no | empty | Longer human-readable step note copied into durable job step snapshots. |
 | `steps[].target` | yes | — | Dispatch target. The target should resolve through an `agent.dispatch` trigger. |
 | `steps[].after` | no | empty | Step dependency or list of dependencies. All referenced steps must be done before this step is ready. |
 | `steps[].gate` | no | empty | Set to `"manual"` to require operator approval before the step can dispatch, even after dependencies are done. Approve with `agent-team job step <job-id> <step-id> --status queued`. |

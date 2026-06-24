@@ -165,6 +165,8 @@ type eventPipelineJobPreview struct {
 
 type eventPipelineStepPreview struct {
 	ID          string     `json:"id"`
+	Label       string     `json:"label,omitempty"`
+	Description string     `json:"description,omitempty"`
 	Target      string     `json:"target"`
 	Status      job.Status `json:"status,omitempty"`
 	After       []string   `json:"after,omitempty"`
@@ -262,6 +264,8 @@ func previewPipelineSteps(steps []job.Step) []eventPipelineStepPreview {
 	for _, step := range steps {
 		out = append(out, eventPipelineStepPreview{
 			ID:          step.ID,
+			Label:       step.Label,
+			Description: step.Description,
 			Target:      step.Target,
 			Status:      step.Status,
 			After:       append([]string(nil), step.After...),

@@ -945,6 +945,8 @@ func jobStepsFromPipeline(p *topology.Pipeline) []job.Step {
 		}
 		steps = append(steps, job.Step{
 			ID:          step.ID,
+			Label:       step.Label,
+			Description: step.Description,
 			Target:      step.Target,
 			Status:      status,
 			After:       append([]string(nil), step.After...),
@@ -5654,6 +5656,8 @@ func jobReadyRowFromJob(j *job.Job, next jobNextResult) jobReadyRow {
 	}
 	if next.Step != nil {
 		row.StepID = next.Step.ID
+		row.Label = next.Step.Label
+		row.Description = next.Step.Description
 		row.Target = next.Step.Target
 		row.StepStatus = next.Step.Status
 		row.Instance = next.Step.Instance
@@ -5708,14 +5712,14 @@ func renderJobReadyTable(w io.Writer, rows []jobReadyRow) {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "JOB\tSTATE\tSTEP\tTARGET\tPIPELINE\tOPTIONAL\tWAITING_FOR\tUPDATED\tACTION")
+	fmt.Fprintln(tw, "JOB\tSTATE\tSTEP\tLABEL\tTARGET\tPIPELINE\tOPTIONAL\tWAITING_FOR\tUPDATED\tACTION")
 	for _, row := range rows {
 		waiting := "-"
 		if len(row.WaitingFor) > 0 {
 			waiting = strings.Join(row.WaitingFor, ",")
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			row.JobID, row.State, emptyDash(row.StepID), emptyDash(row.Target), emptyDash(row.Pipeline), yesNo(row.Optional), waiting, row.UpdatedAt.Format(time.RFC3339), emptyDash(strings.Join(row.Actions, "; ")))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.JobID, row.State, emptyDash(row.StepID), emptyDash(row.Label), emptyDash(row.Target), emptyDash(row.Pipeline), yesNo(row.Optional), waiting, row.UpdatedAt.Format(time.RFC3339), emptyDash(strings.Join(row.Actions, "; ")))
 	}
 	_ = tw.Flush()
 }
@@ -7203,18 +7207,22 @@ type jobExplainResult struct {
 }
 
 type jobExplainNext struct {
-	State      string     `json:"state"`
-	StepID     string     `json:"step_id,omitempty"`
-	Target     string     `json:"target,omitempty"`
-	Status     job.Status `json:"status,omitempty"`
-	Instance   string     `json:"instance,omitempty"`
-	WaitingFor []string   `json:"waiting_for,omitempty"`
-	Actions    []string   `json:"actions,omitempty"`
-	Message    string     `json:"message"`
+	State       string     `json:"state"`
+	StepID      string     `json:"step_id,omitempty"`
+	Label       string     `json:"label,omitempty"`
+	Description string     `json:"description,omitempty"`
+	Target      string     `json:"target,omitempty"`
+	Status      job.Status `json:"status,omitempty"`
+	Instance    string     `json:"instance,omitempty"`
+	WaitingFor  []string   `json:"waiting_for,omitempty"`
+	Actions     []string   `json:"actions,omitempty"`
+	Message     string     `json:"message"`
 }
 
 type jobExplainStep struct {
 	ID          string     `json:"id"`
+	Label       string     `json:"label,omitempty"`
+	Description string     `json:"description,omitempty"`
 	Target      string     `json:"target"`
 	Status      job.Status `json:"status"`
 	State       string     `json:"state"`
@@ -7243,6 +7251,8 @@ type jobReadyRow struct {
 	State              string     `json:"state"`
 	Actions            []string   `json:"actions,omitempty"`
 	StepID             string     `json:"step_id,omitempty"`
+	Label              string     `json:"label,omitempty"`
+	Description        string     `json:"description,omitempty"`
 	Target             string     `json:"target,omitempty"`
 	StepStatus         job.Status `json:"step_status,omitempty"`
 	Instance           string     `json:"instance,omitempty"`
@@ -7600,6 +7610,8 @@ func explainJobPipeline(j *job.Job) jobExplainResult {
 		waiting := jobStepWaitingFor(j, step)
 		row := jobExplainStep{
 			ID:          step.ID,
+			Label:       step.Label,
+			Description: step.Description,
 			Target:      step.Target,
 			Status:      step.Status,
 			Ready:       ready[step.ID],
@@ -7633,6 +7645,8 @@ func jobExplainNextFromResult(next jobNextResult) jobExplainNext {
 	}
 	if next.Step != nil {
 		out.StepID = next.Step.ID
+		out.Label = next.Step.Label
+		out.Description = next.Step.Description
 		out.Target = next.Step.Target
 		out.Status = next.Step.Status
 		out.Instance = next.Step.Instance
@@ -8140,14 +8154,15 @@ func renderJobExplainResult(w io.Writer, res jobExplainResult, jsonOut bool, tmp
 	} else {
 		fmt.Fprintln(w, "Steps:")
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tTARGET\tSTATUS\tSTATE\tINSTANCE\tAFTER\tGATE\tOPTIONAL\tTIMEOUT\tATTEMPTS\tWAITING_FOR\tACTION")
+		fmt.Fprintln(tw, "ID\tLABEL\tTARGET\tSTATUS\tSTATE\tINSTANCE\tAFTER\tGATE\tOPTIONAL\tTIMEOUT\tATTEMPTS\tWAITING_FOR\tACTION")
 		for _, step := range res.Steps {
 			action := "-"
 			if len(step.Actions) > 0 {
 				action = strings.Join(step.Actions, "; ")
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 				step.ID,
+				emptyDash(step.Label),
 				emptyDash(step.Target),
 				step.Status,
 				emptyDash(step.State),
@@ -9204,6 +9219,12 @@ func renderJobDetailWithRuntime(w io.Writer, teamDir string, j *job.Job, queueIt
 				"status=" + string(step.Status),
 				"instance=" + instance,
 				"after=" + after,
+			}
+			if strings.TrimSpace(step.Label) != "" {
+				parts = append(parts, fmt.Sprintf("label=%q", strings.TrimSpace(step.Label)))
+			}
+			if strings.TrimSpace(step.Description) != "" {
+				parts = append(parts, fmt.Sprintf("description=%q", strings.TrimSpace(step.Description)))
 			}
 			if step.Gate != "" {
 				parts = append(parts, "gate="+step.Gate)

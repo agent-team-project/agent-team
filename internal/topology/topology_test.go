@@ -141,6 +141,8 @@ target = "worker"
 
 [[pipelines.ticket_to_pr.steps]]
 id = "review"
+label = "Manager review"
+description = "Review implementation and prepare PR handoff."
 target = "manager"
 after = ["implement"]
 gate = "pr"
@@ -158,12 +160,47 @@ max_attempts = 2
 	if p.Trigger.Event != "ticket.created" || p.Trigger.Match["project"].Single != "Core" {
 		t.Fatalf("trigger = %+v", p.Trigger)
 	}
-	if len(p.Steps) != 2 || p.Steps[1].After[0] != "implement" || p.Steps[1].Gate != "pr" || !p.Steps[1].Optional || p.Steps[1].Timeout != 30*time.Minute || p.Steps[1].MaxAttempts != 2 {
+	if len(p.Steps) != 2 || p.Steps[1].Label != "Manager review" || p.Steps[1].Description != "Review implementation and prepare PR handoff." || p.Steps[1].After[0] != "implement" || p.Steps[1].Gate != "pr" || !p.Steps[1].Optional || p.Steps[1].Timeout != 30*time.Minute || p.Steps[1].MaxAttempts != 2 {
 		t.Fatalf("steps = %+v", p.Steps)
 	}
 	matched := top.ResolvePipelines("ticket.created", map[string]any{"project": "Core"})
 	if len(matched) != 1 || matched[0].Name != "ticket_to_pr" {
 		t.Fatalf("matched = %+v", matched)
+	}
+}
+
+func TestParse_PipelineRejectsInvalidStepText(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{name: "empty label", line: `label = " "`, want: "label must be a non-empty string"},
+		{name: "non-string label", line: "label = 10", want: "label must be a non-empty string"},
+		{name: "empty description", line: `description = ""`, want: "description must be a non-empty string"},
+		{name: "non-string description", line: "description = true", want: "description must be a non-empty string"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(`
+[instances.worker]
+agent = "worker"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+` + tt.line + `
+`))
+			if err == nil {
+				t.Fatal("expected step text error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
 

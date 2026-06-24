@@ -622,6 +622,12 @@ func pipelineStepsAsMaps(steps []*topology.PipelineStep) []map[string]any {
 	out := make([]map[string]any, 0, len(steps))
 	for _, step := range steps {
 		row := map[string]any{"id": step.ID, "target": step.Target, "after": step.After}
+		if step.Label != "" {
+			row["label"] = step.Label
+		}
+		if step.Description != "" {
+			row["description"] = step.Description
+		}
 		if step.Gate != "" {
 			row["gate"] = step.Gate
 		}
@@ -855,6 +861,9 @@ func summarisePipelineStepMaps(steps []map[string]interface{}) string {
 		if maxAttempts, _ := step["max_attempts"].(int); maxAttempts > 0 {
 			suffix += fmt.Sprintf(" max_attempts=%d", maxAttempts)
 		}
+		if label, _ := step["label"].(string); label != "" {
+			suffix = fmt.Sprintf(" label=%q", label) + suffix
+		}
 		parts = append(parts, id+"→"+target+suffix)
 	}
 	return strings.Join(parts, ", ")
@@ -878,6 +887,9 @@ func summariseLocalPipelineSteps(steps []*topology.PipelineStep) string {
 		}
 		if step.MaxAttempts > 0 {
 			suffix += fmt.Sprintf(" max_attempts=%d", step.MaxAttempts)
+		}
+		if step.Label != "" {
+			suffix = fmt.Sprintf(" label=%q", step.Label) + suffix
 		}
 		parts = append(parts, step.ID+"→"+step.Target+suffix)
 	}

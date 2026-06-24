@@ -1044,6 +1044,8 @@ target = "worker"
 
 [[pipelines.ticket_to_pr.steps]]
 id = "review"
+label = "Manager review"
+description = "Review the worker output."
 target = "manager"
 after = ["implement"]
 optional = true
@@ -1086,7 +1088,7 @@ timeout = "2h"
 	if j.Steps[0].ID != "implement" || j.Steps[0].Status != jobstore.StatusRunning || j.Steps[0].Instance != "worker-squ-92" {
 		t.Fatalf("first step = %+v", j.Steps[0])
 	}
-	if j.Steps[1].ID != "review" || !j.Steps[1].Optional || j.Steps[1].Timeout != "2h0m0s" {
+	if j.Steps[1].ID != "review" || j.Steps[1].Label != "Manager review" || j.Steps[1].Description != "Review the worker output." || !j.Steps[1].Optional || j.Steps[1].Timeout != "2h0m0s" {
 		t.Fatalf("optional review step = %+v", j.Steps[1])
 	}
 }

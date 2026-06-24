@@ -95,6 +95,8 @@ type Pipeline struct {
 // PipelineStep is one target dispatch in a pipeline.
 type PipelineStep struct {
 	ID          string
+	Label       string
+	Description string
 	Target      string
 	After       []string
 	Gate        string
@@ -653,6 +655,14 @@ func parsePipelineSteps(name string, raw []map[string]any) ([]*PipelineStep, err
 		if !ok || target == "" {
 			return nil, fmt.Errorf("pipeline %q step[%d]: target is required", name, i)
 		}
+		label, err := parseStepText(body["label"], "label")
+		if err != nil {
+			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
+		}
+		description, err := parseStepText(body["description"], "description")
+		if err != nil {
+			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
+		}
 		after, err := parseStepAfter(body["after"])
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
@@ -673,7 +683,7 @@ func parsePipelineSteps(name string, raw []map[string]any) ([]*PipelineStep, err
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
 		}
-		steps = append(steps, &PipelineStep{ID: id, Target: target, After: after, Gate: gate, Optional: optional, Timeout: timeout, MaxAttempts: maxAttempts})
+		steps = append(steps, &PipelineStep{ID: id, Label: label, Description: description, Target: target, After: after, Gate: gate, Optional: optional, Timeout: timeout, MaxAttempts: maxAttempts})
 	}
 	for _, step := range steps {
 		for _, dep := range step.After {
@@ -683,6 +693,18 @@ func parsePipelineSteps(name string, raw []map[string]any) ([]*PipelineStep, err
 		}
 	}
 	return steps, nil
+}
+
+func parseStepText(raw any, field string) (string, error) {
+	if raw == nil {
+		return "", nil
+	}
+	value, ok := raw.(string)
+	value = strings.TrimSpace(value)
+	if !ok || value == "" {
+		return "", fmt.Errorf("%s must be a non-empty string", field)
+	}
+	return value, nil
 }
 
 func parseStepMaxAttempts(raw any) (int, error) {

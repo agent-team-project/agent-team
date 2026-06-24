@@ -59,6 +59,8 @@ type Job struct {
 // Step is a pipeline step snapshot recorded on a job.
 type Step struct {
 	ID          string    `toml:"id"`
+	Label       string    `toml:"label,omitempty"`
+	Description string    `toml:"description,omitempty"`
 	Target      string    `toml:"target"`
 	Status      Status    `toml:"status"`
 	Instance    string    `toml:"instance,omitempty"`

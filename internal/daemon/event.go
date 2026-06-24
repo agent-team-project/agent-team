@@ -315,6 +315,8 @@ func pipelineJobSteps(pipeline *topology.Pipeline) []jobstore.Step {
 		}
 		steps = append(steps, jobstore.Step{
 			ID:          step.ID,
+			Label:       step.Label,
+			Description: step.Description,
 			Target:      step.Target,
 			Status:      status,
 			After:       append([]string(nil), step.After...),

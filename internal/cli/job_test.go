@@ -6669,6 +6669,78 @@ func TestJobNextReportsPipelineState(t *testing.T) {
 	}
 }
 
+func TestJobStepMetadataAppearsInDiagnostics(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-204",
+		Ticket:    "SQU-204",
+		Target:    "manager",
+		Pipeline:  "ticket_triage",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "triage", Label: "Triage", Target: "manager", Status: job.StatusDone, StartedAt: now, FinishedAt: now},
+			{ID: "review", Label: "Code review", Description: "Review the worker branch before PR handoff.", Target: "worker", Status: job.StatusBlocked, After: []string{"triage"}},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	show := NewRootCmd()
+	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
+	show.SetOut(showOut)
+	show.SetErr(showErr)
+	show.SetArgs([]string{"job", "show", "squ-204", "--repo", tmp})
+	if err := show.Execute(); err != nil {
+		t.Fatalf("job show metadata: %v\nstderr=%s", err, showErr.String())
+	}
+	for _, want := range []string{`review  target=worker status=blocked instance=- after=triage label="Code review" description="Review the worker branch before PR handoff."`} {
+		if !strings.Contains(showOut.String(), want) {
+			t.Fatalf("job show missing %q:\n%s", want, showOut.String())
+		}
+	}
+
+	explain := NewRootCmd()
+	explainOut, explainErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explain.SetOut(explainOut)
+	explain.SetErr(explainErr)
+	explain.SetArgs([]string{"job", "explain", "squ-204", "--repo", tmp, "--json"})
+	if err := explain.Execute(); err != nil {
+		t.Fatalf("job explain metadata: %v\nstderr=%s", err, explainErr.String())
+	}
+	var explained jobExplainResult
+	if err := json.Unmarshal(explainOut.Bytes(), &explained); err != nil {
+		t.Fatalf("decode job explain: %v\nbody=%s", err, explainOut.String())
+	}
+	if explained.Next.StepID != "review" || explained.Next.Label != "Code review" || explained.Next.Description != "Review the worker branch before PR handoff." {
+		t.Fatalf("explain next = %+v", explained.Next)
+	}
+	if len(explained.Steps) != 2 || explained.Steps[1].Label != "Code review" || explained.Steps[1].Description != "Review the worker branch before PR handoff." {
+		t.Fatalf("explain steps = %+v", explained.Steps)
+	}
+
+	ready := NewRootCmd()
+	readyOut, readyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	ready.SetOut(readyOut)
+	ready.SetErr(readyErr)
+	ready.SetArgs([]string{"job", "ready", "--repo", tmp, "--json"})
+	if err := ready.Execute(); err != nil {
+		t.Fatalf("job ready metadata: %v\nstderr=%s", err, readyErr.String())
+	}
+	var rows []jobReadyRow
+	if err := json.Unmarshal(readyOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode ready rows: %v\nbody=%s", err, readyOut.String())
+	}
+	if len(rows) != 1 || rows[0].StepID != "review" || rows[0].Label != "Code review" || rows[0].Description != "Review the worker branch before PR handoff." {
+		t.Fatalf("ready rows = %+v", rows)
+	}
+}
+
 func TestJobOptionalFailedStepUnblocksDependents(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

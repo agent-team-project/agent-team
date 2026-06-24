@@ -863,6 +863,12 @@ func marshalPipelineSteps(steps []*topology.PipelineStep) []map[string]any {
 			"target": step.Target,
 			"after":  step.After,
 		}
+		if step.Label != "" {
+			row["label"] = step.Label
+		}
+		if step.Description != "" {
+			row["description"] = step.Description
+		}
 		if step.Gate != "" {
 			row["gate"] = step.Gate
 		}
@@ -871,6 +877,9 @@ func marshalPipelineSteps(steps []*topology.PipelineStep) []map[string]any {
 		}
 		if step.Timeout > 0 {
 			row["timeout"] = step.Timeout.String()
+		}
+		if step.MaxAttempts > 0 {
+			row["max_attempts"] = step.MaxAttempts
 		}
 		out = append(out, row)
 	}

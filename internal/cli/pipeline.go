@@ -1218,6 +1218,8 @@ type pipelineInfo struct {
 
 type pipelineStepInfo struct {
 	ID          string   `json:"id"`
+	Label       string   `json:"label,omitempty"`
+	Description string   `json:"description,omitempty"`
 	Target      string   `json:"target"`
 	After       []string `json:"after,omitempty"`
 	Gate        string   `json:"gate,omitempty"`
@@ -1236,6 +1238,8 @@ type pipelineGraph struct {
 
 type pipelineGraphNode struct {
 	ID          string   `json:"id"`
+	Label       string   `json:"label,omitempty"`
+	Description string   `json:"description,omitempty"`
 	Target      string   `json:"target,omitempty"`
 	After       []string `json:"after,omitempty"`
 	Gate        string   `json:"gate,omitempty"`
@@ -1471,6 +1475,8 @@ func pipelineGraphFromTopology(top *topology.Topology, pipeline *topology.Pipeli
 		}
 		node := pipelineGraphNode{
 			ID:          id,
+			Label:       strings.TrimSpace(step.Label),
+			Description: strings.TrimSpace(step.Description),
 			Target:      strings.TrimSpace(step.Target),
 			After:       trimStringSlice(step.After),
 			Gate:        strings.TrimSpace(step.Gate),
@@ -1762,6 +1768,8 @@ func pipelineInfoFromTopology(p *topology.Pipeline) pipelineInfo {
 	for _, step := range p.Steps {
 		steps = append(steps, pipelineStepInfo{
 			ID:          step.ID,
+			Label:       step.Label,
+			Description: step.Description,
 			Target:      step.Target,
 			After:       append([]string(nil), step.After...),
 			Gate:        step.Gate,
@@ -2921,7 +2929,15 @@ func renderPipelineDetail(w io.Writer, info pipelineInfo, jsonOut bool, tmpl *te
 		if step.MaxAttempts > 0 {
 			maxAttempts = fmt.Sprintf(" max_attempts=%d", step.MaxAttempts)
 		}
-		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s\n", step.ID, step.Target, after, gate, optional, timeout, maxAttempts)
+		label := ""
+		if step.Label != "" {
+			label = fmt.Sprintf(" label=%q", step.Label)
+		}
+		description := ""
+		if step.Description != "" {
+			description = fmt.Sprintf(" description=%q", step.Description)
+		}
+		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s\n", step.ID, step.Target, after, label, description, gate, optional, timeout, maxAttempts)
 	}
 	return nil
 }
@@ -2995,11 +3011,19 @@ func renderPipelineGraphText(w io.Writer, graph pipelineGraph) {
 		if node.MaxAttempts > 0 {
 			maxAttempts = fmt.Sprintf(" max_attempts=%d", node.MaxAttempts)
 		}
+		label := ""
+		if node.Label != "" {
+			label = fmt.Sprintf(" label=%q", node.Label)
+		}
+		description := ""
+		if node.Description != "" {
+			description = fmt.Sprintf(" description=%q", node.Description)
+		}
 		missing := ""
 		if node.Missing {
 			missing = " missing=true"
 		}
-		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s\n", node.ID, node.Target, after, gate, optional, timeout, maxAttempts, routes, missing)
+		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s%s%s\n", node.ID, node.Target, after, label, description, gate, optional, timeout, maxAttempts, routes, missing)
 	}
 	if len(graph.Edges) == 0 {
 		return
@@ -3054,6 +3078,12 @@ func renderPipelineGraphDOT(w io.Writer, graph pipelineGraph) {
 
 func pipelineGraphNodeLabel(node pipelineGraphNode, sep string) string {
 	parts := []string{node.ID}
+	if node.Label != "" {
+		parts = append(parts, "label: "+node.Label)
+	}
+	if node.Description != "" {
+		parts = append(parts, "description: "+node.Description)
+	}
 	if node.Target != "" {
 		parts = append(parts, "target: "+node.Target)
 	}
@@ -3217,10 +3247,14 @@ func summarisePipelineInfoSteps(steps []pipelineStepInfo) string {
 		if step.MaxAttempts > 0 {
 			maxAttempts = fmt.Sprintf(" max_attempts=%d", step.MaxAttempts)
 		}
+		label := ""
+		if step.Label != "" {
+			label = fmt.Sprintf(" label=%q", step.Label)
+		}
 		if len(step.After) > 0 {
-			parts = append(parts, fmt.Sprintf("%s:%s after=%s%s%s%s%s", step.ID, step.Target, strings.Join(step.After, ","), gate, optional, timeout, maxAttempts))
+			parts = append(parts, fmt.Sprintf("%s:%s%s after=%s%s%s%s%s", step.ID, step.Target, label, strings.Join(step.After, ","), gate, optional, timeout, maxAttempts))
 		} else {
-			parts = append(parts, fmt.Sprintf("%s:%s%s%s%s%s", step.ID, step.Target, gate, optional, timeout, maxAttempts))
+			parts = append(parts, fmt.Sprintf("%s:%s%s%s%s%s%s", step.ID, step.Target, label, gate, optional, timeout, maxAttempts))
 		}
 	}
 	return strings.Join(parts, " -> ")
