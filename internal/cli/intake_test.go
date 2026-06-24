@@ -1660,6 +1660,86 @@ target = "manager"
 	}
 }
 
+func TestIntakeReplayAllDedupeRequestID(t *testing.T) {
+	target := t.TempDir()
+	teamDir := filepath.Join(target, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, delivery := range []intakeDelivery{
+		{
+			ID:         "github-first",
+			Time:       time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC),
+			Provider:   "github",
+			RequestID:  "delivery-dup",
+			Status:     intakeDeliveryStatusError,
+			HTTPStatus: http.StatusServiceUnavailable,
+			EventType:  "pr.opened",
+			Payload:    map[string]any{"source": "github", "pr_url": "https://github.com/acme/repo/pull/210"},
+			PR:         "https://github.com/acme/repo/pull/210",
+			Error:      "daemon is not running",
+		},
+		{
+			ID:         "github-duplicate",
+			Time:       time.Date(2026, 6, 19, 12, 1, 0, 0, time.UTC),
+			Provider:   "github",
+			RequestID:  "delivery-dup",
+			Status:     intakeDeliveryStatusError,
+			HTTPStatus: http.StatusServiceUnavailable,
+			EventType:  "pr.opened",
+			Payload:    map[string]any{"source": "github", "pr_url": "https://github.com/acme/repo/pull/210"},
+			PR:         "https://github.com/acme/repo/pull/210",
+			Error:      "daemon is not running",
+		},
+		{
+			ID:         "github-no-request",
+			Time:       time.Date(2026, 6, 19, 12, 2, 0, 0, time.UTC),
+			Provider:   "github",
+			Status:     intakeDeliveryStatusError,
+			HTTPStatus: http.StatusServiceUnavailable,
+			EventType:  "pr.opened",
+			Payload:    map[string]any{"source": "github", "pr_url": "https://github.com/acme/repo/pull/211"},
+			PR:         "https://github.com/acme/repo/pull/211",
+			Error:      "daemon is not running",
+		},
+	} {
+		if err := appendIntakeDelivery(teamDir, delivery); err != nil {
+			t.Fatalf("append %s: %v", delivery.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "replay", "--all", "--target", target, "--dedupe-request-id", "--dry-run", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake replay all dedupe dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var batch intakeReplayBatchResult
+	if err := json.Unmarshal(out.Bytes(), &batch); err != nil {
+		t.Fatalf("decode replay all dedupe: %v\nbody=%s", err, out.String())
+	}
+	if batch.Total != 2 || batch.Succeeded != 2 || batch.Failed != 0 || batch.SkippedDuplicateRequestIDs != 1 || len(batch.Results) != 2 {
+		t.Fatalf("batch = %+v", batch)
+	}
+	if got := replayResultIDs(batch.Results); got != "github-first,github-no-request" {
+		t.Fatalf("result ids = %q", got)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"intake", "replay", "--all", "--target", target, "--dedupe-request-id", "--dry-run"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("intake replay all dedupe text: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "skipped_duplicate_request_ids=1") {
+		t.Fatalf("dedupe text output = %q", textOut.String())
+	}
+}
+
 func TestIntakeReplayAllPublishesDeliveries(t *testing.T) {
 	target, _, cleanup := setupIntakePipelineRepo(t)
 	defer cleanup()
@@ -1915,6 +1995,14 @@ func deliveryIDs(deliveries []intakeDelivery) string {
 	ids := make([]string, 0, len(deliveries))
 	for _, delivery := range deliveries {
 		ids = append(ids, delivery.ID)
+	}
+	return strings.Join(ids, ",")
+}
+
+func replayResultIDs(results []intakeReplayResult) string {
+	ids := make([]string, 0, len(results))
+	for _, result := range results {
+		ids = append(ids, result.DeliveryID)
 	}
 	return strings.Join(ids, ",")
 }

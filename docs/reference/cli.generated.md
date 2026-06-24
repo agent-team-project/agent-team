@@ -1308,15 +1308,16 @@ agent-team intake replay [delivery-id] [flags]
 Flags:
 
 ```text
-      --all                Replay all matching recorded deliveries.
-      --dry-run            Preview the normalized delivery without publishing it.
-      --format string      Render the replay result with a Go template, e.g. '{{.Event.Type}}'.
-      --json               Emit replay result as JSON.
-      --limit int          With --all, replay at most this many matching deliveries (0 = all).
-      --preview-triggers   With --dry-run, include local topology instance and pipeline matches.
-      --provider string    With --all, only replay deliveries for a provider: linear or github.
-      --status string      With --all, delivery status to replay: ok, error, or all. error skips recovered replays. (default "error")
-      --target string      Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --all                 Replay all matching recorded deliveries.
+      --dedupe-request-id   With --all, skip later deliveries with the same provider request id.
+      --dry-run             Preview the normalized delivery without publishing it.
+      --format string       Render the replay result with a Go template, e.g. '{{.Event.Type}}'.
+      --json                Emit replay result as JSON.
+      --limit int           With --all, replay at most this many matching deliveries (0 = all).
+      --preview-triggers    With --dry-run, include local topology instance and pipeline matches.
+      --provider string     With --all, only replay deliveries for a provider: linear or github.
+      --status string       With --all, delivery status to replay: ok, error, or all. error skips recovered replays. (default "error")
+      --target string       Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 
 Inherited Flags:

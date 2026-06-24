@@ -112,6 +112,10 @@ Delivery history records:
 request IDs, such as duplicate GitHub delivery IDs, while keeping warning-only
 ledgers exit-code clean.
 
+When replaying several recorded deliveries after an outage, use
+`agent-team intake replay --all --dedupe-request-id --dry-run --preview-triggers`
+first to skip later duplicate provider deliveries before publishing.
+
 Successful replays mark failed deliveries recovered.
 
 ## Diagnostics

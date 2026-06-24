@@ -148,6 +148,7 @@ func newIntakeReplayCmd() *cobra.Command {
 		provider      string
 		status        string
 		limit         int
+		dedupeRequest bool
 		dryRun        bool
 		previewRoutes bool
 		jsonOut       bool
@@ -195,7 +196,7 @@ func newIntakeReplayCmd() *cobra.Command {
 					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake replay: --all does not accept a delivery id.")
 					return exitErr(2)
 				}
-				batch, err := replayAllIntakeDeliveries(teamDir, provider, status, limit, dryRun, previewRoutes)
+				batch, err := replayAllIntakeDeliveries(teamDir, provider, status, limit, dedupeRequest, dryRun, previewRoutes)
 				if err != nil {
 					if errors.Is(err, errDaemonNotRunning) {
 						fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake replay: daemon is not running; start it first with `agent-team daemon start`.")
@@ -262,6 +263,7 @@ func newIntakeReplayCmd() *cobra.Command {
 	cmd.Flags().StringVar(&provider, "provider", "", "With --all, only replay deliveries for a provider: linear or github.")
 	cmd.Flags().StringVar(&status, "status", intakeDeliveryStatusError, "With --all, delivery status to replay: ok, error, or all. error skips recovered replays.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, replay at most this many matching deliveries (0 = all).")
+	cmd.Flags().BoolVar(&dedupeRequest, "dedupe-request-id", false, "With --all, skip later deliveries with the same provider request id.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the normalized delivery without publishing it.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit replay result as JSON.")
@@ -283,11 +285,12 @@ type intakeReplayResult struct {
 }
 
 type intakeReplayBatchResult struct {
-	DryRun    bool                 `json:"dry_run,omitempty"`
-	Total     int                  `json:"total"`
-	Succeeded int                  `json:"succeeded"`
-	Failed    int                  `json:"failed"`
-	Results   []intakeReplayResult `json:"results"`
+	DryRun                     bool                 `json:"dry_run,omitempty"`
+	Total                      int                  `json:"total"`
+	Succeeded                  int                  `json:"succeeded"`
+	Failed                     int                  `json:"failed"`
+	SkippedDuplicateRequestIDs int                  `json:"skipped_duplicate_request_ids,omitempty"`
+	Results                    []intakeReplayResult `json:"results"`
 }
 
 type intakePruneResult struct {
@@ -743,16 +746,17 @@ func parseIntakePruneStatus(raw string) (string, error) {
 	}
 }
 
-func replayAllIntakeDeliveries(teamDir, provider, status string, limit int, dryRun, previewRoutes bool) (intakeReplayBatchResult, error) {
+func replayAllIntakeDeliveries(teamDir, provider, status string, limit int, dedupeRequest bool, dryRun, previewRoutes bool) (intakeReplayBatchResult, error) {
 	deliveries, err := listIntakeDeliveries(teamDir)
 	if err != nil {
 		return intakeReplayBatchResult{}, err
 	}
-	deliveries = selectIntakeReplayDeliveries(deliveries, provider, status, limit)
+	deliveries, skippedDuplicates := selectIntakeReplayDeliveries(deliveries, provider, status, limit, dedupeRequest)
 	batch := intakeReplayBatchResult{
-		DryRun:  dryRun,
-		Total:   len(deliveries),
-		Results: make([]intakeReplayResult, 0, len(deliveries)),
+		DryRun:                     dryRun,
+		Total:                      len(deliveries),
+		SkippedDuplicateRequestIDs: skippedDuplicates,
+		Results:                    make([]intakeReplayResult, 0, len(deliveries)),
 	}
 	var dc *daemonClient
 	if !dryRun && len(deliveries) > 0 {
@@ -778,8 +782,10 @@ func replayAllIntakeDeliveries(teamDir, provider, status string, limit int, dryR
 	return batch, nil
 }
 
-func selectIntakeReplayDeliveries(deliveries []intakeDelivery, provider, status string, limit int) []intakeDelivery {
+func selectIntakeReplayDeliveries(deliveries []intakeDelivery, provider, status string, limit int, dedupeRequest bool) ([]intakeDelivery, int) {
 	out := make([]intakeDelivery, 0, len(deliveries))
+	seenRequests := map[string]bool{}
+	skippedDuplicates := 0
 	for _, delivery := range deliveries {
 		if provider != "" && delivery.Provider != provider {
 			continue
@@ -794,12 +800,31 @@ func selectIntakeReplayDeliveries(deliveries []intakeDelivery, provider, status 
 				continue
 			}
 		}
+		if dedupeRequest {
+			key := intakeDeliveryRequestKey(delivery)
+			if key != "" {
+				if seenRequests[key] {
+					skippedDuplicates++
+					continue
+				}
+				seenRequests[key] = true
+			}
+		}
 		out = append(out, delivery)
 		if limit > 0 && len(out) >= limit {
 			break
 		}
 	}
-	return out
+	return out, skippedDuplicates
+}
+
+func intakeDeliveryRequestKey(delivery intakeDelivery) string {
+	provider := strings.ToLower(strings.TrimSpace(delivery.Provider))
+	requestID := strings.TrimSpace(delivery.RequestID)
+	if provider == "" || requestID == "" {
+		return ""
+	}
+	return provider + "\x00" + requestID
 }
 
 func replayOneIntakeDelivery(teamDir string, dc *daemonClient, delivery intakeDelivery, dryRun, previewRoutes bool) intakeReplayResult {
@@ -1193,7 +1218,11 @@ func renderIntakeReplayBatch(w io.Writer, batch intakeReplayBatchResult, jsonOut
 		_, err := fmt.Fprintln(w, "(no intake deliveries matched)")
 		return err
 	}
-	fmt.Fprintf(w, "replay: total=%d succeeded=%d failed=%d\n", batch.Total, batch.Succeeded, batch.Failed)
+	fmt.Fprintf(w, "replay: total=%d succeeded=%d failed=%d skipped_duplicate_request_ids=%d\n",
+		batch.Total,
+		batch.Succeeded,
+		batch.Failed,
+		batch.SkippedDuplicateRequestIDs)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tPROVIDER\tSTATUS\tHTTP\tEVENT\tDRY_RUN\tOK\tMATCHED\tERROR")
 	for _, result := range batch.Results {
