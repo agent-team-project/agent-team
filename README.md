@@ -90,6 +90,7 @@ fake-runtime demo:
 go build -o bin/agent-team ./cmd/agent-team
 go build -o bin/agent-teamd ./cmd/agent-teamd
 python3 scripts/demo/local_orchestration.py bin/agent-team
+python3 scripts/demo/local_orchestration.py bin/agent-team --runtime codex
 ```
 
 Build the local container image used by generated Compose intake deployments:

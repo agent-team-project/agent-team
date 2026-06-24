@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Run a local end-to-end orchestration demo with a fake Claude runtime.
+"""Run a local end-to-end orchestration demo with a fake agent runtime.
 
 Usage:
-    python3 scripts/demo/local_orchestration.py [bin/agent-team] [--keep]
+    python3 scripts/demo/local_orchestration.py [bin/agent-team] [--runtime claude|codex] [--keep]
 
 The demo creates a temporary repo, initializes the bundled team, configures a
-small fake Claude-compatible runtime, starts persistent instances, creates and
-advances a pipeline job, then captures operator views. It never calls a real
-LLM service.
+small fake runtime, creates and advances a pipeline job, then captures operator
+views. Claude mode also starts persistent instances; Codex mode exercises the
+daemon-managed one-shot worker path. It never calls a real LLM service.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from pathlib import Path
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", nargs="?", default="bin/agent-team", help="Path to the agent-team binary.")
+    parser.add_argument("--runtime", choices=("claude", "codex"), default="claude", help="Runtime profile to simulate.")
     parser.add_argument("--keep", action="store_true", help="Keep the temporary demo repo for inspection.")
     args = parser.parse_args(argv[1:])
 
@@ -42,7 +43,7 @@ def main(argv: list[str]) -> int:
         return 2
 
     root = Path(tempfile.mkdtemp(prefix="agent-team-demo-", dir="/tmp"))
-    fake_runtime = root / "fake-bin" / "claude"
+    fake_runtime = root / "fake-bin" / args.runtime
     repo = root / "repo"
     env = os.environ.copy()
     env["PATH"] = f"{fake_runtime.parent}:{env.get('PATH', '')}"
@@ -53,19 +54,25 @@ def main(argv: list[str]) -> int:
 
         step("init bundled team")
         run(binary, "init", "--target", repo, "--set", "linear.team_id=demo-team", "--set", "linear.ticket_prefix=DEMO")
-        configure_fake_runtime(repo, fake_runtime)
+        configure_fake_runtime(repo, args.runtime, fake_runtime)
 
         step("validate topology and runtime")
         run(binary, "runtime", "--repo", repo, "--json", env=env, parse_json=True)
         run(binary, "topology", "summary", "--target", repo, "--json", parse_json=True)
+        run(binary, "topology", "graph", "--target", repo, "--routes", "--json", parse_json=True)
         run(binary, "pipeline", "doctor", "--all", "--repo", repo, "--json", parse_json=True)
+        run(binary, "team", "graph", "delivery", "--repo", repo, "--routes", "--json", parse_json=True)
         run(binary, "team", "doctor", "--all", "--repo", repo, "--json", parse_json=True)
 
-        step("start daemon and persistent instances")
+        step("start daemon")
         run(binary, "daemon", "start", "--target", repo, "--ready-timeout", "5s", "--json", env=env, parse_json=True)
-        start = run(binary, "start", "--target", repo, "--wait", "--timeout", "5s", "--json", env=env, parse_json=True)
-        started = [row.get("instance") for row in start.get("actions", []) if row.get("action") in {"start", "skip"}]
-        print(f"persistent instances: {', '.join(started) or '(none)'}")
+        if args.runtime == "claude":
+            step("start persistent instances")
+            start = run(binary, "start", "--target", repo, "--wait", "--timeout", "5s", "--json", env=env, parse_json=True)
+            started = [row.get("instance") for row in start.get("actions", []) if row.get("action") in {"start", "skip"}]
+            print(f"persistent instances: {', '.join(started) or '(none)'}")
+        else:
+            print("persistent instances: skipped for Codex one-shot runtime")
 
         step("create and preview a pipeline job")
         created = run(
@@ -179,11 +186,11 @@ def field(data: dict, *names: str) -> object:
     return ""
 
 
-def configure_fake_runtime(repo: Path, fake_runtime: Path) -> None:
+def configure_fake_runtime(repo: Path, runtime: str, fake_runtime: Path) -> None:
     cfg = repo / ".agent_team" / "config.toml"
     with cfg.open("a", encoding="utf-8") as f:
         f.write("\n[runtime]\n")
-        f.write('kind = "claude"\n')
+        f.write(f'kind = "{runtime}"\n')
         f.write(f'binary = "{toml_string(str(fake_runtime))}"\n')
 
 
@@ -222,7 +229,8 @@ def write_fake_runtime(path: Path) -> None:
                 ]
                 (state_dir / "status.toml").write_text("\\n".join(body), encoding="utf-8")
 
-            print(f"fake claude instance={instance} args={' '.join(sys.argv[1:])}", flush=True)
+            runtime = Path(sys.argv[0]).name
+            print(f"fake {runtime} instance={instance} args={' '.join(sys.argv[1:])}", flush=True)
             if instance.startswith("worker-") or "-worker-" in instance:
                 write_status("implementing", "fake worker running")
                 time.sleep(0.2)
