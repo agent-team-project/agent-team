@@ -2593,6 +2593,7 @@ Subcommands:
 - `agent-team pipeline advance` - Dispatch ready pipeline steps.
 - `agent-team pipeline approve` - Approve blocked manual pipeline gates.
 - `agent-team pipeline doctor` - Validate pipeline workflow wiring.
+- `agent-team pipeline explain` - Explain pipeline jobs and step blockers.
 - `agent-team pipeline graph` - Render a declared pipeline step graph.
 - `agent-team pipeline jobs` - List jobs for one pipeline.
 - `agent-team pipeline ls` - List declared pipelines.
@@ -2673,6 +2674,26 @@ Flags:
       --all             Validate all pipelines. This is the default when no pipeline is passed.
       --format string   Render the doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.
       --json            Emit pipeline doctor findings as JSON.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team pipeline explain`
+
+Explain pipeline jobs and step blockers.
+
+Explain pipeline state from durable jobs, expanding each matching job with step readiness, dependency blockers, gates, active instances, and suggested next actions.
+
+```text
+agent-team pipeline explain [<pipeline>|--all] [flags]
+```
+
+Flags:
+
+```text
+      --all             Explain all pipelines. This is the default when no pipeline is passed.
+      --format string   Render each pipeline explanation with a Go template, e.g. '{{.Pipeline}} {{len .Jobs}}'.
+      --json            Emit pipeline explanations as JSON.
+      --limit int       Limit job explanations per pipeline; 0 means no limit.
       --repo string     Repo root containing .agent_team. (default "<repo>")
 ```
 

@@ -28,6 +28,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineDoctorCmd())
 	cmd.AddCommand(newPipelineJobsCmd())
 	cmd.AddCommand(newPipelineStatusCmd())
+	cmd.AddCommand(newPipelineExplainCmd())
 	cmd.AddCommand(newPipelineNextCmd())
 	cmd.AddCommand(newPipelineReadyCmd())
 	cmd.AddCommand(newPipelineAdvanceCmd())
@@ -332,6 +333,71 @@ func newPipelineStatusCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&all, "all", false, "Summarize all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline status rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.Pipeline}} {{.Jobs}} {{.ReadySteps}}'.")
+	return cmd
+}
+
+func newPipelineExplainCmd() *cobra.Command {
+	var (
+		repo    string
+		all     bool
+		limit   int
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "explain [<pipeline>|--all]",
+		Short: "Explain pipeline jobs and step blockers.",
+		Long: "Explain pipeline state from durable jobs, expanding each matching job with step readiness, " +
+			"dependency blockers, gates, active instances, and suggested next actions.",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline explain: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline explain: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline explain: pass at most one pipeline name.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline explain: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineExplainFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline explain: %v\n", err)
+				return exitErr(2)
+			}
+			pipelineName := ""
+			if len(args) == 1 && !all {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if len(args) == 1 && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline explain: pipeline name is required.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			rows, err := collectPipelineExplainRows(teamDir, pipelineName, limit)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline explain: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineExplainRows(cmd.OutOrStdout(), rows, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&all, "all", false, "Explain all pipelines. This is the default when no pipeline is passed.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Limit job explanations per pipeline; 0 means no limit.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline explanations as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each pipeline explanation with a Go template, e.g. '{{.Pipeline}} {{len .Jobs}}'.")
 	return cmd
 }
 
@@ -930,6 +996,17 @@ type pipelineStatusRow struct {
 	Actions            []string `json:"actions,omitempty"`
 }
 
+type pipelineExplainRow struct {
+	Pipeline      string             `json:"pipeline"`
+	Declared      bool               `json:"declared"`
+	Status        pipelineStatusRow  `json:"status"`
+	TotalJobs     int                `json:"total_jobs"`
+	ExplainedJobs int                `json:"explained_jobs"`
+	Truncated     bool               `json:"truncated,omitempty"`
+	Jobs          []jobExplainResult `json:"jobs,omitempty"`
+	Actions       []string           `json:"actions,omitempty"`
+}
+
 type pipelineNextAction struct {
 	Pipeline string            `json:"pipeline"`
 	Action   string            `json:"action"`
@@ -1451,6 +1528,41 @@ func collectPipelineStatusRows(teamDir, pipeline string) ([]pipelineStatusRow, e
 		row := rows[name]
 		finalizePipelineStatusRow(row)
 		out = append(out, *row)
+	}
+	return out, nil
+}
+
+func collectPipelineExplainRows(teamDir, pipeline string, limit int) ([]pipelineExplainRow, error) {
+	statusRows, err := collectPipelineStatusRows(teamDir, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	sortJobs(jobs, "updated")
+	out := make([]pipelineExplainRow, 0, len(statusRows))
+	for _, status := range statusRows {
+		row := pipelineExplainRow{
+			Pipeline: status.Pipeline,
+			Declared: status.Declared,
+			Status:   status,
+			Actions:  append([]string(nil), status.Actions...),
+		}
+		for _, j := range jobs {
+			if j == nil || strings.TrimSpace(j.Pipeline) != status.Pipeline {
+				continue
+			}
+			row.TotalJobs++
+			if limit > 0 && row.ExplainedJobs >= limit {
+				row.Truncated = true
+				continue
+			}
+			row.Jobs = append(row.Jobs, explainJobPipeline(j))
+			row.ExplainedJobs++
+		}
+		out = append(out, row)
 	}
 	return out, nil
 }
@@ -2431,6 +2543,17 @@ func parsePipelineStatusFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
+func parsePipelineExplainFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("pipeline-explain-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
 func parsePipelineNextFormat(format string) (*template.Template, error) {
 	if strings.TrimSpace(format) == "" {
 		return nil, nil
@@ -2487,6 +2610,108 @@ func renderPipelineStatusTable(w io.Writer, rows []pipelineStatusRow) {
 		)
 	}
 	_ = tw.Flush()
+}
+
+func renderPipelineExplainRows(w io.Writer, rows []pipelineExplainRow, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(rows)
+	}
+	if tmpl != nil {
+		for _, row := range rows {
+			if err := tmpl.Execute(w, row); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if len(rows) == 0 {
+		fmt.Fprintln(w, "(no pipelines)")
+		return nil
+	}
+	for idx, row := range rows {
+		if idx > 0 {
+			fmt.Fprintln(w)
+		}
+		renderPipelineExplainRow(w, row)
+	}
+	return nil
+}
+
+func renderPipelineExplainRow(w io.Writer, row pipelineExplainRow) {
+	fmt.Fprintf(w, "Pipeline: %s declared=%s jobs=%d explained=%d\n",
+		row.Pipeline, yesNo(row.Declared), row.TotalJobs, row.ExplainedJobs)
+	statusSummary := pipelineStatusJobSummary(row.Status)
+	if statusSummary == "-" {
+		statusSummary = "none"
+	}
+	fmt.Fprintf(w, "Status: jobs=%s ready=%d queued=%d running=%d blocked=%d manual_gates=%d failed=%d done=%d none=%d\n",
+		statusSummary,
+		row.Status.ReadySteps,
+		row.Status.QueuedSteps,
+		row.Status.RunningSteps,
+		row.Status.BlockedSteps,
+		row.Status.ManualGates,
+		row.Status.FailedSteps,
+		row.Status.DoneSteps,
+		row.Status.NoStep)
+	if len(row.Actions) > 0 {
+		fmt.Fprintln(w, "Actions:")
+		for _, action := range row.Actions {
+			fmt.Fprintf(w, "  %s\n", action)
+		}
+	}
+	if row.TotalJobs == 0 {
+		fmt.Fprintln(w, "Jobs: none")
+		return
+	}
+	if row.Truncated {
+		fmt.Fprintf(w, "Jobs: showing %d of %d\n", row.ExplainedJobs, row.TotalJobs)
+	} else {
+		fmt.Fprintln(w, "Jobs:")
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "JOB\tTICKET\tSTATUS\tSTATE\tNEXT\tWAITING_FOR\tACTION")
+	for _, explained := range row.Jobs {
+		next := emptyDash(explained.Next.StepID)
+		action := "-"
+		if len(explained.Actions) > 0 {
+			action = strings.Join(explained.Actions, "; ")
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			explained.JobID,
+			emptyDash(explained.Ticket),
+			explained.JobStatus,
+			emptyDash(explained.State),
+			next,
+			listDash(explained.Next.WaitingFor),
+			action)
+	}
+	_ = tw.Flush()
+	fmt.Fprintln(w, "Steps:")
+	stepWriter := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(stepWriter, "JOB\tSTEP\tTARGET\tSTATUS\tSTATE\tAFTER\tGATE\tWAITING_FOR\tACTION")
+	for _, explained := range row.Jobs {
+		for _, step := range explained.Steps {
+			action := "-"
+			if len(step.Actions) > 0 {
+				action = strings.Join(step.Actions, "; ")
+			}
+			fmt.Fprintf(stepWriter, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				explained.JobID,
+				step.ID,
+				emptyDash(step.Target),
+				step.Status,
+				emptyDash(step.State),
+				listDash(step.After),
+				emptyDash(step.Gate),
+				listDash(step.WaitingFor),
+				action)
+		}
+	}
+	_ = stepWriter.Flush()
 }
 
 func renderPipelineNextActions(w io.Writer, actions []pipelineNextAction, jsonOut bool, tmpl *template.Template) error {

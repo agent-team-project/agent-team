@@ -143,6 +143,7 @@ Shortcuts:
 | `agent-team pipeline doctor --all` | Validate workflows |
 | `agent-team pipeline run <pipeline> <ticket>` | Create pipeline job; `--dispatch` accepts runtime overrides |
 | `agent-team pipeline status` | Summarize pipeline jobs |
+| `agent-team pipeline explain <pipeline>` | Expand pipeline jobs into per-step readiness, blockers, gates, and actions |
 | `agent-team pipeline next` | Print recommended pipeline actions |
 | `agent-team pipeline jobs <pipeline>` | List or summarize pipeline jobs; filter mixed-runtime ownership with `--runtime` |
 | `agent-team pipeline ready` | List ready steps |

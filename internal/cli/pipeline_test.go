@@ -751,6 +751,84 @@ target = "manager"
 		}
 	}
 
+	explain := NewRootCmd()
+	explainOut, explainErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explain.SetOut(explainOut)
+	explain.SetErr(explainErr)
+	explain.SetArgs([]string{"pipeline", "explain", "ticket_to_pr", "--repo", root, "--json"})
+	if err := explain.Execute(); err != nil {
+		t.Fatalf("pipeline explain json: %v\nstderr=%s", err, explainErr.String())
+	}
+	var explainedRows []pipelineExplainRow
+	if err := json.Unmarshal(explainOut.Bytes(), &explainedRows); err != nil {
+		t.Fatalf("decode pipeline explain json: %v\nbody=%s", err, explainOut.String())
+	}
+	if len(explainedRows) != 1 {
+		t.Fatalf("pipeline explain rows = %+v", explainedRows)
+	}
+	explained := explainedRows[0]
+	if explained.Pipeline != "ticket_to_pr" || !explained.Declared || explained.TotalJobs != 3 || explained.ExplainedJobs != 3 || len(explained.Jobs) != 3 {
+		t.Fatalf("pipeline explain ticket_to_pr = %+v", explained)
+	}
+	var readyReview, manualGate, failedImplement bool
+	for _, explainedJob := range explained.Jobs {
+		for _, step := range explainedJob.Steps {
+			switch {
+			case explainedJob.JobID == "squ-610" && step.ID == "review":
+				readyReview = step.State == "ready" && containsString(step.Actions, "agent-team job advance squ-610")
+			case explainedJob.JobID == "squ-614" && step.ID == "review":
+				manualGate = step.State == "waiting" && step.Gate == job.StepGateManual && containsString(step.Actions, "agent-team job step squ-614 review --status queued")
+			case explainedJob.JobID == "squ-611" && step.ID == "implement":
+				failedImplement = step.State == "failed" && containsString(step.Actions, "agent-team job retry squ-611 --dry-run --dispatch")
+			}
+		}
+	}
+	if !readyReview || !manualGate || !failedImplement {
+		t.Fatalf("pipeline explain did not surface expected step diagnostics: ready=%v gate=%v failed=%v rows=%+v", readyReview, manualGate, failedImplement, explainedRows)
+	}
+
+	explainText := NewRootCmd()
+	explainTextOut, explainTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainText.SetOut(explainTextOut)
+	explainText.SetErr(explainTextErr)
+	explainText.SetArgs([]string{"pipeline", "explain", "ticket_to_pr", "--repo", root})
+	if err := explainText.Execute(); err != nil {
+		t.Fatalf("pipeline explain text: %v\nstderr=%s", err, explainTextErr.String())
+	}
+	for _, want := range []string{"Pipeline: ticket_to_pr", "Jobs:", "Steps:", "squ-610", "review", "agent-team job advance squ-610", "agent-team job step squ-614 review --status queued"} {
+		if !strings.Contains(explainTextOut.String(), want) {
+			t.Fatalf("pipeline explain text missing %q:\n%s", want, explainTextOut.String())
+		}
+	}
+
+	explainFormat := NewRootCmd()
+	explainFormatOut, explainFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainFormat.SetOut(explainFormatOut)
+	explainFormat.SetErr(explainFormatErr)
+	explainFormat.SetArgs([]string{"pipeline", "explain", "ticket_to_pr", "--repo", root, "--format", "{{.Pipeline}} {{.TotalJobs}} {{.ExplainedJobs}}"})
+	if err := explainFormat.Execute(); err != nil {
+		t.Fatalf("pipeline explain format: %v\nstderr=%s", err, explainFormatErr.String())
+	}
+	if got := strings.TrimSpace(explainFormatOut.String()); got != "ticket_to_pr 3 3" {
+		t.Fatalf("pipeline explain format = %q", got)
+	}
+
+	explainLimited := NewRootCmd()
+	explainLimitedOut, explainLimitedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainLimited.SetOut(explainLimitedOut)
+	explainLimited.SetErr(explainLimitedErr)
+	explainLimited.SetArgs([]string{"pipeline", "explain", "ticket_to_pr", "--repo", root, "--limit", "1", "--json"})
+	if err := explainLimited.Execute(); err != nil {
+		t.Fatalf("pipeline explain limit: %v\nstderr=%s", err, explainLimitedErr.String())
+	}
+	var limitedRows []pipelineExplainRow
+	if err := json.Unmarshal(explainLimitedOut.Bytes(), &limitedRows); err != nil {
+		t.Fatalf("decode limited pipeline explain json: %v\nbody=%s", err, explainLimitedOut.String())
+	}
+	if len(limitedRows) != 1 || limitedRows[0].TotalJobs != 3 || limitedRows[0].ExplainedJobs != 1 || !limitedRows[0].Truncated || len(limitedRows[0].Jobs) != 1 {
+		t.Fatalf("limited pipeline explain = %+v", limitedRows)
+	}
+
 	invalid := NewRootCmd()
 	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
 	invalid.SetOut(invalidOut)
