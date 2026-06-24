@@ -1105,8 +1105,8 @@ func (r *EventResolver) onReap(spawned string) {
 	if next == nil {
 		return
 	}
-	// Re-spawn from the queue. Failures are dropped to the daemon log; no
-	// retry. (A full retry-and-dead-letter design is out of scope for v1.2.)
+	// Re-spawn from the queue. Failures are persisted with retry metadata and
+	// move to dead-letter after MaxQueueAttempts.
 	if _, err := r.spawn(declared, next.uniqueName, next.eventType, next.payload); err != nil {
 		r.recordQueueFailure(declared.Name, next, err)
 		r.mu.Lock()
