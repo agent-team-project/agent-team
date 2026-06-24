@@ -2898,6 +2898,129 @@ target = "worker"
 	}
 }
 
+func TestPipelineResumePlanScopesRuntimeMetadata(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[[instances.manager.triggers]]
+event        = "agent.dispatch"
+match.target = "manager"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+
+[pipelines.ops_review]
+trigger.event = "ops.created"
+
+[[pipelines.ops_review.steps]]
+id = "audit"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-940",
+			Ticket:    "SQU-940",
+			Target:    "worker",
+			Kickoff:   "recover runtime",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-940",
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-940", StartedAt: now.Add(-time.Hour)},
+				{ID: "review", Target: "manager", Status: job.StatusRunning, Instance: "manager-squ-940", StartedAt: now.Add(-30 * time.Minute)},
+			},
+		},
+		{
+			ID:        "squ-941",
+			Ticket:    "SQU-941",
+			Target:    "worker",
+			Kickoff:   "foreign pipeline",
+			Pipeline:  "ops_review",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-941",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "worker-squ-940", Agent: "worker", Runtime: "codex", RuntimeBinary: "codex", Status: daemon.StatusCrashed, StartedAt: now.Add(-time.Hour), ExitedAt: now.Add(-10 * time.Minute)},
+		{Instance: "manager-squ-940", Job: "squ-940", Agent: "manager", Runtime: "claude", RuntimeBinary: "claude", Status: daemon.StatusCrashed, StartedAt: now.Add(-30 * time.Minute), ExitedAt: now.Add(-5 * time.Minute)},
+		{Instance: "worker-squ-941", Job: "squ-941", Agent: "worker", Runtime: "codex", RuntimeBinary: "codex", Status: daemon.StatusCrashed, StartedAt: now.Add(-20 * time.Minute), ExitedAt: now.Add(-2 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--status", "crashed", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline resume-plan json: %v\nstderr=%s", err, stderr.String())
+	}
+	var plans []runtimeResumePlan
+	if err := json.Unmarshal(out.Bytes(), &plans); err != nil {
+		t.Fatalf("decode pipeline resume-plan: %v\nbody=%s", err, out.String())
+	}
+	if len(plans) != 2 || plans[0].Instance != "manager-squ-940" || plans[1].Instance != "worker-squ-940" {
+		t.Fatalf("plans = %+v, want manager-squ-940 and worker-squ-940 only", plans)
+	}
+	if plans[0].Job != "squ-940" || plans[1].Job != "squ-940" || plans[1].JobLogsCommand != "agent-team job logs squ-940 --follow" || plans[1].JobLastMessageCommand != "agent-team job logs squ-940 --last-message" {
+		t.Fatalf("job-scoped commands not populated: %+v", plans)
+	}
+
+	format := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	format.SetOut(formatOut)
+	format.SetErr(formatErr)
+	format.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--runtime", "codex", "--action", "logs", "--format", "{{.Instance}} {{.Runtime}} {{.RecommendedAction}} {{.JobLogsCommand}}"})
+	if err := format.Execute(); err != nil {
+		t.Fatalf("pipeline resume-plan format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if got, want := strings.TrimSpace(formatOut.String()), "worker-squ-940 codex logs agent-team job logs squ-940 --follow"; got != want {
+		t.Fatalf("formatted pipeline resume-plan = %q, want %q", got, want)
+	}
+
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--status", "crashed", "--summary", "--json"})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("pipeline resume-plan summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var counts runtimeResumeSummary
+	if err := json.Unmarshal(summaryOut.Bytes(), &counts); err != nil {
+		t.Fatalf("decode pipeline resume-plan summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if counts.Total != 2 || counts.Actions["logs"] != 2 || counts.Runtimes["claude"] != 1 || counts.Runtimes["codex"] != 1 || counts.Statuses["crashed"] != 2 {
+		t.Fatalf("pipeline resume-plan summary = %+v", counts)
+	}
+}
+
 func TestPipelinePRGateWaitsForJobPR(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

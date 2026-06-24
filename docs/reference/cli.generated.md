@@ -2928,6 +2928,7 @@ Subcommands:
 - `agent-team pipeline ready` - List ready pipeline jobs.
 - `agent-team pipeline reject` - Reject blocked manual pipeline gates.
 - `agent-team pipeline release` - Release held pipeline jobs so automation can advance them.
+- `agent-team pipeline resume-plan` - Show runtime resume and fallback commands for one pipeline.
 - `agent-team pipeline retry` - Reset failed pipeline steps for another attempt.
 - `agent-team pipeline run` - Create a durable job from a pipeline declaration.
 - `agent-team pipeline show` - Show one declared pipeline.
@@ -3237,6 +3238,28 @@ Flags:
       --limit int        Release at most this many held jobs; 0 means no limit.
       --message string   Release message recorded on each job.
       --repo string      Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team pipeline resume-plan`
+
+Show runtime resume and fallback commands for one pipeline.
+
+Show runtime resume and fallback commands for daemon metadata owned by jobs in one declared pipeline. This is the pipeline-scoped form of `agent-team runtime resume-plan`.
+
+```text
+agent-team pipeline resume-plan <pipeline> [flags]
+```
+
+Flags:
+
+```text
+      --action strings    Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.
+      --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
+      --json              Emit machine-readable JSON.
+      --repo string       Repo root containing .agent_team. (default "<repo>")
+      --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
+      --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
+      --summary           Summarize matching pipeline resume plans by recommended action, runtime, and status.
 ```
 
 ## `agent-team pipeline retry`

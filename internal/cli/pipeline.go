@@ -13,6 +13,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
@@ -42,6 +43,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineRejectCmd())
 	cmd.AddCommand(newPipelineSkipCmd())
 	cmd.AddCommand(newPipelineCancelCmd())
+	cmd.AddCommand(newPipelineResumePlanCmd())
 	cmd.AddCommand(newPipelineRetryCmd())
 	cmd.AddCommand(newPipelineTimeoutCmd())
 	cmd.AddCommand(newPipelineRunCmd())
@@ -1074,6 +1076,79 @@ func newPipelineCancelCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview cancellations without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit cancellation results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each cancellation result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StatusAfter}}'.")
+	return cmd
+}
+
+func newPipelineResumePlanCmd() *cobra.Command {
+	var (
+		repo          string
+		statusFilters []string
+		runtimeFilter []string
+		actionFilters []string
+		summary       bool
+		jsonOut       bool
+		format        string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "resume-plan <pipeline>",
+		Short: "Show runtime resume and fallback commands for one pipeline.",
+		Long: "Show runtime resume and fallback commands for daemon metadata owned by jobs in one declared pipeline. " +
+			"This is the pipeline-scoped form of `agent-team runtime resume-plan`.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if summary && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --summary cannot be combined with --format.")
+				return exitErr(2)
+			}
+			pipelineName := strings.TrimSpace(args[0])
+			if pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: pipeline name is required.")
+				return exitErr(2)
+			}
+			tmpl, err := parseRuntimeResumePlanFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			plans, err := collectPipelineRuntimeResumePlans(teamDir, pipelineName, statusFilters, runtimeFilter, actionFilters)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: %v\n", err)
+				return exitErr(1)
+			}
+			if summary {
+				out := summarizeRuntimeResumePlans(plans)
+				if jsonOut {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
+				}
+				renderRuntimeResumeSummary(cmd.OutOrStdout(), out)
+				return nil
+			}
+			if jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(plans)
+			}
+			if tmpl != nil {
+				return renderRuntimeResumePlanFormat(cmd.OutOrStdout(), plans, tmpl)
+			}
+			renderRuntimeResumePlans(cmd.OutOrStdout(), plans)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching pipeline resume plans by recommended action, runtime, and status.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.")
 	return cmd
 }
 
@@ -2720,6 +2795,79 @@ func selectedPipelineJobs(teamDir, pipeline string) ([]*job.Job, error) {
 		out = append(out, j)
 	}
 	return out, nil
+}
+
+func collectPipelineRuntimeResumePlans(teamDir, pipeline string, statusFilters []string, runtimeFilters []string, actionFilters []string) ([]runtimeResumePlan, error) {
+	jobs, err := selectedPipelineJobs(teamDir, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return nil, err
+	}
+	statusSet, err := parseRuntimeResumeStatusFilter(statusFilters)
+	if err != nil {
+		return nil, err
+	}
+	runtimeSet, err := parseRuntimeResumeRuntimeFilter(runtimeFilters)
+	if err != nil {
+		return nil, err
+	}
+	actionSet, err := parseRuntimeResumeActionFilter(actionFilters)
+	if err != nil {
+		return nil, err
+	}
+
+	byInstance := map[string]*daemon.Metadata{}
+	for _, meta := range metas {
+		if meta == nil {
+			continue
+		}
+		byInstance[meta.Instance] = meta
+	}
+
+	selected := map[string]*daemon.Metadata{}
+	jobForInstance := map[string]string{}
+	for _, j := range jobs {
+		jobID := job.NormalizeID(j.ID)
+		for _, meta := range metadataForResumePlanJob(metas, byInstance, j) {
+			if meta == nil {
+				continue
+			}
+			if _, ok := selected[meta.Instance]; !ok {
+				selected[meta.Instance] = meta
+			}
+			if jobID != "" && strings.TrimSpace(meta.Job) == "" && jobForInstance[meta.Instance] == "" {
+				jobForInstance[meta.Instance] = jobID
+			}
+		}
+	}
+
+	plans := make([]runtimeResumePlan, 0, len(selected))
+	for _, meta := range selected {
+		if len(statusSet) > 0 && !statusSet[strings.ToLower(strings.TrimSpace(string(meta.Status)))] {
+			continue
+		}
+		runtimeKind := lifecycleMetadataRuntimeKind(meta)
+		if len(runtimeSet) > 0 && !runtimeSet[string(runtimeKind)] {
+			continue
+		}
+		plan := runtimeResumePlanFromMetadata(meta)
+		if strings.TrimSpace(plan.Job) == "" {
+			if jobID := jobForInstance[meta.Instance]; jobID != "" {
+				plan = runtimeResumePlanWithJobCommands(plan, jobID)
+			}
+		}
+		if len(actionSet) > 0 && !actionSet[plan.RecommendedAction] {
+			continue
+		}
+		plans = append(plans, plan)
+	}
+	sort.SliceStable(plans, func(i, j int) bool {
+		return plans[i].Instance < plans[j].Instance
+	})
+	return plans, nil
 }
 
 func holdStateSelected(state string, stateFilter map[string]bool, stateDefault bool) bool {
