@@ -20,9 +20,10 @@ import (
 
 func newPipelineCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "pipeline",
-		Short: "Inspect declared pipeline workflows.",
-		Long:  "Inspect pipeline declarations loaded from .agent_team/instances.toml.",
+		Use:     "pipeline",
+		Aliases: []string{"pipelines"},
+		Short:   "Inspect declared pipeline workflows.",
+		Long:    "Inspect pipeline declarations loaded from .agent_team/instances.toml.",
 	}
 	cmd.AddCommand(newPipelineLsCmd())
 	cmd.AddCommand(newPipelineShowCmd())

@@ -28,8 +28,9 @@ import (
 
 func newJobCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "job",
-		Short: "Manage durable work units.",
+		Use:     "job",
+		Aliases: []string{"jobs"},
+		Short:   "Manage durable work units.",
 		Long: "Manage durable work units backed by `.agent_team/jobs/<job-id>.toml`. " +
 			"Jobs track ticket ownership, target agent, lifecycle state, instance, branch, worktree, and PR metadata.",
 	}

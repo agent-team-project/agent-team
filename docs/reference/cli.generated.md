@@ -1498,6 +1498,8 @@ Manage durable work units backed by `.agent_team/jobs/&lt;job-id&gt;.toml`. Jobs
 agent-team job
 ```
 
+Aliases: `jobs`
+
 Inherited Flags:
 
 ```text
@@ -2830,6 +2832,8 @@ Inspect pipeline declarations loaded from .agent_team/instances.toml.
 agent-team pipeline
 ```
 
+Aliases: `pipelines`
+
 Inherited Flags:
 
 ```text
@@ -3365,6 +3369,8 @@ Inspect and control persisted daemon event queue items under `.agent_team/daemon
 ```text
 agent-team queue
 ```
+
+Aliases: `queues`
 
 Inherited Flags:
 
@@ -4129,6 +4135,8 @@ Inspect schedules declared in .agent_team/instances.toml and manually publish th
 agent-team schedule
 ```
 
+Aliases: `schedules`
+
 Inherited Flags:
 
 ```text
@@ -4558,6 +4566,8 @@ Inspect team declarations loaded from .agent_team/instances.toml.
 ```text
 agent-team team
 ```
+
+Aliases: `teams`
 
 Inherited Flags:
 

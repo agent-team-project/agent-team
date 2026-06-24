@@ -72,6 +72,33 @@ func TestRootRepoFlagWorksAfterLegacyTargetCommand(t *testing.T) {
 	}
 }
 
+func TestPluralTopLevelAliasesDispatch(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "jobs", args: []string{"--repo", root, "jobs", "ls", "--json"}},
+		{name: "pipelines", args: []string{"--repo", root, "pipelines", "ls", "--json"}},
+		{name: "queues", args: []string{"--repo", root, "queues", "ls", "--summary", "--json"}},
+		{name: "schedules", args: []string{"--repo", root, "schedules", "ls", "--json"}},
+		{name: "teams", args: []string{"--repo", root, "teams", "ls", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("%s alias failed: %v\nstderr=%s", tc.name, err, stderr.String())
+			}
+		})
+	}
+}
+
 func TestRepoHelpDistinguishesLegacyTargetFromAgentTarget(t *testing.T) {
 	for _, tc := range []struct {
 		name string

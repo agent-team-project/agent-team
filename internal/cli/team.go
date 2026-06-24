@@ -23,9 +23,10 @@ import (
 
 func newTeamCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "team",
-		Short: "Inspect declared agent teams.",
-		Long:  "Inspect team declarations loaded from .agent_team/instances.toml.",
+		Use:     "team",
+		Aliases: []string{"teams"},
+		Short:   "Inspect declared agent teams.",
+		Long:    "Inspect team declarations loaded from .agent_team/instances.toml.",
 	}
 	cmd.AddCommand(newTeamLsCmd())
 	cmd.AddCommand(newTeamShowCmd())

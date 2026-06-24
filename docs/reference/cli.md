@@ -68,6 +68,8 @@ Shortcuts:
 | `agent-team ls` | `agent-team ps` |
 | `agent-team top` | `agent-team stats` |
 
+Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queues`, `schedules`, and `teams`.
+
 ## Topology and Convergence
 
 | Command | Purpose |

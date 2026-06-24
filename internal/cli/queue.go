@@ -23,9 +23,10 @@ import (
 
 func newQueueCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "queue",
-		Short: "Inspect and control persisted daemon event queue items.",
-		Long:  "Inspect and control persisted daemon event queue items under `.agent_team/daemon/queue/`.",
+		Use:     "queue",
+		Aliases: []string{"queues"},
+		Short:   "Inspect and control persisted daemon event queue items.",
+		Long:    "Inspect and control persisted daemon event queue items under `.agent_team/daemon/queue/`.",
 	}
 	cmd.AddCommand(newQueueLsCmd())
 	cmd.AddCommand(newQueueShowCmd())

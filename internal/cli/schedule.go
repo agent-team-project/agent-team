@@ -20,9 +20,10 @@ import (
 
 func newScheduleCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "schedule",
-		Short: "Inspect and run declared schedule events.",
-		Long:  "Inspect schedules declared in .agent_team/instances.toml and manually publish their schedule events.",
+		Use:     "schedule",
+		Aliases: []string{"schedules"},
+		Short:   "Inspect and run declared schedule events.",
+		Long:    "Inspect schedules declared in .agent_team/instances.toml and manually publish their schedule events.",
 	}
 	cmd.AddCommand(newScheduleLsCmd())
 	cmd.AddCommand(newScheduleShowCmd())
