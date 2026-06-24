@@ -1223,6 +1223,22 @@ func TestIntakeDuplicatesListsRequestGroups(t *testing.T) {
 	if !strings.Contains(noneOut.String(), "(no duplicate provider request ids)") {
 		t.Fatalf("duplicates empty output = %q", noneOut.String())
 	}
+
+	summaryCmd := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryCmd.SetOut(summaryOut)
+	summaryCmd.SetErr(summaryErr)
+	summaryCmd.SetArgs([]string{"intake", "summary", "--target", target, "--json"})
+	if err := summaryCmd.Execute(); err != nil {
+		t.Fatalf("intake summary duplicate count: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var summary intakeSummaryResult
+	if err := json.Unmarshal(summaryOut.Bytes(), &summary); err != nil {
+		t.Fatalf("decode summary duplicate count: %v\nbody=%s", err, summaryOut.String())
+	}
+	if summary.DuplicateRequestIDs != 1 || !containsString(summary.Actions, "agent-team intake duplicates") {
+		t.Fatalf("summary duplicate count/actions = %+v", summary)
+	}
 }
 
 func TestIntakeDoctorReportsLedgerFindings(t *testing.T) {

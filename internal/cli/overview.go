@@ -543,7 +543,7 @@ func overviewIntakeFromDeliveries(deliveries []intakeDelivery) overviewIntakeSum
 		Errors:              summary.Unresolved,
 		Recovered:           summary.Recovered,
 		Replayable:          summary.Replayable,
-		DuplicateRequestIDs: len(duplicateIntakeRequestIDs(deliveries, "", "")),
+		DuplicateRequestIDs: summary.DuplicateRequestIDs,
 		LatestErrorID:       summary.LatestErrorID,
 		LatestError:         summary.LatestError,
 	}

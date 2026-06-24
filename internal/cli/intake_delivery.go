@@ -370,17 +370,18 @@ type intakePruneResult struct {
 }
 
 type intakeSummaryResult struct {
-	Deliveries    int                     `json:"deliveries"`
-	OK            int                     `json:"ok"`
-	Failed        int                     `json:"failed"`
-	Unresolved    int                     `json:"unresolved"`
-	Recovered     int                     `json:"recovered"`
-	Replayable    int                     `json:"replayable"`
-	ReplayFailed  int                     `json:"replay_failed"`
-	LatestErrorID string                  `json:"latest_error_id,omitempty"`
-	LatestError   string                  `json:"latest_error,omitempty"`
-	Providers     []intakeProviderSummary `json:"providers,omitempty"`
-	Actions       []string                `json:"actions,omitempty"`
+	Deliveries          int                     `json:"deliveries"`
+	OK                  int                     `json:"ok"`
+	Failed              int                     `json:"failed"`
+	Unresolved          int                     `json:"unresolved"`
+	Recovered           int                     `json:"recovered"`
+	Replayable          int                     `json:"replayable"`
+	ReplayFailed        int                     `json:"replay_failed"`
+	DuplicateRequestIDs int                     `json:"duplicate_request_ids,omitempty"`
+	LatestErrorID       string                  `json:"latest_error_id,omitempty"`
+	LatestError         string                  `json:"latest_error,omitempty"`
+	Providers           []intakeProviderSummary `json:"providers,omitempty"`
+	Actions             []string                `json:"actions,omitempty"`
 }
 
 type intakeProviderSummary struct {
@@ -1127,6 +1128,7 @@ func summarizeIntakeDeliveries(deliveries []intakeDelivery) intakeSummaryResult 
 		return providers[i].Provider < providers[j].Provider
 	})
 	out.Providers = providers
+	out.DuplicateRequestIDs = len(duplicateIntakeRequestIDs(deliveries, "", ""))
 	out.Actions = intakeSummaryActions(out)
 	return out
 }
@@ -1190,6 +1192,9 @@ func intakeSummaryActions(summary intakeSummaryResult) []string {
 	}
 	if summary.Recovered > 0 {
 		actions = append(actions, "agent-team intake prune --replay-status ok --dry-run")
+	}
+	if summary.DuplicateRequestIDs > 0 {
+		actions = append(actions, "agent-team intake duplicates")
 	}
 	return actions
 }
@@ -1339,7 +1344,7 @@ func renderIntakeSummary(w io.Writer, summary intakeSummaryResult, jsonOut bool,
 		_, err := fmt.Fprintln(w)
 		return err
 	}
-	fmt.Fprintf(w, "intake: deliveries=%d ok=%d failed=%d unresolved=%d recovered=%d replayable=%d replay_failed=%d latest_error=%s\n",
+	fmt.Fprintf(w, "intake: deliveries=%d ok=%d failed=%d unresolved=%d recovered=%d replayable=%d replay_failed=%d latest_error=%s duplicate_request_ids=%d\n",
 		summary.Deliveries,
 		summary.OK,
 		summary.Failed,
@@ -1347,7 +1352,8 @@ func renderIntakeSummary(w io.Writer, summary intakeSummaryResult, jsonOut bool,
 		summary.Recovered,
 		summary.Replayable,
 		summary.ReplayFailed,
-		emptyDash(summary.LatestErrorID))
+		emptyDash(summary.LatestErrorID),
+		summary.DuplicateRequestIDs)
 	if len(summary.Providers) > 0 {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "PROVIDER\tDELIVERIES\tOK\tFAILED\tUNRESOLVED\tRECOVERED\tREPLAYABLE\tREPLAY_FAILED")
