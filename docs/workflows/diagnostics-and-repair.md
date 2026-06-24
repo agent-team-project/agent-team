@@ -53,7 +53,9 @@ agent-team next
 agent-team next --team delivery
 agent-team next --source queue
 agent-team next --reason dead
+agent-team next --source jobs --reason stale_running
 agent-team team next delivery
+agent-team team next delivery --source jobs --reason stale_running
 ```
 
 `next` is a compact command-hint view derived from overview. Text output stays

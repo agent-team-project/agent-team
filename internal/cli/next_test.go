@@ -203,6 +203,39 @@ func TestNextCommandFiltersBySourceAndReason(t *testing.T) {
 	if len(prefixResult.Actions) != 1 || prefixResult.Actions[0] != "agent-team schedule fire --dry-run --preview-triggers" {
 		t.Fatalf("prefix-filtered result = %+v", prefixResult)
 	}
+
+	staleRoot := writeOverviewStaleRunningFixture(t)
+	stale := NewRootCmd()
+	staleOut, staleErr := &bytes.Buffer{}, &bytes.Buffer{}
+	stale.SetOut(staleOut)
+	stale.SetErr(staleErr)
+	stale.SetArgs([]string{"next", "--target", staleRoot, "--source", "jobs", "--reason", "stale_running", "--json"})
+	if err := stale.Execute(); err != nil {
+		t.Fatalf("next stale-running json: %v\nstderr=%s", err, staleErr.String())
+	}
+	var staleResult nextActionResult
+	if err := json.Unmarshal(staleOut.Bytes(), &staleResult); err != nil {
+		t.Fatalf("decode stale-running next json: %v\nbody=%s", err, staleOut.String())
+	}
+	if len(staleResult.Actions) != 1 || staleResult.Actions[0] != "agent-team repair --timeout-jobs --dry-run" {
+		t.Fatalf("stale-running filtered result = %+v", staleResult)
+	}
+
+	teamStale := NewRootCmd()
+	teamStaleOut, teamStaleErr := &bytes.Buffer{}, &bytes.Buffer{}
+	teamStale.SetOut(teamStaleOut)
+	teamStale.SetErr(teamStaleErr)
+	teamStale.SetArgs([]string{"team", "next", "delivery", "--repo", staleRoot, "--source", "jobs", "--reason", "stale_running", "--json"})
+	if err := teamStale.Execute(); err != nil {
+		t.Fatalf("team next stale-running json: %v\nstderr=%s", err, teamStaleErr.String())
+	}
+	var teamStaleResult nextActionResult
+	if err := json.Unmarshal(teamStaleOut.Bytes(), &teamStaleResult); err != nil {
+		t.Fatalf("decode team stale-running next json: %v\nbody=%s", err, teamStaleOut.String())
+	}
+	if len(teamStaleResult.Actions) != 1 || teamStaleResult.Actions[0] != "agent-team team repair delivery --timeout-jobs --dry-run" {
+		t.Fatalf("team stale-running filtered result = %+v", teamStaleResult)
+	}
 }
 
 func TestTeamNextCommandFiltersBySource(t *testing.T) {
