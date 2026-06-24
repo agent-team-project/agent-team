@@ -2876,6 +2876,7 @@ func newTeamExplainCmd() *cobra.Command {
 	var (
 		repo    string
 		limit   int
+		states  []string
 		jsonOut bool
 		format  string
 	)
@@ -2895,6 +2896,15 @@ func newTeamExplainCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team explain: --limit must be >= 0.")
 				return exitErr(2)
 			}
+			var stateFilter map[string]bool
+			if cmd.Flags().Changed("state") {
+				var err error
+				stateFilter, err = parseJobNextStateFilter(states, false)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team explain: %v\n", err)
+					return exitErr(2)
+				}
+			}
 			tmpl, err := parsePipelineExplainFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team explain: %v\n", err)
@@ -2904,7 +2914,7 @@ func newTeamExplainCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rows, err := collectTeamPipelineExplain(teamDir, args[0], limit)
+			rows, err := collectTeamPipelineExplain(teamDir, args[0], limit, stateFilter)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team explain: %v\n", err)
 				return exitErr(1)
@@ -2914,6 +2924,7 @@ func newTeamExplainCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit job explanations per team-owned pipeline; 0 means no limit.")
+	cmd.Flags().StringSliceVar(&states, "state", nil, "Only explain jobs whose next-step state matches: ready, queued, running, blocked, failed, done, none, or all. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team pipeline explanations as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each pipeline explanation with a Go template, e.g. '{{.Pipeline}} {{len .Jobs}}'.")
 	return cmd
@@ -5795,12 +5806,12 @@ func collectTeamPipelineStatus(teamDir, name string) ([]pipelineStatusRow, error
 	return teamPipelineStatus(team, rows), nil
 }
 
-func collectTeamPipelineExplain(teamDir, name string, limit int) ([]pipelineExplainRow, error) {
+func collectTeamPipelineExplain(teamDir, name string, limit int, stateFilter map[string]bool) ([]pipelineExplainRow, error) {
 	_, team, err := loadTopologyTeam(teamDir, name)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := collectPipelineExplainRows(teamDir, "", limit)
+	rows, err := collectPipelineExplainRows(teamDir, "", limit, stateFilter)
 	if err != nil {
 		return nil, err
 	}

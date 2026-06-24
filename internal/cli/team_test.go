@@ -493,6 +493,38 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team explain format = %q", got)
 	}
 
+	explainReady := NewRootCmd()
+	explainReadyOut, explainReadyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainReady.SetOut(explainReadyOut)
+	explainReady.SetErr(explainReadyErr)
+	explainReady.SetArgs([]string{"team", "explain", "delivery", "--repo", root, "--state", "ready", "--json"})
+	if err := explainReady.Execute(); err != nil {
+		t.Fatalf("team explain ready filter: %v\nstderr=%s", err, explainReadyErr.String())
+	}
+	var readyExplainRows []pipelineExplainRow
+	if err := json.Unmarshal(explainReadyOut.Bytes(), &readyExplainRows); err != nil {
+		t.Fatalf("decode team ready explain: %v\nbody=%s", err, explainReadyOut.String())
+	}
+	if len(readyExplainRows) != 1 || readyExplainRows[0].TotalJobs != 1 || readyExplainRows[0].ExplainedJobs != 1 || len(readyExplainRows[0].Jobs) != 1 || readyExplainRows[0].Jobs[0].JobID != "squ-801" {
+		t.Fatalf("team ready explain rows = %+v", readyExplainRows)
+	}
+
+	explainFailed := NewRootCmd()
+	explainFailedOut, explainFailedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainFailed.SetOut(explainFailedOut)
+	explainFailed.SetErr(explainFailedErr)
+	explainFailed.SetArgs([]string{"team", "explain", "delivery", "--repo", root, "--state", "failed", "--json"})
+	if err := explainFailed.Execute(); err != nil {
+		t.Fatalf("team explain failed filter: %v\nstderr=%s", err, explainFailedErr.String())
+	}
+	var failedExplainRows []pipelineExplainRow
+	if err := json.Unmarshal(explainFailedOut.Bytes(), &failedExplainRows); err != nil {
+		t.Fatalf("decode team failed explain: %v\nbody=%s", err, explainFailedOut.String())
+	}
+	if len(failedExplainRows) != 1 || failedExplainRows[0].TotalJobs != 1 || failedExplainRows[0].ExplainedJobs != 0 || len(failedExplainRows[0].Jobs) != 0 {
+		t.Fatalf("team failed explain rows = %+v", failedExplainRows)
+	}
+
 	schedules := NewRootCmd()
 	schedulesOut, schedulesErr := &bytes.Buffer{}, &bytes.Buffer{}
 	schedules.SetOut(schedulesOut)

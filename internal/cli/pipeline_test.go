@@ -829,6 +829,34 @@ target = "manager"
 		t.Fatalf("limited pipeline explain = %+v", limitedRows)
 	}
 
+	explainFailed := NewRootCmd()
+	explainFailedOut, explainFailedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainFailed.SetOut(explainFailedOut)
+	explainFailed.SetErr(explainFailedErr)
+	explainFailed.SetArgs([]string{"pipeline", "explain", "ticket_to_pr", "--repo", root, "--state", "failed", "--json"})
+	if err := explainFailed.Execute(); err != nil {
+		t.Fatalf("pipeline explain failed filter: %v\nstderr=%s", err, explainFailedErr.String())
+	}
+	var failedRows []pipelineExplainRow
+	if err := json.Unmarshal(explainFailedOut.Bytes(), &failedRows); err != nil {
+		t.Fatalf("decode failed pipeline explain json: %v\nbody=%s", err, explainFailedOut.String())
+	}
+	if len(failedRows) != 1 || failedRows[0].TotalJobs != 3 || failedRows[0].ExplainedJobs != 1 || len(failedRows[0].Jobs) != 1 || failedRows[0].Jobs[0].JobID != "squ-611" {
+		t.Fatalf("failed pipeline explain = %+v", failedRows)
+	}
+
+	explainInvalidState := NewRootCmd()
+	explainInvalidStateOut, explainInvalidStateErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainInvalidState.SetOut(explainInvalidStateOut)
+	explainInvalidState.SetErr(explainInvalidStateErr)
+	explainInvalidState.SetArgs([]string{"pipeline", "explain", "ticket_to_pr", "--repo", root, "--state", "stuck"})
+	if err := explainInvalidState.Execute(); err == nil {
+		t.Fatalf("pipeline explain invalid state succeeded")
+	}
+	if !strings.Contains(explainInvalidStateErr.String(), "--state must be ready") {
+		t.Fatalf("invalid state stderr = %q", explainInvalidStateErr.String())
+	}
+
 	invalid := NewRootCmd()
 	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
 	invalid.SetOut(invalidOut)
