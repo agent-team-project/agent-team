@@ -1639,6 +1639,7 @@ agent-team job close <job-id> [message...] [flags]
 Flags:
 
 ```text
+      --dry-run               Preview the close without changing job state or writing an audit event.
       --format string         Render the updated job with a Go template, e.g. '{{.ID}} {{.Status}}'.
       --json                  Emit the updated job as JSON.
       --message string        Close message recorded on the job.
@@ -2439,9 +2440,9 @@ Flags:
       --allow-missing         Allow queueing a message for an owning instance the daemon does not know yet.
       --dry-run               Preview the unblock without sending a mailbox message or updating the job.
   -f, --force                 Allow unblocking a job not currently marked blocked.
-      --format string         Render the updated job with a Go template, e.g. '{{.ID}} {{.Status}}'.
+      --format string         Render the updated job or dry-run preview with a Go template, e.g. '{{.ID}} {{.Status}}'.
       --from string           Sender label recorded with the unblock message. (default "(cli)")
-      --json                  Emit the updated job as JSON.
+      --json                  Emit the updated job or dry-run preview as JSON.
       --message string        Message text to send.
       --message-file string   Read message text from a file, or '-' for stdin.
       --repo string           Repo root containing .agent_team. (default "<repo>")

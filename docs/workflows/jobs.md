@@ -170,14 +170,16 @@ For pipeline jobs it resets the first failed step whose dependencies are satisfi
 ## Closing Jobs
 
 ```sh
+agent-team job close squ-42 --status done --dry-run
 agent-team job close squ-42 --status done
 agent-team job close squ-42 --status failed
 agent-team job close squ-42 --status failed --message "superseded by SQU-43"
 ```
 
-Closing records a job event and updates timestamps. Add a positional message,
-`--message`, or `--message-file <path|->` when the terminal state needs an
-operator-readable reason.
+Use `--dry-run` to preview the terminal status and message before mutating the
+job. Closing records a job event and updates timestamps. Add a positional
+message, `--message`, or `--message-file <path|->` when the terminal state
+needs an operator-readable reason.
 
 ## Cancelling Jobs
 

@@ -224,6 +224,55 @@ func TestJobCloseRecordsMessage(t *testing.T) {
 	}
 }
 
+func TestJobCloseDryRunDoesNotMutateJob(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	original := &job.Job{
+		ID:        "squ-72",
+		Ticket:    "SQU-72",
+		Target:    "worker",
+		Status:    job.StatusRunning,
+		LastEvent: "dispatched",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, original); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "close", "squ-72", "--repo", tmp, "--status", "failed", "--message", "preview only", "--dry-run", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job close --dry-run: %v\nstdout=%s\nstderr=%s", err, out.String(), stderr.String())
+	}
+	var preview jobActionPreview
+	if err := json.Unmarshal(out.Bytes(), &preview); err != nil {
+		t.Fatalf("decode close preview: %v\nbody=%s", err, out.String())
+	}
+	if !preview.DryRun || preview.Job == nil || preview.Job.Status != job.StatusFailed || preview.Job.LastEvent != "closed" || preview.Job.LastStatus != "preview only" {
+		t.Fatalf("preview = %+v", preview)
+	}
+	updated, err := job.Read(teamDir, "squ-72")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if updated.Status != job.StatusRunning || updated.LastEvent != "dispatched" || updated.LastStatus != "" || !updated.UpdatedAt.Equal(original.UpdatedAt) {
+		t.Fatalf("dry-run mutated job = %+v", updated)
+	}
+	events, err := job.ListEvents(teamDir, "squ-72")
+	if err != nil {
+		t.Fatalf("events: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("dry-run wrote events = %+v", events)
+	}
+}
+
 func TestJobCancelDryRunDoesNotMutateJob(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

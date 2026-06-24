@@ -1526,8 +1526,8 @@ func newJobUnblockCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Allow unblocking a job not currently marked blocked.")
 	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing a message for an owning instance the daemon does not know yet.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the unblock without sending a mailbox message or updating the job.")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
-	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job or dry-run preview as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or dry-run preview with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
 }
 
@@ -1832,6 +1832,7 @@ func newJobCloseCmd() *cobra.Command {
 		status      string
 		message     string
 		messageFile string
+		dryRun      bool
 		jsonOut     bool
 		format      string
 	)
@@ -1867,6 +1868,9 @@ func newJobCloseCmd() *cobra.Command {
 			j.LastEvent = "closed"
 			j.LastStatus = closeMessage
 			j.UpdatedAt = time.Now().UTC()
+			if dryRun {
+				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
+			}
 			if err := writeJobWithAudit(teamDir, j, "closed", "cli", closeMessage, map[string]string{"status": status}); err != nil {
 				return err
 			}
@@ -1877,6 +1881,7 @@ func newJobCloseCmd() *cobra.Command {
 	cmd.Flags().StringVar(&status, "status", string(job.StatusDone), "Close status: done or failed.")
 	cmd.Flags().StringVar(&message, "message", "", "Close message recorded on the job.")
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read close message from a file, or '-' for stdin.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the close without changing job state or writing an audit event.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
