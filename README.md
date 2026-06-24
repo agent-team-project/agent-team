@@ -211,7 +211,7 @@ agent-team health [-q] [-w] [--no-clear] [--wait --timeout 30s] [--latest | --la
                                                 # check daemon, declarations, crashes, stale status, queue dead letters/quarantine, job health, and optional topology drift
 agent-team monitor [-w] [--no-clear] [-a] [--summary [--resources]] [--plan [--stop-extras] [--action start]] [--jobs] [--schedules] [--latest | --last N] [--events N [--event-action stop] [--since 10m]] [--sort status|agent|phase|stale|unhealthy|started|stopped|exited|name] [--stats-sort cpu|mem|rss|status|agent|phase|stale|unhealthy|name] [--format '{{.Health.Healthy}} {{len .Instances}}'] [--json] [--interval 2s] [--strict-topology] [--agent manager] [--instance manager] [--status running] [--runtime codex] [--phase idle] [--stale] [--unhealthy]
                                                 # combined health, instance, resource, event-history, and job-status snapshot; uses local metadata if the daemon is down
-agent-team runtime [--runtime claude|codex] [--runtime-bin <path>] [--format '{{.Runtime}} {{.Available}}'] [--json] | set <claude|codex> [--runtime-bin <path>] [--dry-run] [--format '{{.Runtime}} {{.Binary}}'] [--json] | profile [--runtime claude|codex] [--runtime-bin <path>] [--format '{{.Runtime}} {{.Available}}'] [--json] | ls [--format '{{.Runtime}} {{.Selected}} {{.Available}}'] [--json] | probe [--runtime claude|codex] [--runtime-bin <path>] [--skip-doctor] [--exec] [--exec-prompt "..."] [--format '{{.OK}} {{len .Issues}}'] [--json] | resume-plan [<instance>...] [--job squ-42] [--status crashed] [--runtime codex] [--action start|attach|resume|logs] [--summary] [--format '{{.Instance}} {{.RecommendedAction}}'] [--json]
+agent-team runtime [--runtime claude|codex] [--runtime-bin <path>] [--format '{{.Runtime}} {{.Available}}'] [--json] | set <claude|codex> [--runtime-bin <path>] [--dry-run] [--format '{{.Runtime}} {{.Binary}}'] [--json] | unset [--dry-run] [--format '{{.Changed}}'] [--json] | profile [--runtime claude|codex] [--runtime-bin <path>] [--format '{{.Runtime}} {{.Available}}'] [--json] | ls [--format '{{.Runtime}} {{.Selected}} {{.Available}}'] [--json] | probe [--runtime claude|codex] [--runtime-bin <path>] [--skip-doctor] [--exec] [--exec-prompt "..."] [--format '{{.OK}} {{len .Issues}}'] [--json] | resume-plan [<instance>...] [--job squ-42] [--status crashed] [--runtime codex] [--action start|attach|resume|logs] [--summary] [--format '{{.Instance}} {{.RecommendedAction}}'] [--json]
                                                 # inspect, list, probe, or plan recovery for selected LLM runtime metadata
 agent-team docs cli [--output docs/reference/cli.generated.md | --check docs/reference/cli.generated.md]
                                                 # generate or check markdown CLI reference from the live command tree
@@ -342,7 +342,7 @@ claude --agents '<json>' --add-dir <tmpdir> --append-system-prompt-file <kickoff
 
 With `--detach`, with `--attach`, or with `--prompt` when the daemon is already running, the CLI sends that same resolved argv/env to `agent-teamd`. `--detach` returns a log-follow hint, while `--attach` follows the daemon-captured log immediately.
 
-Runtime selection is repo-configurable, environment-overridable, and command-overridable. Use `agent-team runtime set codex` to persist a repo default, or put this in `.agent_team/config.toml` directly:
+Runtime selection is repo-configurable, environment-overridable, and command-overridable. Use `agent-team runtime set codex` to persist a repo default, `agent-team runtime unset` to remove it, or put this in `.agent_team/config.toml` directly:
 
 ```toml
 [runtime]
@@ -362,6 +362,7 @@ Precedence is `--runtime` / `--runtime-bin`, then environment, then repo config,
 
 ```sh
 agent-team runtime set codex --runtime-bin codex
+agent-team runtime unset --dry-run
 agent-team runtime --runtime codex
 agent-team run worker --runtime codex --prompt "summarize the queued jobs" --last-message
 agent-team run worker --runtime codex --runtime-bin /opt/bin/codex-wrapper --prompt "check status" --detach

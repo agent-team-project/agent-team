@@ -3941,6 +3941,7 @@ Subcommands:
 - `agent-team runtime profile` - Show the selected runtime profile.
 - `agent-team runtime resume-plan` - Show runtime resume and fallback commands for daemon metadata.
 - `agent-team runtime set` - Set the repo default runtime profile.
+- `agent-team runtime unset` - Remove the repo default runtime profile.
 
 ## `agent-team runtime ls`
 
@@ -4081,6 +4082,33 @@ Flags:
       --json                 Emit machine-readable JSON.
       --runtime-bin string   Runtime binary or wrapper to store. Defaults to the runtime's built-in binary.
       --target string        Repo root or any path under a repo. (default "<repo>")
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team runtime unset`
+
+Remove the repo default runtime profile.
+
+Remove [runtime].kind, [runtime].binary, and [runtime].bin from .agent_team/config.toml so the repo falls back to environment variables or built-in runtime defaults.
+
+```text
+agent-team runtime unset [flags]
+```
+
+Aliases: `clear`, `reset`
+
+Flags:
+
+```text
+      --dry-run         Preview the config change without writing.
+      --format string   Render the unset result with a Go template, e.g. '{{.Changed}} {{.DryRun}}'.
+      --json            Emit machine-readable JSON.
+      --target string   Repo root or any path under a repo. (default "<repo>")
 ```
 
 Inherited Flags:

@@ -296,6 +296,98 @@ func TestRuntimeSetRejectsInvalidRuntime(t *testing.T) {
 	}
 }
 
+func TestRuntimeUnsetRemovesRepoConfigRuntimeSection(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	cfg := filepath.Join(tmp, ".agent_team", "config.toml")
+	before := `[linear]
+ticket_prefix = "SQU"
+
+[runtime]
+kind = "codex"
+binary = "codex-dev"
+
+[health]
+status_stale_after = "10m"
+`
+	if err := os.WriteFile(cfg, []byte(before), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "unset", "--target", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime unset failed: %v\nstderr: %s", err, errOut.String())
+	}
+	var result runtimeUnsetResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("json: %v\n%s", err, out.String())
+	}
+	if !result.Changed || result.ConfigPath == "" {
+		t.Fatalf("result = %+v, want changed config path", result)
+	}
+	body, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	content := string(body)
+	if strings.Contains(content, "[runtime]") || strings.Contains(content, `kind = "codex"`) || strings.Contains(content, `binary = "codex-dev"`) {
+		t.Fatalf("runtime override still present:\n%s", content)
+	}
+	for _, want := range []string{`[linear]`, `ticket_prefix = "SQU"`, `[health]`} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("config missing %q:\n%s", want, content)
+		}
+	}
+}
+
+func TestRuntimeUnsetDryRunPreservesConfigAndReportsEnvOverride(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "codex-wrapper")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	cfg := filepath.Join(tmp, ".agent_team", "config.toml")
+	before := `[runtime]
+kind = "codex"
+binary = "codex-dev"
+extra = "kept"
+`
+	if err := os.WriteFile(cfg, []byte(before), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "unset", "--target", tmp, "--dry-run", "--format", "{{.Changed}} {{.DryRun}} {{len .Notes}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime unset --dry-run failed: %v\nstderr: %s", err, errOut.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "true true 1" {
+		t.Fatalf("format output = %q", got)
+	}
+	after, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if string(after) != before {
+		t.Fatalf("dry-run changed config:\nbefore:\n%s\nafter:\n%s", before, string(after))
+	}
+	next := unsetRuntimeConfigContent(before)
+	if !strings.Contains(next, "[runtime]") || !strings.Contains(next, `extra = "kept"`) {
+		t.Fatalf("unset should preserve runtime section with unknown keys:\n%s", next)
+	}
+	if strings.Contains(next, `kind = "codex"`) || strings.Contains(next, `binary = "codex-dev"`) {
+		t.Fatalf("unset retained selector keys:\n%s", next)
+	}
+}
+
 func TestRuntimeLsJSONListsSupportedRuntimes(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "")
 	t.Setenv(runtimebin.EnvBinary, "")

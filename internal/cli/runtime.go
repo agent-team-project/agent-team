@@ -44,6 +44,7 @@ func newRuntimeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile to inspect for this invocation (claude or codex). Overrides env and repo config.")
 	cmd.Flags().StringVar(&runtimeBinary, "runtime-bin", "", "Runtime binary to inspect for this invocation. Overrides env and repo config.")
 	cmd.AddCommand(newRuntimeSetCmd())
+	cmd.AddCommand(newRuntimeUnsetCmd())
 	cmd.AddCommand(newRuntimeProfileCmd())
 	cmd.AddCommand(newRuntimeLsCmd())
 	cmd.AddCommand(newRuntimeProbeCmd())
@@ -114,6 +115,57 @@ func newRuntimeSetCmd() *cobra.Command {
 	return cmd
 }
 
+func newRuntimeUnsetCmd() *cobra.Command {
+	var (
+		target  string
+		dryRun  bool
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:     "unset",
+		Aliases: []string{"reset", "clear"},
+		Short:   "Remove the repo default runtime profile.",
+		Long: "Remove [runtime].kind, [runtime].binary, and [runtime].bin from .agent_team/config.toml " +
+			"so the repo falls back to environment variables or built-in runtime defaults.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime unset: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseRuntimeFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime unset: %v\n", err)
+				return exitErr(2)
+			}
+			result, err := runRuntimeUnsetCommand(cmd, target, dryRun)
+			if err != nil {
+				var ec ExitCode
+				if errors.As(err, &ec) {
+					return err
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime unset: %v\n", err)
+				return exitErr(2)
+			}
+			if jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			}
+			if tmpl != nil {
+				return renderRuntimeFormat(cmd.OutOrStdout(), result, tmpl)
+			}
+			renderRuntimeUnsetResult(cmd.OutOrStdout(), result)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&target, "target", cwd, "Repo root or any path under a repo.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the config change without writing.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the unset result with a Go template, e.g. '{{.Changed}} {{.DryRun}}'.")
+	return cmd
+}
+
 func newRuntimeProfileCmd() *cobra.Command {
 	var (
 		target        string
@@ -181,6 +233,13 @@ type runtimeSetResult struct {
 	ConfigPath string   `json:"config_path"`
 	Runtime    string   `json:"runtime"`
 	Binary     string   `json:"binary"`
+	Changed    bool     `json:"changed"`
+	DryRun     bool     `json:"dry_run,omitempty"`
+	Notes      []string `json:"notes,omitempty"`
+}
+
+type runtimeUnsetResult struct {
+	ConfigPath string   `json:"config_path"`
 	Changed    bool     `json:"changed"`
 	DryRun     bool     `json:"dry_run,omitempty"`
 	Notes      []string `json:"notes,omitempty"`
@@ -290,12 +349,7 @@ func runRuntimeSetCommand(cmd *cobra.Command, target string, kind runtimebin.Kin
 		Runtime:    string(kind),
 		Binary:     binary,
 		DryRun:     dryRun,
-	}
-	if strings.TrimSpace(os.Getenv(runtimebin.EnvRuntime)) != "" {
-		result.Notes = append(result.Notes, runtimebin.EnvRuntime+" is set; it overrides repo config in the current environment")
-	}
-	if strings.TrimSpace(os.Getenv(runtimebin.EnvBinary)) != "" {
-		result.Notes = append(result.Notes, runtimebin.EnvBinary+" is set; it overrides repo config in the current environment")
+		Notes:      runtimeConfigEnvOverrideNotes(),
 	}
 	body, err := os.ReadFile(configPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -317,6 +371,50 @@ func runRuntimeSetCommand(cmd *cobra.Command, target string, kind runtimebin.Kin
 		}
 	}
 	return result, nil
+}
+
+func runRuntimeUnsetCommand(cmd *cobra.Command, target string, dryRun bool) (runtimeUnsetResult, error) {
+	teamDir, err := resolveTeamDir(cmd, target)
+	if err != nil {
+		return runtimeUnsetResult{}, err
+	}
+	configPath := filepath.Join(teamDir, "config.toml")
+	result := runtimeUnsetResult{
+		ConfigPath: filepath.ToSlash(configPath),
+		DryRun:     dryRun,
+		Notes:      runtimeConfigEnvOverrideNotes(),
+	}
+	body, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return result, nil
+		}
+		return runtimeUnsetResult{}, err
+	}
+	current := string(body)
+	next := unsetRuntimeConfigContent(current)
+	result.Changed = next != current
+	if !dryRun && result.Changed {
+		mode := os.FileMode(0o644)
+		if st, statErr := os.Stat(configPath); statErr == nil {
+			mode = st.Mode().Perm()
+		}
+		if err := os.WriteFile(configPath, []byte(next), mode); err != nil {
+			return runtimeUnsetResult{}, err
+		}
+	}
+	return result, nil
+}
+
+func runtimeConfigEnvOverrideNotes() []string {
+	var notes []string
+	if strings.TrimSpace(os.Getenv(runtimebin.EnvRuntime)) != "" {
+		notes = append(notes, runtimebin.EnvRuntime+" is set; it overrides repo config in the current environment")
+	}
+	if strings.TrimSpace(os.Getenv(runtimebin.EnvBinary)) != "" {
+		notes = append(notes, runtimebin.EnvBinary+" is set; it overrides repo config in the current environment")
+	}
+	return notes
 }
 
 func updateRuntimeConfigContent(current string, kind runtimebin.Kind, binary string) string {
@@ -359,6 +457,45 @@ func updateRuntimeConfigContent(current string, kind runtimebin.Kind, binary str
 	}
 	out += strings.Join(replacement, "")
 	return out
+}
+
+func unsetRuntimeConfigContent(current string) string {
+	lines := splitLinesAfter(current)
+	for i, line := range lines {
+		if !isRuntimeTableHeader(line) {
+			continue
+		}
+		end := i + 1
+		for end < len(lines) && !isTOMLTableHeader(lines[end]) {
+			end++
+		}
+		kept := make([]string, 0, end-i-1)
+		for _, existing := range lines[i+1 : end] {
+			if isRuntimeConfigKeyLine(existing) {
+				continue
+			}
+			kept = append(kept, existing)
+		}
+		out := make([]string, 0, len(lines))
+		out = append(out, lines[:i]...)
+		if runtimeSectionHasNonCommentContent(kept) {
+			out = append(out, lines[i])
+			out = append(out, kept...)
+		}
+		out = append(out, lines[end:]...)
+		return strings.Join(out, "")
+	}
+	return current
+}
+
+func runtimeSectionHasNonCommentContent(lines []string) bool {
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(stripTOMLLineComment(line))
+		if trimmed != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func splitLinesAfter(value string) []string {
@@ -561,6 +698,17 @@ func renderRuntimeSetResult(w fmtWriter, result runtimeSetResult) {
 	fmt.Fprintf(w, "config:  %s\n", result.ConfigPath)
 	fmt.Fprintf(w, "runtime: %s\n", result.Runtime)
 	fmt.Fprintf(w, "binary:  %s\n", result.Binary)
+	fmt.Fprintf(w, "changed: %s\n", runtimeYesNo(result.Changed))
+	if result.DryRun {
+		fmt.Fprintln(w, "dry_run: yes")
+	}
+	for _, note := range result.Notes {
+		fmt.Fprintf(w, "note:    %s\n", note)
+	}
+}
+
+func renderRuntimeUnsetResult(w fmtWriter, result runtimeUnsetResult) {
+	fmt.Fprintf(w, "config:  %s\n", result.ConfigPath)
 	fmt.Fprintf(w, "changed: %s\n", runtimeYesNo(result.Changed))
 	if result.DryRun {
 		fmt.Fprintln(w, "dry_run: yes")

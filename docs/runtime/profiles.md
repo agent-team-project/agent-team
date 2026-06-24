@@ -76,6 +76,13 @@ Binary selection is:
 
 Example repo default:
 
+```sh
+agent-team runtime set codex --runtime-bin codex
+agent-team runtime unset --dry-run
+```
+
+Equivalent direct config:
+
 ```toml
 [runtime]
 kind = "codex"
