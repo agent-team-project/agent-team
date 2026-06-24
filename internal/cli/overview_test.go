@@ -265,10 +265,10 @@ func TestOverviewRecommendsExpiredHoldRelease(t *testing.T) {
 	if overview.Jobs.ExpiredHolds != 1 || overview.Jobs.Summary.ExpiredHeld != 1 {
 		t.Fatalf("overview jobs = %+v", overview.Jobs)
 	}
-	if !stringSliceContains(overview.Actions, "agent-team pipeline release --all --expired --dry-run") {
+	if !stringSliceContains(overview.Actions, "agent-team job release --all --expired --dry-run") {
 		t.Fatalf("actions missing expired release: %+v", overview.Actions)
 	}
-	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team pipeline release --all --expired --dry-run"); !ok || detail.Source != "jobs" || detail.Reason != "expired_holds=1" {
+	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team job release --all --expired --dry-run"); !ok || detail.Source != "jobs" || detail.Reason != "expired_holds=1" {
 		t.Fatalf("expired release detail = %+v ok=%v", detail, ok)
 	}
 
@@ -284,7 +284,7 @@ func TestOverviewRecommendsExpiredHoldRelease(t *testing.T) {
 	if err := json.Unmarshal(nextOut.Bytes(), &nextResult); err != nil {
 		t.Fatalf("decode next expired holds: %v\nbody=%s", err, nextOut.String())
 	}
-	if len(nextResult.Actions) != 1 || nextResult.Actions[0] != "agent-team pipeline release --all --expired --dry-run" {
+	if len(nextResult.Actions) != 1 || nextResult.Actions[0] != "agent-team job release --all --expired --dry-run" {
 		t.Fatalf("next expired holds = %+v", nextResult)
 	}
 

@@ -5880,6 +5880,29 @@ func TestJobHoldReleaseStopsReadiness(t *testing.T) {
 		t.Fatalf("expired hold triage = %+v", expiredTriage.Attention)
 	}
 
+	releaseExpired := NewRootCmd()
+	releaseExpiredOut, releaseExpiredErr := &bytes.Buffer{}, &bytes.Buffer{}
+	releaseExpired.SetOut(releaseExpiredOut)
+	releaseExpired.SetErr(releaseExpiredErr)
+	releaseExpired.SetArgs([]string{"job", "release", "--all", "--expired", "--repo", tmp, "--json"})
+	if err := releaseExpired.Execute(); err != nil {
+		t.Fatalf("job release expired holds: %v\nstderr=%s", err, releaseExpiredErr.String())
+	}
+	var releaseExpiredRows []pipelineHoldResult
+	if err := json.Unmarshal(releaseExpiredOut.Bytes(), &releaseExpiredRows); err != nil {
+		t.Fatalf("decode release expired holds: %v\nbody=%s", err, releaseExpiredOut.String())
+	}
+	if len(releaseExpiredRows) != 1 || releaseExpiredRows[0].JobID != "squ-241" || releaseExpiredRows[0].Action != "released" || releaseExpiredRows[0].HoldUntil == "" {
+		t.Fatalf("release expired holds = %+v", releaseExpiredRows)
+	}
+	releasedExpired, err := job.Read(teamDir, "squ-241")
+	if err != nil {
+		t.Fatalf("read released expired job: %v", err)
+	}
+	if releasedExpired.Held || !releasedExpired.HoldUntil.IsZero() {
+		t.Fatalf("released expired job = %+v", releasedExpired)
+	}
+
 	release := NewRootCmd()
 	releaseOut, releaseErr := &bytes.Buffer{}, &bytes.Buffer{}
 	release.SetOut(releaseOut)

@@ -2099,22 +2099,59 @@ func newJobHoldCmd() *cobra.Command {
 
 func newJobReleaseCmd() *cobra.Command {
 	var (
-		repo    string
-		message string
-		dryRun  bool
-		jsonOut bool
-		format  string
+		repo        string
+		all         bool
+		expiredOnly bool
+		limit       int
+		message     string
+		dryRun      bool
+		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "release <job-id> [message...]",
+		Use:   "release <job-id>|--all [message...]",
 		Short: "Release a held job so pipeline automation can advance it.",
 		Long: "Release a held durable job without changing its lifecycle status. " +
-			"After release, ready and advance commands evaluate the job's pipeline steps normally.",
-		Args: cobra.MinimumNArgs(1),
+			"After release, ready and advance commands evaluate the job's pipeline steps normally. Use --all to release matching held jobs in a batch.",
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			if expiredOnly && !all {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --expired requires --all.")
+				return exitErr(2)
+			}
+			if limit > 0 && !all {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --limit requires --all.")
+				return exitErr(2)
+			}
+			if all {
+				tmpl, err := parsePipelineHoldFormat(format)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job release: %v\n", err)
+					return exitErr(2)
+				}
+				teamDir, err := resolveTeamDir(cmd, repo)
+				if err != nil {
+					return err
+				}
+				statusMessage := jobActionMessage(message, args, "released")
+				results, err := releaseJobs(teamDir, statusMessage, limit, expiredOnly, dryRun)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job release: %v\n", err)
+					return exitErr(1)
+				}
+				return renderPipelineHoldResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+			}
+			if len(args) == 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: pass a job id or --all.")
 				return exitErr(2)
 			}
 			tmpl, err := parseJobFormat(format)
@@ -2127,12 +2164,7 @@ func newJobReleaseCmd() *cobra.Command {
 				return err
 			}
 			statusMessage := jobActionMessage(message, args[1:], "released")
-			j.Held = false
-			j.HoldReason = ""
-			j.HoldUntil = time.Time{}
-			j.LastEvent = "released"
-			j.LastStatus = statusMessage
-			j.UpdatedAt = time.Now().UTC()
+			releaseJobState(j, statusMessage, time.Now().UTC())
 			if dryRun {
 				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
@@ -2143,11 +2175,84 @@ func newJobReleaseCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&all, "all", false, "Release all matching held jobs instead of one job.")
+	cmd.Flags().BoolVar(&expiredOnly, "expired", false, "With --all, only release held jobs whose hold_until has passed.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, release at most this many held jobs; 0 means no limit.")
 	cmd.Flags().StringVar(&message, "message", "", "Release message recorded on the job.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the release without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
-	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.Held}} {{.LastStatus}}'.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or batch row with a Go template, e.g. '{{.ID}} {{.Held}} {{.LastStatus}}' or '{{.JobID}} {{.Action}}'.")
 	return cmd
+}
+
+func releaseJobState(j *job.Job, message string, now time.Time) {
+	if j == nil {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	j.Held = false
+	j.HoldReason = ""
+	j.HoldUntil = time.Time{}
+	j.LastEvent = "released"
+	j.LastStatus = strings.TrimSpace(message)
+	if j.LastStatus == "" {
+		j.LastStatus = "released"
+	}
+	j.UpdatedAt = now.UTC()
+}
+
+func releaseJobs(teamDir, message string, limit int, expiredOnly bool, dryRun bool) ([]pipelineHoldResult, error) {
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	sortJobs(jobs, "id")
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "released"
+	}
+	results := make([]pipelineHoldResult, 0, len(jobs))
+	now := time.Now().UTC()
+	for _, j := range jobs {
+		if limit > 0 && len(results) >= limit {
+			break
+		}
+		if j == nil || !j.Held {
+			continue
+		}
+		if expiredOnly && !jobHoldExpired(j, now) {
+			continue
+		}
+		next := inspectNextJobStep(j)
+		result := pipelineHoldResult{
+			JobID:      j.ID,
+			Ticket:     j.Ticket,
+			Pipeline:   j.Pipeline,
+			Status:     j.Status,
+			NextState:  next.State,
+			Action:     "would_release",
+			Message:    message,
+			HeldBefore: true,
+			HeldAfter:  false,
+			HoldUntil:  jobHoldUntilText(j),
+			DryRun:     dryRun,
+		}
+		releaseJobState(j, message, now)
+		result.Job = j
+		if dryRun {
+			results = append(results, result)
+			continue
+		}
+		if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"held": "false", "hold_until": ""}); err != nil {
+			return nil, err
+		}
+		result.Action = "released"
+		result.DryRun = false
+		results = append(results, result)
+	}
+	return results, nil
 }
 
 func newJobReopenCmd() *cobra.Command {

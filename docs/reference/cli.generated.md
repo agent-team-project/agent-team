@@ -2134,18 +2134,21 @@ Flags:
 
 Release a held job so pipeline automation can advance it.
 
-Release a held durable job without changing its lifecycle status. After release, ready and advance commands evaluate the job&#39;s pipeline steps normally.
+Release a held durable job without changing its lifecycle status. After release, ready and advance commands evaluate the job&#39;s pipeline steps normally. Use --all to release matching held jobs in a batch.
 
 ```text
-agent-team job release <job-id> [message...] [flags]
+agent-team job release <job-id>|--all [message...] [flags]
 ```
 
 Flags:
 
 ```text
+      --all              Release all matching held jobs instead of one job.
       --dry-run          Preview the release without writing job state.
-      --format string    Render the updated job with a Go template, e.g. '{{.ID}} {{.Held}} {{.LastStatus}}'.
+      --expired          With --all, only release held jobs whose hold_until has passed.
+      --format string    Render the updated job or batch row with a Go template, e.g. '{{.ID}} {{.Held}} {{.LastStatus}}' or '{{.JobID}} {{.Action}}'.
       --json             Emit the updated job as JSON.
+      --limit int        With --all, release at most this many held jobs; 0 means no limit.
       --message string   Release message recorded on the job.
       --repo string      Repo root containing .agent_team. (default "<repo>")
 ```

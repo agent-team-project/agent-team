@@ -570,7 +570,7 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 		if teamName != "" {
 			add(fmt.Sprintf("agent-team team release %s --expired --dry-run", teamName), "jobs", fmt.Sprintf("expired_holds=%d", out.Jobs.ExpiredHolds))
 		} else {
-			add("agent-team pipeline release --all --expired --dry-run", "jobs", fmt.Sprintf("expired_holds=%d", out.Jobs.ExpiredHolds))
+			add("agent-team job release --all --expired --dry-run", "jobs", fmt.Sprintf("expired_holds=%d", out.Jobs.ExpiredHolds))
 		}
 	}
 	if out.Jobs.StatusChanges > 0 {
