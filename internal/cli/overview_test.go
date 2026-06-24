@@ -123,6 +123,63 @@ func TestOverviewRecommendsParallelReadyFanout(t *testing.T) {
 	}
 }
 
+func TestOverviewReportsRuntimeResumePlanActions(t *testing.T) {
+	root := writeOverviewRuntimeFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview runtime json: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview runtime: %v\nbody=%s", err, out.String())
+	}
+	if overview.Runtime.Total != 4 || overview.Runtime.Crashed != 3 || overview.Runtime.Exited != 1 {
+		t.Fatalf("runtime summary = %+v", overview.Runtime)
+	}
+	if !stringSliceContains(overview.Actions, "agent-team runtime resume-plan --status crashed") {
+		t.Fatalf("actions missing runtime resume plan: %+v", overview.Actions)
+	}
+	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team runtime resume-plan --status crashed"); !ok || detail.Source != "runtime" || detail.Reason != "crashed=3" {
+		t.Fatalf("runtime action detail = %+v ok=%v", detail, ok)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"overview", "--target", root})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("overview runtime text: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "runtime: total=4 running=0 stopped=0 exited=1 crashed=3 unknown=0") {
+		t.Fatalf("overview runtime text missing summary:\n%s", textOut.String())
+	}
+
+	team := NewRootCmd()
+	teamOut, teamErr := &bytes.Buffer{}, &bytes.Buffer{}
+	team.SetOut(teamOut)
+	team.SetErr(teamErr)
+	team.SetArgs([]string{"team", "overview", "delivery", "--repo", root, "--json"})
+	if err := team.Execute(); err != nil {
+		t.Fatalf("team overview runtime json: %v\nstderr=%s", err, teamErr.String())
+	}
+	var teamOverview overviewResult
+	if err := json.Unmarshal(teamOut.Bytes(), &teamOverview); err != nil {
+		t.Fatalf("decode team overview runtime: %v\nbody=%s", err, teamOut.String())
+	}
+	if teamOverview.Runtime.Total != 3 || teamOverview.Runtime.Crashed != 2 || teamOverview.Runtime.Exited != 1 {
+		t.Fatalf("team runtime summary = %+v", teamOverview.Runtime)
+	}
+	if !stringSliceContains(teamOverview.Actions, "agent-team runtime resume-plan manager worker-squ-900 --status crashed") {
+		t.Fatalf("team actions missing scoped runtime resume plan: %+v", teamOverview.Actions)
+	}
+}
+
 func TestOverviewTextRendersOperatorSummary(t *testing.T) {
 	root := writeOverviewAttentionFixture(t)
 
@@ -873,6 +930,41 @@ pipelines = ["parallel_checks"]
 	}
 	if err := job.Write(teamDir, j); err != nil {
 		t.Fatalf("job.Write: %v", err)
+	}
+	return root
+}
+
+func writeOverviewRuntimeFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	instances := `
+[instances.manager]
+agent = "manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[teams.delivery]
+instances = ["manager", "worker"]
+`
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(instances), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Status: daemon.StatusCrashed, Runtime: "claude", StartedAt: now.Add(-2 * time.Hour), ExitedAt: now.Add(-time.Hour)},
+		{Instance: "worker-squ-900", Agent: "worker", Status: daemon.StatusCrashed, Runtime: "codex", StartedAt: now.Add(-90 * time.Minute), ExitedAt: now.Add(-30 * time.Minute)},
+		{Instance: "worker-squ-901", Agent: "worker", Status: daemon.StatusExited, Runtime: "codex", StartedAt: now.Add(-80 * time.Minute), ExitedAt: now.Add(-20 * time.Minute)},
+		{Instance: "support", Agent: "support", Status: daemon.StatusCrashed, Runtime: "claude", StartedAt: now.Add(-70 * time.Minute), ExitedAt: now.Add(-10 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("WriteMetadata %s: %v", meta.Instance, err)
+		}
 	}
 	return root
 }

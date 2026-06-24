@@ -12,6 +12,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
 )
@@ -147,6 +148,7 @@ type overviewResult struct {
 	Team          *teamInfo               `json:"team,omitempty"`
 	Health        overviewHealthSummary   `json:"health"`
 	Topology      *topologySummary        `json:"topology,omitempty"`
+	Runtime       overviewRuntimeSummary  `json:"runtime"`
 	Jobs          overviewJobSummary      `json:"jobs"`
 	Queue         queueSummary            `json:"queue"`
 	Pipelines     overviewPipelineSummary `json:"pipelines"`
@@ -183,6 +185,16 @@ type overviewJobSummary struct {
 	StatusPreviews        int        `json:"status_previews"`
 	StatusChanges         int        `json:"status_changes"`
 	BlockedStatusPreviews int        `json:"blocked_status_previews"`
+}
+
+type overviewRuntimeSummary struct {
+	Total            int      `json:"total"`
+	Running          int      `json:"running"`
+	Stopped          int      `json:"stopped"`
+	Exited           int      `json:"exited"`
+	Crashed          int      `json:"crashed"`
+	Unknown          int      `json:"unknown"`
+	CrashedInstances []string `json:"crashed_instances,omitempty"`
 }
 
 type overviewPipelineSummary struct {
@@ -241,6 +253,12 @@ func collectOverview(teamDir string, now time.Time, scheduleLimit int) *overview
 		out.addError("topology", err)
 	} else {
 		out.Topology = topology
+	}
+
+	if runtime, err := collectOverviewRuntime(teamDir); err != nil {
+		out.addError("runtime", err)
+	} else {
+		out.Runtime = runtime
 	}
 
 	if out.Jobs.Summary.Total == 0 && out.Jobs.Attention == 0 && out.Jobs.ReadySteps == 0 {
@@ -321,6 +339,12 @@ func collectTeamOverview(teamDir, name string, now time.Time, scheduleLimit int)
 		out.addError("topology", err)
 	} else {
 		out.Topology = overviewTopologyFromTeam(top, team, doctor)
+	}
+
+	if runtime, err := collectOverviewRuntimeForTeam(teamDir, top, team); err != nil {
+		out.addError("runtime", err)
+	} else {
+		out.Runtime = runtime
 	}
 
 	if out.Jobs.Summary.Total == 0 && out.Jobs.Attention == 0 && out.Jobs.ReadySteps == 0 {
@@ -425,6 +449,49 @@ func overviewJobsFromTriage(triage jobTriageSnapshot) overviewJobSummary {
 		StatusChanges:         countChangedJobStatusPreviews(triage.StatusPreviews),
 		BlockedStatusPreviews: countJobStatusPreviewsByAfter(triage.StatusPreviews, "blocked"),
 	}
+}
+
+func collectOverviewRuntime(teamDir string) (overviewRuntimeSummary, error) {
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return overviewRuntimeSummary{}, err
+	}
+	return overviewRuntimeFromMetadata(metas), nil
+}
+
+func collectOverviewRuntimeForTeam(teamDir string, top *topology.Topology, team *topology.Team) (overviewRuntimeSummary, error) {
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return overviewRuntimeSummary{}, err
+	}
+	return overviewRuntimeFromMetadata(teamMetadata(top, team, metas)), nil
+}
+
+func overviewRuntimeFromMetadata(metas []*daemon.Metadata) overviewRuntimeSummary {
+	out := overviewRuntimeSummary{}
+	for _, meta := range metas {
+		if meta == nil {
+			continue
+		}
+		out.Total++
+		switch meta.Status {
+		case daemon.StatusRunning:
+			out.Running++
+		case daemon.StatusStopped:
+			out.Stopped++
+		case daemon.StatusExited:
+			out.Exited++
+		case daemon.StatusCrashed:
+			out.Crashed++
+			if strings.TrimSpace(meta.Instance) != "" {
+				out.CrashedInstances = append(out.CrashedInstances, meta.Instance)
+			}
+		default:
+			out.Unknown++
+		}
+	}
+	sort.Strings(out.CrashedInstances)
+	return out
 }
 
 func countJobTriageReason(items []jobTriageItem, reason string) int {
@@ -582,6 +649,9 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 	}
 	if out.Jobs.StatusChanges > 0 {
 		add("agent-team job reconcile status", "jobs", fmt.Sprintf("status_changes=%d", out.Jobs.StatusChanges))
+	}
+	if out.Runtime.Crashed > 0 {
+		add(overviewRuntimeResumePlanAction(out.Runtime, teamName), "runtime", fmt.Sprintf("crashed=%d", out.Runtime.Crashed))
 	}
 	if out.Jobs.ReadySteps > 0 || out.Pipelines.ReadySteps > 0 {
 		reason := fmt.Sprintf("ready_steps=%d", out.Jobs.ReadySteps+out.Pipelines.ReadySteps)
@@ -757,6 +827,13 @@ func overviewQueueQuarantineAction(health *healthResult, teamName string) string
 	return "agent-team queue quarantine ls"
 }
 
+func overviewRuntimeResumePlanAction(summary overviewRuntimeSummary, teamName string) string {
+	if teamName == "" || len(summary.CrashedInstances) == 0 {
+		return "agent-team runtime resume-plan --status crashed"
+	}
+	return fmt.Sprintf("agent-team runtime resume-plan %s --status crashed", strings.Join(summary.CrashedInstances, " "))
+}
+
 func overviewHasQueueSectionError(out *overviewResult) bool {
 	if out == nil {
 		return false
@@ -901,6 +978,13 @@ func renderOverview(w io.Writer, result *overviewResult, jsonOut bool, tmpl *tem
 			result.Topology.PipelineProblems+result.Topology.TeamProblems,
 			result.Topology.PipelineWarnings+result.Topology.TeamWarnings)
 	}
+	fmt.Fprintf(w, "runtime: total=%d running=%d stopped=%d exited=%d crashed=%d unknown=%d\n",
+		result.Runtime.Total,
+		result.Runtime.Running,
+		result.Runtime.Stopped,
+		result.Runtime.Exited,
+		result.Runtime.Crashed,
+		result.Runtime.Unknown)
 	fmt.Fprintf(w, "jobs: total=%d queued=%d running=%d blocked=%d done=%d failed=%d attention=%d cleanup_ready=%d expired_holds=%d ready_steps=%d status_changes=%d\n",
 		result.Jobs.Summary.Total,
 		result.Jobs.Summary.Queued,

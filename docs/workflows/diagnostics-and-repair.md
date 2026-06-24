@@ -26,6 +26,7 @@ It summarizes:
 - jobs
 - queues
 - queue quarantine
+- runtime metadata
 - pipelines
 - schedules
 - intake
@@ -34,6 +35,10 @@ It summarizes:
 JSON output includes both `actions` (the compatibility list of command
 strings) and `action_details` with a command, source, reason, and team scope
 where applicable.
+
+When daemon metadata contains crashed instances, overview includes runtime
+counts and suggests `agent-team runtime resume-plan --status crashed` or a
+team-scoped equivalent using the crashed instance names.
 
 Team scoped:
 
@@ -183,6 +188,7 @@ Use `--retry-step <id>` with `--retry-pipelines` when a broad repair pass should
 | Need scripted before/after drift detection | `agent-team snapshot diff before.json after.json --exit-code` |
 | Queue parsing fails | `agent-team queue doctor --quarantine --dry-run` |
 | Dead queue entries | `agent-team repair --dry-run --jobs` |
+| Crashed runtime metadata | `agent-team runtime resume-plan --status crashed` |
 | Failed pipeline steps | `agent-team repair --retry-pipelines --dry-run --preview-routes` |
 | Failed stage across jobs | `agent-team repair --retry-pipelines --retry-step review --dry-run --preview-routes` |
 | One stuck job | `agent-team job show <job-id> --events all` |

@@ -216,6 +216,10 @@ agent-team runtime resume-plan --runtime codex --status exited
 agent-team runtime resume-plan --json
 ```
 
+`agent-team overview` also summarizes runtime metadata and links crashed
+instances to `runtime resume-plan`; `agent-team team overview <team>` narrows
+that hint to crashed instances owned by the selected team.
+
 The command reads `.agent_team/daemon/*/meta.json` directly and prints the
 recommended managed start, attach dry-run, unmanaged runtime resume, log
 follow, and Codex last-message commands. Job-linked metadata also includes
