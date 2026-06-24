@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1045,6 +1046,7 @@ target = "worker"
 id = "review"
 target = "manager"
 after = ["implement"]
+optional = true
 `))
 	if err != nil {
 		t.Fatalf("parse topology: %v", err)
@@ -1082,6 +1084,70 @@ after = ["implement"]
 	}
 	if j.Steps[0].ID != "implement" || j.Steps[0].Status != jobstore.StatusRunning || j.Steps[0].Instance != "worker-squ-92" {
 		t.Fatalf("first step = %+v", j.Steps[0])
+	}
+	if j.Steps[1].ID != "review" || !j.Steps[1].Optional {
+		t.Fatalf("optional review step = %+v", j.Steps[1])
+	}
+}
+
+func TestEvent_PipelineInitialManualGateBlocksWithoutDispatch(t *testing.T) {
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	top, err := topology.Parse([]byte(`
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "approval"
+target = "worker"
+gate = "manual"
+`))
+	if err != nil {
+		t.Fatalf("parse topology: %v", err)
+	}
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+	srv := httptest.NewServer(Handler(m, nil, resolver, teamDir))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"ticket.created","payload":{"ticket":"SQU-94","kickoff":"wait for approval"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var got struct {
+		Dispatched []map[string]any `json:"dispatched"`
+		Queued     []string         `json:"queued"`
+		Blocked    []map[string]any `json:"blocked"`
+		Rejected   []map[string]any `json:"rejected"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Dispatched) != 0 || len(got.Queued) != 0 || len(got.Rejected) != 0 || len(got.Blocked) != 1 {
+		t.Fatalf("response = %+v, want one blocked pipeline outcome", got)
+	}
+	if got.Blocked[0]["instance"] != "pipeline:ticket_to_pr" || !strings.Contains(fmt.Sprint(got.Blocked[0]["reason"]), "manual approval") {
+		t.Fatalf("blocked outcome = %+v", got.Blocked[0])
+	}
+	if fake.callCount() != 0 {
+		t.Fatalf("spawn calls=%d, want 0", fake.callCount())
+	}
+	j, err := jobstore.Read(teamDir, "squ-94")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if j.Pipeline != "ticket_to_pr" || len(j.Steps) != 1 || j.Steps[0].Status != jobstore.StatusBlocked || j.Steps[0].Gate != jobstore.StepGateManual || !j.Steps[0].StartedAt.IsZero() {
+		t.Fatalf("job = %+v", j)
 	}
 }
 

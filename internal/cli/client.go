@@ -430,13 +430,14 @@ func (c *daemonClient) ChannelList() ([]*channelInfo, error) {
 
 // --- topology / event client helpers ------------------------------------
 
-// eventOutcome mirrors the matched/dispatched/queued/messaged/rejected lists
+// eventOutcome mirrors the matched/dispatched/queued/messaged/blocked/rejected lists
 // returned by POST /v1/event.
 type eventResponse struct {
 	Matched    []string                 `json:"matched"`
 	Dispatched []map[string]interface{} `json:"dispatched"`
 	Queued     []string                 `json:"queued"`
 	Messaged   []string                 `json:"messaged"`
+	Blocked    []map[string]interface{} `json:"blocked"`
 	Rejected   []map[string]interface{} `json:"rejected"`
 }
 

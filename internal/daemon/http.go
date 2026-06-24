@@ -642,6 +642,7 @@ func eventResponseMap(outcomes []EventOutcome) map[string]any {
 	dispatched := make([]map[string]any, 0)
 	queued := make([]string, 0)
 	messaged := make([]string, 0)
+	blocked := make([]map[string]string, 0)
 	rejected := make([]map[string]string, 0)
 	for _, oc := range outcomes {
 		matched = append(matched, oc.Instance)
@@ -659,6 +660,11 @@ func eventResponseMap(outcomes []EventOutcome) map[string]any {
 			}
 		case "messaged":
 			messaged = append(messaged, oc.Instance)
+		case "blocked":
+			blocked = append(blocked, map[string]string{
+				"instance": oc.Instance,
+				"reason":   oc.Reason,
+			})
 		case "rejected":
 			rejected = append(rejected, map[string]string{
 				"instance": oc.Instance,
@@ -671,6 +677,7 @@ func eventResponseMap(outcomes []EventOutcome) map[string]any {
 		"dispatched": dispatched,
 		"queued":     queued,
 		"messaged":   messaged,
+		"blocked":    blocked,
 		"rejected":   rejected,
 	}
 }

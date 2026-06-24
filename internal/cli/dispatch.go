@@ -318,6 +318,11 @@ func renderDispatchOutcome(w io.Writer, targetAgent, requestedName string, res *
 	for _, n := range res.Messaged {
 		fmt.Fprintf(w, "  messaged %s\n", n)
 	}
+	for _, b := range res.Blocked {
+		name, _ := b["instance"].(string)
+		reason, _ := b["reason"].(string)
+		fmt.Fprintf(w, "  blocked %s: %s\n", name, reason)
+	}
 	for _, r := range res.Rejected {
 		name, _ := r["instance"].(string)
 		reason, _ := r["reason"].(string)

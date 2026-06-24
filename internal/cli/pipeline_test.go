@@ -107,6 +107,46 @@ optional = true
 	}
 }
 
+func TestPipelineRunCopiesOptionalStepMetadata(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "verify"
+target = "manager"
+after = ["implement"]
+optional = true
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"pipeline", "run", "ticket_to_pr", "SQU-903", "optional stage", "--repo", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline run: %v\nstderr=%s", err, stderr.String())
+	}
+	created, err := job.Read(teamDir, "squ-903")
+	if err != nil {
+		t.Fatalf("read created job: %v", err)
+	}
+	if len(created.Steps) != 2 || created.Steps[1].ID != "verify" || !created.Steps[1].Optional {
+		t.Fatalf("optional step metadata was not copied: %+v", created.Steps)
+	}
+}
+
 func TestPipelineGraphFormats(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

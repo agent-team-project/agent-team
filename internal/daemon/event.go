@@ -101,7 +101,7 @@ func (r *EventResolver) Topology() *topology.Topology {
 // HTTP response so callers know what was actuated.
 type EventOutcome struct {
 	Instance   string `json:"instance"`
-	Action     string `json:"action"` // "dispatched" | "queued" | "messaged" | "rejected"
+	Action     string `json:"action"` // "dispatched" | "queued" | "messaged" | "blocked" | "rejected"
 	InstanceID string `json:"instance_id,omitempty"`
 	Reason     string `json:"reason,omitempty"`
 }
@@ -219,6 +219,13 @@ func (r *EventResolver) actuatePipeline(pipeline *topology.Pipeline, eventType s
 	}
 	step := firstRunnablePipelineStep(pipeline)
 	if step == nil {
+		if blocked := firstBlockedInitialPipelineStep(pipeline); blocked != nil {
+			return []EventOutcome{{
+				Instance: "pipeline:" + pipeline.Name,
+				Action:   "blocked",
+				Reason:   pipelineStepGateBlockedReason(blocked),
+			}}
+		}
 		return []EventOutcome{{Instance: "pipeline:" + pipeline.Name, Action: "rejected", Reason: "no runnable step"}}
 	}
 	outcomes := r.dispatchPipelineStep(pipeline, step, j, payload)
@@ -303,7 +310,7 @@ func pipelineJobSteps(pipeline *topology.Pipeline) []jobstore.Step {
 	steps := make([]jobstore.Step, 0, len(pipeline.Steps))
 	for i, step := range pipeline.Steps {
 		status := jobstore.StatusQueued
-		if i > 0 {
+		if i > 0 || strings.TrimSpace(step.Gate) != "" {
 			status = jobstore.StatusBlocked
 		}
 		steps = append(steps, jobstore.Step{
@@ -320,11 +327,42 @@ func pipelineJobSteps(pipeline *topology.Pipeline) []jobstore.Step {
 
 func firstRunnablePipelineStep(pipeline *topology.Pipeline) *topology.PipelineStep {
 	for _, step := range pipeline.Steps {
-		if len(step.After) == 0 {
+		if len(step.After) == 0 && strings.TrimSpace(step.Gate) == "" {
 			return step
 		}
 	}
+	for _, step := range pipeline.Steps {
+		if len(step.After) == 0 && strings.TrimSpace(step.Gate) != "" {
+			return nil
+		}
+	}
 	return pipeline.Steps[0]
+}
+
+func firstBlockedInitialPipelineStep(pipeline *topology.Pipeline) *topology.PipelineStep {
+	if pipeline == nil {
+		return nil
+	}
+	for _, step := range pipeline.Steps {
+		if len(step.After) == 0 && strings.TrimSpace(step.Gate) != "" {
+			return step
+		}
+	}
+	return nil
+}
+
+func pipelineStepGateBlockedReason(step *topology.PipelineStep) string {
+	if step == nil {
+		return "pipeline step is waiting"
+	}
+	switch strings.TrimSpace(step.Gate) {
+	case jobstore.StepGateManual:
+		return "initial step " + step.ID + " is waiting for manual approval"
+	case jobstore.StepGatePR:
+		return "initial step " + step.ID + " is waiting for PR metadata"
+	default:
+		return "initial step " + step.ID + " is waiting for gate " + step.Gate
+	}
 }
 
 func applyPipelineStepOutcome(j *jobstore.Job, stepID string, outcomes []EventOutcome) {

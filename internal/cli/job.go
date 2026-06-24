@@ -943,11 +943,12 @@ func jobStepsFromPipeline(p *topology.Pipeline) []job.Step {
 			status = job.StatusBlocked
 		}
 		steps = append(steps, job.Step{
-			ID:     step.ID,
-			Target: step.Target,
-			Status: status,
-			After:  append([]string(nil), step.After...),
-			Gate:   step.Gate,
+			ID:       step.ID,
+			Target:   step.Target,
+			Status:   status,
+			After:    append([]string(nil), step.After...),
+			Gate:     step.Gate,
+			Optional: step.Optional,
 		})
 	}
 	return steps
