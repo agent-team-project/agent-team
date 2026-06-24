@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/spf13/cobra"
 )
 
@@ -40,10 +41,6 @@ func newJobAdoptCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job adopt: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if strings.TrimSpace(instance) == "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job adopt: --instance is required.")
-				return exitErr(2)
-			}
 			tmpl, err := parseDaemonAdoptFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job adopt: %v\n", err)
@@ -52,6 +49,17 @@ func newJobAdoptCmd() *cobra.Command {
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
 			if err != nil {
 				return err
+			}
+			selectedInstance := strings.TrimSpace(instance)
+			if selectedInstance == "" {
+				selectedInstance = strings.TrimSpace(j.Instance)
+			}
+			if selectedInstance == "" {
+				selectedInstance = defaultJobAdoptInstance(j)
+			}
+			if selectedInstance == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job adopt: --instance is required when it cannot be inferred from the job.")
+				return exitErr(2)
 			}
 			repoRoot := filepath.Dir(teamDir)
 			selectedAgent := strings.TrimSpace(agent)
@@ -73,7 +81,7 @@ func newJobAdoptCmd() *cobra.Command {
 			if selectedPR == "" {
 				selectedPR = strings.TrimSpace(j.PR)
 			}
-			return runDaemonAdopt(cmd, repoRoot, instance, daemonAdoptOptions{
+			return runDaemonAdopt(cmd, repoRoot, selectedInstance, daemonAdoptOptions{
 				Agent:         selectedAgent,
 				PID:           pid,
 				Workspace:     selectedWorkspace,
@@ -94,7 +102,7 @@ func newJobAdoptCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
-	cmd.Flags().StringVar(&instance, "instance", "", "Instance name that should own the job.")
+	cmd.Flags().StringVar(&instance, "instance", "", "Instance name that should own the job. Defaults to the job instance, then <target>-<job-id>.")
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent name for the adopted instance. Defaults to the job target.")
 	cmd.Flags().IntVar(&pid, "pid", 0, "Live process PID to adopt.")
 	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace path for the adopted process. Defaults to the job worktree, then repo root.")
@@ -110,4 +118,16 @@ func newJobAdoptCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the adoption result with a Go template, e.g. '{{.Job.ID}} {{.Metadata.Instance}}'.")
 	return cmd
+}
+
+func defaultJobAdoptInstance(j *job.Job) string {
+	if j == nil {
+		return ""
+	}
+	target := job.NormalizeID(j.Target)
+	id := job.NormalizeID(j.ID)
+	if target == "" || id == "" {
+		return ""
+	}
+	return target + "-" + id
 }

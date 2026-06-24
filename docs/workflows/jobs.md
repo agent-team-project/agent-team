@@ -243,7 +243,7 @@ agent-team job queue retry squ-42 --all
 agent-team job queue quarantine squ-42
 agent-team job queue quarantine restore squ-42 --all --dry-run
 agent-team job unblock squ-42 <answer...>
-agent-team job adopt squ-42 --instance <name> --pid <pid> --dry-run
+agent-team job adopt squ-42 --pid <pid> --dry-run
 agent-team job cleanup squ-42 --dry-run
 ```
 

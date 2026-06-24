@@ -4769,7 +4769,7 @@ func actionsForJobTriageItem(item jobTriageItem) []string {
 		add("agent-team job reconcile status")
 	}
 	if stringSliceContains(item.Reasons, "running_without_instance") {
-		add(fmt.Sprintf("agent-team job adopt %s --instance <name> --pid <pid> --dry-run", item.JobID))
+		add(fmt.Sprintf("agent-team job adopt %s --pid <pid> --dry-run", item.JobID))
 	}
 	if stringSliceContains(item.Reasons, "cleanup_ready") {
 		add(fmt.Sprintf("agent-team job cleanup %s --dry-run", item.JobID))

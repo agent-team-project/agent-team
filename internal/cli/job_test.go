@@ -314,7 +314,7 @@ func TestJobAdoptUsesJobDefaultsAndUpdatesJob(t *testing.T) {
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"job", "adopt", "squ-68", "--repo", tmp, "--instance", "worker-squ-68", "--pid", strconv.Itoa(os.Getpid()), "--json"})
+	cmd.SetArgs([]string{"job", "adopt", "squ-68", "--repo", tmp, "--pid", strconv.Itoa(os.Getpid()), "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("job adopt: %v\nstdout=%s\nstderr=%s", err, out.String(), stderr.String())
 	}
@@ -357,7 +357,7 @@ func TestJobAdoptDryRunDoesNotMutateJobOrMetadata(t *testing.T) {
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"job", "adopt", "squ-69", "--repo", tmp, "--instance", "worker-squ-69", "--pid", strconv.Itoa(os.Getpid()), "--dry-run", "--json"})
+	cmd.SetArgs([]string{"job", "adopt", "squ-69", "--repo", tmp, "--pid", strconv.Itoa(os.Getpid()), "--dry-run", "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("job adopt --dry-run: %v\nstdout=%s\nstderr=%s", err, out.String(), stderr.String())
 	}
@@ -1973,7 +1973,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		"stale_running",
 		"running_without_instance",
 		"agent-team job reconcile status",
-		"agent-team job adopt squ-202 --instance <name> --pid <pid> --dry-run",
+		"agent-team job adopt squ-202 --pid <pid> --dry-run",
 		"squ-203",
 		"stale_queued",
 		"agent-team job dispatch squ-203",
@@ -2028,7 +2028,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	if !containsString(actions["squ-201"], "agent-team job retry squ-201 --dispatch") {
 		t.Fatalf("squ-201 actions = %v", actions["squ-201"])
 	}
-	if !containsString(actions["squ-202"], "agent-team job adopt squ-202 --instance <name> --pid <pid> --dry-run") {
+	if !containsString(actions["squ-202"], "agent-team job adopt squ-202 --pid <pid> --dry-run") {
 		t.Fatalf("squ-202 actions = %v", actions["squ-202"])
 	}
 	if !containsString(reasons["squ-206"], "cleanup_ready") {
