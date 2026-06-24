@@ -3470,6 +3470,175 @@ target = "worker"
 	}
 }
 
+func TestPipelineCleanupScopesJobs(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[pipelines.ops_review]
+trigger.event = "ops.created"
+
+[[pipelines.ops_review.steps]]
+id = "audit"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoForJobTest(t, root)
+	makeMergedBranch := func(branch string) {
+		t.Helper()
+		runGitForJobTest(t, root, "checkout", "-b", branch)
+		runGitForJobTest(t, root, "checkout", "main")
+	}
+	deliveryBranch := "worktree-worker-squ-730"
+	opsBranch := "worktree-worker-ops-730"
+	makeMergedBranch(deliveryBranch)
+	makeMergedBranch(opsBranch)
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-730",
+			Ticket:    "SQU-730",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusDone,
+			Branch:    deliveryBranch,
+			PR:        "https://github.com/acme/repo/pull/730",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "ops-730",
+			Ticket:    "OPS-730",
+			Target:    "worker",
+			Pipeline:  "ops_review",
+			Status:    job.StatusDone,
+			Branch:    opsBranch,
+			PR:        "https://github.com/acme/repo/pull/731",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+
+	preview := NewRootCmd()
+	previewOut, previewErr := &bytes.Buffer{}, &bytes.Buffer{}
+	preview.SetOut(previewOut)
+	preview.SetErr(previewErr)
+	preview.SetArgs([]string{"pipeline", "cleanup", "ticket_to_pr", "--repo", root, "--dry-run", "--json"})
+	if err := preview.Execute(); err != nil {
+		t.Fatalf("pipeline cleanup dry-run: %v\nstderr=%s", err, previewErr.String())
+	}
+	var previewResult jobCleanupBatchResult
+	if err := json.Unmarshal(previewOut.Bytes(), &previewResult); err != nil {
+		t.Fatalf("decode pipeline cleanup preview: %v\nbody=%s", err, previewOut.String())
+	}
+	if previewResult.Pipeline != "ticket_to_pr" || !previewResult.DryRun || previewResult.Total != 1 || len(previewResult.Items) != 1 || previewResult.Items[0].JobID != "squ-730" {
+		t.Fatalf("pipeline cleanup preview = %+v", previewResult)
+	}
+	if !branchExists(t, root, deliveryBranch) || !branchExists(t, root, opsBranch) {
+		t.Fatalf("dry-run removed a branch")
+	}
+
+	previewFormat := NewRootCmd()
+	previewFormatOut, previewFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	previewFormat.SetOut(previewFormatOut)
+	previewFormat.SetErr(previewFormatErr)
+	previewFormat.SetArgs([]string{"pipeline", "cleanup", "ticket_to_pr", "--repo", root, "--dry-run", "--format", "{{.Pipeline}} {{.Total}} {{.Previewed}} {{len .Items}}"})
+	if err := previewFormat.Execute(); err != nil {
+		t.Fatalf("pipeline cleanup dry-run format: %v\nstderr=%s", err, previewFormatErr.String())
+	}
+	if got, want := previewFormatOut.String(), "ticket_to_pr 1 1 1\n"; got != want {
+		t.Fatalf("pipeline cleanup dry-run format = %q, want %q", got, want)
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"pipeline", "cleanup", "ticket_to_pr", "--repo", root, "--merged", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("pipeline cleanup apply: %v\nstderr=%s", err, applyErr.String())
+	}
+	var applied jobCleanupBatchResult
+	if err := json.Unmarshal(applyOut.Bytes(), &applied); err != nil {
+		t.Fatalf("decode pipeline cleanup apply: %v\nbody=%s", err, applyOut.String())
+	}
+	if applied.Pipeline != "ticket_to_pr" || !applied.Merged || applied.Total != 1 || applied.Cleaned != 1 || len(applied.Items) != 1 || applied.Items[0].JobID != "squ-730" {
+		t.Fatalf("pipeline cleanup applied = %+v", applied)
+	}
+	cleaned, err := job.Read(teamDir, "squ-730")
+	if err != nil {
+		t.Fatalf("read cleaned job: %v", err)
+	}
+	untouched, err := job.Read(teamDir, "ops-730")
+	if err != nil {
+		t.Fatalf("read untouched job: %v", err)
+	}
+	if cleaned.Branch != "" || cleaned.LastEvent != "cleanup" {
+		t.Fatalf("cleaned job = %+v", cleaned)
+	}
+	if untouched.Branch != opsBranch || untouched.LastEvent == "cleanup" {
+		t.Fatalf("outside pipeline job mutated = %+v", untouched)
+	}
+	if branchExists(t, root, deliveryBranch) {
+		t.Fatalf("pipeline branch still exists")
+	}
+	if !branchExists(t, root, opsBranch) {
+		t.Fatalf("outside pipeline branch was removed")
+	}
+}
+
+func TestPipelineCleanupRejectsFormatCombinations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "format with json",
+			args: []string{"pipeline", "cleanup", "ticket_to_pr", "--dry-run", "--format", "{{.Pipeline}}", "--json"},
+			want: "--format cannot be combined",
+		},
+		{
+			name: "invalid format",
+			args: []string{"pipeline", "cleanup", "ticket_to_pr", "--dry-run", "--format", "{{"},
+			want: "invalid --format template",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("pipeline cleanup validation succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("pipeline cleanup err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestPipelinePRGateWaitsForJobPR(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

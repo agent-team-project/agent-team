@@ -4669,6 +4669,7 @@ type jobCleanupPreview struct {
 
 type jobCleanupBatchResult struct {
 	Team        string                `json:"team,omitempty"`
+	Pipeline    string                `json:"pipeline,omitempty"`
 	DryRun      bool                  `json:"dry_run"`
 	Merged      bool                  `json:"merged,omitempty"`
 	ForceBranch bool                  `json:"force_branch,omitempty"`
@@ -8944,6 +8945,9 @@ func cleanupReadyJobs(jobs []*job.Job) []*job.Job {
 func renderJobCleanupBatch(w io.Writer, result jobCleanupBatchResult) {
 	if result.Team != "" {
 		fmt.Fprintf(w, "Team: %s\n", result.Team)
+	}
+	if result.Pipeline != "" {
+		fmt.Fprintf(w, "Pipeline: %s\n", result.Pipeline)
 	}
 	if result.Total == 0 {
 		fmt.Fprintln(w, "No cleanup-ready jobs.")

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -44,6 +45,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineRejectCmd())
 	cmd.AddCommand(newPipelineSkipCmd())
 	cmd.AddCommand(newPipelineCancelCmd())
+	cmd.AddCommand(newPipelineCleanupCmd())
 	cmd.AddCommand(newPipelineResumePlanCmd())
 	cmd.AddCommand(newPipelineSendCmd())
 	cmd.AddCommand(newPipelineLogsCmd())
@@ -1153,6 +1155,74 @@ func newPipelineResumePlanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching pipeline resume plans by recommended action, runtime, and status.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.")
+	return cmd
+}
+
+func newPipelineCleanupCmd() *cobra.Command {
+	var (
+		repo        string
+		merged      bool
+		forceBranch bool
+		verifyPR    bool
+		dryRun      bool
+		jsonOut     bool
+		format      string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "cleanup <pipeline>",
+		Short: "Clean up done jobs owned by one pipeline.",
+		Long:  "Preview or remove job-owned worktrees and branches for done jobs owned by one declared pipeline.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline cleanup: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobCleanupFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline cleanup: %v\n", err)
+				return exitErr(2)
+			}
+			if !merged && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline cleanup: pass --merged after confirming the pipeline's PRs have merged.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			jobs, err := selectedPipelineJobs(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline cleanup: %v\n", err)
+				return exitErr(1)
+			}
+			result := runJobCleanupJobs(teamDir, filepath.Dir(teamDir), jobs, dryRun, merged, forceBranch, verifyPR)
+			result.Pipeline = strings.TrimSpace(args[0])
+			if jsonOut {
+				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(result); err != nil {
+					return err
+				}
+			} else if tmpl != nil {
+				if err := renderJobCleanupFormat(cmd.OutOrStdout(), result, tmpl); err != nil {
+					return err
+				}
+			} else {
+				renderJobCleanupBatch(cmd.OutOrStdout(), result)
+			}
+			if result.Failed > 0 {
+				return exitErr(1)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview pipeline-owned cleanup without removing worktrees or branches.")
+	cmd.Flags().BoolVar(&merged, "merged", false, "Confirm matching pipeline jobs' PRs are merged and apply cleanup.")
+	cmd.Flags().BoolVar(&forceBranch, "force-branch", false, "Delete recorded branches even when git does not consider them merged.")
+	cmd.Flags().BoolVar(&verifyPR, "verify-pr", false, "Use gh to verify each recorded PR is merged before cleanup.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline cleanup result as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the cleanup result with a Go template, e.g. '{{.Pipeline}} {{.Cleaned}} {{.Failed}}'.")
 	return cmd
 }
 

@@ -2918,6 +2918,7 @@ Subcommands:
 - `agent-team pipeline advance` - Dispatch ready pipeline steps.
 - `agent-team pipeline approve` - Approve blocked manual pipeline gates.
 - `agent-team pipeline cancel` - Cancel non-terminal pipeline jobs.
+- `agent-team pipeline cleanup` - Clean up done jobs owned by one pipeline.
 - `agent-team pipeline doctor` - Validate pipeline workflow wiring.
 - `agent-team pipeline events` - Show lifecycle events scoped to one pipeline.
 - `agent-team pipeline explain` - Explain pipeline jobs and step blockers.
@@ -3015,6 +3016,28 @@ Flags:
       --limit int        Maximum matching jobs to cancel (0 = no limit).
       --message string   Cancellation reason recorded on each cancelled job.
       --repo string      Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team pipeline cleanup`
+
+Clean up done jobs owned by one pipeline.
+
+Preview or remove job-owned worktrees and branches for done jobs owned by one declared pipeline.
+
+```text
+agent-team pipeline cleanup <pipeline> [flags]
+```
+
+Flags:
+
+```text
+      --dry-run         Preview pipeline-owned cleanup without removing worktrees or branches.
+      --force-branch    Delete recorded branches even when git does not consider them merged.
+      --format string   Render the cleanup result with a Go template, e.g. '{{.Pipeline}} {{.Cleaned}} {{.Failed}}'.
+      --json            Emit pipeline cleanup result as JSON.
+      --merged          Confirm matching pipeline jobs' PRs are merged and apply cleanup.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
+      --verify-pr       Use gh to verify each recorded PR is merged before cleanup.
 ```
 
 ## `agent-team pipeline doctor`
