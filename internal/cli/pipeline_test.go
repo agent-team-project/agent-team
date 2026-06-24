@@ -3912,6 +3912,213 @@ target = "worker"
 	}
 }
 
+func TestPipelineQueueScopesItems(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[pipelines.ops_review]
+trigger.event = "ops.created"
+
+[[pipelines.ops_review.steps]]
+id = "audit"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-901",
+			Ticket:    "SQU-901",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "ops-901",
+			Ticket:    "OPS-901",
+			Target:    "worker",
+			Pipeline:  "ops_review",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	queueRoot := daemon.DaemonRoot(teamDir)
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:             "q-pipeline-dead",
+			State:          daemon.QueueStateDead,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     "worker-squ-901",
+			Payload:        map[string]any{"job_id": "squ-901", "ticket": "SQU-901", "runtime": "codex"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "worker unavailable",
+			QueuedAt:       now.Add(-3 * time.Hour),
+			UpdatedAt:      now.Add(-2 * time.Hour),
+			DeadLetteredAt: now.Add(-2 * time.Hour),
+		},
+		{
+			ID:         "q-pipeline-pending",
+			State:      daemon.QueueStatePending,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-901-review",
+			Payload:    map[string]any{"job": "squ-901", "ticket": "SQU-901"},
+			QueuedAt:   now.Add(-time.Hour),
+			UpdatedAt:  now.Add(-time.Hour),
+		},
+		{
+			ID:             "q-foreign-dead",
+			State:          daemon.QueueStateDead,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     "worker-ops-901",
+			Payload:        map[string]any{"job_id": "ops-901", "ticket": "OPS-901"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "foreign",
+			QueuedAt:       now.Add(-3 * time.Hour),
+			UpdatedAt:      now.Add(-2 * time.Hour),
+			DeadLetteredAt: now.Add(-2 * time.Hour),
+		},
+	} {
+		if err := daemon.WriteQueueItem(queueRoot, item); err != nil {
+			t.Fatalf("write queue item %s: %v", item.ID, err)
+		}
+	}
+
+	list := NewRootCmd()
+	listOut, listErr := &bytes.Buffer{}, &bytes.Buffer{}
+	list.SetOut(listOut)
+	list.SetErr(listErr)
+	list.SetArgs([]string{"pipeline", "queue", "ticket_to_pr", "--repo", root, "--sort", "id", "--json"})
+	if err := list.Execute(); err != nil {
+		t.Fatalf("pipeline queue list: %v\nstderr=%s", err, listErr.String())
+	}
+	var listed []daemon.QueueItem
+	if err := json.Unmarshal(listOut.Bytes(), &listed); err != nil {
+		t.Fatalf("decode pipeline queue list: %v\nbody=%s", err, listOut.String())
+	}
+	if got := queueItemIDsForTest(listed); strings.Join(got, ",") != "q-pipeline-dead,q-pipeline-pending" {
+		t.Fatalf("pipeline queue list IDs = %v\nbody=%s", got, listOut.String())
+	}
+
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"pipeline", "queue", "ticket_to_pr", "--repo", root, "--summary", "--json"})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("pipeline queue summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var summarized queueSummary
+	if err := json.Unmarshal(summaryOut.Bytes(), &summarized); err != nil {
+		t.Fatalf("decode pipeline queue summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if summarized.Total != 2 || summarized.Dead != 1 || summarized.Pending != 1 {
+		t.Fatalf("pipeline queue summary = %+v", summarized)
+	}
+
+	show := NewRootCmd()
+	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
+	show.SetOut(showOut)
+	show.SetErr(showErr)
+	show.SetArgs([]string{"pipeline", "queue", "show", "ticket_to_pr", "q-pipeline-dead", "--repo", root, "--format", "{{.ID}} {{.State}}"})
+	if err := show.Execute(); err != nil {
+		t.Fatalf("pipeline queue show: %v\nstderr=%s", err, showErr.String())
+	}
+	if got, want := showOut.String(), "q-pipeline-dead dead\n"; got != want {
+		t.Fatalf("pipeline queue show format = %q, want %q", got, want)
+	}
+
+	foreign := NewRootCmd()
+	foreignOut, foreignErr := &bytes.Buffer{}, &bytes.Buffer{}
+	foreign.SetOut(foreignOut)
+	foreign.SetErr(foreignErr)
+	foreign.SetArgs([]string{"pipeline", "queue", "show", "ticket_to_pr", "q-foreign-dead", "--repo", root})
+	if err := foreign.Execute(); err == nil {
+		t.Fatalf("pipeline queue foreign show succeeded: stdout=%s", foreignOut.String())
+	}
+	if !strings.Contains(foreignErr.String(), `queue item "q-foreign-dead" is not owned by pipeline "ticket_to_pr"`) {
+		t.Fatalf("foreign stderr = %q", foreignErr.String())
+	}
+
+	retry := NewRootCmd()
+	retryOut, retryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	retry.SetOut(retryOut)
+	retry.SetErr(retryErr)
+	retry.SetArgs([]string{"pipeline", "queue", "retry", "ticket_to_pr", "--all", "--repo", root, "--dry-run", "--json"})
+	if err := retry.Execute(); err != nil {
+		t.Fatalf("pipeline queue retry dry-run: %v\nstderr=%s", err, retryErr.String())
+	}
+	var retryRows []queueRetryResult
+	if err := json.Unmarshal(retryOut.Bytes(), &retryRows); err != nil {
+		t.Fatalf("decode retry rows: %v\nbody=%s", err, retryOut.String())
+	}
+	if len(retryRows) != 1 || retryRows[0].ID != "q-pipeline-dead" || retryRows[0].Action != "would_retry" {
+		t.Fatalf("retry rows = %+v", retryRows)
+	}
+
+	drop := NewRootCmd()
+	dropOut, dropErr := &bytes.Buffer{}, &bytes.Buffer{}
+	drop.SetOut(dropOut)
+	drop.SetErr(dropErr)
+	drop.SetArgs([]string{"pipeline", "queue", "drop", "ticket_to_pr", "--all", "--repo", root, "--dry-run", "--format", "{{.ID}} {{.Action}}"})
+	if err := drop.Execute(); err != nil {
+		t.Fatalf("pipeline queue drop dry-run: %v\nstderr=%s", err, dropErr.String())
+	}
+	if got, want := dropOut.String(), "q-pipeline-dead would_drop\n"; got != want {
+		t.Fatalf("drop format = %q, want %q", got, want)
+	}
+
+	prune := NewRootCmd()
+	pruneOut, pruneErr := &bytes.Buffer{}, &bytes.Buffer{}
+	prune.SetOut(pruneOut)
+	prune.SetErr(pruneErr)
+	prune.SetArgs([]string{"pipeline", "queue", "prune", "ticket_to_pr", "--repo", root, "--json"})
+	if err := prune.Execute(); err != nil {
+		t.Fatalf("pipeline queue prune: %v\nstderr=%s", err, pruneErr.String())
+	}
+	var pruned []queuePruneResult
+	if err := json.Unmarshal(pruneOut.Bytes(), &pruned); err != nil {
+		t.Fatalf("decode prune rows: %v\nbody=%s", err, pruneOut.String())
+	}
+	if len(pruned) != 1 || pruned[0].ID != "q-pipeline-dead" || !pruned[0].Dropped {
+		t.Fatalf("prune rows = %+v", pruned)
+	}
+	if _, err := daemon.ReadQueueItem(queueRoot, "q-pipeline-dead"); err == nil {
+		t.Fatalf("pipeline dead queue item still exists after prune")
+	}
+	if _, err := daemon.ReadQueueItem(queueRoot, "q-foreign-dead"); err != nil {
+		t.Fatalf("foreign queue item was removed: %v", err)
+	}
+}
+
+func queueItemIDsForTest(items []daemon.QueueItem) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.ID)
+	}
+	return out
+}
+
 func TestPipelinePRGateWaitsForJobPR(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

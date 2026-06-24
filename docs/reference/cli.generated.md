@@ -2928,6 +2928,7 @@ Subcommands:
 - `agent-team pipeline logs` - Show daemon-captured logs for one pipeline.
 - `agent-team pipeline ls` - List declared pipelines.
 - `agent-team pipeline next` - Print recommended next actions for pipeline jobs.
+- `agent-team pipeline queue` - List or control queue items scoped to one pipeline.
 - `agent-team pipeline ready` - List ready pipeline jobs.
 - `agent-team pipeline reject` - Reject blocked manual pipeline gates.
 - `agent-team pipeline release` - Release held pipeline jobs so automation can advance them.
@@ -3251,6 +3252,130 @@ Flags:
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --team string         Only consider pipelines owned by this declared team; actions are rendered with team-scoped commands.
   -w, --watch               Refresh recommended pipeline actions until interrupted.
+```
+
+## `agent-team pipeline queue`
+
+List or control queue items scoped to one pipeline.
+
+```text
+agent-team pipeline queue <pipeline> [flags]
+```
+
+Flags:
+
+```text
+      --event-type strings   Filter by event type; repeat or comma-separate values.
+      --format string        Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --interval duration    Refresh interval for --watch. (default 2s)
+      --job strings          Filter by job id or ticket; repeat or comma-separate values.
+      --json                 Emit pipeline queue rows as JSON.
+      --limit int            Limit rows after filtering and sorting; 0 means no limit.
+      --no-clear             With --watch, append snapshots instead of redrawing the terminal.
+      --ready                Only show pending queue items whose next retry is due now.
+      --repo string          Repo root containing .agent_team. (default "<repo>")
+      --runtime strings      Filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.
+      --sort string          Sort rows by state, id, event, instance, job, runtime, queued, updated, next-retry, or attempts. (default "state")
+      --state string         Filter by queue state: pending or dead.
+      --summary              Show aggregate queue counts instead of queue rows.
+  -w, --watch                Refresh the pipeline queue table until interrupted.
+```
+
+Subcommands:
+
+- `agent-team pipeline queue drop` - Drop pipeline-owned queue items.
+- `agent-team pipeline queue prune` - Prune pipeline-owned queue items.
+- `agent-team pipeline queue retry` - Retry pipeline-owned queue items.
+- `agent-team pipeline queue show` - Show one queue item owned by one pipeline.
+
+## `agent-team pipeline queue drop`
+
+Drop pipeline-owned queue items.
+
+Drop one pipeline-owned queue item by id, or drop a filtered pipeline-owned batch with --all. Batch drops default to dead-letter items.
+
+```text
+agent-team pipeline queue drop <pipeline> [id] [flags]
+```
+
+Flags:
+
+```text
+      --all                  Drop all matching pipeline-owned queue items instead of one id.
+      --dry-run              Preview matching pipeline-owned queue items without dropping them.
+      --event-type strings   With --all, filter by event type; repeat or comma-separate values.
+      --format string        Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --job strings          With --all, filter by job id or ticket; repeat or comma-separate values.
+      --json                 Emit machine-readable JSON.
+      --limit int            With --all, drop at most this many matching queue items; 0 means no limit.
+      --ready                With --all, only drop pending queue items whose next retry is due now.
+      --repo string          Repo root containing .agent_team. (default "<repo>")
+      --runtime strings      With --all, filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.
+      --state string         With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.
+```
+
+## `agent-team pipeline queue prune`
+
+Prune pipeline-owned queue items.
+
+Prune pipeline-owned queue items. By default this removes dead-letter items owned by the selected pipeline.
+
+```text
+agent-team pipeline queue prune <pipeline> [flags]
+```
+
+Flags:
+
+```text
+      --dry-run               Preview pipeline-owned queue items that would be pruned without dropping them.
+      --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --json                  Emit prune results as JSON.
+      --older-than duration   Only prune pipeline-owned items older than this duration based on retry/dead-letter/update time.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --runtime strings       Filter by queued dispatch runtime before pruning: claude or codex. Can repeat or comma-separate.
+      --state string          Queue state to prune: dead, pending, or all. (default "dead")
+```
+
+## `agent-team pipeline queue retry`
+
+Retry pipeline-owned queue items.
+
+Retry one pipeline-owned queue item by id, or retry a filtered pipeline-owned batch with --all. Batch retries default to dead-letter items.
+
+```text
+agent-team pipeline queue retry <pipeline> [id] [flags]
+```
+
+Flags:
+
+```text
+      --all                  Retry all matching pipeline-owned queue items instead of one id.
+      --dry-run              Preview matching pipeline-owned queue items without retrying them.
+      --event-type strings   With --all, filter by event type; repeat or comma-separate values.
+      --format string        Render each retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --job strings          With --all, filter by job id or ticket; repeat or comma-separate values.
+      --json                 Emit machine-readable JSON.
+      --limit int            With --all, retry at most this many matching queue items; 0 means no limit.
+      --ready                With --all, only retry pending queue items whose next retry is due now.
+      --repo string          Repo root containing .agent_team. (default "<repo>")
+      --runtime strings      With --all, filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.
+      --state string         With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.
+```
+
+## `agent-team pipeline queue show`
+
+Show one queue item owned by one pipeline.
+
+```text
+agent-team pipeline queue show <pipeline> <id> [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --json            Emit the queue item as JSON.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
 ```
 
 ## `agent-team pipeline ready`

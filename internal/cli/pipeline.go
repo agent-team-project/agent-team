@@ -38,6 +38,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineSnapshotCmd())
 	cmd.AddCommand(newPipelineNextCmd())
 	cmd.AddCommand(newPipelineWaitCmd())
+	cmd.AddCommand(newPipelineQueueCmd())
 	cmd.AddCommand(newPipelineReadyCmd())
 	cmd.AddCommand(newPipelineHoldCmd())
 	cmd.AddCommand(newPipelineReleaseCmd())
@@ -737,6 +738,378 @@ func newPipelineWaitCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit final pipeline jobs as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each final job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
+	return cmd
+}
+
+func newPipelineQueueCmd() *cobra.Command {
+	var (
+		repo        string
+		stateFilter string
+		eventTypes  []string
+		jobs        []string
+		runtimes    []string
+		readyOnly   bool
+		sortBy      string
+		limit       int
+		watch       bool
+		noClear     bool
+		summary     bool
+		jsonOut     bool
+		format      string
+		interval    time.Duration
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "queue <pipeline>",
+		Short: "List or control queue items scoped to one pipeline.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if format != "" && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if summary && (cmd.Flags().Changed("sort") || cmd.Flags().Changed("limit")) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --sort and --limit cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			sortMode, err := parseQueueListSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue: %v\n", err)
+				return exitErr(2)
+			}
+			tmpl, err := parseQueueFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue: %v\n", err)
+				return exitErr(2)
+			}
+			filters, err := parseQueueListFiltersWithRuntime(stateFilter, nil, eventTypes, jobs, runtimes, readyOnly, time.Now().UTC())
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				if summary {
+					return runPipelineQueueSummaryWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], filters, jsonOut, interval, !noClear && !jsonOut)
+				}
+				return runPipelineQueueListWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], filters, queueListOptions{Sort: sortMode, Limit: limit}, jsonOut, tmpl, interval, !noClear && !jsonOut)
+			}
+			if summary {
+				return runPipelineQueueSummary(cmd.OutOrStdout(), teamDir, args[0], filters, jsonOut)
+			}
+			return runPipelineQueueList(cmd.OutOrStdout(), teamDir, args[0], filters, queueListOptions{Sort: sortMode, Limit: limit}, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&stateFilter, "state", "", "Filter by queue state: pending or dead.")
+	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "Filter by event type; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Filter by job id or ticket; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&readyOnly, "ready", false, "Only show pending queue items whose next retry is due now.")
+	cmd.Flags().StringVar(&sortBy, "sort", "state", "Sort rows by state, id, event, instance, job, runtime, queued, updated, next-retry, or attempts.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the pipeline queue table until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate queue counts instead of queue rows.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline queue rows as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
+	cmd.AddCommand(newPipelineQueueShowCmd())
+	cmd.AddCommand(newPipelineQueueRetryCmd())
+	cmd.AddCommand(newPipelineQueueDropCmd())
+	cmd.AddCommand(newPipelineQueuePruneCmd())
+	return cmd
+}
+
+func newPipelineQueueShowCmd() *cobra.Command {
+	var (
+		repo    string
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "show <pipeline> <id>",
+		Short: "Show one queue item owned by one pipeline.",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue show: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseQueueFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue show: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			item, err := readPipelineQueueItem(cmd, teamDir, args[0], args[1], "show")
+			if err != nil {
+				return err
+			}
+			return renderQueueItemResultWithActions(cmd.OutOrStdout(), item, jsonOut, tmpl, pipelineQueueActionResolver(args[0]), queueRuntimeMap(teamDir))
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the queue item as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
+	return cmd
+}
+
+func newPipelineQueueRetryCmd() *cobra.Command {
+	var (
+		repo        string
+		jsonOut     bool
+		format      string
+		retryAll    bool
+		dryRun      bool
+		stateFilter string
+		eventTypes  []string
+		jobs        []string
+		runtimes    []string
+		readyOnly   bool
+		limit       int
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "retry <pipeline> [id]",
+		Short: "Retry pipeline-owned queue items.",
+		Long:  "Retry one pipeline-owned queue item by id, or retry a filtered pipeline-owned batch with --all. Batch retries default to dead-letter items.",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue retry: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseQueueFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue retry: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			if retryAll {
+				if len(args) != 1 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue retry: --all requires exactly one pipeline and cannot be combined with an id.")
+					return exitErr(2)
+				}
+				if limit < 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue retry: --limit must be >= 0.")
+					return exitErr(2)
+				}
+				effectiveState := strings.TrimSpace(stateFilter)
+				if effectiveState == "" {
+					effectiveState = daemon.QueueStateDead
+					if readyOnly {
+						effectiveState = daemon.QueueStatePending
+					}
+				}
+				filters, err := parseQueueListFiltersWithRuntime(effectiveState, nil, eventTypes, jobs, runtimes, readyOnly, time.Now().UTC())
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue retry: %v\n", err)
+					return exitErr(2)
+				}
+				return runPipelineQueueRetryAll(cmd.OutOrStdout(), teamDir, args[0], filters, limit, dryRun, jsonOut, tmpl)
+			}
+			if len(args) != 2 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue retry: requires <pipeline> and one id unless --all is set.")
+				return exitErr(2)
+			}
+			if stateFilter != "" || len(eventTypes) > 0 || len(jobs) > 0 || len(runtimes) > 0 || readyOnly || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue retry: --state, --event-type, --job, --runtime, --ready, and --limit require --all.")
+				return exitErr(2)
+			}
+			item, err := readPipelineQueueItem(cmd, teamDir, args[0], args[1], "retry")
+			if err != nil {
+				return err
+			}
+			results, err := retryQueueItemMatches(teamDir, []*daemon.QueueItem{item}, dryRun)
+			if err != nil {
+				return err
+			}
+			return renderQueueRetryResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
+	cmd.Flags().BoolVar(&retryAll, "all", false, "Retry all matching pipeline-owned queue items instead of one id.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching pipeline-owned queue items without retrying them.")
+	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.")
+	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "With --all, filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&readyOnly, "ready", false, "With --all, only retry pending queue items whose next retry is due now.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, retry at most this many matching queue items; 0 means no limit.")
+	return cmd
+}
+
+func newPipelineQueueDropCmd() *cobra.Command {
+	var (
+		repo        string
+		jsonOut     bool
+		format      string
+		dropAll     bool
+		dryRun      bool
+		stateFilter string
+		eventTypes  []string
+		jobs        []string
+		runtimes    []string
+		readyOnly   bool
+		limit       int
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "drop <pipeline> [id]",
+		Short: "Drop pipeline-owned queue items.",
+		Long:  "Drop one pipeline-owned queue item by id, or drop a filtered pipeline-owned batch with --all. Batch drops default to dead-letter items.",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue drop: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseQueueFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue drop: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			if dropAll {
+				if len(args) != 1 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue drop: --all requires exactly one pipeline and cannot be combined with an id.")
+					return exitErr(2)
+				}
+				if limit < 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue drop: --limit must be >= 0.")
+					return exitErr(2)
+				}
+				effectiveState := strings.TrimSpace(stateFilter)
+				if effectiveState == "" {
+					effectiveState = daemon.QueueStateDead
+					if readyOnly {
+						effectiveState = daemon.QueueStatePending
+					}
+				}
+				filters, err := parseQueueListFiltersWithRuntime(effectiveState, nil, eventTypes, jobs, runtimes, readyOnly, time.Now().UTC())
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue drop: %v\n", err)
+					return exitErr(2)
+				}
+				return runPipelineQueueDropAll(cmd.OutOrStdout(), teamDir, args[0], filters, limit, dryRun, jsonOut, tmpl)
+			}
+			if len(args) != 2 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue drop: requires <pipeline> and one id unless --all is set.")
+				return exitErr(2)
+			}
+			if stateFilter != "" || len(eventTypes) > 0 || len(jobs) > 0 || len(runtimes) > 0 || readyOnly || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue drop: --state, --event-type, --job, --runtime, --ready, and --limit require --all.")
+				return exitErr(2)
+			}
+			item, err := readPipelineQueueItem(cmd, teamDir, args[0], args[1], "drop")
+			if err != nil {
+				return err
+			}
+			results, err := dropQueueItemMatches(teamDir, []*daemon.QueueItem{item}, dryRun)
+			if err != nil {
+				return err
+			}
+			return renderQueueDropResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
+	cmd.Flags().BoolVar(&dropAll, "all", false, "Drop all matching pipeline-owned queue items instead of one id.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching pipeline-owned queue items without dropping them.")
+	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.")
+	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "With --all, filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&readyOnly, "ready", false, "With --all, only drop pending queue items whose next retry is due now.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, drop at most this many matching queue items; 0 means no limit.")
+	return cmd
+}
+
+func newPipelineQueuePruneCmd() *cobra.Command {
+	var (
+		repo      string
+		stateFlag string
+		olderThan time.Duration
+		dryRun    bool
+		jsonOut   bool
+		format    string
+		runtimes  []string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "prune <pipeline>",
+		Short: "Prune pipeline-owned queue items.",
+		Long:  "Prune pipeline-owned queue items. By default this removes dead-letter items owned by the selected pipeline.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue prune: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if olderThan < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue prune: --older-than must be >= 0.")
+				return exitErr(2)
+			}
+			tmpl, err := parseQueuePruneFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue prune: %v\n", err)
+				return exitErr(2)
+			}
+			state, err := parseQueuePruneState(stateFlag)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue prune: %v\n", err)
+				return exitErr(2)
+			}
+			filters, err := parseQueueListFiltersWithRuntime("", nil, nil, nil, runtimes, false, time.Now().UTC())
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue prune: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			return runPipelineQueuePrune(cmd.OutOrStdout(), teamDir, args[0], state, olderThan, filters, time.Now().UTC(), dryRun, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&stateFlag, "state", daemon.QueueStateDead, "Queue state to prune: dead, pending, or all.")
+	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "Only prune pipeline-owned items older than this duration based on retry/dead-letter/update time.")
+	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Filter by queued dispatch runtime before pruning: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview pipeline-owned queue items that would be pruned without dropping them.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit prune results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each prune result with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
 
@@ -3485,6 +3858,206 @@ func pipelineWaitHasFailed(jobs []*job.Job) bool {
 		}
 	}
 	return false
+}
+
+func collectPipelineQueueItems(teamDir, pipeline string, filters queueListFilters, now time.Time) ([]*daemon.QueueItem, error) {
+	jobs, err := selectedPipelineJobs(teamDir, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return nil, err
+	}
+	owned := queueItemsForJobs(items, jobs)
+	return filterQueueItems(owned, filters.withNow(now).withRuntimeByInstance(queueRuntimeMap(teamDir))), nil
+}
+
+func readPipelineQueueItem(cmd *cobra.Command, teamDir, pipeline, id, verb string) (*daemon.QueueItem, error) {
+	item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue %s: queue item %q not found.\n", verb, id)
+			return nil, exitErr(2)
+		}
+		return nil, err
+	}
+	jobs, err := selectedPipelineJobs(teamDir, pipeline)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue %s: %v\n", verb, err)
+		return nil, exitErr(1)
+	}
+	if len(queueItemsForJobs([]*daemon.QueueItem{item}, jobs)) == 0 {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue %s: queue item %q is not owned by pipeline %q.\n", verb, id, pipeline)
+		return nil, exitErr(2)
+	}
+	return item, nil
+}
+
+func runPipelineQueueList(w io.Writer, teamDir, pipeline string, filters queueListFilters, opts queueListOptions, jsonOut bool, tmpl *template.Template) error {
+	items, err := collectPipelineQueueItems(teamDir, pipeline, filters, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	runtimeByInstance := queueRuntimeMap(teamDir)
+	items = prepareQueueListItems(items, opts, runtimeByInstance)
+	if jsonOut {
+		return json.NewEncoder(w).Encode(items)
+	}
+	if tmpl != nil {
+		return renderQueueItemsFormat(w, items, tmpl)
+	}
+	renderQueueTableWithActions(w, items, runtimeByInstance, pipelineQueueActionResolver(pipeline))
+	return nil
+}
+
+func runPipelineQueueSummary(w io.Writer, teamDir, pipeline string, filters queueListFilters, jsonOut bool) error {
+	now := time.Now().UTC()
+	items, err := collectPipelineQueueItems(teamDir, pipeline, filters, now)
+	if err != nil {
+		return err
+	}
+	summary := summarizeQueueItems(items, now, queueRuntimeMap(teamDir))
+	if jsonOut {
+		return json.NewEncoder(w).Encode(summary)
+	}
+	renderQueueSummary(w, summary)
+	return nil
+}
+
+func runPipelineQueueListWatch(ctx context.Context, w io.Writer, teamDir, pipeline string, filters queueListFilters, opts queueListOptions, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if !jsonOut {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+		}
+		if err := runPipelineQueueList(w, teamDir, pipeline, filters, opts, jsonOut, tmpl); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
+}
+
+func runPipelineQueueSummaryWatch(ctx context.Context, w io.Writer, teamDir, pipeline string, filters queueListFilters, jsonOut bool, interval time.Duration, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if !jsonOut {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+		}
+		if err := runPipelineQueueSummary(w, teamDir, pipeline, filters, jsonOut); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
+}
+
+func runPipelineQueueRetryAll(w io.Writer, teamDir, pipeline string, filters queueListFilters, limit int, dryRun, jsonOut bool, tmpl *template.Template) error {
+	matches, err := collectPipelineQueueItems(teamDir, pipeline, filters, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if limit > 0 && len(matches) > limit {
+		matches = matches[:limit]
+	}
+	results, err := retryQueueItemMatches(teamDir, matches, dryRun)
+	if err != nil {
+		return err
+	}
+	return renderQueueRetryResults(w, results, jsonOut, tmpl)
+}
+
+func runPipelineQueueDropAll(w io.Writer, teamDir, pipeline string, filters queueListFilters, limit int, dryRun, jsonOut bool, tmpl *template.Template) error {
+	matches, err := collectPipelineQueueItems(teamDir, pipeline, filters, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if limit > 0 && len(matches) > limit {
+		matches = matches[:limit]
+	}
+	results, err := dropQueueItemMatches(teamDir, matches, dryRun)
+	if err != nil {
+		return err
+	}
+	return renderQueueDropResults(w, results, jsonOut, tmpl)
+}
+
+func runPipelineQueuePrune(w io.Writer, teamDir, pipeline, state string, olderThan time.Duration, filters queueListFilters, now time.Time, dryRun, jsonOut bool, tmpl *template.Template) error {
+	items, err := collectPipelineQueueItems(teamDir, pipeline, filters, now)
+	if err != nil {
+		return err
+	}
+	matches := make([]*daemon.QueueItem, 0, len(items))
+	for _, item := range items {
+		if queueItemMatchesPrune(item, state, olderThan, now) {
+			matches = append(matches, item)
+		}
+	}
+	results, err := pruneQueueItemMatches(teamDir, matches, dryRun)
+	if err != nil {
+		return err
+	}
+	return renderQueuePruneResults(w, results, jsonOut, tmpl)
+}
+
+func pipelineQueueActionResolver(pipeline string) queueActionResolver {
+	return func(item *daemon.QueueItem, now time.Time) []string {
+		return pipelineQueueItemActions(pipeline, item, now)
+	}
+}
+
+func pipelineQueueItemActions(pipeline string, item *daemon.QueueItem, now time.Time) []string {
+	if item == nil {
+		return nil
+	}
+	queueCommand := func(verb string) string {
+		return fmt.Sprintf("agent-team pipeline queue %s %s %s", verb, pipeline, item.ID)
+	}
+	switch item.State {
+	case daemon.QueueStateDead:
+		return []string{
+			queueCommand("retry"),
+			queueCommand("drop"),
+		}
+	case daemon.QueueStatePending:
+		if !item.NextRetry.IsZero() && item.NextRetry.After(now.UTC()) {
+			return []string{
+				queueCommand("show"),
+				queueCommand("drop"),
+			}
+		}
+		return []string{
+			"agent-team queue drain",
+			queueCommand("drop"),
+		}
+	default:
+		return nil
+	}
 }
 
 type pipelineOwnedMetadata struct {
