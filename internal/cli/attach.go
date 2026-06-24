@@ -64,7 +64,9 @@ func newAttachCmd() *cobra.Command {
 			"Compatibility: log-oriented invocations such as --no-follow, --tail, " +
 			"--latest, --last, --all, or status/agent/phase filters follow the " +
 			"daemon-captured log stream, matching the older attach shortcut. " +
-			"`agent-team logs` is the preferred explicit command for log streaming.",
+			"`agent-team logs` is the preferred explicit command for log streaming. " +
+			"Dry-runs also print unmanaged resume and log commands for runtimes " +
+			"that do not support daemon-managed resume.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logMode := attachUsesLogMode(args, all, latest, last, statuses, runtimes, agents, phases, staleOnly, unhealthy, noFollow, cmd.Flags().Changed("tail"), since, grep)
@@ -277,7 +279,7 @@ func runAttach(cmd *cobra.Command, target, instance string, noResume bool, dryRu
 		return exitErr(2)
 	}
 
-	bin, err := resolveAttachRuntimeBinary(cmd, teamDir, meta)
+	bin, err := resolveAttachRuntimeBinary(cmd, teamDir, meta, dryRun)
 	if err != nil {
 		return err
 	}
@@ -321,8 +323,11 @@ func runAttach(cmd *cobra.Command, target, instance string, noResume bool, dryRu
 	return resumeErr
 }
 
-func resolveAttachRuntimeBinary(cmd *cobra.Command, teamDir string, meta *daemon.Metadata) (string, error) {
+func resolveAttachRuntimeBinary(cmd *cobra.Command, teamDir string, meta *daemon.Metadata, allowUnsupportedPreview bool) (string, error) {
 	if !lifecycleMetadataSupportsManagedResume(meta) {
+		if allowUnsupportedPreview {
+			return attachRuntimeBinaryFromMetadata(meta), nil
+		}
 		writeAttachUnsupportedResumeHint(cmd.ErrOrStderr(), meta, lifecycleUnsupportedResumeDetail(meta))
 		return "", exitErr(2)
 	}
@@ -343,11 +348,10 @@ func resolveAttachRuntimeBinary(cmd *cobra.Command, teamDir string, meta *daemon
 
 func writeAttachUnsupportedResumeHint(w fmtWriter, meta *daemon.Metadata, detail string) {
 	fmt.Fprintf(w, "agent-team attach: %s\n", detail)
-	var instance, sessionID, runtimeBinary string
+	var instance, sessionID string
 	if meta != nil {
 		instance = strings.TrimSpace(meta.Instance)
 		sessionID = strings.TrimSpace(meta.SessionID)
-		runtimeBinary = strings.TrimSpace(meta.RuntimeBinary)
 	}
 	if instance != "" {
 		fmt.Fprintf(w, "  Follow captured logs with `agent-team logs %s --follow`.\n", instance)
@@ -356,25 +360,33 @@ func writeAttachUnsupportedResumeHint(w fmtWriter, meta *daemon.Metadata, detail
 		}
 	}
 	if lifecycleMetadataRuntimeKind(meta) == runtimebin.KindCodex && sessionID != "" {
-		bin := runtimeBinary
-		if bin == "" {
-			bin = runtimebin.DefaultBinaryForKind(runtimebin.KindCodex)
-		}
-		fmt.Fprintf(w, "  For unmanaged Codex resume outside daemon ownership, run `%s resume %s`.\n", bin, sessionID)
+		fmt.Fprintf(w, "  For unmanaged Codex resume outside daemon ownership, run `%s`.\n", attachResumeCommand(meta, attachRuntimeBinaryFromMetadata(meta)))
 	}
 }
 
 func renderAttachDryRun(w fmtWriter, instance string, meta *daemon.Metadata, bin string, noResume bool) {
-	wouldStop := meta.Status == daemon.StatusRunning
 	runtimeKind := lifecycleMetadataRuntimeKind(meta)
+	managedResume := lifecycleMetadataSupportsManagedResume(meta)
+	wouldStop := managedResume && meta.Status == daemon.StatusRunning
+	wouldResumeDaemon := managedResume && !noResume
 	fmt.Fprintf(w, "instance:             %s\n", instance)
 	fmt.Fprintf(w, "runtime:              %s\n", runtimeKind)
 	fmt.Fprintf(w, "runtime_binary:       %s\n", bin)
 	fmt.Fprintf(w, "status:               %s\n", meta.Status)
 	fmt.Fprintf(w, "session_id:           %s\n", meta.SessionID)
+	fmt.Fprintf(w, "managed_resume:       %s\n", attachYesNo(managedResume))
 	fmt.Fprintf(w, "would_stop:           %s\n", attachYesNo(wouldStop))
-	fmt.Fprintf(w, "command:              %s --resume %s\n", bin, meta.SessionID)
-	fmt.Fprintf(w, "would_resume_daemon:  %s\n", attachYesNo(!noResume))
+	fmt.Fprintf(w, "command:              %s\n", attachResumeCommand(meta, bin))
+	fmt.Fprintf(w, "would_resume_daemon:  %s\n", attachYesNo(wouldResumeDaemon))
+	if !managedResume {
+		fmt.Fprintf(w, "managed_detail:       %s\n", lifecycleUnsupportedResumeDetail(meta))
+		if strings.TrimSpace(instance) != "" {
+			fmt.Fprintf(w, "logs_command:         agent-team logs %s --follow\n", instance)
+			if runtimeKind == runtimebin.KindCodex {
+				fmt.Fprintf(w, "last_message_command: agent-team logs %s --last-message\n", instance)
+			}
+		}
+	}
 }
 
 func attachYesNo(value bool) string {
@@ -382,6 +394,26 @@ func attachYesNo(value bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+func attachRuntimeBinaryFromMetadata(meta *daemon.Metadata) string {
+	if meta != nil {
+		if bin := strings.TrimSpace(meta.RuntimeBinary); bin != "" {
+			return bin
+		}
+	}
+	return runtimebin.DefaultBinaryForKind(lifecycleMetadataRuntimeKind(meta))
+}
+
+func attachResumeCommand(meta *daemon.Metadata, bin string) string {
+	sessionID := ""
+	if meta != nil {
+		sessionID = strings.TrimSpace(meta.SessionID)
+	}
+	if lifecycleMetadataRuntimeKind(meta) == runtimebin.KindCodex {
+		return strings.TrimSpace(bin + " resume " + sessionID)
+	}
+	return strings.TrimSpace(bin + " --resume " + sessionID)
 }
 
 // lookupInstanceMeta fetches the daemon's metadata for one instance. Returns a

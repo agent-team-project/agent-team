@@ -401,6 +401,76 @@ func TestAttach_DryRunNoResumePreview(t *testing.T) {
 	}
 }
 
+func TestAttach_DryRunUnsupportedCodexShowsUnmanagedResume(t *testing.T) {
+	env := newAttachTestEnv(t)
+	sleep := exec.Command("sleep", "30")
+	if err := sleep.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sleep.Process.Kill()
+		_, _ = sleep.Process.Wait()
+	})
+
+	meta := &daemon.Metadata{
+		Instance:      "codex-worker",
+		Agent:         "worker",
+		Runtime:       string(runtimebin.KindCodex),
+		RuntimeBinary: runtimebin.DefaultBinaryForKind(runtimebin.KindCodex),
+		Workspace:     env.target,
+		PID:           sleep.Process.Pid,
+		SessionID:     "legacy-session",
+		StartedAt:     time.Now().UTC(),
+		Status:        daemon.StatusRunning,
+	}
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(env.teamDir), meta); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	if err := env.dmn.Manager().LoadFromDisk(); err != nil {
+		t.Fatalf("load metadata: %v", err)
+	}
+
+	cap, restore := captureAttachExec(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"attach", "codex-worker", "--target", env.target, "--dry-run"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("attach codex --dry-run: %v\nstderr=%s", err, errOut.String())
+	}
+	if cap.called {
+		t.Fatal("execClaudeAttach should not run during unsupported dry-run")
+	}
+	if err := env.dmn.Manager().WaitForReaper("codex-worker", 20*time.Millisecond); err == nil {
+		t.Fatal("unsupported dry-run stopped the running daemon child")
+	}
+	body := out.String()
+	for _, want := range []string{
+		"runtime:              codex",
+		"managed_resume:       no",
+		"would_stop:           no",
+		"command:              codex resume legacy-session",
+		"would_resume_daemon:  no",
+		`managed_detail:       runtime "codex" does not support managed resume`,
+		"logs_command:         agent-team logs codex-worker --follow",
+		"last_message_command: agent-team logs codex-worker --last-message",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, body)
+		}
+	}
+	got, err := daemon.ReadMetadata(daemon.DaemonRoot(env.teamDir), "codex-worker")
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	if got.Status != daemon.StatusRunning {
+		t.Fatalf("dry-run changed unsupported runtime status: got %s want running", got.Status)
+	}
+}
+
 func TestAttach_DryRunRequiresDirectAttachMode(t *testing.T) {
 	cmd := NewRootCmd()
 	errOut := &bytes.Buffer{}

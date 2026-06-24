@@ -83,7 +83,7 @@ Stop the daemon-managed child for &lt;instance&gt;, then exec `&lt;runtime&gt; -
 
 There is brief downtime during the handoff (Shape A): the daemon child is killed before the runtime resume command reattaches. Channel cursors and mailbox state survive the transfer.
 
-Compatibility: log-oriented invocations such as --no-follow, --tail, --latest, --last, --all, or status/agent/phase filters follow the daemon-captured log stream, matching the older attach shortcut. `agent-team logs` is the preferred explicit command for log streaming.
+Compatibility: log-oriented invocations such as --no-follow, --tail, --latest, --last, --all, or status/agent/phase filters follow the daemon-captured log stream, matching the older attach shortcut. `agent-team logs` is the preferred explicit command for log streaming. Dry-runs also print unmanaged resume and log commands for runtimes that do not support daemon-managed resume.
 
 ```text
 agent-team attach <instance> [flags]

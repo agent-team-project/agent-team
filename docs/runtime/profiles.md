@@ -179,6 +179,18 @@ agent-team job logs <job-id> --clean --grep "error"
 agent-team team logs <team> --clean
 ```
 
+Use attach dry-runs to discover the direct resume command without transferring
+daemon ownership:
+
+```sh
+agent-team attach <instance> --dry-run
+```
+
+For Codex metadata, the preview includes the unmanaged `codex resume <session>`
+command plus `logs --follow` and `logs --last-message` fallbacks. Non-dry-run
+`attach` still refuses Codex managed handoff so it does not stop a child it
+cannot later supervise with the same session contract.
+
 The Codex adapter sets `AGENT_TEAM_*` variables through Codex shell-environment policy options, so status, inbox, and channel scripts can find the repo team root and state directory without broadly inheriting the parent process environment.
 
 ## Codex Limitations
@@ -188,7 +200,7 @@ Codex does not expose the same `--agents` and `--session-id` contract as the Cla
 That means:
 
 - native runtime subagents are not registered
-- direct `codex resume` is available only outside agent-team managed instance ownership
+- direct `codex resume` is available only outside agent-team managed instance ownership; use `agent-team attach <instance> --dry-run` to print the exact command
 - stopped Codex metadata cannot be resumed with `start`
 - Codex metadata cannot be restarted through managed daemon resume; `restart` reports `unsupported` and leaves running Codex children untouched
 - `plan` and `sync` report stopped Codex instances as `unsupported` instead of trying to resume them
@@ -203,7 +215,7 @@ Use jobs, queue, and pipeline commands for orchestration around Codex runs inste
 | `available: no` | Runtime binary is not in `PATH` | `agent-team runtime`, then `which codex` or `which claude` |
 | Config binary ignored | `--runtime`, `AGENT_TEAM_RUNTIME`, or `AGENT_TEAM_RUNTIME_BIN` is taking precedence | Check `agent-team runtime --json`, then unset the env override or pass `--runtime-bin` |
 | `codex daemon dispatch requires --prompt` | Codex daemon runs need an explicit one-shot task | Add `--prompt "..."` |
-| `runtime "codex" does not support managed resume` | Codex metadata cannot be started or restarted through managed daemon resume | Inspect logs or last message, then re-run with a fresh `--prompt` when more work is needed |
+| `runtime "codex" does not support managed resume` | Codex metadata cannot be started or restarted through managed daemon resume | Run `agent-team attach <instance> --dry-run` to print unmanaged resume/log commands, or re-run with a fresh `--prompt` |
 | Tool scripts cannot find state | Missing `AGENT_TEAM_*` environment in runtime shell | Check `agent-team runtime` and inspect the daemon child log |
 | Codex exits before running any task | Codex auth, provider reachability, sandbox setup, stdin handling, or last-message capture is broken | `agent-team runtime probe --runtime codex --json`, then `agent-team runtime probe --runtime codex --exec --timeout 2m` |
 
