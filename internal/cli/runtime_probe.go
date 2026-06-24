@@ -256,7 +256,8 @@ func collectRuntimeProbe(cmd *cobra.Command, opts runtimeProbeOptions) (*runtime
 			probe := runCodexExecProbe(cmd.Context(), repo, teamDir, result.Daemon, info.Binary, opts.Timeout, opts.ExecPrompt)
 			result.ExecProbe = probe
 			if probe.Error != "" {
-				result.addIssue("fail", "exec_probe", runtimeExecProbeIssueID(probe), probe.Error, "Run `agent-team run manager --runtime codex --prompt \"probe\" --last-message` and inspect raw Codex output if it still fails.")
+				issueID := runtimeExecProbeIssueID(probe)
+				result.addIssue("fail", "exec_probe", issueID, runtimeExecProbeIssueSummary(probe, issueID), runtimeExecProbeRemediation(issueID))
 			}
 		}
 	}
@@ -444,6 +445,30 @@ func runtimeExecProbeIssueID(probe *runtimeExecProbe) string {
 	if probe.TimedOut {
 		return "exec_timeout"
 	}
+	execText := strings.ToLower(strings.Join([]string{probe.Error, probe.Stderr, probe.Stdout}, "\n"))
+	switch {
+	case strings.Contains(execText, "could not resolve host"),
+		strings.Contains(execText, "failed to lookup"),
+		strings.Contains(execText, "provider unavailable"),
+		strings.Contains(execText, "provider endpoints are unreachable"),
+		strings.Contains(execText, "network error"),
+		strings.Contains(execText, "error sending request"),
+		strings.Contains(execText, "connection refused"),
+		strings.Contains(execText, "connect failed"):
+		return "provider_unreachable"
+	case strings.Contains(execText, "unauthorized"),
+		strings.Contains(execText, "forbidden"),
+		strings.Contains(execText, "401"),
+		strings.Contains(execText, "403"),
+		strings.Contains(execText, "authentication"),
+		strings.Contains(execText, "not logged in"),
+		strings.Contains(execText, "login required"):
+		return "auth_failed"
+	case strings.Contains(execText, "operation not permitted"),
+		strings.Contains(execText, "permission denied"),
+		strings.Contains(execText, "sandbox"):
+		return "sandbox_blocked"
+	}
 	if probe.LastMessagePresent && strings.TrimSpace(probe.LastMessage) == "" {
 		return "last_message_empty"
 	}
@@ -451,6 +476,52 @@ func runtimeExecProbeIssueID(probe *runtimeExecProbe) string {
 		return "last_message_missing"
 	}
 	return "exec_failed"
+}
+
+func runtimeExecProbeIssueSummary(probe *runtimeExecProbe, issueID string) string {
+	if probe == nil {
+		return "runtime exec probe failed"
+	}
+	base := strings.TrimSpace(probe.Error)
+	switch issueID {
+	case "provider_unreachable":
+		return appendRuntimeProbeError(base, "stderr indicates provider or network reachability failure")
+	case "auth_failed":
+		return appendRuntimeProbeError(base, "stderr indicates runtime authentication failure")
+	case "sandbox_blocked":
+		return appendRuntimeProbeError(base, "stderr indicates sandbox or filesystem/socket permission failure")
+	case "exec_timeout":
+		if base != "" {
+			return base
+		}
+		return "runtime exec probe timed out"
+	case "last_message_empty":
+		return "runtime exec wrote an empty last-message sidecar"
+	case "last_message_missing":
+		return "runtime exec exited successfully but did not write the expected last-message sidecar"
+	default:
+		if base != "" {
+			return base
+		}
+		return "runtime exec probe failed"
+	}
+}
+
+func runtimeExecProbeRemediation(issueID string) string {
+	switch issueID {
+	case "provider_unreachable":
+		return "Fix DNS, proxy, VPN, firewall, or provider reachability, then rerun `agent-team runtime probe --runtime codex --exec --timeout 2m`."
+	case "auth_failed":
+		return "Run `codex login` or refresh the selected runtime credentials, then rerun the exec probe."
+	case "sandbox_blocked":
+		return "Inspect Codex sandbox and filesystem/socket policy for this repo, then retry with the same `agent-team runtime probe --runtime codex --exec` command."
+	case "exec_timeout":
+		return "Increase `--timeout` only after checking provider reachability with `codex doctor --json`."
+	case "last_message_empty", "last_message_missing":
+		return "Run `agent-team run manager --runtime codex --prompt \"probe\" --last-message` and inspect raw Codex output if the sidecar is still missing."
+	default:
+		return "Run `agent-team run manager --runtime codex --prompt \"probe\" --last-message` and inspect raw Codex output if it still fails."
+	}
 }
 
 func runtimeProbeExitCode(err error) int {

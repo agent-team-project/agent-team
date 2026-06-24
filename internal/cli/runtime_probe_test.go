@@ -307,8 +307,60 @@ func TestRuntimeProbeCodexExecProbeFailure(t *testing.T) {
 	if result.OK || result.ExecProbe == nil || result.ExecProbe.ExitCode != 42 {
 		t.Fatalf("result = %+v, want failed exec probe exit 42", result)
 	}
-	if !containsRuntimeProbeIssue(result.Issues, "fail", "exec_probe", "exec_failed") {
-		t.Fatalf("issues = %+v, want exec failure", result.Issues)
+	if !containsRuntimeProbeIssue(result.Issues, "fail", "exec_probe", "provider_unreachable") {
+		t.Fatalf("issues = %+v, want provider reachability failure", result.Issues)
+	}
+}
+
+func TestRuntimeExecProbeClassifiesFailures(t *testing.T) {
+	tests := []struct {
+		name  string
+		probe *runtimeExecProbe
+		want  string
+	}{
+		{
+			name:  "provider dns",
+			probe: &runtimeExecProbe{Error: "exit status 1", Stderr: "fatal: unable to access 'https://github.com/openai/plugins.git/': Could not resolve host: github.com"},
+			want:  "provider_unreachable",
+		},
+		{
+			name:  "auth",
+			probe: &runtimeExecProbe{Error: "exit status 1", Stderr: "401 unauthorized: login required"},
+			want:  "auth_failed",
+		},
+		{
+			name:  "sandbox",
+			probe: &runtimeExecProbe{Error: "exit status 1", Stderr: "operation not permitted while opening daemon socket"},
+			want:  "sandbox_blocked",
+		},
+		{
+			name:  "timeout",
+			probe: &runtimeExecProbe{TimedOut: true},
+			want:  "exec_timeout",
+		},
+		{
+			name:  "empty last message",
+			probe: &runtimeExecProbe{LastMessagePresent: true, LastMessage: " \n"},
+			want:  "last_message_empty",
+		},
+		{
+			name:  "missing last message",
+			probe: &runtimeExecProbe{ExitCode: 0},
+			want:  "last_message_missing",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runtimeExecProbeIssueID(tc.probe); got != tc.want {
+				t.Fatalf("issue id = %q, want %q", got, tc.want)
+			}
+			if summary := runtimeExecProbeIssueSummary(tc.probe, tc.want); strings.TrimSpace(summary) == "" {
+				t.Fatalf("empty summary for %s", tc.want)
+			}
+			if remediation := runtimeExecProbeRemediation(tc.want); strings.TrimSpace(remediation) == "" {
+				t.Fatalf("empty remediation for %s", tc.want)
+			}
+		})
 	}
 }
 

@@ -43,7 +43,9 @@ before jobs or pipelines queue work against a runtime that cannot start.
 `codex exec -`, sends a short prompt over stdin, and verifies that
 `--output-last-message` produced a sidecar. Add `--output <file>` to write the
 full structured probe result as pretty JSON while still printing the normal
-text or `--json` response.
+text or `--json` response. Exec probe failures are classified into actionable
+IDs such as `provider_unreachable`, `auth_failed`, `sandbox_blocked`,
+`exec_timeout`, and last-message sidecar failures.
 
 ## Selection Order
 
