@@ -61,6 +61,25 @@ func TestTicketIdentity(t *testing.T) {
 	}
 }
 
+func TestStepDispatchKickoff(t *testing.T) {
+	got := StepDispatchKickoff("Implement SQU-42", "review", "Review the branch and prepare PR feedback.")
+	for _, want := range []string{
+		"Implement SQU-42",
+		"--- pipeline step instructions (review) ---",
+		"Review the branch and prepare PR feedback.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("StepDispatchKickoff missing %q in:\n%s", want, got)
+		}
+	}
+	if got := StepDispatchKickoff("Implement SQU-42", "review", " "); got != "Implement SQU-42" {
+		t.Fatalf("empty instructions kickoff = %q", got)
+	}
+	if got := StepDispatchKickoff("", "", "Only step instructions"); got != "--- pipeline step instructions ---\n\nOnly step instructions" {
+		t.Fatalf("instruction-only kickoff = %q", got)
+	}
+}
+
 func TestJobReadWriteList(t *testing.T) {
 	teamDir := filepath.Join(t.TempDir(), ".agent_team")
 	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)

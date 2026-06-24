@@ -60,6 +60,7 @@ Built or substantially implemented:
 - PR metadata pipeline gates
 - skipped pipeline step metadata
 - pipeline step labels and descriptions
+- pipeline step-specific runtime instructions
 - pipeline step retry caps
 - pipeline failed-step batch retry
 - team-scoped pipeline failed-step retry

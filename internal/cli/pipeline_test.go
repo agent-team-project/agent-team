@@ -33,6 +33,7 @@ target = "worker"
 id = "review"
 label = "Code review"
 description = "Review branch and PR state."
+instructions = "Check tests, summarize risks, and decide whether the PR can proceed."
 target = "manager"
 after = ["implement"]
 optional = true
@@ -64,7 +65,7 @@ max_attempts = 3
 	if err := show.Execute(); err != nil {
 		t.Fatalf("pipeline show: %v\nstderr=%s", err, showErr.String())
 	}
-	for _, want := range []string{"Pipeline: ticket_to_pr", "Trigger:  ticket.created", "implement target=worker after=-", `review target=manager after=implement label="Code review" description="Review branch and PR state." optional=true timeout=45m0s max_attempts=3`} {
+	for _, want := range []string{"Pipeline: ticket_to_pr", "Trigger:  ticket.created", "implement target=worker after=-", `review target=manager after=implement label="Code review" description="Review branch and PR state." instructions="Check tests, summarize risks, and decide whether the PR can proceed." optional=true timeout=45m0s max_attempts=3`} {
 		if !strings.Contains(showOut.String(), want) {
 			t.Fatalf("pipeline show missing %q:\n%s", want, showOut.String())
 		}
@@ -82,7 +83,7 @@ max_attempts = 3
 	if err := json.Unmarshal(jsonOut.Bytes(), &rows); err != nil {
 		t.Fatalf("decode pipeline json: %v\nbody=%s", err, jsonOut.String())
 	}
-	if len(rows) != 1 || rows[0].Name != "ticket_to_pr" || len(rows[0].Steps) != 2 || rows[0].Steps[1].Label != "Code review" || rows[0].Steps[1].Description != "Review branch and PR state." || !rows[0].Steps[1].Optional || rows[0].Steps[1].Timeout != "45m0s" || rows[0].Steps[1].MaxAttempts != 3 {
+	if len(rows) != 1 || rows[0].Name != "ticket_to_pr" || len(rows[0].Steps) != 2 || rows[0].Steps[1].Label != "Code review" || rows[0].Steps[1].Description != "Review branch and PR state." || rows[0].Steps[1].Instructions != "Check tests, summarize risks, and decide whether the PR can proceed." || !rows[0].Steps[1].Optional || rows[0].Steps[1].Timeout != "45m0s" || rows[0].Steps[1].MaxAttempts != 3 {
 		t.Fatalf("pipeline rows = %+v", rows)
 	}
 
@@ -129,6 +130,7 @@ target = "worker"
 id = "verify"
 label = "Verification"
 description = "Confirm implementation matches the ticket."
+instructions = "Check acceptance criteria before closing the workflow."
 target = "manager"
 after = ["implement"]
 optional = true
@@ -150,7 +152,7 @@ max_attempts = 2
 	if err != nil {
 		t.Fatalf("read created job: %v", err)
 	}
-	if len(created.Steps) != 2 || created.Steps[1].ID != "verify" || created.Steps[1].Label != "Verification" || created.Steps[1].Description != "Confirm implementation matches the ticket." || !created.Steps[1].Optional || created.Steps[1].Timeout != "30m0s" || created.Steps[1].MaxAttempts != 2 {
+	if len(created.Steps) != 2 || created.Steps[1].ID != "verify" || created.Steps[1].Label != "Verification" || created.Steps[1].Description != "Confirm implementation matches the ticket." || created.Steps[1].Instructions != "Check acceptance criteria before closing the workflow." || !created.Steps[1].Optional || created.Steps[1].Timeout != "30m0s" || created.Steps[1].MaxAttempts != 2 {
 		t.Fatalf("optional step metadata was not copied: %+v", created.Steps)
 	}
 }
@@ -177,6 +179,7 @@ target = "worker"
 id = "review"
 label = "Review"
 description = "Human review gate."
+instructions = "Inspect the branch and make a release recommendation."
 target = "manager"
 after = ["implement"]
 optional = true
@@ -201,7 +204,7 @@ after = ["review"]
 		"Pipeline: ticket_to_pr",
 		"Trigger:  ticket.created",
 		"implement target=worker after=- routes=worker",
-		`review target=manager after=implement label="Review" description="Human review gate." optional=true routes=manager`,
+		`review target=manager after=implement label="Review" description="Human review gate." instructions="Inspect the branch and make a release recommendation." optional=true routes=manager`,
 		"<trigger> -> implement",
 		"implement -> review",
 		"review -> announce",
@@ -251,7 +254,7 @@ after = ["review"]
 	if err := json.Unmarshal(jsonOut.Bytes(), &graph); err != nil {
 		t.Fatalf("decode graph json: %v\nbody=%s", err, jsonOut.String())
 	}
-	if graph.Name != "ticket_to_pr" || len(graph.Nodes) != 3 || len(graph.Edges) != 3 || len(graph.Nodes[0].Routes) != 1 || graph.Nodes[1].Label != "Review" || graph.Nodes[1].Description != "Human review gate." || !graph.Nodes[1].Optional {
+	if graph.Name != "ticket_to_pr" || len(graph.Nodes) != 3 || len(graph.Edges) != 3 || len(graph.Nodes[0].Routes) != 1 || graph.Nodes[1].Label != "Review" || graph.Nodes[1].Description != "Human review gate." || graph.Nodes[1].Instructions != "Inspect the branch and make a release recommendation." || !graph.Nodes[1].Optional {
 		t.Fatalf("graph json = %+v", graph)
 	}
 }

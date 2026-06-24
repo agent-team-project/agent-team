@@ -94,15 +94,16 @@ type Pipeline struct {
 
 // PipelineStep is one target dispatch in a pipeline.
 type PipelineStep struct {
-	ID          string
-	Label       string
-	Description string
-	Target      string
-	After       []string
-	Gate        string
-	Optional    bool
-	Timeout     time.Duration
-	MaxAttempts int
+	ID           string
+	Label        string
+	Description  string
+	Instructions string
+	Target       string
+	After        []string
+	Gate         string
+	Optional     bool
+	Timeout      time.Duration
+	MaxAttempts  int
 }
 
 // Schedule is a periodic source of `schedule` events.
@@ -663,6 +664,10 @@ func parsePipelineSteps(name string, raw []map[string]any) ([]*PipelineStep, err
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
 		}
+		instructions, err := parseStepText(body["instructions"], "instructions")
+		if err != nil {
+			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
+		}
 		after, err := parseStepAfter(body["after"])
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
@@ -683,7 +688,7 @@ func parsePipelineSteps(name string, raw []map[string]any) ([]*PipelineStep, err
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
 		}
-		steps = append(steps, &PipelineStep{ID: id, Label: label, Description: description, Target: target, After: after, Gate: gate, Optional: optional, Timeout: timeout, MaxAttempts: maxAttempts})
+		steps = append(steps, &PipelineStep{ID: id, Label: label, Description: description, Instructions: instructions, Target: target, After: after, Gate: gate, Optional: optional, Timeout: timeout, MaxAttempts: maxAttempts})
 	}
 	for _, step := range steps {
 		for _, dep := range step.After {

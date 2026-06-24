@@ -869,6 +869,9 @@ func marshalPipelineSteps(steps []*topology.PipelineStep) []map[string]any {
 		if step.Description != "" {
 			row["description"] = step.Description
 		}
+		if step.Instructions != "" {
+			row["instructions"] = step.Instructions
+		}
 		if step.Gate != "" {
 			row["gate"] = step.Gate
 		}

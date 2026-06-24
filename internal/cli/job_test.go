@@ -6678,13 +6678,14 @@ func TestJobStepMetadataAppearsInDiagnostics(t *testing.T) {
 		ID:        "squ-204",
 		Ticket:    "SQU-204",
 		Target:    "manager",
+		Kickoff:   "Implement SQU-204.",
 		Pipeline:  "ticket_triage",
 		Status:    job.StatusRunning,
 		CreatedAt: now,
 		UpdatedAt: now,
 		Steps: []job.Step{
 			{ID: "triage", Label: "Triage", Target: "manager", Status: job.StatusDone, StartedAt: now, FinishedAt: now},
-			{ID: "review", Label: "Code review", Description: "Review the worker branch before PR handoff.", Target: "worker", Status: job.StatusBlocked, After: []string{"triage"}},
+			{ID: "review", Label: "Code review", Description: "Review the worker branch before PR handoff.", Instructions: "Check tests and prepare PR handoff notes.", Target: "worker", Status: job.StatusBlocked, After: []string{"triage"}},
 		},
 	}
 	if err := job.Write(teamDir, j); err != nil {
@@ -6699,7 +6700,7 @@ func TestJobStepMetadataAppearsInDiagnostics(t *testing.T) {
 	if err := show.Execute(); err != nil {
 		t.Fatalf("job show metadata: %v\nstderr=%s", err, showErr.String())
 	}
-	for _, want := range []string{`review  target=worker status=blocked instance=- after=triage label="Code review" description="Review the worker branch before PR handoff."`} {
+	for _, want := range []string{`review  target=worker status=blocked instance=- after=triage label="Code review" description="Review the worker branch before PR handoff." instructions="Check tests and prepare PR handoff notes."`} {
 		if !strings.Contains(showOut.String(), want) {
 			t.Fatalf("job show missing %q:\n%s", want, showOut.String())
 		}
@@ -6717,10 +6718,10 @@ func TestJobStepMetadataAppearsInDiagnostics(t *testing.T) {
 	if err := json.Unmarshal(explainOut.Bytes(), &explained); err != nil {
 		t.Fatalf("decode job explain: %v\nbody=%s", err, explainOut.String())
 	}
-	if explained.Next.StepID != "review" || explained.Next.Label != "Code review" || explained.Next.Description != "Review the worker branch before PR handoff." {
+	if explained.Next.StepID != "review" || explained.Next.Label != "Code review" || explained.Next.Description != "Review the worker branch before PR handoff." || explained.Next.Instructions != "Check tests and prepare PR handoff notes." {
 		t.Fatalf("explain next = %+v", explained.Next)
 	}
-	if len(explained.Steps) != 2 || explained.Steps[1].Label != "Code review" || explained.Steps[1].Description != "Review the worker branch before PR handoff." {
+	if len(explained.Steps) != 2 || explained.Steps[1].Label != "Code review" || explained.Steps[1].Description != "Review the worker branch before PR handoff." || explained.Steps[1].Instructions != "Check tests and prepare PR handoff notes." {
 		t.Fatalf("explain steps = %+v", explained.Steps)
 	}
 
@@ -6736,8 +6737,30 @@ func TestJobStepMetadataAppearsInDiagnostics(t *testing.T) {
 	if err := json.Unmarshal(readyOut.Bytes(), &rows); err != nil {
 		t.Fatalf("decode ready rows: %v\nbody=%s", err, readyOut.String())
 	}
-	if len(rows) != 1 || rows[0].StepID != "review" || rows[0].Label != "Code review" || rows[0].Description != "Review the worker branch before PR handoff." {
+	if len(rows) != 1 || rows[0].StepID != "review" || rows[0].Label != "Code review" || rows[0].Description != "Review the worker branch before PR handoff." || rows[0].Instructions != "Check tests and prepare PR handoff notes." {
 		t.Fatalf("ready rows = %+v", rows)
+	}
+
+	advance := NewRootCmd()
+	advanceOut, advanceErr := &bytes.Buffer{}, &bytes.Buffer{}
+	advance.SetOut(advanceOut)
+	advance.SetErr(advanceErr)
+	advance.SetArgs([]string{"job", "advance", "squ-204", "--repo", tmp, "--dry-run", "--json"})
+	if err := advance.Execute(); err != nil {
+		t.Fatalf("job advance metadata dry-run: %v\nstderr=%s", err, advanceErr.String())
+	}
+	var preview jobAdvancePreview
+	if err := json.Unmarshal(advanceOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode advance preview: %v\nbody=%s", err, advanceOut.String())
+	}
+	if preview.Dispatch == nil || preview.Dispatch.Preview == nil {
+		t.Fatalf("advance preview missing dispatch: %+v", preview)
+	}
+	kickoff, _ := preview.Dispatch.Preview.Payload["kickoff"].(string)
+	for _, want := range []string{"Implement SQU-204.", "--- pipeline step instructions (review) ---", "Check tests and prepare PR handoff notes."} {
+		if !strings.Contains(kickoff, want) {
+			t.Fatalf("advance kickoff missing %q in:\n%s", want, kickoff)
+		}
 	}
 }
 

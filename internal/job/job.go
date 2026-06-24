@@ -58,22 +58,42 @@ type Job struct {
 
 // Step is a pipeline step snapshot recorded on a job.
 type Step struct {
-	ID          string    `toml:"id"`
-	Label       string    `toml:"label,omitempty"`
-	Description string    `toml:"description,omitempty"`
-	Target      string    `toml:"target"`
-	Status      Status    `toml:"status"`
-	Instance    string    `toml:"instance,omitempty"`
-	After       []string  `toml:"after,omitempty"`
-	Gate        string    `toml:"gate,omitempty"`
-	Optional    bool      `toml:"optional,omitempty"`
-	Timeout     string    `toml:"timeout,omitempty"`
-	Attempts    int       `toml:"attempts,omitempty"`
-	MaxAttempts int       `toml:"max_attempts,omitempty"`
-	Skipped     bool      `toml:"skipped,omitempty"`
-	SkipReason  string    `toml:"skip_reason,omitempty"`
-	StartedAt   time.Time `toml:"started_at,omitempty"`
-	FinishedAt  time.Time `toml:"finished_at,omitempty"`
+	ID           string    `toml:"id"`
+	Label        string    `toml:"label,omitempty"`
+	Description  string    `toml:"description,omitempty"`
+	Instructions string    `toml:"instructions,omitempty"`
+	Target       string    `toml:"target"`
+	Status       Status    `toml:"status"`
+	Instance     string    `toml:"instance,omitempty"`
+	After        []string  `toml:"after,omitempty"`
+	Gate         string    `toml:"gate,omitempty"`
+	Optional     bool      `toml:"optional,omitempty"`
+	Timeout      string    `toml:"timeout,omitempty"`
+	Attempts     int       `toml:"attempts,omitempty"`
+	MaxAttempts  int       `toml:"max_attempts,omitempty"`
+	Skipped      bool      `toml:"skipped,omitempty"`
+	SkipReason   string    `toml:"skip_reason,omitempty"`
+	StartedAt    time.Time `toml:"started_at,omitempty"`
+	FinishedAt   time.Time `toml:"finished_at,omitempty"`
+}
+
+// StepDispatchKickoff combines a job-level kickoff with optional step-specific
+// instructions for the payload sent to the target runtime.
+func StepDispatchKickoff(jobKickoff, stepID, instructions string) string {
+	jobKickoff = strings.TrimSpace(jobKickoff)
+	instructions = strings.TrimSpace(instructions)
+	if instructions == "" {
+		return jobKickoff
+	}
+	heading := "--- pipeline step instructions"
+	if stepID = strings.TrimSpace(stepID); stepID != "" {
+		heading += " (" + stepID + ")"
+	}
+	heading += " ---"
+	if jobKickoff == "" {
+		return heading + "\n\n" + instructions
+	}
+	return jobKickoff + "\n\n" + heading + "\n\n" + instructions
 }
 
 // Directory returns the jobs directory for a team root.

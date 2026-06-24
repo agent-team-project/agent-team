@@ -1217,15 +1217,16 @@ type pipelineInfo struct {
 }
 
 type pipelineStepInfo struct {
-	ID          string   `json:"id"`
-	Label       string   `json:"label,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Target      string   `json:"target"`
-	After       []string `json:"after,omitempty"`
-	Gate        string   `json:"gate,omitempty"`
-	Optional    bool     `json:"optional,omitempty"`
-	Timeout     string   `json:"timeout,omitempty"`
-	MaxAttempts int      `json:"max_attempts,omitempty"`
+	ID           string   `json:"id"`
+	Label        string   `json:"label,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	Instructions string   `json:"instructions,omitempty"`
+	Target       string   `json:"target"`
+	After        []string `json:"after,omitempty"`
+	Gate         string   `json:"gate,omitempty"`
+	Optional     bool     `json:"optional,omitempty"`
+	Timeout      string   `json:"timeout,omitempty"`
+	MaxAttempts  int      `json:"max_attempts,omitempty"`
 }
 
 type pipelineGraph struct {
@@ -1237,17 +1238,18 @@ type pipelineGraph struct {
 }
 
 type pipelineGraphNode struct {
-	ID          string   `json:"id"`
-	Label       string   `json:"label,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Target      string   `json:"target,omitempty"`
-	After       []string `json:"after,omitempty"`
-	Gate        string   `json:"gate,omitempty"`
-	Optional    bool     `json:"optional,omitempty"`
-	Timeout     string   `json:"timeout,omitempty"`
-	MaxAttempts int      `json:"max_attempts,omitempty"`
-	Routes      []string `json:"routes,omitempty"`
-	Missing     bool     `json:"missing,omitempty"`
+	ID           string   `json:"id"`
+	Label        string   `json:"label,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	Instructions string   `json:"instructions,omitempty"`
+	Target       string   `json:"target,omitempty"`
+	After        []string `json:"after,omitempty"`
+	Gate         string   `json:"gate,omitempty"`
+	Optional     bool     `json:"optional,omitempty"`
+	Timeout      string   `json:"timeout,omitempty"`
+	MaxAttempts  int      `json:"max_attempts,omitempty"`
+	Routes       []string `json:"routes,omitempty"`
+	Missing      bool     `json:"missing,omitempty"`
 }
 
 type pipelineGraphEdge struct {
@@ -1474,15 +1476,16 @@ func pipelineGraphFromTopology(top *topology.Topology, pipeline *topology.Pipeli
 			continue
 		}
 		node := pipelineGraphNode{
-			ID:          id,
-			Label:       strings.TrimSpace(step.Label),
-			Description: strings.TrimSpace(step.Description),
-			Target:      strings.TrimSpace(step.Target),
-			After:       trimStringSlice(step.After),
-			Gate:        strings.TrimSpace(step.Gate),
-			Optional:    step.Optional,
-			Timeout:     formatPipelineStepTimeout(step.Timeout),
-			MaxAttempts: step.MaxAttempts,
+			ID:           id,
+			Label:        strings.TrimSpace(step.Label),
+			Description:  strings.TrimSpace(step.Description),
+			Instructions: strings.TrimSpace(step.Instructions),
+			Target:       strings.TrimSpace(step.Target),
+			After:        trimStringSlice(step.After),
+			Gate:         strings.TrimSpace(step.Gate),
+			Optional:     step.Optional,
+			Timeout:      formatPipelineStepTimeout(step.Timeout),
+			MaxAttempts:  step.MaxAttempts,
 		}
 		if includeRoutes && node.Target != "" {
 			node.Routes = pipelineDispatchRoutes(top, node.Target)
@@ -1767,15 +1770,16 @@ func pipelineInfoFromTopology(p *topology.Pipeline) pipelineInfo {
 	steps := make([]pipelineStepInfo, 0, len(p.Steps))
 	for _, step := range p.Steps {
 		steps = append(steps, pipelineStepInfo{
-			ID:          step.ID,
-			Label:       step.Label,
-			Description: step.Description,
-			Target:      step.Target,
-			After:       append([]string(nil), step.After...),
-			Gate:        step.Gate,
-			Optional:    step.Optional,
-			Timeout:     formatPipelineStepTimeout(step.Timeout),
-			MaxAttempts: step.MaxAttempts,
+			ID:           step.ID,
+			Label:        step.Label,
+			Description:  step.Description,
+			Instructions: step.Instructions,
+			Target:       step.Target,
+			After:        append([]string(nil), step.After...),
+			Gate:         step.Gate,
+			Optional:     step.Optional,
+			Timeout:      formatPipelineStepTimeout(step.Timeout),
+			MaxAttempts:  step.MaxAttempts,
 		})
 	}
 	return pipelineInfo{
@@ -2937,7 +2941,11 @@ func renderPipelineDetail(w io.Writer, info pipelineInfo, jsonOut bool, tmpl *te
 		if step.Description != "" {
 			description = fmt.Sprintf(" description=%q", step.Description)
 		}
-		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s\n", step.ID, step.Target, after, label, description, gate, optional, timeout, maxAttempts)
+		instructions := ""
+		if step.Instructions != "" {
+			instructions = fmt.Sprintf(" instructions=%q", step.Instructions)
+		}
+		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s%s\n", step.ID, step.Target, after, label, description, instructions, gate, optional, timeout, maxAttempts)
 	}
 	return nil
 }
@@ -3019,11 +3027,15 @@ func renderPipelineGraphText(w io.Writer, graph pipelineGraph) {
 		if node.Description != "" {
 			description = fmt.Sprintf(" description=%q", node.Description)
 		}
+		instructions := ""
+		if node.Instructions != "" {
+			instructions = fmt.Sprintf(" instructions=%q", node.Instructions)
+		}
 		missing := ""
 		if node.Missing {
 			missing = " missing=true"
 		}
-		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s%s%s\n", node.ID, node.Target, after, label, description, gate, optional, timeout, maxAttempts, routes, missing)
+		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s%s%s%s\n", node.ID, node.Target, after, label, description, instructions, gate, optional, timeout, maxAttempts, routes, missing)
 	}
 	if len(graph.Edges) == 0 {
 		return

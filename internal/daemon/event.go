@@ -251,7 +251,7 @@ func (r *EventResolver) dispatchPipelineStep(pipeline *topology.Pipeline, step *
 	dispatchPayload["pipeline"] = pipeline.Name
 	dispatchPayload["pipeline_step"] = step.ID
 	dispatchPayload["ticket"] = j.Ticket
-	dispatchPayload["kickoff"] = j.Kickoff
+	dispatchPayload["kickoff"] = jobstore.StepDispatchKickoff(j.Kickoff, step.ID, step.Instructions)
 	if payloadString(dispatchPayload, "name") == "" {
 		dispatchPayload["name"] = step.Target + "-" + j.ID
 	}
@@ -314,16 +314,17 @@ func pipelineJobSteps(pipeline *topology.Pipeline) []jobstore.Step {
 			status = jobstore.StatusBlocked
 		}
 		steps = append(steps, jobstore.Step{
-			ID:          step.ID,
-			Label:       step.Label,
-			Description: step.Description,
-			Target:      step.Target,
-			Status:      status,
-			After:       append([]string(nil), step.After...),
-			Gate:        step.Gate,
-			Optional:    step.Optional,
-			Timeout:     pipelineStepTimeoutString(step.Timeout),
-			MaxAttempts: step.MaxAttempts,
+			ID:           step.ID,
+			Label:        step.Label,
+			Description:  step.Description,
+			Instructions: step.Instructions,
+			Target:       step.Target,
+			Status:       status,
+			After:        append([]string(nil), step.After...),
+			Gate:         step.Gate,
+			Optional:     step.Optional,
+			Timeout:      pipelineStepTimeoutString(step.Timeout),
+			MaxAttempts:  step.MaxAttempts,
 		})
 	}
 	return steps

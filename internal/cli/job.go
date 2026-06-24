@@ -944,16 +944,17 @@ func jobStepsFromPipeline(p *topology.Pipeline) []job.Step {
 			status = job.StatusBlocked
 		}
 		steps = append(steps, job.Step{
-			ID:          step.ID,
-			Label:       step.Label,
-			Description: step.Description,
-			Target:      step.Target,
-			Status:      status,
-			After:       append([]string(nil), step.After...),
-			Gate:        step.Gate,
-			Optional:    step.Optional,
-			Timeout:     formatPipelineStepTimeout(step.Timeout),
-			MaxAttempts: step.MaxAttempts,
+			ID:           step.ID,
+			Label:        step.Label,
+			Description:  step.Description,
+			Instructions: step.Instructions,
+			Target:       step.Target,
+			Status:       status,
+			After:        append([]string(nil), step.After...),
+			Gate:         step.Gate,
+			Optional:     step.Optional,
+			Timeout:      formatPipelineStepTimeout(step.Timeout),
+			MaxAttempts:  step.MaxAttempts,
 		})
 	}
 	return steps
@@ -5658,6 +5659,7 @@ func jobReadyRowFromJob(j *job.Job, next jobNextResult) jobReadyRow {
 		row.StepID = next.Step.ID
 		row.Label = next.Step.Label
 		row.Description = next.Step.Description
+		row.Instructions = next.Step.Instructions
 		row.Target = next.Step.Target
 		row.StepStatus = next.Step.Status
 		row.Instance = next.Step.Instance
@@ -7207,40 +7209,42 @@ type jobExplainResult struct {
 }
 
 type jobExplainNext struct {
-	State       string     `json:"state"`
-	StepID      string     `json:"step_id,omitempty"`
-	Label       string     `json:"label,omitempty"`
-	Description string     `json:"description,omitempty"`
-	Target      string     `json:"target,omitempty"`
-	Status      job.Status `json:"status,omitempty"`
-	Instance    string     `json:"instance,omitempty"`
-	WaitingFor  []string   `json:"waiting_for,omitempty"`
-	Actions     []string   `json:"actions,omitempty"`
-	Message     string     `json:"message"`
+	State        string     `json:"state"`
+	StepID       string     `json:"step_id,omitempty"`
+	Label        string     `json:"label,omitempty"`
+	Description  string     `json:"description,omitempty"`
+	Instructions string     `json:"instructions,omitempty"`
+	Target       string     `json:"target,omitempty"`
+	Status       job.Status `json:"status,omitempty"`
+	Instance     string     `json:"instance,omitempty"`
+	WaitingFor   []string   `json:"waiting_for,omitempty"`
+	Actions      []string   `json:"actions,omitempty"`
+	Message      string     `json:"message"`
 }
 
 type jobExplainStep struct {
-	ID          string     `json:"id"`
-	Label       string     `json:"label,omitempty"`
-	Description string     `json:"description,omitempty"`
-	Target      string     `json:"target"`
-	Status      job.Status `json:"status"`
-	State       string     `json:"state"`
-	Ready       bool       `json:"ready,omitempty"`
-	Instance    string     `json:"instance,omitempty"`
-	After       []string   `json:"after,omitempty"`
-	Gate        string     `json:"gate,omitempty"`
-	Optional    bool       `json:"optional,omitempty"`
-	Timeout     string     `json:"timeout,omitempty"`
-	Attempts    int        `json:"attempts,omitempty"`
-	MaxAttempts int        `json:"max_attempts,omitempty"`
-	WaitingFor  []string   `json:"waiting_for,omitempty"`
-	Actions     []string   `json:"actions,omitempty"`
-	Skipped     bool       `json:"skipped,omitempty"`
-	SkipReason  string     `json:"skip_reason,omitempty"`
-	StartedAt   string     `json:"started_at,omitempty"`
-	FinishedAt  string     `json:"finished_at,omitempty"`
-	Message     string     `json:"message"`
+	ID           string     `json:"id"`
+	Label        string     `json:"label,omitempty"`
+	Description  string     `json:"description,omitempty"`
+	Instructions string     `json:"instructions,omitempty"`
+	Target       string     `json:"target"`
+	Status       job.Status `json:"status"`
+	State        string     `json:"state"`
+	Ready        bool       `json:"ready,omitempty"`
+	Instance     string     `json:"instance,omitempty"`
+	After        []string   `json:"after,omitempty"`
+	Gate         string     `json:"gate,omitempty"`
+	Optional     bool       `json:"optional,omitempty"`
+	Timeout      string     `json:"timeout,omitempty"`
+	Attempts     int        `json:"attempts,omitempty"`
+	MaxAttempts  int        `json:"max_attempts,omitempty"`
+	WaitingFor   []string   `json:"waiting_for,omitempty"`
+	Actions      []string   `json:"actions,omitempty"`
+	Skipped      bool       `json:"skipped,omitempty"`
+	SkipReason   string     `json:"skip_reason,omitempty"`
+	StartedAt    string     `json:"started_at,omitempty"`
+	FinishedAt   string     `json:"finished_at,omitempty"`
+	Message      string     `json:"message"`
 }
 
 type jobReadyRow struct {
@@ -7253,6 +7257,7 @@ type jobReadyRow struct {
 	StepID             string     `json:"step_id,omitempty"`
 	Label              string     `json:"label,omitempty"`
 	Description        string     `json:"description,omitempty"`
+	Instructions       string     `json:"instructions,omitempty"`
 	Target             string     `json:"target,omitempty"`
 	StepStatus         job.Status `json:"step_status,omitempty"`
 	Instance           string     `json:"instance,omitempty"`
@@ -7386,7 +7391,7 @@ func advanceJobStep(cmd *cobra.Command, teamDir string, j *job.Job, step *job.St
 	if strings.TrimSpace(name) == "" {
 		name = step.Target + "-" + j.ID + "-" + job.NormalizeID(stepID)
 	}
-	payload, requestedName, err := buildDispatchEventPayload(step.Target, j.Ticket, j.Kickoff, name, "job:"+j.ID, workspace)
+	payload, requestedName, err := buildDispatchEventPayload(step.Target, j.Ticket, job.StepDispatchKickoff(j.Kickoff, step.ID, step.Instructions), name, "job:"+j.ID, workspace)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job advance: %v\n", err)
 		return nil, exitErr(2)
@@ -7609,24 +7614,25 @@ func explainJobPipeline(j *job.Job) jobExplainResult {
 		step := &j.Steps[i]
 		waiting := jobStepWaitingFor(j, step)
 		row := jobExplainStep{
-			ID:          step.ID,
-			Label:       step.Label,
-			Description: step.Description,
-			Target:      step.Target,
-			Status:      step.Status,
-			Ready:       ready[step.ID],
-			Instance:    step.Instance,
-			After:       append([]string(nil), step.After...),
-			Gate:        step.Gate,
-			Optional:    step.Optional,
-			Timeout:     step.Timeout,
-			Attempts:    step.Attempts,
-			MaxAttempts: step.MaxAttempts,
-			WaitingFor:  waiting,
-			Skipped:     step.Skipped,
-			SkipReason:  step.SkipReason,
-			StartedAt:   jobExplainTime(step.StartedAt),
-			FinishedAt:  jobExplainTime(step.FinishedAt),
+			ID:           step.ID,
+			Label:        step.Label,
+			Description:  step.Description,
+			Instructions: step.Instructions,
+			Target:       step.Target,
+			Status:       step.Status,
+			Ready:        ready[step.ID],
+			Instance:     step.Instance,
+			After:        append([]string(nil), step.After...),
+			Gate:         step.Gate,
+			Optional:     step.Optional,
+			Timeout:      step.Timeout,
+			Attempts:     step.Attempts,
+			MaxAttempts:  step.MaxAttempts,
+			WaitingFor:   waiting,
+			Skipped:      step.Skipped,
+			SkipReason:   step.SkipReason,
+			StartedAt:    jobExplainTime(step.StartedAt),
+			FinishedAt:   jobExplainTime(step.FinishedAt),
 		}
 		row.State = explainJobStepState(j, step, row.Ready, waiting)
 		row.Message = explainJobStepMessage(j, step, row.State, waiting)
@@ -7647,6 +7653,7 @@ func jobExplainNextFromResult(next jobNextResult) jobExplainNext {
 		out.StepID = next.Step.ID
 		out.Label = next.Step.Label
 		out.Description = next.Step.Description
+		out.Instructions = next.Step.Instructions
 		out.Target = next.Step.Target
 		out.Status = next.Step.Status
 		out.Instance = next.Step.Instance
@@ -8779,7 +8786,7 @@ func previewJobStepDispatch(teamDir string, j *job.Job, step *job.Step, workspac
 	if strings.TrimSpace(name) == "" {
 		name = step.Target + "-" + j.ID + "-" + job.NormalizeID(step.ID)
 	}
-	payload, requestedName, err := buildDispatchEventPayload(step.Target, j.Ticket, j.Kickoff, name, "job:"+j.ID, workspace)
+	payload, requestedName, err := buildDispatchEventPayload(step.Target, j.Ticket, job.StepDispatchKickoff(j.Kickoff, step.ID, step.Instructions), name, "job:"+j.ID, workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -9225,6 +9232,9 @@ func renderJobDetailWithRuntime(w io.Writer, teamDir string, j *job.Job, queueIt
 			}
 			if strings.TrimSpace(step.Description) != "" {
 				parts = append(parts, fmt.Sprintf("description=%q", strings.TrimSpace(step.Description)))
+			}
+			if strings.TrimSpace(step.Instructions) != "" {
+				parts = append(parts, fmt.Sprintf("instructions=%q", strings.TrimSpace(step.Instructions)))
 			}
 			if step.Gate != "" {
 				parts = append(parts, "gate="+step.Gate)

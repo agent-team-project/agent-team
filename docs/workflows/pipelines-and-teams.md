@@ -20,6 +20,7 @@ target = "ticket-manager"
 [[pipelines.ticket_to_pr.steps]]
 id = "implement"
 label = "Implementation"
+instructions = "Implement the ticket with tests and summarize the branch state."
 target = "worker"
 after = ["triage"]
 
@@ -37,6 +38,7 @@ The current engine supports:
 
 - step ids
 - human-readable step labels and descriptions
+- step-specific runtime instructions
 - target instances/agents
 - simple `after` dependencies
 - optional steps that do not block downstream dependencies when they fail
@@ -121,7 +123,7 @@ Common states:
 - `none`
 
 `job triage`, `job explain`, `pipeline status`, `pipeline explain`, `pipeline next`, `pipeline ready`, `team explain`, and `team triage` all read the same job state. Use `job explain <job-id>` when you need one job's full step-by-step readiness view: it lists every step with dependencies, gates, waiting reasons, active instance ownership, and suggested next commands. Use `pipeline explain <pipeline>` for the same diagnostic view across every job in one workflow, or `team explain <team>` for the same view scoped to team-owned pipelines; add `--state failed`, `--state blocked`, `--state held`, `--limit N`, or `--json` for large histories and scripts. Use `pipeline snapshot <pipeline> --output <file>` when you need a shareable artifact for one workflow's status, explained jobs, owned jobs, job-owned queue/quarantine state, git context, and dry-run advance route previews. `pipeline status` includes `manual_gates` and recommends `pipeline approve` or the team-scoped equivalent when manual gates are ready. Failed, held, or blocked pipeline status also links to the matching explain view before the compact ready listing. `pipeline next` prints just those recommended commands with a short reason when you do not need the full status table; add `--team <team>` to render team-scoped commands for pipelines owned by one declared team.
-Use optional `label` and `description` fields when step ids need to stay short for commands but the operator view needs clearer names. The metadata is copied into each durable job step, so `job show`, `job explain`, `job ready --json`, `pipeline show`, and graph views remain understandable even if the topology is edited later.
+Use optional `label` and `description` fields when step ids need to stay short for commands but the operator view needs clearer names. Add `instructions` when the target agent needs step-specific guidance beyond the job kickoff; dispatch payloads append those instructions under a step heading while preserving the original job kickoff. The metadata is copied into each durable job step, so `job show`, `job explain`, `job ready --json`, `pipeline show`, and graph views remain understandable even if the topology is edited later.
 When a whole job should stop advancing without changing its lifecycle status, use `agent-team job hold <job-id> [reason...]`. Add `--for 2h` or `--until 2026-06-24T18:00:00Z` when the pause has a known deadline. Use `agent-team job hold --all --dry-run` before a repo-wide incident freeze that should include non-pipeline jobs; add `--state`, `--limit`, `--for`, or `--until` to narrow the batch. Held jobs report next-step state `held`, are skipped by default ready and advance loops, and remain visible through `job ready --state held`, `pipeline explain --state held`, and `team explain --state held`. Use `agent-team job release <job-id> [message...]` to resume normal readiness checks; expired holds stay paused until released.
 When an operator intentionally bypasses a stage, `agent-team job step <job-id> <step-id> --skip` records that step as `done` with `skipped = true`, so dependency checks can continue while `job show` still reports the bypass.
 When a stage is best-effort, add `optional = true` to its pipeline step. If that step fails, downstream `after` dependencies can still advance; `job explain`, `pipeline explain`, and retry views keep the optional failure visible, and the job closes as done once all required steps finish.
