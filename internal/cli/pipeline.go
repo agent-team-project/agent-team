@@ -477,6 +477,7 @@ func newPipelineAdvanceCmd() *cobra.Command {
 		runtimeBin    string
 		limit         int
 		all           bool
+		allReadySteps bool
 		dryRun        bool
 		previewRoutes bool
 		jsonOut       bool
@@ -526,7 +527,7 @@ func newPipelineAdvanceCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: pipeline name is required.")
 				return exitErr(2)
 			}
-			results, err := advanceReadyPipelineJobs(cmd, teamDir, pipelineName, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin}, limit, dryRun, previewRoutes)
+			results, err := advanceReadyPipelineJobs(cmd, teamDir, pipelineName, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin}, limit, dryRun, previewRoutes, allReadySteps)
 			if err != nil {
 				return err
 			}
@@ -537,8 +538,9 @@ func newPipelineAdvanceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for advanced steps: auto, worktree, or repo.")
 	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile for advanced step dispatches (claude or codex). Overrides env and repo config.")
 	cmd.Flags().StringVar(&runtimeBin, "runtime-bin", "", "Runtime binary for advanced step dispatches. Overrides env and repo config.")
-	cmd.Flags().IntVar(&limit, "limit", 0, "Advance at most this many ready jobs; 0 means no limit.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Advance at most this many ready jobs, or ready steps with --all-ready-steps; 0 means no limit.")
 	cmd.Flags().BoolVar(&all, "all", false, "Advance ready steps across all pipelines.")
+	cmd.Flags().BoolVar(&allReadySteps, "all-ready-steps", false, "Advance every currently ready independent step for each selected job.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview ready steps without dispatching them.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include local topology route and dispatch payload previews.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit advance results as JSON.")
@@ -1571,7 +1573,10 @@ func pipelineNextActionReason(row pipelineStatusRow, action string) string {
 	}
 }
 
-func advanceReadyPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace string, selection runtimeSelection, limit int, dryRun bool, previewRoutes bool) ([]pipelineAdvanceResult, error) {
+func advanceReadyPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace string, selection runtimeSelection, limit int, dryRun bool, previewRoutes bool, allReadySteps bool) ([]pipelineAdvanceResult, error) {
+	if allReadySteps {
+		return advanceAllReadyPipelineSteps(cmd, teamDir, pipeline, workspace, selection, limit, dryRun, previewRoutes)
+	}
 	rows, err := collectJobReadyRows(teamDir, pipeline, map[string]bool{"ready": true, "queued": true})
 	if err != nil {
 		return nil, err
@@ -1643,6 +1648,128 @@ func advanceReadyPipelineJobs(cmd *cobra.Command, teamDir, pipeline, workspace s
 		results = append(results, result)
 	}
 	return results, nil
+}
+
+func advanceAllReadyPipelineSteps(cmd *cobra.Command, teamDir, pipeline, workspace string, selection runtimeSelection, limit int, dryRun bool, previewRoutes bool) ([]pipelineAdvanceResult, error) {
+	rows, err := collectJobReadyRows(teamDir, pipeline, map[string]bool{"ready": true, "queued": true})
+	if err != nil {
+		return nil, err
+	}
+	rows = filterAdvanceablePipelineRows(rows)
+	results := []pipelineAdvanceResult{}
+	for _, row := range rows {
+		if limit > 0 && len(results) >= limit {
+			break
+		}
+		j, err := job.Read(teamDir, row.JobID)
+		if err != nil {
+			return nil, err
+		}
+		if dryRun {
+			stepResults, err := previewAllReadyJobSteps(teamDir, j, workspace, selection, previewRoutes, limit-len(results))
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, stepResults...)
+			continue
+		}
+		for {
+			if limit > 0 && len(results) >= limit {
+				break
+			}
+			steps := advanceableJobSteps(j)
+			if len(steps) == 0 {
+				break
+			}
+			advanced, err := advanceJobStep(cmd, teamDir, j, steps[0], workspace, selection)
+			if err != nil {
+				return nil, err
+			}
+			result := pipelineAdvanceResultFromAdvance(row, advanced)
+			results = append(results, result)
+			if pipelineAdvanceAction(advanced) != "advanced" || advanced.Job == nil {
+				break
+			}
+			j = advanced.Job
+		}
+	}
+	return results, nil
+}
+
+func previewAllReadyJobSteps(teamDir string, j *job.Job, workspace string, selection runtimeSelection, previewRoutes bool, remaining int) ([]pipelineAdvanceResult, error) {
+	steps := advanceableJobSteps(j)
+	if remaining > 0 && len(steps) > remaining {
+		steps = steps[:remaining]
+	}
+	results := make([]pipelineAdvanceResult, 0, len(steps))
+	for _, step := range steps {
+		result := pipelineAdvanceResult{
+			JobID:      j.ID,
+			Ticket:     j.Ticket,
+			Pipeline:   j.Pipeline,
+			StepID:     step.ID,
+			Target:     step.Target,
+			StepStatus: step.Status,
+			Instance:   step.Instance,
+			Action:     "would_advance",
+			DryRun:     true,
+			Message:    "step " + step.ID + " is ready",
+		}
+		if step.Status == job.StatusQueued {
+			result.Message = "step " + step.ID + " is queued and ready"
+		}
+		if previewRoutes {
+			preview, err := previewJobStepDispatch(teamDir, j, step, workspace, selection)
+			if err != nil {
+				return nil, err
+			}
+			result.Preview = preview
+			if preview.Message != "" {
+				result.Message = preview.Message
+			}
+			if preview.Step != nil {
+				result.StepID = preview.Step.ID
+				result.Target = preview.Step.Target
+				result.StepStatus = preview.Step.Status
+				result.Instance = preview.Step.Instance
+			}
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func pipelineAdvanceResultFromAdvance(row jobReadyRow, advanced *jobAdvanceResult) pipelineAdvanceResult {
+	result := pipelineAdvanceResult{
+		JobID:      row.JobID,
+		Ticket:     row.Ticket,
+		Pipeline:   row.Pipeline,
+		StepID:     row.StepID,
+		Target:     row.Target,
+		StepStatus: row.StepStatus,
+		Instance:   row.Instance,
+		Action:     pipelineAdvanceAction(advanced),
+		Message:    row.Message,
+	}
+	if advanced == nil {
+		return result
+	}
+	result.Job = advanced.Job
+	result.Step = advanced.Step
+	result.Event = advanced.Event
+	result.Message = advanced.Message
+	if advanced.Job != nil {
+		result.JobID = advanced.Job.ID
+		result.Ticket = advanced.Job.Ticket
+		result.Pipeline = advanced.Job.Pipeline
+	}
+	if advanced.Step != nil {
+		result.StepID = advanced.Step.ID
+		result.Target = advanced.Step.Target
+		result.StepStatus = advanced.Step.Status
+		result.Instance = advanced.Step.Instance
+	}
+	return result
 }
 
 func approvePipelineManualGates(cmd *cobra.Command, teamDir, pipeline, workspace string, selection runtimeSelection, stepFilter, message string, limit int, dispatchNow, dryRun bool, previewRoutes bool) ([]pipelineApproveResult, error) {

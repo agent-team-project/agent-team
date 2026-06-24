@@ -54,6 +54,7 @@ agent-team pipeline next
 agent-team pipeline next --team delivery
 agent-team pipeline ready
 agent-team pipeline advance ticket_to_pr --runtime codex --dry-run --preview-routes
+agent-team pipeline advance ticket_to_pr --all-ready-steps --dry-run --preview-routes
 agent-team pipeline approve ticket_to_pr --dry-run
 agent-team pipeline approve ticket_to_pr --dispatch --dry-run --preview-routes
 agent-team pipeline retry ticket_to_pr --dry-run
@@ -91,6 +92,7 @@ When an operator intentionally bypasses a stage, `agent-team job step <job-id> <
 When a step waits on a manual gate, `agent-team pipeline approve <pipeline>` marks approveable blocked manual gates queued so `pipeline advance`, `team advance`, or `tick` can dispatch them. Add `--step <id>` to approve one stage, add `--dispatch` to approve and dispatch in one command, and use `--dry-run --preview-routes` before batch approvals.
 When a step fails, `agent-team pipeline retry <pipeline>` resets retryable failed steps to a blocked-but-ready state so the next `pipeline advance`, `team advance`, or `tick` can dispatch another attempt. Add `--step <id>` to target one failed stage, add `--dispatch` to retry and dispatch in one command, use `--dry-run --preview-routes` before a batch retry to inspect the resolved routes and payloads, and pass `--message` to record why the retry happened.
 Pipeline and team-scoped dispatch commands accept `--runtime` and `--runtime-bin` for one-off Claude/Codex selection; the selected runtime is stored in the dispatch payload so queued or delayed starts keep the same intent.
+By default, `pipeline advance` dispatches one ready step per job. Use `pipeline advance <pipeline> --all-ready-steps` when a job has multiple currently ready independent steps and you want to fan them out in one command. Dependency checks still use the job file: a downstream step waits until all of its `after` steps are marked done.
 Use `agent-team team approve <team>` for the same manual-gate approval flow scoped to one team's declared pipelines.
 Use `agent-team team retry <team>` for the same recovery flow scoped to one team's declared pipelines.
 Use `agent-team repair --retry-pipelines` or `agent-team team repair <team> --retry-pipelines` when failed-step retry should happen inside the broader repair loop after daemon reconciliation and dead-letter queue retry. Add `--dry-run --preview-routes` first to inspect the dispatch routes, `--retry-step <id>` to target one failed stage, and `--retry-message` to record the operator reason.

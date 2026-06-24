@@ -5921,7 +5921,7 @@ func advanceTeamReadyPipelineJobs(cmd *cobra.Command, teamDir string, team *topo
 		if limit > 0 {
 			batchLimit = remaining
 		}
-		advanced, err := advanceReadyPipelineJobs(cmd, teamDir, pipeline, workspace, selection, batchLimit, dryRun, previewRoutes)
+		advanced, err := advanceReadyPipelineJobs(cmd, teamDir, pipeline, workspace, selection, batchLimit, dryRun, previewRoutes, false)
 		if err != nil {
 			return nil, err
 		}

@@ -5932,9 +5932,17 @@ func advanceJob(cmd *cobra.Command, teamDir string, j *job.Job, workspace string
 		}
 		return &jobAdvanceResult{Job: j, Message: "no ready steps"}, nil
 	}
+	return advanceJobStep(cmd, teamDir, j, step, workspace, selection)
+}
+
+func advanceJobStep(cmd *cobra.Command, teamDir string, j *job.Job, step *job.Step, workspace string, selection runtimeSelection) (*jobAdvanceResult, error) {
+	if step == nil {
+		return &jobAdvanceResult{Job: j, Message: "no ready steps"}, nil
+	}
+	stepID := step.ID
 	name := step.Instance
 	if strings.TrimSpace(name) == "" {
-		name = step.Target + "-" + j.ID + "-" + job.NormalizeID(step.ID)
+		name = step.Target + "-" + j.ID + "-" + job.NormalizeID(stepID)
 	}
 	payload, requestedName, err := buildDispatchEventPayload(step.Target, j.Ticket, j.Kickoff, name, "job:"+j.ID, workspace)
 	if err != nil {
@@ -5946,7 +5954,7 @@ func advanceJob(cmd *cobra.Command, teamDir string, j *job.Job, workspace string
 	if j.Pipeline != "" {
 		payload["pipeline"] = j.Pipeline
 	}
-	payload["pipeline_step"] = step.ID
+	payload["pipeline_step"] = stepID
 	if err := applyDispatchRuntimeSelection(teamDir, payload, selection); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job advance: %v\n", err)
 		return nil, exitErr(2)
@@ -5964,11 +5972,11 @@ func advanceJob(cmd *cobra.Command, teamDir string, j *job.Job, workspace string
 	if latest, err := job.Read(teamDir, j.ID); err == nil {
 		j = latest
 	}
-	applyAdvanceResponseToJobStep(j, step.ID, requestedName, res)
-	if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"step": step.ID}); err != nil {
+	applyAdvanceResponseToJobStep(j, stepID, requestedName, res)
+	if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"step": stepID}); err != nil {
 		return nil, err
 	}
-	if idx := jobStepIndex(j, step.ID); idx >= 0 {
+	if idx := jobStepIndex(j, stepID); idx >= 0 {
 		return &jobAdvanceResult{Job: j, Step: &j.Steps[idx], Event: res}, nil
 	}
 	return &jobAdvanceResult{Job: j, Event: res}, nil
@@ -6207,6 +6215,40 @@ func nextReadyJobStep(j *job.Job) *job.Step {
 		}
 	}
 	return nil
+}
+
+func advanceableJobSteps(j *job.Job) []*job.Step {
+	done := map[string]bool{}
+	for _, step := range j.Steps {
+		if step.Status == job.StatusDone {
+			done[step.ID] = true
+		}
+	}
+	isReady := func(step *job.Step) bool {
+		if stepGatePending(j, step) {
+			return false
+		}
+		for _, dep := range step.After {
+			if !done[dep] {
+				return false
+			}
+		}
+		return true
+	}
+	var ready []*job.Step
+	for i := range j.Steps {
+		step := &j.Steps[i]
+		if step.Status == job.StatusDone || step.Status == job.StatusFailed || step.Status == job.StatusRunning {
+			continue
+		}
+		if step.Status == job.StatusQueued && strings.TrimSpace(step.Instance) != "" {
+			continue
+		}
+		if isReady(step) {
+			ready = append(ready, step)
+		}
+	}
+	return ready
 }
 
 func stepManualGatePending(step *job.Step) bool {
@@ -6881,6 +6923,13 @@ func previewJobAdvanceDispatch(teamDir string, j *job.Job, workspace string, sel
 			message = "all steps done"
 		}
 		return &jobAdvancePreview{Job: j, Message: message, DryRun: true}, nil
+	}
+	return previewJobStepDispatch(teamDir, j, step, workspace, selection)
+}
+
+func previewJobStepDispatch(teamDir string, j *job.Job, step *job.Step, workspace string, selection runtimeSelection) (*jobAdvancePreview, error) {
+	if step == nil {
+		return &jobAdvancePreview{Job: j, Message: "no ready steps", DryRun: true}, nil
 	}
 	name := step.Instance
 	if strings.TrimSpace(name) == "" {

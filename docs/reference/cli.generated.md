@@ -2574,10 +2574,11 @@ Flags:
 
 ```text
       --all                  Advance ready steps across all pipelines.
+      --all-ready-steps      Advance every currently ready independent step for each selected job.
       --dry-run              Preview ready steps without dispatching them.
       --format string        Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
       --json                 Emit advance results as JSON.
-      --limit int            Advance at most this many ready jobs; 0 means no limit.
+      --limit int            Advance at most this many ready jobs, or ready steps with --all-ready-steps; 0 means no limit.
       --preview-routes       With --dry-run, include local topology route and dispatch payload previews.
       --repo string          Repo root. (default "<repo>")
       --runtime string       Runtime profile for advanced step dispatches (claude or codex). Overrides env and repo config.

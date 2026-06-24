@@ -1585,6 +1585,149 @@ func TestPipelineAdvanceIncludesQueuedReadyFirstStep(t *testing.T) {
 	}
 }
 
+func TestPipelineAdvanceAllReadyStepsDryRun(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-310",
+		Ticket:    "SQU-310",
+		Target:    "worker",
+		Kickoff:   "SQU-310: parallel checks",
+		Pipeline:  "parallel_checks",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "lint", Target: "worker", Status: job.StatusBlocked},
+			{ID: "test", Target: "worker", Status: job.StatusBlocked},
+			{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"lint", "test"}},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	one := NewRootCmd()
+	oneOut, oneErr := &bytes.Buffer{}, &bytes.Buffer{}
+	one.SetOut(oneOut)
+	one.SetErr(oneErr)
+	one.SetArgs([]string{"pipeline", "advance", "parallel_checks", "--repo", root, "--dry-run", "--json"})
+	if err := one.Execute(); err != nil {
+		t.Fatalf("pipeline advance dry-run: %v\nstderr=%s", err, oneErr.String())
+	}
+	var oneRows []pipelineAdvanceResult
+	if err := json.Unmarshal(oneOut.Bytes(), &oneRows); err != nil {
+		t.Fatalf("decode one-step rows: %v\nbody=%s", err, oneOut.String())
+	}
+	if len(oneRows) != 1 || oneRows[0].StepID != "lint" {
+		t.Fatalf("default advance rows = %+v, want only first ready step", oneRows)
+	}
+
+	all := NewRootCmd()
+	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
+	all.SetOut(allOut)
+	all.SetErr(allErr)
+	all.SetArgs([]string{"pipeline", "advance", "parallel_checks", "--repo", root, "--dry-run", "--all-ready-steps", "--json"})
+	if err := all.Execute(); err != nil {
+		t.Fatalf("pipeline advance all-ready dry-run: %v\nstderr=%s", err, allErr.String())
+	}
+	var allRows []pipelineAdvanceResult
+	if err := json.Unmarshal(allOut.Bytes(), &allRows); err != nil {
+		t.Fatalf("decode all-ready rows: %v\nbody=%s", err, allOut.String())
+	}
+	if len(allRows) != 2 || allRows[0].StepID != "lint" || allRows[1].StepID != "test" {
+		t.Fatalf("all-ready rows = %+v, want lint and test", allRows)
+	}
+
+	limited := NewRootCmd()
+	limitedOut, limitedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	limited.SetOut(limitedOut)
+	limited.SetErr(limitedErr)
+	limited.SetArgs([]string{"pipeline", "advance", "parallel_checks", "--repo", root, "--dry-run", "--all-ready-steps", "--limit", "1", "--json"})
+	if err := limited.Execute(); err != nil {
+		t.Fatalf("pipeline advance all-ready limited dry-run: %v\nstderr=%s", err, limitedErr.String())
+	}
+	var limitedRows []pipelineAdvanceResult
+	if err := json.Unmarshal(limitedOut.Bytes(), &limitedRows); err != nil {
+		t.Fatalf("decode limited rows: %v\nbody=%s", err, limitedOut.String())
+	}
+	if len(limitedRows) != 1 || limitedRows[0].StepID != "lint" {
+		t.Fatalf("limited rows = %+v, want first ready step", limitedRows)
+	}
+}
+
+func TestPipelineAdvanceAllReadyStepsPreservesQueuedStepOrder(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.parallel_checks]
+trigger.event = "ticket.created"
+
+[[pipelines.parallel_checks.steps]]
+id = "lint"
+target = "worker"
+
+[[pipelines.parallel_checks.steps]]
+id = "test"
+target = "worker"
+
+[[pipelines.parallel_checks.steps]]
+id = "review"
+target = "manager"
+after = ["lint", "test"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{"pipeline", "run", "parallel_checks", "SQU-311", "--repo", root, "--json"})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("pipeline run: %v\nstderr=%s", err, createErr.String())
+	}
+
+	all := NewRootCmd()
+	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
+	all.SetOut(allOut)
+	all.SetErr(allErr)
+	all.SetArgs([]string{"pipeline", "advance", "parallel_checks", "--repo", root, "--dry-run", "--all-ready-steps", "--json"})
+	if err := all.Execute(); err != nil {
+		t.Fatalf("pipeline advance all-ready dry-run: %v\nstderr=%s", err, allErr.String())
+	}
+	var allRows []pipelineAdvanceResult
+	if err := json.Unmarshal(allOut.Bytes(), &allRows); err != nil {
+		t.Fatalf("decode all-ready rows: %v\nbody=%s", err, allOut.String())
+	}
+	if len(allRows) != 2 || allRows[0].StepID != "lint" || allRows[0].StepStatus != job.StatusQueued || allRows[1].StepID != "test" {
+		t.Fatalf("all-ready rows = %+v, want queued lint then ready test", allRows)
+	}
+
+	limited := NewRootCmd()
+	limitedOut, limitedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	limited.SetOut(limitedOut)
+	limited.SetErr(limitedErr)
+	limited.SetArgs([]string{"pipeline", "advance", "parallel_checks", "--repo", root, "--dry-run", "--all-ready-steps", "--limit", "1", "--json"})
+	if err := limited.Execute(); err != nil {
+		t.Fatalf("pipeline advance all-ready limited dry-run: %v\nstderr=%s", err, limitedErr.String())
+	}
+	var limitedRows []pipelineAdvanceResult
+	if err := json.Unmarshal(limitedOut.Bytes(), &limitedRows); err != nil {
+		t.Fatalf("decode limited rows: %v\nbody=%s", err, limitedOut.String())
+	}
+	if len(limitedRows) != 1 || limitedRows[0].StepID != "lint" {
+		t.Fatalf("limited rows = %+v, want queued first step", limitedRows)
+	}
+}
+
 func TestPipelineAdvanceDryRunAndDispatch(t *testing.T) {
 	target, _, cleanup := setupIntakePipelineRepo(t)
 	defer cleanup()
