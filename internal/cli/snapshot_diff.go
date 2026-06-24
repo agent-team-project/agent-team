@@ -16,6 +16,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 	var (
 		jsonOut  bool
 		exitCode bool
+		sections []string
 	)
 	cmd := &cobra.Command{
 		Use:   "diff <before.json> <after.json>",
@@ -24,7 +25,12 @@ func newSnapshotDiffCmd() *cobra.Command {
 			"job, queue, pipeline, ready-advance, and section-error changes.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			result, err := diffSnapshotFiles(args[0], args[1])
+			sectionSet, err := parseSnapshotDiffSections(sections)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team snapshot diff: %v\n", err)
+				return exitErr(2)
+			}
+			result, err := diffSnapshotFiles(args[0], args[1], snapshotDiffOptions{Sections: sectionSet})
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team snapshot diff: %v\n", err)
 				return exitErr(1)
@@ -44,6 +50,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit snapshot diff as JSON.")
 	cmd.Flags().BoolVar(&exitCode, "exit-code", false, "Exit with status 1 when snapshots differ.")
+	cmd.Flags().StringSliceVar(&sections, "section", nil, "Only compare sections: jobs, pipelines, queue, advance, section_errors, or all. Can repeat or comma-separate.")
 	return cmd
 }
 
@@ -131,7 +138,11 @@ type snapshotDiffComparable struct {
 	SectionErrors map[string]string
 }
 
-func diffSnapshotFiles(beforePath, afterPath string) (*snapshotDiffResult, error) {
+type snapshotDiffOptions struct {
+	Sections map[string]bool
+}
+
+func diffSnapshotFiles(beforePath, afterPath string, opts snapshotDiffOptions) (*snapshotDiffResult, error) {
 	before, err := readSnapshotDiffComparable(beforePath)
 	if err != nil {
 		return nil, err
@@ -144,13 +155,60 @@ func diffSnapshotFiles(beforePath, afterPath string) (*snapshotDiffResult, error
 		Before: before.Meta,
 		After:  after.Meta,
 	}
-	result.Changes = append(result.Changes, diffSnapshotStringMaps("jobs", before.Jobs, after.Jobs, &result.Summary.Jobs)...)
-	result.Changes = append(result.Changes, diffSnapshotStringMaps("pipelines", before.Pipelines, after.Pipelines, &result.Summary.Pipelines)...)
-	result.Changes = append(result.Changes, diffSnapshotStringMaps("queue", before.Queue, after.Queue, &result.Summary.Queue)...)
-	result.Changes = append(result.Changes, diffSnapshotStringMaps("advance", before.Advance, after.Advance, &result.Summary.Advance)...)
-	result.Changes = append(result.Changes, diffSnapshotStringMaps("section_errors", before.SectionErrors, after.SectionErrors, &result.Summary.SectionErrors)...)
+	if snapshotDiffSectionEnabled(opts.Sections, "jobs") {
+		result.Changes = append(result.Changes, diffSnapshotStringMaps("jobs", before.Jobs, after.Jobs, &result.Summary.Jobs)...)
+	}
+	if snapshotDiffSectionEnabled(opts.Sections, "pipelines") {
+		result.Changes = append(result.Changes, diffSnapshotStringMaps("pipelines", before.Pipelines, after.Pipelines, &result.Summary.Pipelines)...)
+	}
+	if snapshotDiffSectionEnabled(opts.Sections, "queue") {
+		result.Changes = append(result.Changes, diffSnapshotStringMaps("queue", before.Queue, after.Queue, &result.Summary.Queue)...)
+	}
+	if snapshotDiffSectionEnabled(opts.Sections, "advance") {
+		result.Changes = append(result.Changes, diffSnapshotStringMaps("advance", before.Advance, after.Advance, &result.Summary.Advance)...)
+	}
+	if snapshotDiffSectionEnabled(opts.Sections, "section_errors") {
+		result.Changes = append(result.Changes, diffSnapshotStringMaps("section_errors", before.SectionErrors, after.SectionErrors, &result.Summary.SectionErrors)...)
+	}
 	result.Summary.TotalChanges = len(result.Changes)
 	return result, nil
+}
+
+func parseSnapshotDiffSections(values []string) (map[string]bool, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	valid := map[string]bool{
+		"jobs":           true,
+		"pipelines":      true,
+		"queue":          true,
+		"advance":        true,
+		"section_errors": true,
+	}
+	out := map[string]bool{}
+	for _, raw := range values {
+		for _, part := range strings.Split(raw, ",") {
+			name := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(part, "-", "_")))
+			if name == "" {
+				continue
+			}
+			if name == "all" {
+				return nil, nil
+			}
+			if !valid[name] {
+				return nil, fmt.Errorf("--section must be jobs, pipelines, queue, advance, section_errors, or all")
+			}
+			out[name] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("--section requires at least one non-empty section")
+	}
+	return out, nil
+}
+
+func snapshotDiffSectionEnabled(sections map[string]bool, section string) bool {
+	return len(sections) == 0 || sections[section]
 }
 
 func readSnapshotDiffComparable(path string) (snapshotDiffComparable, error) {

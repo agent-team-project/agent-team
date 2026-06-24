@@ -380,6 +380,39 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	if !strings.Contains(sameExitOut.String(), "changes: total=0") || !strings.Contains(sameExitOut.String(), "details: none") {
 		t.Fatalf("identical snapshot diff text = %s", sameExitOut.String())
 	}
+
+	queueOnly := NewRootCmd()
+	queueOnlyOut, queueOnlyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	queueOnly.SetOut(queueOnlyOut)
+	queueOnly.SetErr(queueOnlyErr)
+	queueOnly.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "queue", "--json"})
+	if err := queueOnly.Execute(); err != nil {
+		t.Fatalf("snapshot diff queue section: %v\nstderr=%s", err, queueOnlyErr.String())
+	}
+	var queueOnlyResult snapshotDiffResult
+	if err := json.Unmarshal(queueOnlyOut.Bytes(), &queueOnlyResult); err != nil {
+		t.Fatalf("decode queue-only snapshot diff: %v\nbody=%s", err, queueOnlyOut.String())
+	}
+	if queueOnlyResult.Summary.TotalChanges != 2 || queueOnlyResult.Summary.Queue.Added != 1 || queueOnlyResult.Summary.Queue.Changed != 1 || queueOnlyResult.Summary.Jobs.Added != 0 {
+		t.Fatalf("queue-only diff summary = %+v", queueOnlyResult.Summary)
+	}
+	for _, change := range queueOnlyResult.Changes {
+		if change.Section != "queue" {
+			t.Fatalf("queue-only diff included %q change: %+v", change.Section, queueOnlyResult.Changes)
+		}
+	}
+
+	invalidSection := NewRootCmd()
+	invalidSectionOut, invalidSectionErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSection.SetOut(invalidSectionOut)
+	invalidSection.SetErr(invalidSectionErr)
+	invalidSection.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "runtime"})
+	if err := invalidSection.Execute(); err == nil {
+		t.Fatalf("snapshot diff invalid section succeeded")
+	}
+	if !strings.Contains(invalidSectionErr.String(), "--section must be jobs") {
+		t.Fatalf("invalid section stderr = %q", invalidSectionErr.String())
+	}
 }
 
 func TestSnapshotIncludesGitMetadata(t *testing.T) {

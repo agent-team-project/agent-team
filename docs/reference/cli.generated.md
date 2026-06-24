@@ -3850,8 +3850,9 @@ agent-team snapshot diff <before.json> <after.json> [flags]
 Flags:
 
 ```text
-      --exit-code   Exit with status 1 when snapshots differ.
-      --json        Emit snapshot diff as JSON.
+      --exit-code         Exit with status 1 when snapshots differ.
+      --json              Emit snapshot diff as JSON.
+      --section strings   Only compare sections: jobs, pipelines, queue, advance, section_errors, or all. Can repeat or comma-separate.
 ```
 
 Inherited Flags:

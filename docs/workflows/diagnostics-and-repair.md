@@ -96,10 +96,11 @@ agent-team snapshot --json
 agent-team pipeline snapshot ticket_to_pr --output ticket-to-pr-diagnostics.json
 agent-team team snapshot delivery --output delivery-diagnostics.json
 agent-team snapshot diff before-repair.json after-repair.json
+agent-team snapshot diff before-repair.json after-repair.json --section queue
 agent-team snapshot diff before-repair.json after-repair.json --exit-code
 ```
 
-Snapshots are redacted by default and are designed for debugging or handoff. Use `pipeline snapshot` when the handoff only needs one workflow's pipeline status, explained jobs, owned jobs, job-owned queue/quarantine state, and dry-run advance previews. Use `snapshot diff` to compare two saved artifacts after a tick, repair, or manual intervention; add `--exit-code` when a script should fail on any detected difference.
+Snapshots are redacted by default and are designed for debugging or handoff. Use `pipeline snapshot` when the handoff only needs one workflow's pipeline status, explained jobs, owned jobs, job-owned queue/quarantine state, and dry-run advance previews. Use `snapshot diff` to compare two saved artifacts after a tick, repair, or manual intervention; add `--section queue` or another section to focus the comparison, and add `--exit-code` when a script should fail on any detected difference.
 
 They include:
 
@@ -172,6 +173,7 @@ Use `--retry-step <id>` with `--retry-pipelines` when a broad repair pass should
 | Need handoff artifact | `agent-team snapshot --output diagnostics.json` |
 | Need one workflow handoff artifact | `agent-team pipeline snapshot ticket_to_pr --output ticket-to-pr-diagnostics.json` |
 | Need before/after artifact comparison | `agent-team snapshot diff before.json after.json` |
+| Need focused queue drift comparison | `agent-team snapshot diff before.json after.json --section queue` |
 | Need scripted before/after drift detection | `agent-team snapshot diff before.json after.json --exit-code` |
 | Queue parsing fails | `agent-team queue doctor --quarantine --dry-run` |
 | Dead queue entries | `agent-team repair --dry-run --jobs` |
