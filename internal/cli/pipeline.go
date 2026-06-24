@@ -909,24 +909,25 @@ type pipelineGraphEdge struct {
 }
 
 type pipelineStatusRow struct {
-	Pipeline     string   `json:"pipeline"`
-	Declared     bool     `json:"declared"`
-	Steps        int      `json:"steps"`
-	Jobs         int      `json:"jobs"`
-	Queued       int      `json:"queued"`
-	Running      int      `json:"running"`
-	Blocked      int      `json:"blocked"`
-	Done         int      `json:"done"`
-	Failed       int      `json:"failed"`
-	ReadySteps   int      `json:"ready_steps"`
-	QueuedSteps  int      `json:"queued_steps"`
-	RunningSteps int      `json:"running_steps"`
-	BlockedSteps int      `json:"blocked_steps"`
-	ManualGates  int      `json:"manual_gates"`
-	FailedSteps  int      `json:"failed_steps"`
-	DoneSteps    int      `json:"done_steps"`
-	NoStep       int      `json:"no_step"`
-	Actions      []string `json:"actions,omitempty"`
+	Pipeline           string   `json:"pipeline"`
+	Declared           bool     `json:"declared"`
+	Steps              int      `json:"steps"`
+	Jobs               int      `json:"jobs"`
+	Queued             int      `json:"queued"`
+	Running            int      `json:"running"`
+	Blocked            int      `json:"blocked"`
+	Done               int      `json:"done"`
+	Failed             int      `json:"failed"`
+	ReadySteps         int      `json:"ready_steps"`
+	ParallelReadySteps int      `json:"parallel_ready_steps,omitempty"`
+	QueuedSteps        int      `json:"queued_steps"`
+	RunningSteps       int      `json:"running_steps"`
+	BlockedSteps       int      `json:"blocked_steps"`
+	ManualGates        int      `json:"manual_gates"`
+	FailedSteps        int      `json:"failed_steps"`
+	DoneSteps          int      `json:"done_steps"`
+	NoStep             int      `json:"no_step"`
+	Actions            []string `json:"actions,omitempty"`
 }
 
 type pipelineNextAction struct {
@@ -1465,6 +1466,9 @@ func applyPipelineStatusJob(row *pipelineStatusRow, j *job.Job) {
 	case job.StatusFailed:
 		row.Failed++
 	}
+	if steps := advanceableJobSteps(j); len(steps) > 1 {
+		row.ParallelReadySteps += len(steps)
+	}
 	next := inspectNextJobStep(j)
 	switch next.State {
 	case "ready":
@@ -1494,6 +1498,9 @@ func finalizePipelineStatusRow(row *pipelineStatusRow) {
 	actions := []string{}
 	if row.ReadySteps > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team pipeline advance %s --dry-run --preview-routes", row.Pipeline))
+	}
+	if row.ParallelReadySteps > 1 {
+		actions = append(actions, fmt.Sprintf("agent-team pipeline advance %s --all-ready-steps --dry-run --preview-routes", row.Pipeline))
 	}
 	if row.FailedSteps > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team pipeline retry %s --dry-run --dispatch --preview-routes", row.Pipeline))

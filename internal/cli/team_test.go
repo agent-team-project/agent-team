@@ -541,6 +541,22 @@ pipelines = ["parallel_checks"]
 		t.Fatalf("team ready rows = %+v, want scoped all-ready action", readyRows)
 	}
 
+	status := NewRootCmd()
+	statusOut, statusErr := &bytes.Buffer{}, &bytes.Buffer{}
+	status.SetOut(statusOut)
+	status.SetErr(statusErr)
+	status.SetArgs([]string{"team", "pipelines", "delivery", "--repo", root, "--json"})
+	if err := status.Execute(); err != nil {
+		t.Fatalf("team pipelines: %v\nstderr=%s", err, statusErr.String())
+	}
+	var statusRows []pipelineStatusRow
+	if err := json.Unmarshal(statusOut.Bytes(), &statusRows); err != nil {
+		t.Fatalf("decode team pipeline status: %v\nbody=%s", err, statusOut.String())
+	}
+	if len(statusRows) != 1 || statusRows[0].ParallelReadySteps != 2 || !containsString(statusRows[0].Actions, "agent-team team advance delivery --all-ready-steps --dry-run --preview-routes") {
+		t.Fatalf("team pipeline status = %+v, want scoped all-ready action", statusRows)
+	}
+
 	all := NewRootCmd()
 	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
 	all.SetOut(allOut)

@@ -1711,6 +1711,22 @@ after = ["lint", "test"]
 		t.Fatalf("ready rows = %+v, want parallel-ready action", readyRows)
 	}
 
+	status := NewRootCmd()
+	statusOut, statusErr := &bytes.Buffer{}, &bytes.Buffer{}
+	status.SetOut(statusOut)
+	status.SetErr(statusErr)
+	status.SetArgs([]string{"pipeline", "status", "parallel_checks", "--repo", root, "--json"})
+	if err := status.Execute(); err != nil {
+		t.Fatalf("pipeline status: %v\nstderr=%s", err, statusErr.String())
+	}
+	var statusRows []pipelineStatusRow
+	if err := json.Unmarshal(statusOut.Bytes(), &statusRows); err != nil {
+		t.Fatalf("decode status rows: %v\nbody=%s", err, statusOut.String())
+	}
+	if len(statusRows) != 1 || statusRows[0].ParallelReadySteps != 2 || !containsString(statusRows[0].Actions, "agent-team pipeline advance parallel_checks --all-ready-steps --dry-run --preview-routes") {
+		t.Fatalf("status rows = %+v, want parallel-ready action", statusRows)
+	}
+
 	all := NewRootCmd()
 	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
 	all.SetOut(allOut)

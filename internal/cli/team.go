@@ -6762,6 +6762,9 @@ func teamPipelineActions(teamName string, row pipelineStatusRow) []string {
 	if row.ReadySteps > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team team advance %s --dry-run --preview-routes", teamName))
 	}
+	if row.ParallelReadySteps > 1 {
+		actions = append(actions, fmt.Sprintf("agent-team team advance %s --all-ready-steps --dry-run --preview-routes", teamName))
+	}
 	if row.FailedSteps > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team team retry %s --dry-run --dispatch --preview-routes", teamName))
 		actions = append(actions, fmt.Sprintf("agent-team team repair %s --retry-pipelines --dry-run --preview-routes", teamName))
