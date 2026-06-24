@@ -2051,6 +2051,7 @@ func jobCloseMessage(status, message, messageFile string, positional []string) (
 func newJobCancelCmd() *cobra.Command {
 	var (
 		repo           string
+		actor          string
 		message        string
 		messageFile    string
 		stopInstance   bool
@@ -2149,7 +2150,11 @@ func newJobCancelCmd() *cobra.Command {
 			if len(result.InstanceActions) > 0 {
 				data["instance_action"] = result.InstanceActions[0].Action
 			}
-			if err := writeJobWithAudit(teamDir, j, "cancelled", "cli", reason, data); err != nil {
+			cancelActor := strings.TrimSpace(actor)
+			if cancelActor == "" {
+				cancelActor = "cli"
+			}
+			if err := writeJobWithAudit(teamDir, j, "cancelled", cancelActor, reason, data); err != nil {
 				return err
 			}
 			result.Job = j
@@ -2157,6 +2162,7 @@ func newJobCancelCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&actor, "actor", "cli", "Actor label recorded in the cancellation audit event.")
 	cmd.Flags().StringVar(&message, "message", "", "Cancellation reason recorded on the job.")
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read cancellation reason from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&stopInstance, "stop", false, "Gracefully stop the owning instance before recording the cancellation.")

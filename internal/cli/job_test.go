@@ -349,7 +349,7 @@ func TestJobCancelStopsOwningInstanceAndFailsJob(t *testing.T) {
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"job", "cancel", "squ-65", "--repo", tmp, "--message", "operator cancelled", "--stop", "--wait", "--timeout", "2s", "--json"})
+	cmd.SetArgs([]string{"job", "cancel", "squ-65", "--repo", tmp, "--message", "operator cancelled", "--actor", "ops", "--stop", "--wait", "--timeout", "2s", "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("job cancel --stop: %v\nstdout=%s\nstderr=%s", err, out.String(), stderr.String())
 	}
@@ -374,7 +374,7 @@ func TestJobCancelStopsOwningInstanceAndFailsJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("events: %v", err)
 	}
-	if len(events) != 1 || events[0].Type != "cancelled" || events[0].Data["instance_action"] != "stop" {
+	if len(events) != 1 || events[0].Type != "cancelled" || events[0].Actor != "ops" || events[0].Data["instance_action"] != "stop" {
 		t.Fatalf("events = %+v", events)
 	}
 }
