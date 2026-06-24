@@ -2345,18 +2345,23 @@ agent-team job update <job-id> [flags]
 Flags:
 
 ```text
-      --branch string       Set branch.
-      --clear strings       Clear metadata fields: ticket-url, instance, branch, worktree, pr, or pipeline. Can repeat or comma-separate.
-      --format string       Render the updated job with a Go template, e.g. '{{.ID}} {{.Status}}'.
-      --instance string     Set owning instance.
-      --json                Emit the updated job as JSON.
-      --message string      Status message recorded on the job.
-      --pr string           Set PR URL or number.
-      --repo string         Repo root containing .agent_team. (default "<repo>")
-      --status string       Set lifecycle status: queued, running, blocked, done, or failed.
-      --target string       Set target agent.
-      --ticket-url string   Set ticket URL.
-      --worktree string     Set worktree path.
+      --advance              After updating metadata, dispatch the next ready pipeline step.
+      --branch string        Set branch.
+      --clear strings        Clear metadata fields: ticket-url, instance, branch, worktree, pr, or pipeline. Can repeat or comma-separate.
+      --dry-run              Preview metadata updates and optional advance dispatch without writing job or daemon state.
+      --format string        Render the updated job or advance result with a Go template, e.g. '{{.ID}} {{.Status}}' or '{{.Job.ID}} {{.Step.ID}}'.
+      --instance string      Set owning instance.
+      --json                 Emit the updated job or advance result as JSON.
+      --message string       Status message recorded on the job.
+      --pr string            Set PR URL or number.
+      --repo string          Repo root containing .agent_team. (default "<repo>")
+      --runtime string       Runtime profile for --advance dispatch (claude or codex). Overrides env and repo config.
+      --runtime-bin string   Runtime binary for --advance dispatch. Overrides env and repo config.
+      --status string        Set lifecycle status: queued, running, blocked, done, or failed.
+      --target string        Set target agent.
+      --ticket-url string    Set ticket URL.
+      --workspace string     Workspace mode for --advance: auto, worktree, or repo. (default "auto")
+      --worktree string      Set worktree path.
 ```
 
 ## `agent-team job wait`

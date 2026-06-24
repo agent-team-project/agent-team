@@ -1436,8 +1436,24 @@ gate = "pr"
 	if err := json.Unmarshal(readyBlockedOut.Bytes(), &rows); err != nil {
 		t.Fatalf("decode ready rows: %v\nbody=%s", err, readyBlockedOut.String())
 	}
-	if len(rows) != 1 || rows[0].Gate != job.StepGatePR || strings.Join(rows[0].WaitingFor, ",") != "pr" || len(rows[0].Actions) != 1 || rows[0].Actions[0] != "agent-team job update squ-902 --pr <url>" {
+	if len(rows) != 1 || rows[0].Gate != job.StepGatePR || strings.Join(rows[0].WaitingFor, ",") != "pr" || len(rows[0].Actions) != 1 || rows[0].Actions[0] != "agent-team job update squ-902 --pr <url> --advance --dry-run" {
 		t.Fatalf("blocked ready rows = %+v", rows)
+	}
+
+	explainBlocked := NewRootCmd()
+	explainBlockedOut, explainBlockedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainBlocked.SetOut(explainBlockedOut)
+	explainBlocked.SetErr(explainBlockedErr)
+	explainBlocked.SetArgs([]string{"job", "explain", "squ-902", "--repo", root, "--json"})
+	if err := explainBlocked.Execute(); err != nil {
+		t.Fatalf("job explain blocked: %v\nstderr=%s", err, explainBlockedErr.String())
+	}
+	var explained jobExplainResult
+	if err := json.Unmarshal(explainBlockedOut.Bytes(), &explained); err != nil {
+		t.Fatalf("decode explain blocked: %v\nbody=%s", err, explainBlockedOut.String())
+	}
+	if len(explained.Steps) != 2 || !containsString(explained.Steps[1].Actions, "agent-team job update squ-902 --pr <url> --advance --dry-run") {
+		t.Fatalf("blocked explain actions = %+v", explained)
 	}
 
 	advanceBlocked := NewRootCmd()
@@ -1454,6 +1470,29 @@ gate = "pr"
 	}
 	if blockedPreview.Step != nil || blockedPreview.Message != "no ready steps" {
 		t.Fatalf("blocked advance preview = %+v", blockedPreview)
+	}
+
+	updatePreview := NewRootCmd()
+	updatePreviewOut, updatePreviewErr := &bytes.Buffer{}, &bytes.Buffer{}
+	updatePreview.SetOut(updatePreviewOut)
+	updatePreview.SetErr(updatePreviewErr)
+	updatePreview.SetArgs([]string{"job", "update", "squ-902", "--pr", "https://github.com/acme/app/pull/42", "--advance", "--dry-run", "--repo", root, "--json"})
+	if err := updatePreview.Execute(); err != nil {
+		t.Fatalf("job update pr advance dry-run: %v\nstderr=%s", err, updatePreviewErr.String())
+	}
+	var updateAdvance jobAdvancePreview
+	if err := json.Unmarshal(updatePreviewOut.Bytes(), &updateAdvance); err != nil {
+		t.Fatalf("decode update advance preview: %v\nbody=%s", err, updatePreviewOut.String())
+	}
+	if !updateAdvance.DryRun || updateAdvance.Step == nil || updateAdvance.Step.ID != "review" || updateAdvance.Dispatch == nil || updateAdvance.Dispatch.RequestedName != "manager-squ-902-review" {
+		t.Fatalf("update advance preview = %+v", updateAdvance)
+	}
+	stillBlocked, err := job.Read(teamDir, "squ-902")
+	if err != nil {
+		t.Fatalf("read dry-run job: %v", err)
+	}
+	if stillBlocked.PR != "" {
+		t.Fatalf("dry-run update mutated PR: %+v", stillBlocked)
 	}
 
 	update := NewRootCmd()

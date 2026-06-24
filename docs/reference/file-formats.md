@@ -155,7 +155,7 @@ skip_reason = "triage folded into implementation"
 Supported step gates are:
 
 - `manual`: waits for operator approval with `agent-team job step <job-id> <step-id> --status queued`.
-- `pr`: waits until the job has PR metadata, usually from `agent-team job update <job-id> --pr <url>` or status reconciliation.
+- `pr`: waits until the job has PR metadata, usually from `agent-team job update <job-id> --pr <url> --advance --dry-run` followed by the non-dry-run update, or status reconciliation.
 
 Exact encoding is owned by `internal/job`.
 

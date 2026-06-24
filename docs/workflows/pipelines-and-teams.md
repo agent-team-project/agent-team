@@ -109,7 +109,7 @@ Pipeline status, health, overview, and next-action hints recommend these retry d
 Supported gates:
 
 - `gate = "manual"`: wait for operator approval with `agent-team pipeline approve <pipeline>`, `agent-team team approve <team>`, or `agent-team job step <job-id> <step-id> --status queued`.
-- `gate = "pr"`: wait until the job has PR metadata, then advance normally.
+- `gate = "pr"`: wait until the job has PR metadata, then advance normally. Use `agent-team job update <job-id> --pr <url> --advance --dry-run` to preview the metadata update and next-step dispatch together before rerunning without `--dry-run`.
 
 When a ready step targets a persistent instance that is not currently running,
 advancement writes the mailbox message and leaves the step `queued` with the

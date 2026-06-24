@@ -1852,18 +1852,23 @@ func newJobCloseCmd() *cobra.Command {
 
 func newJobUpdateCmd() *cobra.Command {
 	var (
-		repo      string
-		status    string
-		target    string
-		ticketURL string
-		instance  string
-		branch    string
-		worktree  string
-		pr        string
-		message   string
-		clear     []string
-		jsonOut   bool
-		format    string
+		repo        string
+		status      string
+		target      string
+		ticketURL   string
+		instance    string
+		branch      string
+		worktree    string
+		pr          string
+		message     string
+		clear       []string
+		advance     bool
+		workspace   string
+		runtimeKind string
+		runtimeBin  string
+		dryRun      bool
+		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1876,10 +1881,21 @@ func newJobUpdateCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job update: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			tmpl, err := parseJobFormat(format)
-			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job update: %v\n", err)
-				return exitErr(2)
+			var jobTmpl, advanceTmpl *template.Template
+			if advance {
+				var err error
+				advanceTmpl, err = parseJobAdvanceFormat(format)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job update: %v\n", err)
+					return exitErr(2)
+				}
+			} else {
+				var err error
+				jobTmpl, err = parseJobFormat(format)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job update: %v\n", err)
+					return exitErr(2)
+				}
 			}
 			clearSet, err := parseJobUpdateClear(clear)
 			if err != nil {
@@ -1929,21 +1945,50 @@ func newJobUpdateCmd() *cobra.Command {
 				changed["pr"] = j.PR
 			}
 			applyJobUpdateClears(j, clearSet, changed)
-			if len(changed) == 0 && strings.TrimSpace(message) == "" {
+			hasUpdate := len(changed) > 0 || strings.TrimSpace(message) != ""
+			if !hasUpdate && !advance {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job update: pass at least one update flag.")
 				return exitErr(2)
 			}
-			j.LastEvent = "updated"
-			if strings.TrimSpace(message) != "" {
-				j.LastStatus = strings.TrimSpace(message)
-			} else {
-				j.LastStatus = "updated " + jobUpdateFieldList(changed)
+			if hasUpdate {
+				j.LastEvent = "updated"
+				if strings.TrimSpace(message) != "" {
+					j.LastStatus = strings.TrimSpace(message)
+				} else {
+					j.LastStatus = "updated " + jobUpdateFieldList(changed)
+				}
+				j.UpdatedAt = time.Now().UTC()
 			}
-			j.UpdatedAt = time.Now().UTC()
-			if err := writeJobWithAudit(teamDir, j, "", "cli", "", changed); err != nil {
-				return err
+			if dryRun {
+				if advance {
+					preview, err := previewJobAdvanceDispatch(teamDir, j, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin})
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job update: %v\n", err)
+						return exitErr(1)
+					}
+					return renderJobAdvancePreview(cmd.OutOrStdout(), preview, jsonOut, advanceTmpl)
+				}
+				return renderJobUpdatePreview(cmd.OutOrStdout(), j, changed, jsonOut, jobTmpl)
 			}
-			return renderJobResult(cmd.OutOrStdout(), j, jsonOut, tmpl)
+			if hasUpdate {
+				if err := writeJobWithAudit(teamDir, j, "", "cli", "", changed); err != nil {
+					return err
+				}
+			}
+			if advance {
+				res, err := advanceJob(cmd, teamDir, j, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin})
+				if err != nil {
+					return err
+				}
+				if jsonOut {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(res)
+				}
+				if advanceTmpl != nil {
+					return renderJobAdvanceResultFormat(cmd.OutOrStdout(), res, advanceTmpl)
+				}
+				return renderJobAdvanceResult(cmd.OutOrStdout(), res)
+			}
+			return renderJobResult(cmd.OutOrStdout(), j, jsonOut, jobTmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -1956,8 +2001,13 @@ func newJobUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&pr, "pr", "", "Set PR URL or number.")
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on the job.")
 	cmd.Flags().StringSliceVar(&clear, "clear", nil, "Clear metadata fields: ticket-url, instance, branch, worktree, pr, or pipeline. Can repeat or comma-separate.")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
-	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
+	cmd.Flags().BoolVar(&advance, "advance", false, "After updating metadata, dispatch the next ready pipeline step.")
+	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for --advance: auto, worktree, or repo.")
+	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile for --advance dispatch (claude or codex). Overrides env and repo config.")
+	cmd.Flags().StringVar(&runtimeBin, "runtime-bin", "", "Runtime binary for --advance dispatch. Overrides env and repo config.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview metadata updates and optional advance dispatch without writing job or daemon state.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job or advance result as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or advance result with a Go template, e.g. '{{.ID}} {{.Status}}' or '{{.Job.ID}} {{.Step.ID}}'.")
 	return cmd
 }
 
@@ -4422,7 +4472,7 @@ func actionsForJobReadyRow(row jobReadyRow) []string {
 			return nil
 		}
 		if row.Gate == job.StepGatePR {
-			return []string{fmt.Sprintf("agent-team job update %s --pr <url>", row.JobID)}
+			return []string{fmt.Sprintf("agent-team job update %s --pr <url> --advance --dry-run", row.JobID)}
 		}
 		return []string{fmt.Sprintf("agent-team job unblock %s <answer...>", row.JobID)}
 	default:
@@ -6377,7 +6427,7 @@ func actionsForJobExplainStep(j *job.Job, step *job.Step, state string) []string
 	case state == "waiting" && step.Gate == job.StepGateManual:
 		return []string{fmt.Sprintf("agent-team job step %s %s --status queued", j.ID, step.ID)}
 	case state == "waiting" && step.Gate == job.StepGatePR:
-		return []string{fmt.Sprintf("agent-team job update %s --pr <url>", j.ID)}
+		return []string{fmt.Sprintf("agent-team job update %s --pr <url> --advance --dry-run", j.ID)}
 	case state == "failed":
 		return []string{fmt.Sprintf("agent-team job retry %s --dry-run --dispatch", j.ID)}
 	default:
@@ -7351,6 +7401,27 @@ func renderJobStepPreview(w io.Writer, j *job.Job, jsonOut bool, tmpl *template.
 		return renderJobTemplate(w, j, tmpl)
 	}
 	fmt.Fprintln(w, "Dry run: true")
+	renderJobDetail(w, j)
+	return nil
+}
+
+type jobUpdatePreview struct {
+	Job     *job.Job          `json:"job"`
+	Changed map[string]string `json:"changed,omitempty"`
+	DryRun  bool              `json:"dry_run"`
+}
+
+func renderJobUpdatePreview(w io.Writer, j *job.Job, changed map[string]string, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(jobUpdatePreview{Job: j, Changed: changed, DryRun: true})
+	}
+	if tmpl != nil {
+		return renderJobTemplate(w, j, tmpl)
+	}
+	fmt.Fprintln(w, "Dry run: true")
+	if len(changed) > 0 {
+		fmt.Fprintf(w, "Changed: %s\n", jobUpdateFieldList(changed))
+	}
 	renderJobDetail(w, j)
 	return nil
 }
