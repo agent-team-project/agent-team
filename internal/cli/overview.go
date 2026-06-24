@@ -897,10 +897,11 @@ func renderOverview(w io.Writer, result *overviewResult, jsonOut bool, tmpl *tem
 		result.Jobs.ReadySteps,
 		result.Jobs.StatusChanges)
 	fmt.Fprintln(w, queueSummaryLine(result.Queue))
-	fmt.Fprintf(w, "pipelines: total=%d jobs=%d ready_steps=%d blocked_steps=%d failed_steps=%d\n",
+	fmt.Fprintf(w, "pipelines: total=%d jobs=%d ready_steps=%d parallel_ready_steps=%d blocked_steps=%d failed_steps=%d\n",
 		result.Pipelines.Total,
 		result.Pipelines.Jobs,
 		result.Pipelines.ReadySteps,
+		result.Pipelines.ParallelReadySteps,
 		result.Pipelines.BlockedSteps,
 		result.Pipelines.FailedSteps)
 	fmt.Fprintf(w, "schedules: declared=%d due=%d upcoming=%d\n",

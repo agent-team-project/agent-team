@@ -1563,6 +1563,8 @@ func filterPipelineNextRowsForPipeline(rows []pipelineStatusRow, pipeline, teamN
 
 func pipelineNextActionReason(row pipelineStatusRow, action string) string {
 	switch {
+	case strings.Contains(action, " --all-ready-steps"):
+		return fmt.Sprintf("parallel_ready_steps=%d", row.ParallelReadySteps)
 	case strings.Contains(action, " advance "):
 		return fmt.Sprintf("ready_steps=%d", row.ReadySteps)
 	case strings.Contains(action, " retry "),

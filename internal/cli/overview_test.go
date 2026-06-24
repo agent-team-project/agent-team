@@ -93,6 +93,17 @@ func TestOverviewRecommendsParallelReadyFanout(t *testing.T) {
 	if overview.Pipelines.ParallelReadySteps != 2 || !stringSliceContains(overview.Actions, "agent-team pipeline advance --all --all-ready-steps --dry-run --preview-routes") {
 		t.Fatalf("overview parallel actions = %+v pipelines=%+v", overview.Actions, overview.Pipelines)
 	}
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"overview", "--target", root})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("overview parallel text: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "pipelines: total=1 jobs=1 ready_steps=1 parallel_ready_steps=2") {
+		t.Fatalf("overview parallel text missing fanout count:\n%s", textOut.String())
+	}
 
 	team := NewRootCmd()
 	teamOut, teamErr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -129,7 +140,7 @@ func TestOverviewTextRendersOperatorSummary(t *testing.T) {
 		"topology: instances=2 persistent=1 ephemeral=1",
 		"jobs: total=1 queued=0 running=0 blocked=1 done=0 failed=0 attention=1",
 		"queue: total=1 pending=0 dead=1",
-		"pipelines: total=1 jobs=1 ready_steps=1 blocked_steps=0 failed_steps=0",
+		"pipelines: total=1 jobs=1 ready_steps=1 parallel_ready_steps=0 blocked_steps=0 failed_steps=0",
 		"schedules: declared=1 due=1 upcoming=1",
 		"actions:",
 		"agent-team repair --dry-run --jobs",

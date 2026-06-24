@@ -1727,6 +1727,31 @@ after = ["lint", "test"]
 		t.Fatalf("status rows = %+v, want parallel-ready action", statusRows)
 	}
 
+	next := NewRootCmd()
+	nextOut, nextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	next.SetOut(nextOut)
+	next.SetErr(nextErr)
+	next.SetArgs([]string{"pipeline", "next", "parallel_checks", "--repo", root, "--json"})
+	if err := next.Execute(); err != nil {
+		t.Fatalf("pipeline next all-ready: %v\nstderr=%s", err, nextErr.String())
+	}
+	var nextRows []pipelineNextAction
+	if err := json.Unmarshal(nextOut.Bytes(), &nextRows); err != nil {
+		t.Fatalf("decode pipeline next all-ready: %v\nbody=%s", err, nextOut.String())
+	}
+	foundAllReady := false
+	for _, row := range nextRows {
+		if row.Action == "agent-team pipeline advance parallel_checks --all-ready-steps --dry-run --preview-routes" {
+			foundAllReady = true
+			if row.Reason != "parallel_ready_steps=2" {
+				t.Fatalf("all-ready reason = %q, want parallel_ready_steps=2", row.Reason)
+			}
+		}
+	}
+	if !foundAllReady {
+		t.Fatalf("pipeline next rows missing all-ready action: %+v", nextRows)
+	}
+
 	all := NewRootCmd()
 	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
 	all.SetOut(allOut)
