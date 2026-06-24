@@ -13,10 +13,11 @@ import (
 )
 
 type intakeDoctorFinding struct {
-	Line    int    `json:"line,omitempty"`
-	ID      string `json:"id,omitempty"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Line    int      `json:"line,omitempty"`
+	ID      string   `json:"id,omitempty"`
+	Code    string   `json:"code"`
+	Message string   `json:"message"`
+	Actions []string `json:"actions,omitempty"`
 }
 
 type intakeDoctorResult struct {
@@ -163,6 +164,11 @@ func validateIntakeDeliveryRecord(line int, delivery intakeDelivery, seenIDs map
 				ID:      id,
 				Code:    "duplicate_request_id",
 				Message: fmt.Sprintf("line %d duplicates %s request id %q from line %d", line, provider, requestID, firstLine),
+				Actions: []string{fmt.Sprintf(
+					"agent-team intake duplicates --provider %s --request-id %s",
+					shellQuote(provider),
+					shellQuote(requestID),
+				)},
 			})
 		} else {
 			seenRequestIDs[key] = line
@@ -240,6 +246,9 @@ func renderIntakeDoctor(stdout, stderr io.Writer, result intakeDoctorResult, jso
 			result.Summary.ReplayFailed)
 		for _, warning := range result.Warnings {
 			fmt.Fprintf(stderr, "  warning: %s\n", warning.Message)
+			for _, action := range warning.Actions {
+				fmt.Fprintf(stderr, "    action: %s\n", action)
+			}
 		}
 		return nil
 	}
@@ -249,8 +258,18 @@ func renderIntakeDoctor(stdout, stderr io.Writer, result intakeDoctorResult, jso
 	}
 	for _, warning := range result.Warnings {
 		fmt.Fprintf(stderr, "  warning: %s\n", warning.Message)
+		for _, action := range warning.Actions {
+			fmt.Fprintf(stderr, "    action: %s\n", action)
+		}
 	}
 	return nil
+}
+
+func intakeDoctorFindingMessage(finding intakeDoctorFinding) string {
+	if len(finding.Actions) == 0 {
+		return finding.Message
+	}
+	return finding.Message + " (action: " + strings.Join(finding.Actions, "; ") + ")"
 }
 
 func parseIntakeDoctorFormat(format string) (*template.Template, error) {

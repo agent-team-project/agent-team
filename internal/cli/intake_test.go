@@ -2076,6 +2076,28 @@ func TestIntakeDoctorWarnsDuplicateProviderRequestID(t *testing.T) {
 	if !result.OK || len(result.Problems) != 0 || !hasIntakeDoctorFinding(result.Warnings, "duplicate_request_id") {
 		t.Fatalf("doctor result = %+v", result)
 	}
+	var duplicate *intakeDoctorFinding
+	for i := range result.Warnings {
+		if result.Warnings[i].Code == "duplicate_request_id" {
+			duplicate = &result.Warnings[i]
+			break
+		}
+	}
+	if duplicate == nil || len(duplicate.Actions) != 1 || !strings.Contains(duplicate.Actions[0], "agent-team intake duplicates --provider github --request-id delivery-1") {
+		t.Fatalf("duplicate request actions = %+v", result.Warnings)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"intake", "doctor", "--target", target})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("intake doctor duplicate text warning: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textErr.String(), "action: agent-team intake duplicates --provider github --request-id delivery-1") {
+		t.Fatalf("doctor text stderr = %q", textErr.String())
+	}
 }
 
 func hmacSHA256Hex(secret string, body []byte, prefix string) string {

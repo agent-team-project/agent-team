@@ -204,10 +204,10 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 		problems = append(problems, fmt.Sprintf("intake ledger validation failed: %v", err))
 	} else {
 		for _, problem := range intakeDoctor.Problems {
-			problems = append(problems, "intake ledger: "+problem.Message)
+			problems = append(problems, "intake ledger: "+intakeDoctorFindingMessage(problem))
 		}
 		for _, warning := range intakeDoctor.Warnings {
-			warnings = append(warnings, "intake ledger: "+warning.Message)
+			warnings = append(warnings, "intake ledger: "+intakeDoctorFindingMessage(warning))
 		}
 	}
 	if queueDoctor, err := collectQueueDoctor(teamDir); err != nil {
