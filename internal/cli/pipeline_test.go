@@ -710,6 +710,7 @@ target = "manager"
 		!containsString(ticket.Actions, "agent-team pipeline approve ticket_to_pr --dry-run --dispatch --preview-routes") ||
 		!containsString(ticket.Actions, "agent-team pipeline retry ticket_to_pr --dry-run --dispatch --preview-routes") ||
 		!containsString(ticket.Actions, "agent-team repair --retry-pipelines --dry-run --preview-routes") ||
+		!containsString(ticket.Actions, "agent-team pipeline explain ticket_to_pr --state failed") ||
 		!containsString(ticket.Actions, "agent-team pipeline ready ticket_to_pr --state failed") {
 		t.Fatalf("ticket actions = %+v", ticket.Actions)
 	}
@@ -985,6 +986,7 @@ pipelines = ["ticket_to_pr"]
 	for _, want := range []string{
 		"ticket_to_pr|ready_steps=1|agent-team pipeline advance ticket_to_pr --dry-run --preview-routes",
 		"ticket_to_pr|failed_steps=1|agent-team repair --retry-pipelines --dry-run --preview-routes",
+		"ticket_to_pr|failed_steps=1|agent-team pipeline explain ticket_to_pr --state failed",
 		"ticket_to_pr|failed_steps=1|agent-team pipeline ready ticket_to_pr --state failed",
 		"ticket_to_pr|queued_steps=1|agent-team tick",
 	} {
@@ -1004,6 +1006,7 @@ pipelines = ["ticket_to_pr"]
 	for _, want := range []string{
 		"ticket_to_pr|ready_steps=1|agent-team team advance delivery --dry-run --preview-routes",
 		"ticket_to_pr|failed_steps=1|agent-team team repair delivery --retry-pipelines --dry-run --preview-routes",
+		"ticket_to_pr|failed_steps=1|agent-team team explain delivery --state failed",
 		"ticket_to_pr|failed_steps=1|agent-team team ready delivery --state failed",
 		"ticket_to_pr|queued_steps=1|agent-team team tick delivery",
 	} {

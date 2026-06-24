@@ -7041,12 +7041,14 @@ func teamPipelineActions(teamName string, row pipelineStatusRow) []string {
 	if row.FailedSteps > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team team retry %s --dry-run --dispatch --preview-routes", teamName))
 		actions = append(actions, fmt.Sprintf("agent-team team repair %s --retry-pipelines --dry-run --preview-routes", teamName))
+		actions = append(actions, fmt.Sprintf("agent-team team explain %s --state failed", teamName))
 		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state failed", teamName))
 	}
 	if row.ManualGates > 0 {
 		actions = append(actions, fmt.Sprintf("agent-team team approve %s --dry-run --dispatch --preview-routes", teamName))
 	}
 	if row.BlockedSteps > 0 {
+		actions = append(actions, fmt.Sprintf("agent-team team explain %s --state blocked", teamName))
 		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state blocked", teamName))
 	}
 	if row.QueuedSteps > 0 {
