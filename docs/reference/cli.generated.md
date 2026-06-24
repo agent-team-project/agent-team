@@ -2936,6 +2936,7 @@ Flags:
       --limit int       Limit job explanations per pipeline; 0 means no limit.
       --repo string     Repo root containing .agent_team. (default "<repo>")
       --state strings   Only explain jobs whose next-step state matches: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --step string     Only include jobs and step details for this pipeline step id.
 ```
 
 ## `agent-team pipeline graph`
@@ -4676,6 +4677,7 @@ Flags:
       --limit int       Limit job explanations per team-owned pipeline; 0 means no limit.
       --repo string     Repo root containing .agent_team. (default "<repo>")
       --state strings   Only explain jobs whose next-step state matches: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --step string     Only include jobs and step details for this pipeline step id.
 ```
 
 ## `agent-team team graph`

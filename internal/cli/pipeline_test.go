@@ -925,6 +925,27 @@ target = "manager"
 		t.Fatalf("limited pipeline explain = %+v", limitedRows)
 	}
 
+	explainStep := NewRootCmd()
+	explainStepOut, explainStepErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainStep.SetOut(explainStepOut)
+	explainStep.SetErr(explainStepErr)
+	explainStep.SetArgs([]string{"pipeline", "explain", "ticket_to_pr", "--repo", root, "--step", "review", "--json"})
+	if err := explainStep.Execute(); err != nil {
+		t.Fatalf("pipeline explain step filter: %v\nstderr=%s", err, explainStepErr.String())
+	}
+	var stepRows []pipelineExplainRow
+	if err := json.Unmarshal(explainStepOut.Bytes(), &stepRows); err != nil {
+		t.Fatalf("decode step-filtered pipeline explain json: %v\nbody=%s", err, explainStepOut.String())
+	}
+	if len(stepRows) != 1 || stepRows[0].TotalJobs != 4 || stepRows[0].ExplainedJobs != 2 || len(stepRows[0].Jobs) != 2 {
+		t.Fatalf("step-filtered pipeline explain = %+v", stepRows)
+	}
+	for _, explainedJob := range stepRows[0].Jobs {
+		if len(explainedJob.Steps) != 1 || explainedJob.Steps[0].ID != "review" {
+			t.Fatalf("step-filtered job retained unexpected steps: %+v", explainedJob)
+		}
+	}
+
 	explainFailed := NewRootCmd()
 	explainFailedOut, explainFailedErr := &bytes.Buffer{}, &bytes.Buffer{}
 	explainFailed.SetOut(explainFailedOut)

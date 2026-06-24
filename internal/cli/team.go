@@ -3236,6 +3236,7 @@ func newTeamExplainCmd() *cobra.Command {
 		repo    string
 		limit   int
 		states  []string
+		step    string
 		jsonOut bool
 		format  string
 	)
@@ -3273,7 +3274,7 @@ func newTeamExplainCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rows, err := collectTeamPipelineExplain(teamDir, args[0], limit, stateFilter)
+			rows, err := collectTeamPipelineExplain(teamDir, args[0], limit, stateFilter, step)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team explain: %v\n", err)
 				return exitErr(1)
@@ -3284,6 +3285,7 @@ func newTeamExplainCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit job explanations per team-owned pipeline; 0 means no limit.")
 	cmd.Flags().StringSliceVar(&states, "state", nil, "Only explain jobs whose next-step state matches: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&step, "step", "", "Only include jobs and step details for this pipeline step id.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team pipeline explanations as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each pipeline explanation with a Go template, e.g. '{{.Pipeline}} {{len .Jobs}}'.")
 	return cmd
@@ -6278,12 +6280,12 @@ func collectTeamPipelineStatus(teamDir, name string) ([]pipelineStatusRow, error
 	return teamPipelineStatus(team, rows), nil
 }
 
-func collectTeamPipelineExplain(teamDir, name string, limit int, stateFilter map[string]bool) ([]pipelineExplainRow, error) {
+func collectTeamPipelineExplain(teamDir, name string, limit int, stateFilter map[string]bool, stepFilter string) ([]pipelineExplainRow, error) {
 	_, team, err := loadTopologyTeam(teamDir, name)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := collectPipelineExplainRows(teamDir, "", limit, stateFilter)
+	rows, err := collectPipelineExplainRows(teamDir, "", limit, stateFilter, stepFilter)
 	if err != nil {
 		return nil, err
 	}

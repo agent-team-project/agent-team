@@ -201,7 +201,7 @@ func collectSnapshot(teamDir, repoRoot string, opts snapshotOptions) *snapshotRe
 	} else {
 		out.PipelineStatus = status
 	}
-	if explain, err := collectPipelineExplainRows(teamDir, "", 0, nil); err != nil {
+	if explain, err := collectPipelineExplainRows(teamDir, "", 0, nil, ""); err != nil {
 		out.addError("pipeline_explain", err)
 	} else {
 		out.PipelineExplain = explain
@@ -345,7 +345,7 @@ func collectTeamSnapshot(teamDir, repoRoot, name string, opts snapshotOptions) (
 	} else {
 		out.PipelineStatus = teamPipelineStatus(team, status)
 	}
-	if explain, err := collectTeamPipelineExplain(teamDir, name, 0, nil); err != nil {
+	if explain, err := collectTeamPipelineExplain(teamDir, name, 0, nil, ""); err != nil {
 		out.addError("pipeline_explain", err)
 	} else {
 		out.PipelineExplain = explain

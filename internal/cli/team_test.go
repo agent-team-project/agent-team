@@ -509,6 +509,22 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team ready explain rows = %+v", readyExplainRows)
 	}
 
+	explainStep := NewRootCmd()
+	explainStepOut, explainStepErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainStep.SetOut(explainStepOut)
+	explainStep.SetErr(explainStepErr)
+	explainStep.SetArgs([]string{"team", "explain", "delivery", "--repo", root, "--step", "review", "--json"})
+	if err := explainStep.Execute(); err != nil {
+		t.Fatalf("team explain step filter: %v\nstderr=%s", err, explainStepErr.String())
+	}
+	var stepExplainRows []pipelineExplainRow
+	if err := json.Unmarshal(explainStepOut.Bytes(), &stepExplainRows); err != nil {
+		t.Fatalf("decode team step explain: %v\nbody=%s", err, explainStepOut.String())
+	}
+	if len(stepExplainRows) != 1 || stepExplainRows[0].TotalJobs != 1 || stepExplainRows[0].ExplainedJobs != 1 || len(stepExplainRows[0].Jobs) != 1 || len(stepExplainRows[0].Jobs[0].Steps) != 1 || stepExplainRows[0].Jobs[0].Steps[0].ID != "review" {
+		t.Fatalf("team step explain rows = %+v", stepExplainRows)
+	}
+
 	explainFailed := NewRootCmd()
 	explainFailedOut, explainFailedErr := &bytes.Buffer{}, &bytes.Buffer{}
 	explainFailed.SetOut(explainFailedOut)

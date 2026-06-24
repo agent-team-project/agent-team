@@ -152,7 +152,7 @@ Shortcuts:
 | `agent-team pipeline doctor --all` | Validate workflows |
 | `agent-team pipeline run <pipeline> <ticket>` | Create pipeline job; `--dispatch` accepts runtime overrides |
 | `agent-team pipeline status` | Summarize pipeline jobs |
-| `agent-team pipeline explain <pipeline>` | Expand pipeline jobs into per-step readiness, blockers, gates, and actions |
+| `agent-team pipeline explain <pipeline>` | Expand pipeline jobs into per-step readiness, blockers, gates, and actions; add `--step` to focus one stage |
 | `agent-team pipeline snapshot <pipeline>` | Capture one pipeline's status, explained jobs, queue ownership, and dry-run advance previews |
 | `agent-team pipeline next` | Print recommended pipeline actions |
 | `agent-team pipeline jobs <pipeline>` | List or summarize pipeline jobs; filter held state, hold deadlines, mixed-runtime ownership, and sort rows |
@@ -186,7 +186,7 @@ Shortcuts:
 | `agent-team team queue drop <team> --all` | Drop matching team-owned entries; filter batch actions with `--runtime` |
 | `agent-team team queue prune <team>` | Age-prune team-owned entries; filter prune candidates with `--runtime` |
 | `agent-team team queue quarantine <team>` | Scoped quarantine list |
-| `agent-team team explain <team>` | Expand team-owned pipeline jobs into per-step diagnostics |
+| `agent-team team explain <team>` | Expand team-owned pipeline jobs into per-step diagnostics; add `--step` to focus one stage |
 | `agent-team team ready <team>` | Scoped ready pipeline steps; filter by `--step`, sort by `--sort`, and cap rows with `--limit` |
 | `agent-team team hold <team>` | Hold matching pipeline jobs owned by a team; add `--for` or `--until` for a deadline |
 | `agent-team team release <team>` | Release held pipeline jobs owned by a team; add `--expired` to release only elapsed deadlines |

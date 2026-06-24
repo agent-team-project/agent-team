@@ -119,7 +119,7 @@ func collectPipelineSnapshot(teamDir, repoRoot, pipeline string, opts pipelineSn
 		row := status[0]
 		out.Status = &row
 	}
-	if explain, err := collectPipelineExplainRows(teamDir, pipeline, 0, nil); err != nil {
+	if explain, err := collectPipelineExplainRows(teamDir, pipeline, 0, nil, ""); err != nil {
 		out.addError("explain", err)
 	} else if len(explain) > 0 {
 		row := explain[0]

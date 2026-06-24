@@ -372,6 +372,7 @@ func newPipelineExplainCmd() *cobra.Command {
 		all     bool
 		limit   int
 		states  []string
+		step    string
 		jsonOut bool
 		format  string
 	)
@@ -425,7 +426,7 @@ func newPipelineExplainCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rows, err := collectPipelineExplainRows(teamDir, pipelineName, limit, stateFilter)
+			rows, err := collectPipelineExplainRows(teamDir, pipelineName, limit, stateFilter, step)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline explain: %v\n", err)
 				return exitErr(1)
@@ -437,6 +438,7 @@ func newPipelineExplainCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&all, "all", false, "Explain all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit job explanations per pipeline; 0 means no limit.")
 	cmd.Flags().StringSliceVar(&states, "state", nil, "Only explain jobs whose next-step state matches: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&step, "step", "", "Only include jobs and step details for this pipeline step id.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline explanations as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each pipeline explanation with a Go template, e.g. '{{.Pipeline}} {{len .Jobs}}'.")
 	return cmd
@@ -1900,7 +1902,7 @@ func collectPipelineStatusRowsAt(teamDir, pipeline string, now time.Time, staleA
 	return out, nil
 }
 
-func collectPipelineExplainRows(teamDir, pipeline string, limit int, stateFilter map[string]bool) ([]pipelineExplainRow, error) {
+func collectPipelineExplainRows(teamDir, pipeline string, limit int, stateFilter map[string]bool, stepFilter string) ([]pipelineExplainRow, error) {
 	statusRows, err := collectPipelineStatusRows(teamDir, pipeline)
 	if err != nil {
 		return nil, err
@@ -1924,6 +1926,11 @@ func collectPipelineExplainRows(teamDir, pipeline string, limit int, stateFilter
 			}
 			row.TotalJobs++
 			explained := explainJobPipeline(j)
+			var ok bool
+			explained, ok = filterJobExplainResultByStep(explained, stepFilter)
+			if !ok {
+				continue
+			}
 			if len(stateFilter) > 0 && !stateFilter[explained.State] {
 				continue
 			}
@@ -1937,6 +1944,24 @@ func collectPipelineExplainRows(teamDir, pipeline string, limit int, stateFilter
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+func filterJobExplainResultByStep(explained jobExplainResult, stepFilter string) (jobExplainResult, bool) {
+	stepFilter = strings.TrimSpace(stepFilter)
+	if stepFilter == "" {
+		return explained, true
+	}
+	steps := make([]jobExplainStep, 0, len(explained.Steps))
+	for _, step := range explained.Steps {
+		if step.ID == stepFilter {
+			steps = append(steps, step)
+		}
+	}
+	if len(steps) == 0 {
+		return explained, false
+	}
+	explained.Steps = steps
+	return explained, true
 }
 
 func applyPipelineStatusJob(row *pipelineStatusRow, j *job.Job, now time.Time, staleAfter time.Duration) {
