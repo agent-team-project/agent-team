@@ -1678,21 +1678,24 @@ Flags:
 
 Hold a job so pipeline automation will not advance it.
 
-Hold a durable job without changing its lifecycle status. Held jobs remain visible in status views, but next-step readiness reports held and automatic advance loops skip them until release.
+Hold a durable job without changing its lifecycle status. Held jobs remain visible in status views, but next-step readiness reports held and automatic advance loops skip them until release. Use --all to hold matching jobs in a batch.
 
 ```text
-agent-team job hold <job-id> [reason...] [flags]
+agent-team job hold <job-id>|--all [reason...] [flags]
 ```
 
 Flags:
 
 ```text
+      --all              Hold all matching jobs instead of one job.
       --dry-run          Preview the hold without writing job state.
       --for duration     Hold for this duration, for example 30m or 2h.
-      --format string    Render the updated job with a Go template, e.g. '{{.ID}} {{.Held}} {{.HoldReason}}'.
+      --format string    Render the updated job or batch row with a Go template, e.g. '{{.ID}} {{.Held}} {{.HoldReason}}' or '{{.JobID}} {{.Action}}'.
       --json             Emit the updated job as JSON.
+      --limit int        With --all, hold at most this many matching jobs; 0 means no limit.
       --message string   Hold reason recorded on the job.
       --repo string      Repo root containing .agent_team. (default "<repo>")
+      --state strings    With --all, next-step state to hold: ready, queued, running, blocked, failed, held, done, none, or all. Defaults to active non-held, non-done jobs.
       --until string     Hold until this RFC3339 timestamp.
 ```
 
@@ -2218,7 +2221,7 @@ Flags:
       --allow-missing         Allow queueing a message for an instance the daemon does not know yet.
       --format string         Render the updated job with a Go template, e.g. '{{.ID}} {{.LastEvent}}'.
       --from string           Sender label recorded with the message. (default "(cli)")
-      --json                  Emit the updated job as JSON.
+      --json                  Emit the updated job or batch rows as JSON.
       --message string        Message text to send.
       --message-file string   Read message text from a file, or '-' for stdin.
       --repo string           Repo root containing .agent_team. (default "<repo>")

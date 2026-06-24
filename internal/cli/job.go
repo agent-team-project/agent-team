@@ -1394,7 +1394,7 @@ func newJobSendCmd() *cobra.Command {
 	cmd.Flags().StringVar(&message, "message", "", "Message text to send.")
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read message text from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing a message for an instance the daemon does not know yet.")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job or batch rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.LastEvent}}'.")
 	return cmd
 }
@@ -2034,6 +2034,9 @@ func newJobUpdateCmd() *cobra.Command {
 func newJobHoldCmd() *cobra.Command {
 	var (
 		repo     string
+		all      bool
+		limit    int
+		states   []string
 		message  string
 		holdFor  time.Duration
 		untilRaw string
@@ -2043,14 +2046,63 @@ func newJobHoldCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "hold <job-id> [reason...]",
+		Use:   "hold <job-id>|--all [reason...]",
 		Short: "Hold a job so pipeline automation will not advance it.",
 		Long: "Hold a durable job without changing its lifecycle status. " +
-			"Held jobs remain visible in status views, but next-step readiness reports held and automatic advance loops skip them until release.",
-		Args: cobra.MinimumNArgs(1),
+			"Held jobs remain visible in status views, but next-step readiness reports held and automatic advance loops skip them until release. Use --all to hold matching jobs in a batch.",
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			if limit > 0 && !all {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --limit requires --all.")
+				return exitErr(2)
+			}
+			if cmd.Flags().Changed("state") && !all {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --state requires --all.")
+				return exitErr(2)
+			}
+			var stateFilter map[string]bool
+			stateDefault := !cmd.Flags().Changed("state")
+			if !stateDefault {
+				var err error
+				stateFilter, err = parseJobNextStateFilter(states, false)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job hold: %v\n", err)
+					return exitErr(2)
+				}
+			}
+			holdUntil, err := parseJobHoldUntil(holdFor, cmd.Flags().Changed("for"), untilRaw, time.Now().UTC())
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job hold: %v\n", err)
+				return exitErr(2)
+			}
+			if all {
+				tmpl, err := parsePipelineHoldFormat(format)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job hold: %v\n", err)
+					return exitErr(2)
+				}
+				teamDir, err := resolveTeamDir(cmd, repo)
+				if err != nil {
+					return err
+				}
+				reason := jobActionMessage(message, args, "held")
+				results, err := holdJobs(teamDir, reason, holdUntil, stateFilter, stateDefault, limit, dryRun)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job hold: %v\n", err)
+					return exitErr(1)
+				}
+				return renderPipelineHoldResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+			}
+			if len(args) == 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: pass a job id or --all.")
 				return exitErr(2)
 			}
 			tmpl, err := parseJobFormat(format)
@@ -2062,18 +2114,8 @@ func newJobHoldCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			holdUntil, err := parseJobHoldUntil(holdFor, cmd.Flags().Changed("for"), untilRaw, time.Now().UTC())
-			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job hold: %v\n", err)
-				return exitErr(2)
-			}
 			reason := jobActionMessage(message, args[1:], "held")
-			j.Held = true
-			j.HoldReason = reason
-			j.HoldUntil = holdUntil
-			j.LastEvent = "held"
-			j.LastStatus = reason
-			j.UpdatedAt = time.Now().UTC()
+			holdJobState(j, reason, holdUntil, time.Now().UTC())
 			if dryRun {
 				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
@@ -2088,13 +2130,104 @@ func newJobHoldCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&all, "all", false, "Hold all matching jobs instead of one job.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, hold at most this many matching jobs; 0 means no limit.")
+	cmd.Flags().StringSliceVar(&states, "state", nil, "With --all, next-step state to hold: ready, queued, running, blocked, failed, held, done, none, or all. Defaults to active non-held, non-done jobs.")
 	cmd.Flags().StringVar(&message, "message", "", "Hold reason recorded on the job.")
 	cmd.Flags().DurationVar(&holdFor, "for", 0, "Hold for this duration, for example 30m or 2h.")
 	cmd.Flags().StringVar(&untilRaw, "until", "", "Hold until this RFC3339 timestamp.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the hold without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
-	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.Held}} {{.HoldReason}}'.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or batch row with a Go template, e.g. '{{.ID}} {{.Held}} {{.HoldReason}}' or '{{.JobID}} {{.Action}}'.")
 	return cmd
+}
+
+func holdJobState(j *job.Job, reason string, holdUntil time.Time, now time.Time) {
+	if j == nil {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	j.Held = true
+	j.HoldReason = strings.TrimSpace(reason)
+	if j.HoldReason == "" {
+		j.HoldReason = "held"
+	}
+	j.HoldUntil = holdUntil
+	j.LastEvent = "held"
+	j.LastStatus = j.HoldReason
+	j.UpdatedAt = now.UTC()
+}
+
+func holdJobs(teamDir, reason string, holdUntil time.Time, stateFilter map[string]bool, stateDefault bool, limit int, dryRun bool) ([]pipelineHoldResult, error) {
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	sortJobs(jobs, "id")
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "held"
+	}
+	results := make([]pipelineHoldResult, 0, len(jobs))
+	now := time.Now().UTC()
+	for _, j := range jobs {
+		if limit > 0 && len(results) >= limit {
+			break
+		}
+		if j == nil {
+			continue
+		}
+		next := inspectNextJobStep(j)
+		if stateDefault && j.Status == job.StatusDone {
+			continue
+		}
+		if !holdStateSelected(next.State, stateFilter, stateDefault) {
+			continue
+		}
+		result := pipelineHoldResult{
+			JobID:      j.ID,
+			Ticket:     j.Ticket,
+			Pipeline:   j.Pipeline,
+			Status:     j.Status,
+			NextState:  next.State,
+			Action:     "would_hold",
+			Message:    reason,
+			HeldBefore: j.Held,
+			HeldAfter:  true,
+			HoldUntil:  pipelineHoldUntilText(holdUntil),
+			DryRun:     dryRun,
+		}
+		if j.Held {
+			result.Action = "skipped"
+			result.Message = "already held"
+			result.HoldUntil = jobHoldUntilText(j)
+			result.Job = j
+			results = append(results, result)
+			continue
+		}
+		holdJobState(j, reason, holdUntil, now)
+		result.Job = j
+		if dryRun {
+			results = append(results, result)
+			continue
+		}
+		changes := map[string]string{"held": "true"}
+		if strings.TrimSpace(j.Pipeline) != "" {
+			changes["pipeline"] = j.Pipeline
+		}
+		if !j.HoldUntil.IsZero() {
+			changes["hold_until"] = jobHoldUntilText(j)
+		}
+		if err := writeJobWithAudit(teamDir, j, "", "cli", "", changes); err != nil {
+			return nil, err
+		}
+		result.Action = "held"
+		result.DryRun = false
+		results = append(results, result)
+	}
+	return results, nil
 }
 
 func newJobReleaseCmd() *cobra.Command {

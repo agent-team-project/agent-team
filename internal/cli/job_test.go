@@ -5936,6 +5936,82 @@ func TestJobHoldReleaseStopsReadiness(t *testing.T) {
 	}
 }
 
+func TestJobHoldAllMatchesActiveJobs(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-250",
+			Ticket:    "SQU-250",
+			Target:    "manager",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "squ-251",
+			Ticket:    "SQU-251",
+			Target:    "manager",
+			Status:    job.StatusDone,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:         "squ-252",
+			Ticket:     "SQU-252",
+			Target:     "manager",
+			Status:     job.StatusQueued,
+			Held:       true,
+			HoldReason: "already paused",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+
+	hold := NewRootCmd()
+	holdOut, holdErr := &bytes.Buffer{}, &bytes.Buffer{}
+	hold.SetOut(holdOut)
+	hold.SetErr(holdErr)
+	hold.SetArgs([]string{"job", "hold", "--all", "--repo", tmp, "--for", "1h", "--message", "incident freeze", "--json"})
+	if err := hold.Execute(); err != nil {
+		t.Fatalf("job hold all: %v\nstderr=%s", err, holdErr.String())
+	}
+	var rows []pipelineHoldResult
+	if err := json.Unmarshal(holdOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode hold all rows: %v\nbody=%s", err, holdOut.String())
+	}
+	if len(rows) != 1 || rows[0].JobID != "squ-250" || rows[0].Action != "held" || rows[0].HoldUntil == "" {
+		t.Fatalf("hold all rows = %+v", rows)
+	}
+	held, err := job.Read(teamDir, "squ-250")
+	if err != nil {
+		t.Fatalf("read held job: %v", err)
+	}
+	if !held.Held || held.HoldReason != "incident freeze" || held.HoldUntil.IsZero() {
+		t.Fatalf("held job = %+v", held)
+	}
+	done, err := job.Read(teamDir, "squ-251")
+	if err != nil {
+		t.Fatalf("read done job: %v", err)
+	}
+	if done.Held {
+		t.Fatalf("done job should not be held by default: %+v", done)
+	}
+	already, err := job.Read(teamDir, "squ-252")
+	if err != nil {
+		t.Fatalf("read already held job: %v", err)
+	}
+	if !already.Held || already.HoldReason != "already paused" {
+		t.Fatalf("already held job changed unexpectedly: %+v", already)
+	}
+}
+
 func TestJobReadyListsAdvanceablePipelineJobs(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
