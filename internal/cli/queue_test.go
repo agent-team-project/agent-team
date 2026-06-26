@@ -1001,14 +1001,21 @@ func TestQueueQuarantineBatchLimit(t *testing.T) {
 	teamDir := filepath.Join(tmp, ".agent_team")
 	now := time.Now().UTC().Truncate(time.Second)
 	stamp := "20260619T030000.000000000Z"
-	for _, id := range []string{"q-limit-a", "q-limit-b", "q-limit-c"} {
+	for _, item := range []struct {
+		id       string
+		attempts int
+	}{
+		{id: "q-limit-a", attempts: 1},
+		{id: "q-limit-b", attempts: 3},
+		{id: "q-limit-c", attempts: 2},
+	} {
 		writeQuarantinedQueueItem(t, teamDir, stamp, daemon.QueueStateDead, &daemon.QueueItem{
-			ID:             id,
+			ID:             item.id,
 			EventType:      "agent.dispatch",
 			Instance:       "worker",
-			InstanceID:     "worker-" + id,
+			InstanceID:     "worker-" + item.id,
 			Payload:        map[string]any{"target": "worker", "ticket": "SQU-130"},
-			Attempts:       daemon.MaxQueueAttempts,
+			Attempts:       item.attempts,
 			LastError:      "spawn failed",
 			QueuedAt:       now.Add(-time.Hour),
 			UpdatedAt:      now.Add(-time.Hour),
@@ -1026,6 +1033,30 @@ func TestQueueQuarantineBatchLimit(t *testing.T) {
 	}
 	if got, want := restoreOut.String(), "q-limit-a\nq-limit-b\n"; got != want {
 		t.Fatalf("restore --limit output = %q, want %q", got, want)
+	}
+
+	listSorted := NewRootCmd()
+	listSortedOut, listSortedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	listSorted.SetOut(listSortedOut)
+	listSorted.SetErr(listSortedErr)
+	listSorted.SetArgs([]string{"queue", "quarantine", "ls", "--target", tmp, "--sort", "attempts", "--limit", "2", "--format", "{{.ID}}"})
+	if err := listSorted.Execute(); err != nil {
+		t.Fatalf("queue quarantine ls sorted limit: %v\nstderr=%s", err, listSortedErr.String())
+	}
+	if got, want := listSortedOut.String(), "q-limit-b\nq-limit-c\n"; got != want {
+		t.Fatalf("ls --sort attempts --limit output = %q, want %q", got, want)
+	}
+
+	restoreSorted := NewRootCmd()
+	restoreSortedOut, restoreSortedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreSorted.SetOut(restoreSortedOut)
+	restoreSorted.SetErr(restoreSortedErr)
+	restoreSorted.SetArgs([]string{"queue", "quarantine", "restore", "--target", tmp, "--all", "--sort", "attempts", "--limit", "2", "--dry-run", "--format", "{{.ID}}"})
+	if err := restoreSorted.Execute(); err != nil {
+		t.Fatalf("queue quarantine restore --all sorted limit dry-run: %v\nstderr=%s", err, restoreSortedErr.String())
+	}
+	if got, want := restoreSortedOut.String(), "q-limit-b\nq-limit-c\n"; got != want {
+		t.Fatalf("restore --sort attempts --limit output = %q, want %q", got, want)
 	}
 
 	drop := NewRootCmd()
@@ -1056,6 +1087,18 @@ func TestQueueQuarantineBatchLimit(t *testing.T) {
 		t.Fatalf("negative limit stderr = %q", invalidErr.String())
 	}
 
+	invalidSort := NewRootCmd()
+	invalidSortOut, invalidSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSort.SetOut(invalidSortOut)
+	invalidSort.SetErr(invalidSortErr)
+	invalidSort.SetArgs([]string{"queue", "quarantine", "ls", "--target", tmp, "--sort", "priority"})
+	if err := invalidSort.Execute(); err == nil {
+		t.Fatalf("queue quarantine ls invalid sort succeeded: stdout=%s", invalidSortOut.String())
+	}
+	if !strings.Contains(invalidSortErr.String(), "--sort must be path") {
+		t.Fatalf("invalid sort stderr = %q", invalidSortErr.String())
+	}
+
 	pathLimit := NewRootCmd()
 	pathLimitOut, pathLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
 	pathLimit.SetOut(pathLimitOut)
@@ -1066,6 +1109,18 @@ func TestQueueQuarantineBatchLimit(t *testing.T) {
 	}
 	if !strings.Contains(pathLimitErr.String(), "--limit requires --all") {
 		t.Fatalf("path limit stderr = %q", pathLimitErr.String())
+	}
+
+	pathSort := NewRootCmd()
+	pathSortOut, pathSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pathSort.SetOut(pathSortOut)
+	pathSort.SetErr(pathSortErr)
+	pathSort.SetArgs([]string{"queue", "quarantine", "restore", "--target", tmp, "--sort", "attempts", filepath.Join("quarantine", stamp, daemon.QueueStateDead, "q-limit-a.json")})
+	if err := pathSort.Execute(); err == nil {
+		t.Fatalf("queue quarantine restore path with sort succeeded: stdout=%s", pathSortOut.String())
+	}
+	if !strings.Contains(pathSortErr.String(), "--sort requires --all") {
+		t.Fatalf("path sort stderr = %q", pathSortErr.String())
 	}
 }
 

@@ -127,12 +127,12 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team job queue drop <job-id> <id>` | Drop one job-owned queue item |
 | `agent-team job queue drop <job-id> --all` | Drop matching job-owned queue items; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
 | `agent-team job queue prune <job-id>` | Age-prune job-owned queue entries; filter and limit prune candidates with `--runtime`, `--ready`, and `--limit` |
-| `agent-team job queue quarantine <job-id>` | List job-owned quarantined queue files |
+| `agent-team job queue quarantine <job-id>` | List job-owned quarantined queue files; sort rows with `--sort` and cap output with `--limit` |
 | `agent-team job queue quarantine show <job-id> <path>` | Inspect one preserved file |
 | `agent-team job queue quarantine restore <job-id> <path>` | Restore one preserved file |
-| `agent-team job queue quarantine restore <job-id> --all` | Restore matching restorable files; cap batch actions with `--limit` |
+| `agent-team job queue quarantine restore <job-id> --all` | Restore matching restorable files; sort and cap batch actions with `--sort` and `--limit` |
 | `agent-team job queue quarantine drop <job-id> <path>` | Drop one preserved file |
-| `agent-team job queue quarantine drop <job-id> --all` | Drop matching preserved files; cap batch actions with `--limit` |
+| `agent-team job queue quarantine drop <job-id> --all` | Drop matching preserved files; sort and cap batch actions with `--sort` and `--limit` |
 
 ## Global Queue
 
@@ -147,12 +147,12 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team queue drop --all` | Drop matching entries; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
 | `agent-team queue prune` | Age-prune entries; filter and limit prune candidates with `--runtime`, `--ready`, and `--limit` |
 | `agent-team queue doctor` | Validate queue files |
-| `agent-team queue quarantine ls` | List quarantined queue files |
+| `agent-team queue quarantine ls` | List quarantined queue files; sort rows with `--sort` and cap output with `--limit` |
 | `agent-team queue quarantine show <path>` | Inspect quarantined queue file |
 | `agent-team queue quarantine restore <path>` | Restore one preserved file |
 | `agent-team queue quarantine drop <path>` | Drop one preserved file |
-| `agent-team queue quarantine restore --all` | Restore matching restorable files; cap batch actions with `--limit` |
-| `agent-team queue quarantine drop --all` | Drop matching preserved files; cap batch actions with `--limit` |
+| `agent-team queue quarantine restore --all` | Restore matching restorable files; sort and cap batch actions with `--sort` and `--limit` |
+| `agent-team queue quarantine drop --all` | Drop matching preserved files; sort and cap batch actions with `--sort` and `--limit` |
 
 ## Pipelines
 
@@ -182,7 +182,7 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team pipeline logs <pipeline>` | Read daemon-captured logs for pipeline-owned instances |
 | `agent-team pipeline events <pipeline>` | Read lifecycle events for pipeline-owned instances |
 | `agent-team pipeline cleanup <pipeline>` | Scoped job cleanup for done jobs in one pipeline |
-| `agent-team pipeline queue <pipeline>` | List, inspect, retry, drop, prune, or recover active/quarantined queue items owned by one pipeline |
+| `agent-team pipeline queue <pipeline>` | List, inspect, retry, drop, prune, or recover active/quarantined queue items owned by one pipeline; quarantine lists and batch actions support `--sort` and `--limit` |
 | `agent-team pipeline timeout <pipeline>` | Mark stale running steps failed; add `--target-agent` to scope by role |
 | `agent-team pipeline retry <pipeline>` | Retry failed steps, honoring step `max_attempts` caps; add `--force` for an explicit override |
 | `agent-team pipeline repair <pipeline>` | Scoped repair loop for one pipeline: queue retry, optional timeout/retry, and ready-step advance |
@@ -208,7 +208,7 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team team queue retry <team> --all` | Retry matching team-owned entries; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
 | `agent-team team queue drop <team> --all` | Drop matching team-owned entries; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
 | `agent-team team queue prune <team>` | Age-prune team-owned entries; filter and limit prune candidates with `--runtime`, `--ready`, and `--limit` |
-| `agent-team team queue quarantine <team>` | Scoped quarantine list |
+| `agent-team team queue quarantine <team>` | Scoped quarantine list; sort rows with `--sort` and cap output with `--limit` |
 | `agent-team team pipelines <team>` | List or watch team-owned pipeline status rows with queue/quarantine counts; sort rows and cap output with `--limit` |
 | `agent-team team explain <team>` | Expand or watch team-owned pipeline jobs as per-step diagnostics; add `--step` to focus one stage |
 | `agent-team team ready <team>` | List or watch scoped ready pipeline steps; filter by `--step`, sort by `--sort`, and cap rows with `--limit` |

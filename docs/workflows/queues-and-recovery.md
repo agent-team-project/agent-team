@@ -142,6 +142,7 @@ agent-team queue quarantine ls
 agent-team queue quarantine ls --job SQU-42
 agent-team queue quarantine ls --restorable
 agent-team queue quarantine ls --unrestorable
+agent-team queue quarantine ls --sort attempts --limit 10
 ```
 
 Inspect:
@@ -155,14 +156,14 @@ Restore:
 ```sh
 agent-team queue quarantine restore <path> --dry-run
 agent-team queue quarantine restore <path>
-agent-team queue quarantine restore --all --job SQU-42 --limit 10 --dry-run
+agent-team queue quarantine restore --all --job SQU-42 --sort attempts --limit 10 --dry-run
 ```
 
 Drop:
 
 ```sh
 agent-team queue quarantine drop <path> --dry-run
-agent-team queue quarantine drop --all --unrestorable --limit 10 --dry-run
+agent-team queue quarantine drop --all --unrestorable --sort modified --limit 10 --dry-run
 ```
 
 ## Job-Scoped Quarantine
@@ -171,9 +172,10 @@ When a durable job owns preserved files, prefer job-scoped commands:
 
 ```sh
 agent-team job queue quarantine squ-42
+agent-team job queue quarantine squ-42 --sort attempts --limit 10
 agent-team job queue quarantine show squ-42 <path>
 agent-team job queue quarantine restore squ-42 <path> --dry-run
-agent-team job queue quarantine restore squ-42 --all --limit 10 --dry-run
+agent-team job queue quarantine restore squ-42 --all --sort attempts --limit 10 --dry-run
 agent-team job queue quarantine drop squ-42 <path> --dry-run
 ```
 
@@ -187,10 +189,10 @@ For repos with teams:
 
 ```sh
 agent-team team queue quarantine delivery
-agent-team team queue quarantine delivery --restorable
+agent-team team queue quarantine delivery --restorable --sort attempts --limit 10
 agent-team team queue quarantine show delivery <path>
-agent-team team queue quarantine restore delivery --all --job SQU-42 --limit 10 --dry-run
-agent-team team queue quarantine drop delivery --all --unrestorable --limit 10 --dry-run
+agent-team team queue quarantine restore delivery --all --job SQU-42 --sort attempts --limit 10 --dry-run
+agent-team team queue quarantine drop delivery --all --unrestorable --sort modified --limit 10 --dry-run
 ```
 
 Team scoping prevents delivery recovery commands from mutating platform-owned queue files in the same repo.

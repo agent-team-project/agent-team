@@ -5440,6 +5440,18 @@ instances = ["other"]
 		t.Fatalf("team queue quarantine format =\n%s", quarantineFormatOut.String())
 	}
 
+	quarantineSorted := NewRootCmd()
+	quarantineSortedOut, quarantineSortedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	quarantineSorted.SetOut(quarantineSortedOut)
+	quarantineSorted.SetErr(quarantineSortedErr)
+	quarantineSorted.SetArgs([]string{"team", "queue", "quarantine", "delivery", "--repo", root, "--sort", "restorable", "--limit", "1", "--format", "{{.ID}} {{.Restorable}}"})
+	if err := quarantineSorted.Execute(); err != nil {
+		t.Fatalf("team queue quarantine sorted limit list: %v\nstderr=%s", err, quarantineSortedErr.String())
+	}
+	if got, want := quarantineSortedOut.String(), "q-team-quarantined true\n"; got != want {
+		t.Fatalf("team queue quarantine sorted limit list = %q, want %q", got, want)
+	}
+
 	unrestorable := NewRootCmd()
 	unrestorableOut, unrestorableErr := &bytes.Buffer{}, &bytes.Buffer{}
 	unrestorable.SetOut(unrestorableOut)

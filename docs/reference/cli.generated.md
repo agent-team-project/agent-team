@@ -2139,8 +2139,10 @@ Flags:
       --event-type strings   Filter by event type; repeat or comma-separate values.
       --format string        Render each quarantined queue file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.
       --json                 Emit quarantined queue files as JSON.
+      --limit int            Limit rows after filtering and sorting; 0 means no limit.
       --repo string          Repo root containing .agent_team. (default "<repo>")
       --restorable           Only show quarantined files that can be restored.
+      --sort string          Sort rows by path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size. (default "path")
       --state string         Filter by queue state: pending or dead.
       --unrestorable         Only show quarantined files that cannot be restored.
 ```
@@ -2173,6 +2175,7 @@ Flags:
       --older-than duration   With --all, only drop files older than this duration based on file mtime.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --restorable            With --all, only drop quarantined files that can be restored.
+      --sort string           With --all, sort matching job-owned quarantined files before limiting: path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size. (default "path")
       --state string          With --all, filter by queue state: pending or dead.
       --unrestorable          With --all, only drop quarantined files that cannot be restored.
 ```
@@ -2198,6 +2201,7 @@ Flags:
       --json                 Emit restore result as JSON.
       --limit int            With --all, restore at most this many matching job-owned quarantined files; 0 means no limit.
       --repo string          Repo root containing .agent_team. (default "<repo>")
+      --sort string          With --all, sort matching job-owned quarantined files before limiting: path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size. (default "path")
       --state string         With --all, filter by queue state: pending or dead.
 ```
 
@@ -3430,8 +3434,10 @@ Flags:
       --format string        Render each pipeline-owned quarantined queue file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.
       --job strings          Filter by job id or ticket; repeat or comma-separate values.
       --json                 Emit pipeline-owned quarantined queue files as JSON.
+      --limit int            Limit rows after filtering and sorting; 0 means no limit.
       --repo string          Repo root containing .agent_team. (default "<repo>")
       --restorable           Only show quarantined files that can be restored.
+      --sort string          Sort rows by path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size. (default "path")
       --state string         Filter by queue state: pending or dead.
       --unrestorable         Only show quarantined files that cannot be restored.
 ```
@@ -3465,6 +3471,7 @@ Flags:
       --older-than duration   With --all, only drop files older than this duration based on file mtime.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --restorable            With --all, only drop quarantined files that can be restored.
+      --sort string           With --all, sort matching pipeline-owned quarantined files before limiting: path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size. (default "path")
       --state string          With --all, filter by queue state: pending or dead.
       --unrestorable          With --all, only drop quarantined files that cannot be restored.
 ```
@@ -3491,6 +3498,7 @@ Flags:
       --json                 Emit restore result as JSON.
       --limit int            With --all, restore at most this many matching pipeline-owned quarantined files; 0 means no limit.
       --repo string          Repo root containing .agent_team. (default "<repo>")
+      --sort string          With --all, sort matching pipeline-owned quarantined files before limiting: path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size. (default "path")
       --state string         With --all, filter by queue state: pending or dead.
 ```
 
@@ -4242,6 +4250,7 @@ Flags:
       --limit int             With --all, drop at most this many matching quarantined files; 0 means no limit.
       --older-than duration   With --all, only drop files older than this duration based on file mtime.
       --restorable            With --all, only drop quarantined files that can be restored.
+      --sort string           With --all, sort matching quarantined files before limiting: path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size. (default "path")
       --state string          With --all, filter by queue state: pending or dead.
       --target string         Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
       --unrestorable          With --all, only drop quarantined files that cannot be restored.
@@ -4269,7 +4278,9 @@ Flags:
       --instance strings     Filter by target instance name; repeat or comma-separate values.
       --job strings          Filter by job id or ticket; repeat or comma-separate values.
       --json                 Emit quarantined queue files as JSON.
+      --limit int            Limit rows after filtering and sorting; 0 means no limit.
       --restorable           Only show quarantined files that can be restored.
+      --sort string          Sort rows by path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size. (default "path")
       --state string         Filter by queue state: pending or dead.
       --target string        Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
       --unrestorable         Only show quarantined files that cannot be restored.
@@ -4303,6 +4314,7 @@ Flags:
       --job strings          With --all, filter by job id or ticket; repeat or comma-separate values.
       --json                 Emit restore result as JSON.
       --limit int            With --all, restore at most this many matching quarantined files; 0 means no limit.
+      --sort string          With --all, sort matching quarantined files before limiting: path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size. (default "path")
       --state string         With --all, filter by queue state: pending or dead.
       --target string        Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
@@ -5995,8 +6007,10 @@ Flags:
       --format string        Render each team-owned quarantined queue file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.
       --job strings          Filter by job id or ticket; repeat or comma-separate values.
       --json                 Emit team-owned quarantined queue files as JSON.
+      --limit int            Limit rows after filtering and sorting; 0 means no limit.
       --repo string          Repo root containing .agent_team. (default "<repo>")
       --restorable           Only show quarantined files that can be restored.
+      --sort string          Sort rows by path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size. (default "path")
       --state string         Filter by queue state: pending or dead.
       --unrestorable         Only show quarantined files that cannot be restored.
 ```
@@ -6030,6 +6044,7 @@ Flags:
       --older-than duration   With --all, only drop files older than this duration based on file mtime.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --restorable            With --all, only drop quarantined files that can be restored.
+      --sort string           With --all, sort matching team-owned quarantined files before limiting: path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size. (default "path")
       --state string          With --all, filter by queue state: pending or dead.
       --unrestorable          With --all, only drop quarantined files that cannot be restored.
 ```
@@ -6056,6 +6071,7 @@ Flags:
       --json                 Emit restore result as JSON.
       --limit int            With --all, restore at most this many matching team-owned quarantined files; 0 means no limit.
       --repo string          Repo root containing .agent_team. (default "<repo>")
+      --sort string          With --all, sort matching team-owned quarantined files before limiting: path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size. (default "path")
       --state string         With --all, filter by queue state: pending or dead.
 ```
 

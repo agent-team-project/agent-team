@@ -5108,6 +5108,7 @@ target = "worker"
 		Instance:   "worker",
 		InstanceID: "worker-squ-903",
 		Payload:    map[string]any{"job_id": "squ-903", "ticket": "SQU-903", "target": "worker"},
+		Attempts:   2,
 		QueuedAt:   now.Add(-2 * time.Hour),
 		UpdatedAt:  now.Add(-time.Hour),
 	})
@@ -5149,6 +5150,18 @@ target = "worker"
 	}
 	if got := queueQuarantineItemIDs(listed); got != "q-pipeline-quarantined,q-pipeline-quarantined-extra,q-pipeline-unrestorable" {
 		t.Fatalf("listed pipeline quarantined items = %s\nbody=%s", got, listOut.String())
+	}
+
+	listSorted := NewRootCmd()
+	listSortedOut, listSortedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	listSorted.SetOut(listSortedOut)
+	listSorted.SetErr(listSortedErr)
+	listSorted.SetArgs([]string{"pipeline", "queue", "quarantine", "ticket_to_pr", "--repo", root, "--sort", "attempts", "--limit", "1", "--format", "{{.ID}}"})
+	if err := listSorted.Execute(); err != nil {
+		t.Fatalf("pipeline queue quarantine sorted limit list: %v\nstderr=%s", err, listSortedErr.String())
+	}
+	if got, want := listSortedOut.String(), "q-pipeline-quarantined-extra\n"; got != want {
+		t.Fatalf("pipeline queue quarantine sorted limit list = %q, want %q", got, want)
 	}
 
 	restorable := NewRootCmd()
@@ -5233,6 +5246,18 @@ target = "worker"
 	}
 	if got, want := restoreLimitOut.String(), "q-pipeline-quarantined-extra\n"; got != want {
 		t.Fatalf("pipeline restore --limit output = %q, want %q", got, want)
+	}
+
+	restoreSorted := NewRootCmd()
+	restoreSortedOut, restoreSortedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreSorted.SetOut(restoreSortedOut)
+	restoreSorted.SetErr(restoreSortedErr)
+	restoreSorted.SetArgs([]string{"pipeline", "queue", "quarantine", "restore", "ticket_to_pr", "--repo", root, "--all", "--sort", "attempts", "--limit", "1", "--dry-run", "--format", "{{.ID}}"})
+	if err := restoreSorted.Execute(); err != nil {
+		t.Fatalf("pipeline queue quarantine restore --all sorted limit dry-run: %v\nstderr=%s", err, restoreSortedErr.String())
+	}
+	if got, want := restoreSortedOut.String(), "q-pipeline-quarantined-extra\n"; got != want {
+		t.Fatalf("pipeline restore --sort attempts --limit output = %q, want %q", got, want)
 	}
 
 	restoreOne := NewRootCmd()

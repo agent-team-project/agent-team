@@ -886,6 +886,8 @@ func newPipelineQueueQuarantineCmd() *cobra.Command {
 		jobs         []string
 		restorable   bool
 		unrestorable bool
+		sortBy       string
+		limit        int
 		jsonOut      bool
 		format       string
 	)
@@ -897,6 +899,15 @@ func newPipelineQueueQuarantineCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if restorable && unrestorable {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: --restorable and --unrestorable cannot be combined.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			sortMode, err := parseQueueQuarantineSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: %v\n", err)
 				return exitErr(2)
 			}
 			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team pipeline queue quarantine", format, jsonOut)
@@ -918,6 +929,7 @@ func newPipelineQueueQuarantineCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			items = filterQueueQuarantineRestorable(items, restorable, unrestorable)
+			items = prepareQueueQuarantineItems(items, sortMode, limit)
 			return renderQueueQuarantineList(cmd.OutOrStdout(), items, jsonOut, formatTemplate)
 		},
 	}
@@ -927,6 +939,8 @@ func newPipelineQueueQuarantineCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Filter by job id or ticket; repeat or comma-separate values.")
 	cmd.Flags().BoolVar(&restorable, "restorable", false, "Only show quarantined files that can be restored.")
 	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "Only show quarantined files that cannot be restored.")
+	cmd.Flags().StringVar(&sortBy, "sort", "path", queueQuarantineSortFlagHelp)
+	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline-owned quarantined queue files as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each pipeline-owned quarantined queue file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.")
 	cmd.AddCommand(newPipelineQueueQuarantineShowCmd())
@@ -984,6 +998,7 @@ func newPipelineQueueQuarantineRestoreCmd() *cobra.Command {
 		stateFilter string
 		eventTypes  []string
 		jobs        []string
+		sortBy      string
 		limit       int
 		jsonOut     bool
 		format      string
@@ -1017,13 +1032,18 @@ func newPipelineQueueQuarantineRestoreCmd() *cobra.Command {
 					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine restore: --all requires exactly one pipeline and cannot be combined with a path.")
 					return exitErr(2)
 				}
+				sortMode, err := parseQueueQuarantineSort(sortBy)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine restore: %v\n", err)
+					return exitErr(2)
+				}
 				items, err := collectPipelineQueueQuarantineItems(teamDir, args[0], filters)
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine restore: %v\n", err)
 					return exitErr(1)
 				}
 				items = filterQueueQuarantineRestorable(items, true, false)
-				results, err := restoreQueueQuarantineItems(teamDir, items, dryRun, force, limit)
+				results, err := restoreQueueQuarantineItems(teamDir, items, dryRun, force, sortMode, limit)
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine restore: %v\n", err)
 					return exitErr(1)
@@ -1034,8 +1054,8 @@ func newPipelineQueueQuarantineRestoreCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine restore: requires <pipeline> and one path unless --all is set.")
 				return exitErr(2)
 			}
-			if !filters.empty() || limit > 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine restore: filters require --all; --limit requires --all.")
+			if !filters.empty() || cmd.Flags().Changed("sort") || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine restore: filters require --all; --sort requires --all; --limit requires --all.")
 				return exitErr(2)
 			}
 			if _, err := readPipelineQueueQuarantineItem(teamDir, args[0], args[1]); err != nil {
@@ -1057,6 +1077,7 @@ func newPipelineQueueQuarantineRestoreCmd() *cobra.Command {
 	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead.")
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
+	cmd.Flags().StringVar(&sortBy, "sort", "path", "With --all, sort matching pipeline-owned quarantined files before limiting: path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, restore at most this many matching pipeline-owned quarantined files; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit restore result as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
@@ -1074,6 +1095,7 @@ func newPipelineQueueQuarantineDropCmd() *cobra.Command {
 		restorable   bool
 		unrestorable bool
 		olderThan    time.Duration
+		sortBy       string
 		limit        int
 		jsonOut      bool
 		format       string
@@ -1115,13 +1137,18 @@ func newPipelineQueueQuarantineDropCmd() *cobra.Command {
 					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine drop: --all requires exactly one pipeline and cannot be combined with a path.")
 					return exitErr(2)
 				}
+				sortMode, err := parseQueueQuarantineSort(sortBy)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine drop: %v\n", err)
+					return exitErr(2)
+				}
 				items, err := collectPipelineQueueQuarantineItems(teamDir, args[0], filters)
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine drop: %v\n", err)
 					return exitErr(1)
 				}
 				items = filterQueueQuarantineRestorable(items, restorable, unrestorable)
-				results, err := dropQueueQuarantineItems(teamDir, items, dryRun, olderThan, unrestorable, limit, time.Now().UTC())
+				results, err := dropQueueQuarantineItems(teamDir, items, dryRun, olderThan, unrestorable, sortMode, limit, time.Now().UTC())
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine drop: %v\n", err)
 					return exitErr(1)
@@ -1132,8 +1159,8 @@ func newPipelineQueueQuarantineDropCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine drop: requires <pipeline> and one path unless --all is set.")
 				return exitErr(2)
 			}
-			if olderThan > 0 || restorable || unrestorable || !filters.empty() || limit > 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine drop: filters require --all; --limit requires --all.")
+			if olderThan > 0 || restorable || unrestorable || !filters.empty() || cmd.Flags().Changed("sort") || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine drop: filters require --all; --sort requires --all; --limit requires --all.")
 				return exitErr(2)
 			}
 			item, err := readPipelineQueueQuarantineItem(teamDir, args[0], args[1])
@@ -1158,6 +1185,7 @@ func newPipelineQueueQuarantineDropCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&restorable, "restorable", false, "With --all, only drop quarantined files that can be restored.")
 	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "With --all, only drop quarantined files that cannot be restored.")
 	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "With --all, only drop files older than this duration based on file mtime.")
+	cmd.Flags().StringVar(&sortBy, "sort", "path", "With --all, sort matching pipeline-owned quarantined files before limiting: path, state, id, event, instance, job, queued, updated, modified, attempts, restorable, or size.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, drop at most this many matching pipeline-owned quarantined files; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit drop results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.")

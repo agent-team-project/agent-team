@@ -1651,11 +1651,23 @@ func TestJobQueueQuarantineScopesOwnedFiles(t *testing.T) {
 		t.Fatalf("listed job quarantined items = %+v", listed)
 	}
 
+	listSorted := NewRootCmd()
+	listSortedOut, listSortedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	listSorted.SetOut(listSortedOut)
+	listSorted.SetErr(listSortedErr)
+	listSorted.SetArgs([]string{"job", "queue", "quarantine", "SQU-123", "--repo", tmp, "--sort", "attempts", "--limit", "1", "--format", "{{.ID}}"})
+	if err := listSorted.Execute(); err != nil {
+		t.Fatalf("job queue quarantine sorted limit list: %v\nstderr=%s", err, listSortedErr.String())
+	}
+	if got, want := listSortedOut.String(), "q-job-quarantined-drop\n"; got != want {
+		t.Fatalf("job queue quarantine sorted limit list = %q, want %q", got, want)
+	}
+
 	restoreLimit := NewRootCmd()
 	restoreLimitOut, restoreLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restoreLimit.SetOut(restoreLimitOut)
 	restoreLimit.SetErr(restoreLimitErr)
-	restoreLimit.SetArgs([]string{"job", "queue", "quarantine", "restore", "SQU-123", "--repo", tmp, "--all", "--limit", "1", "--dry-run", "--format", "{{.ID}}"})
+	restoreLimit.SetArgs([]string{"job", "queue", "quarantine", "restore", "SQU-123", "--repo", tmp, "--all", "--sort", "attempts", "--limit", "1", "--dry-run", "--format", "{{.ID}}"})
 	if err := restoreLimit.Execute(); err != nil {
 		t.Fatalf("job queue quarantine restore --all limit: %v\nstderr=%s", err, restoreLimitErr.String())
 	}
