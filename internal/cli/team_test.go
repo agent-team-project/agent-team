@@ -4305,8 +4305,16 @@ func TestTeamRuntimeResumePlanScopesMetadata(t *testing.T) {
 		daemon.PidLiveCheck = oldPIDLiveCheck
 	})
 	now := time.Now().UTC()
+	staleJob := mustNewJob(t, "SQU-902", "worker")
+	staleJob.Pipeline = "ticket_to_pr"
+	staleJob.Status = job.StatusRunning
+	staleJob.Instance = "worker-squ-902"
+	staleJob.Steps = []job.Step{{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-902", StartedAt: now.Add(-15 * time.Minute)}}
+	if err := job.Write(teamDir, staleJob); err != nil {
+		t.Fatalf("write stale job: %v", err)
+	}
 	for _, meta := range []*daemon.Metadata{
-		{Instance: "worker-squ-902", Agent: "worker", Status: daemon.StatusRunning, Runtime: "claude", RuntimeBinary: "claude", PID: 4242, SessionID: "team-stale-session", StartedAt: now.Add(-15 * time.Minute)},
+		{Instance: "worker-squ-902", Job: "squ-902", Agent: "worker", Status: daemon.StatusRunning, Runtime: "claude", RuntimeBinary: "claude", PID: 4242, SessionID: "team-stale-session", StartedAt: now.Add(-15 * time.Minute)},
 		{Instance: "support-stale", Agent: "support", Status: daemon.StatusRunning, Runtime: "claude", RuntimeBinary: "claude", PID: 4242, SessionID: "foreign-stale-session", StartedAt: now.Add(-10 * time.Minute)},
 	} {
 		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
@@ -4368,6 +4376,18 @@ func TestTeamRuntimeResumePlanScopesMetadata(t *testing.T) {
 	}
 	if counts.Total != 2 || counts.Actions["logs"] != 2 || counts.Runtimes["claude"] != 1 || counts.Runtimes["codex"] != 1 || counts.Statuses["crashed"] != 2 || counts.ManagedResume != 1 || counts.CanManagedResume != 0 || counts.DirectResume != 0 {
 		t.Fatalf("team resume-plan summary = %+v", counts)
+	}
+
+	step := NewRootCmd()
+	stepOut, stepErr := &bytes.Buffer{}, &bytes.Buffer{}
+	step.SetOut(stepOut)
+	step.SetErr(stepErr)
+	step.SetArgs([]string{"team", "runtime", "resume-plan", "delivery", "--repo", root, "--step", "implement", "--format", "{{.Instance}} {{.Pipeline}} {{.StepID}} {{.RecommendedAction}}"})
+	if err := step.Execute(); err != nil {
+		t.Fatalf("team runtime resume-plan step filter: %v\nstderr=%s", err, stepErr.String())
+	}
+	if got, want := strings.TrimSpace(stepOut.String()), "worker-squ-902 ticket_to_pr implement start"; got != want {
+		t.Fatalf("team step resume-plan = %q, want %q", got, want)
 	}
 
 	stale := NewRootCmd()

@@ -2580,6 +2580,7 @@ Flags:
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
       --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
+      --step string       Only include plans for this pipeline step id.
       --summary           Summarize matching resume plans by recommended action, runtime, and status.
       --unhealthy         Only include crashed or stale running metadata.
 ```
@@ -3795,6 +3796,7 @@ Flags:
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
       --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
+      --step string       Only include plans for this pipeline step id.
       --summary           Summarize matching pipeline resume plans by recommended action, runtime, and status.
       --unhealthy         Only include crashed or stale running metadata.
 ```
@@ -4648,6 +4650,7 @@ Flags:
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
       --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
+      --step string       Only include plans for this pipeline step id.
       --summary           Summarize matching resume plans by recommended action, runtime, and status.
       --unhealthy         Only include crashed or stale running metadata.
 ```
@@ -4918,6 +4921,7 @@ Flags:
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
       --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
+      --step string       Only include plans for this pipeline step id.
       --summary           Summarize matching resume plans by recommended action, runtime, and status.
       --target string     Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
       --unhealthy         Only include crashed or stale running metadata.
@@ -6431,6 +6435,7 @@ Flags:
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
       --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
+      --step string       Only include plans for this pipeline step id.
       --summary           Summarize matching team resume plans by recommended action, runtime, and status.
       --unhealthy         Only include crashed or stale running metadata.
 ```
@@ -6533,6 +6538,7 @@ Flags:
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
       --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
+      --step string       Only include plans for this pipeline step id.
       --summary           Summarize matching team resume plans by recommended action, runtime, and status.
       --unhealthy         Only include crashed or stale running metadata.
 ```

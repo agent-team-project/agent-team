@@ -964,6 +964,98 @@ func TestRuntimeResumePlanCodexJobJSON(t *testing.T) {
 	}
 }
 
+func TestRuntimeResumePlanJobStepFilter(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-43",
+		Ticket:    "SQU-43",
+		Target:    "manager",
+		Instance:  "manager-squ-43",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-43-implement", StartedAt: now.Add(-time.Hour)},
+			{ID: "review", Target: "manager", Status: job.StatusRunning, Instance: "manager-squ-43-review", StartedAt: now.Add(-30 * time.Minute)},
+		},
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	for _, meta := range []*daemon.Metadata{
+		{
+			Instance:      "manager-squ-43",
+			Agent:         "manager",
+			Runtime:       string(runtimebin.KindClaude),
+			RuntimeBinary: "claude",
+			Workspace:     tmp,
+			StartedAt:     now.Add(-2 * time.Hour),
+			Status:        daemon.StatusCrashed,
+		},
+		{
+			Instance:      "worker-squ-43-implement",
+			Agent:         "worker",
+			Runtime:       string(runtimebin.KindCodex),
+			RuntimeBinary: "codex",
+			Workspace:     tmp,
+			SessionID:     "implement-session",
+			StartedAt:     now.Add(-time.Hour),
+			Status:        daemon.StatusExited,
+		},
+		{
+			Instance:      "manager-squ-43-review",
+			Agent:         "manager",
+			Runtime:       string(runtimebin.KindClaude),
+			RuntimeBinary: "claude",
+			Workspace:     tmp,
+			SessionID:     "review-session",
+			StartedAt:     now.Add(-30 * time.Minute),
+			Status:        daemon.StatusExited,
+		},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"job", "resume-plan", "SQU-43", "--repo", tmp, "--step", "implement", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job resume-plan --step: %v\nstderr=%s", err, errOut.String())
+	}
+	var plans []runtimeResumePlan
+	if err := json.Unmarshal(out.Bytes(), &plans); err != nil {
+		t.Fatalf("decode job step resume plans: %v\nbody=%s", err, out.String())
+	}
+	if len(plans) != 1 {
+		t.Fatalf("plans = %+v, want one implement plan", plans)
+	}
+	plan := plans[0]
+	if plan.Instance != "worker-squ-43-implement" || plan.Job != "squ-43" || plan.Pipeline != "ticket_to_pr" || plan.StepID != "implement" || plan.JobLastMessageCommand != "agent-team job logs squ-43 --last-message" {
+		t.Fatalf("plan = %+v", plan)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--job", "SQU-43", "--step", "review"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan --job --step text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"pipeline:                 ticket_to_pr", "step:                     review", "manager-squ-43-review"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("resume-plan text missing %q:\n%s", want, textOut.String())
+		}
+	}
+}
+
 func TestRuntimeResumePlanFormatAndFilters(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

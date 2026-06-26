@@ -18,6 +18,8 @@ import (
 type runtimeResumePlan struct {
 	Instance              string `json:"instance"`
 	Job                   string `json:"job,omitempty"`
+	Pipeline              string `json:"pipeline,omitempty"`
+	StepID                string `json:"step_id,omitempty"`
 	Agent                 string `json:"agent,omitempty"`
 	Runtime               string `json:"runtime"`
 	RuntimeBinary         string `json:"runtime_binary"`
@@ -87,6 +89,7 @@ func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Comm
 	var (
 		target        string
 		jobID         string
+		stepID        string
 		statusFilters []string
 		runtimeFilter []string
 		actionFilters []string
@@ -125,7 +128,7 @@ func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Comm
 			if err != nil {
 				return err
 			}
-			plans, err := collectRuntimeResumePlans(teamDir, args, jobID, statusFilters, runtimeFilter, actionFilters, staleOnly || runtimeStale, unhealthyOnly)
+			plans, err := collectRuntimeResumePlans(teamDir, args, jobID, stepID, statusFilters, runtimeFilter, actionFilters, staleOnly || runtimeStale, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", cfg.ErrorName, err)
 				return exitErr(1)
@@ -154,6 +157,7 @@ func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Comm
 		cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	}
 	cmd.Flags().StringVar(&jobID, "job", "", "Select the instance recorded on or associated with this job id.")
+	cmd.Flags().StringVar(&stepID, "step", "", "Only include plans for this pipeline step id.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
@@ -169,6 +173,7 @@ func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Comm
 func newJobResumePlanCmd() *cobra.Command {
 	var (
 		repo          string
+		stepID        string
 		statusFilters []string
 		runtimeFilter []string
 		actionFilters []string
@@ -204,7 +209,7 @@ func newJobResumePlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			plans, err := collectRuntimeResumePlans(teamDir, nil, args[0], statusFilters, runtimeFilter, actionFilters, staleOnly || runtimeStale, unhealthyOnly)
+			plans, err := collectRuntimeResumePlans(teamDir, nil, args[0], stepID, statusFilters, runtimeFilter, actionFilters, staleOnly || runtimeStale, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job resume-plan: %v\n", err)
 				return exitErr(1)
@@ -228,6 +233,7 @@ func newJobResumePlanCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&stepID, "step", "", "Only include plans for this pipeline step id.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
@@ -240,7 +246,7 @@ func newJobResumePlanCmd() *cobra.Command {
 	return cmd
 }
 
-func collectRuntimeResumePlans(teamDir string, instances []string, jobID string, statusFilters []string, runtimeFilters []string, actionFilters []string, staleOnly bool, unhealthyOnly bool) ([]runtimeResumePlan, error) {
+func collectRuntimeResumePlans(teamDir string, instances []string, jobID string, stepFilter string, statusFilters []string, runtimeFilters []string, actionFilters []string, staleOnly bool, unhealthyOnly bool) ([]runtimeResumePlan, error) {
 	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
 	if err != nil {
 		return nil, err
@@ -254,13 +260,13 @@ func collectRuntimeResumePlans(teamDir string, instances []string, jobID string,
 	}
 
 	var selected []*daemon.Metadata
-	selectedJobID := ""
+	var selectedJob *job.Job
 	if id := strings.TrimSpace(jobID); id != "" {
 		j, err := job.Read(teamDir, id)
 		if err != nil {
 			return nil, err
 		}
-		selectedJobID = j.ID
+		selectedJob = j
 		selected = metadataForResumePlanJob(metas, byInstance, j)
 		if len(selected) == 0 {
 			return nil, fmt.Errorf("job %q has no daemon metadata; dispatch or adopt it first", j.ID)
@@ -295,6 +301,7 @@ func collectRuntimeResumePlans(teamDir string, instances []string, jobID string,
 	}
 
 	plans := make([]runtimeResumePlan, 0, len(selected))
+	jobCache := map[string]*job.Job{}
 	for _, meta := range selected {
 		if meta == nil {
 			continue
@@ -307,10 +314,15 @@ func collectRuntimeResumePlans(teamDir string, instances []string, jobID string,
 			continue
 		}
 		plan := runtimeResumePlanFromMetadata(meta)
-		if selectedJobID != "" && strings.TrimSpace(plan.Job) == "" {
-			plan = runtimeResumePlanWithJobCommands(plan, selectedJobID)
+		if selectedJob != nil {
+			plan = runtimeResumePlanWithJobContext(plan, selectedJob)
+		} else {
+			plan = runtimeResumePlanWithJobContextFromDisk(teamDir, plan, jobCache)
 		}
 		if len(actionSet) > 0 && !actionSet[plan.RecommendedAction] {
+			continue
+		}
+		if !runtimeResumePlanMatchesStep(plan, stepFilter) {
 			continue
 		}
 		if staleOnly && !plan.Stale {
@@ -337,11 +349,23 @@ func metadataForResumePlanJob(metas []*daemon.Metadata, byInstance map[string]*d
 	}
 	seen := map[string]bool{}
 	var out []*daemon.Metadata
-	if instance := strings.TrimSpace(j.Instance); instance != "" {
-		if meta := byInstance[instance]; meta != nil {
-			out = append(out, meta)
-			seen[meta.Instance] = true
+	addInstance := func(instance string) {
+		instance = strings.TrimSpace(instance)
+		if instance == "" {
+			return
 		}
+		meta := byInstance[instance]
+		if meta == nil || seen[meta.Instance] {
+			return
+		}
+		out = append(out, meta)
+		seen[meta.Instance] = true
+	}
+	if instance := strings.TrimSpace(j.Instance); instance != "" {
+		addInstance(instance)
+	}
+	for _, step := range j.Steps {
+		addInstance(step.Instance)
 	}
 	id := job.NormalizeID(j.ID)
 	for _, meta := range metas {
@@ -421,6 +445,83 @@ func runtimeResumePlanWithJobCommands(plan runtimeResumePlan, jobID string) runt
 		plan.JobLastMessageCommand = "agent-team job logs " + id + " --last-message"
 	}
 	return plan
+}
+
+func runtimeResumePlanWithJobContext(plan runtimeResumePlan, j *job.Job) runtimeResumePlan {
+	if j == nil {
+		return plan
+	}
+	if id := job.NormalizeID(j.ID); id != "" {
+		plan = runtimeResumePlanWithJobCommands(plan, id)
+	}
+	if pipeline := strings.TrimSpace(j.Pipeline); pipeline != "" {
+		plan.Pipeline = pipeline
+	}
+	if step := jobStepForRuntimeResumePlan(j, plan.Instance); step != nil {
+		plan.StepID = strings.TrimSpace(step.ID)
+		if strings.TrimSpace(plan.Agent) == "" {
+			plan.Agent = strings.TrimSpace(step.Target)
+		}
+	}
+	return plan
+}
+
+func runtimeResumePlanWithJobContextFromDisk(teamDir string, plan runtimeResumePlan, cache map[string]*job.Job) runtimeResumePlan {
+	id := job.IDFromInput(plan.Job)
+	if id == "" {
+		return plan
+	}
+	if cache == nil {
+		cache = map[string]*job.Job{}
+	}
+	j, ok := cache[id]
+	if !ok {
+		var err error
+		j, err = job.Read(teamDir, id)
+		if err != nil {
+			cache[id] = nil
+			return plan
+		}
+		cache[id] = j
+	}
+	return runtimeResumePlanWithJobContext(plan, j)
+}
+
+func jobStepForRuntimeResumePlan(j *job.Job, instance string) *job.Step {
+	if j == nil {
+		return nil
+	}
+	instance = strings.TrimSpace(instance)
+	if instance == "" {
+		return nil
+	}
+	for i := range j.Steps {
+		if strings.TrimSpace(j.Steps[i].Instance) == instance {
+			return &j.Steps[i]
+		}
+	}
+	if strings.TrimSpace(j.Instance) != instance {
+		return nil
+	}
+	var running *job.Step
+	for i := range j.Steps {
+		if j.Steps[i].Status != job.StatusRunning {
+			continue
+		}
+		if running != nil {
+			return nil
+		}
+		running = &j.Steps[i]
+	}
+	return running
+}
+
+func runtimeResumePlanMatchesStep(plan runtimeResumePlan, stepFilter string) bool {
+	stepFilter = strings.TrimSpace(stepFilter)
+	if stepFilter == "" {
+		return true
+	}
+	return strings.TrimSpace(plan.StepID) == stepFilter
 }
 
 func runtimeResumeRecommendation(meta *daemon.Metadata, plan runtimeResumePlan) (string, string) {
@@ -552,6 +653,12 @@ func renderRuntimeResumePlans(w fmtWriter, plans []runtimeResumePlan) {
 		fmt.Fprintf(w, "instance:                 %s\n", plan.Instance)
 		if plan.Job != "" {
 			fmt.Fprintf(w, "job:                      %s\n", plan.Job)
+		}
+		if plan.Pipeline != "" {
+			fmt.Fprintf(w, "pipeline:                 %s\n", plan.Pipeline)
+		}
+		if plan.StepID != "" {
+			fmt.Fprintf(w, "step:                     %s\n", plan.StepID)
 		}
 		if plan.Agent != "" {
 			fmt.Fprintf(w, "agent:                    %s\n", plan.Agent)

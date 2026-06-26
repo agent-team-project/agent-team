@@ -41,7 +41,7 @@ as the output directory instead.
 | `agent-team runtime ls` | List supported runtime profiles, availability, and capabilities |
 | `agent-team runtime probe` | Probe runtime selection, daemon readiness, Codex doctor health, optional Codex exec readiness, Codex socket reachability with `--exec-socket-check`, and write diagnostics with `--output`; aliases: `doctor`, `check` |
 | `agent-team adopt <instance>` | Adopt a live external runtime process into daemon metadata; `runtime adopt` remains available |
-| `agent-team resume-plan` | Show resume, attach, and log fallback commands from daemon metadata; filter by `--action`/`--runtime-stale`/`--unhealthy` or summarize with `--summary`; `runtime resume-plan` remains available |
+| `agent-team resume-plan` | Show resume, attach, and log fallback commands from daemon metadata; filter by `--step`, `--action`, `--runtime-stale`, or `--unhealthy`, or summarize with `--summary`; `runtime resume-plan` remains available |
 
 ## Instance Lifecycle
 
@@ -95,7 +95,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job ls` | List jobs; filter held state, hold deadlines, and mixed-runtime ownership; sort rows and cap output with `--limit` |
 | `agent-team job show <job-id>` | Show job detail, runtime metadata, queue, quarantine, status previews, and actions |
 | `agent-team job wait <job-id>` | Wait for lifecycle status or last event with `--event` |
-| `agent-team job resume-plan <job-id>` | Show runtime resume, attach, and log fallback commands for one job |
+| `agent-team job resume-plan <job-id>` | Show runtime resume, attach, and log fallback commands for one job; add `--step` for one pipeline stage |
 | `agent-team job snapshot <job-id>` | Capture one job's post-mortem metadata, events, queue ownership, state files, and optional log tails |
 | `agent-team job explain <job-id>` | Explain or watch every pipeline step's readiness, blockers, gates, and next actions |
 | `agent-team job approve <job-id>` | Approve a blocked manual pipeline gate, optionally advancing it |
@@ -179,7 +179,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline reject <pipeline>` | Reject blocked manual gates |
 | `agent-team pipeline skip <pipeline> --step <id>` | Mark matching non-running steps intentionally skipped |
 | `agent-team pipeline cancel <pipeline>` | Cancel non-terminal pipeline jobs without stopping instances |
-| `agent-team pipeline resume-plan <pipeline>` | Pipeline-scoped runtime recovery commands; filter by `--action`/`--runtime-stale`/`--unhealthy` or summarize with `--summary` |
+| `agent-team pipeline resume-plan <pipeline>` | Pipeline-scoped runtime recovery commands; filter by `--step`, `--action`, `--runtime-stale`, or `--unhealthy`, or summarize with `--summary` |
 | `agent-team pipeline send <pipeline>` | Send a mailbox message to pipeline-owned daemon-known instances |
 | `agent-team pipeline logs <pipeline>` | Read daemon-captured logs for pipeline-owned instances |
 | `agent-team pipeline events <pipeline>` | Read lifecycle events for pipeline-owned instances |
@@ -199,7 +199,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team doctor --all` | Validate team-owned workflow wiring; add `--strict-runtime` to fail on unavailable step runtime defaults |
 | `agent-team team overview <team>` | Scoped operator overview |
 | `agent-team team health <team>` | Scoped health |
-| `agent-team team resume-plan <team>` | Team-scoped runtime recovery commands; filter by `--action`/`--runtime-stale`/`--unhealthy` or summarize with `--summary`; `team runtime resume-plan` remains available |
+| `agent-team team resume-plan <team>` | Team-scoped runtime recovery commands; filter by `--step`, `--action`, `--runtime-stale`, or `--unhealthy`, or summarize with `--summary`; `team runtime resume-plan` remains available |
 | `agent-team team status <team>` | Scoped status |
 | `agent-team team monitor <team>` | Scoped dashboard |
 | `agent-team team run <team> <ticket>` | Create a team-owned job; `--dispatch` accepts workspace and runtime overrides |

@@ -3386,7 +3386,7 @@ target = "worker"
 	if len(plans) != 2 || plans[0].Instance != "manager-squ-940" || plans[1].Instance != "worker-squ-940" {
 		t.Fatalf("plans = %+v, want manager-squ-940 and worker-squ-940 only", plans)
 	}
-	if plans[0].Job != "squ-940" || plans[1].Job != "squ-940" || plans[1].JobLogsCommand != "agent-team job logs squ-940 --follow" || plans[1].JobLastMessageCommand != "agent-team job logs squ-940 --last-message" {
+	if plans[0].Job != "squ-940" || plans[0].Pipeline != "ticket_to_pr" || plans[0].StepID != "review" || plans[1].Job != "squ-940" || plans[1].Pipeline != "ticket_to_pr" || plans[1].StepID != "implement" || plans[1].JobLogsCommand != "agent-team job logs squ-940 --follow" || plans[1].JobLastMessageCommand != "agent-team job logs squ-940 --last-message" {
 		t.Fatalf("job-scoped commands not populated: %+v", plans)
 	}
 
@@ -3394,11 +3394,11 @@ target = "worker"
 	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	format.SetOut(formatOut)
 	format.SetErr(formatErr)
-	format.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--runtime", "codex", "--action", "logs", "--format", "{{.Instance}} {{.Runtime}} {{.RecommendedAction}} {{.JobLogsCommand}}"})
+	format.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--step", "implement", "--runtime", "codex", "--action", "logs", "--format", "{{.Instance}} {{.Runtime}} {{.RecommendedAction}} {{.Pipeline}} {{.StepID}} {{.JobLogsCommand}}"})
 	if err := format.Execute(); err != nil {
 		t.Fatalf("pipeline resume-plan format: %v\nstderr=%s", err, formatErr.String())
 	}
-	if got, want := strings.TrimSpace(formatOut.String()), "worker-squ-940 codex logs agent-team job logs squ-940 --follow"; got != want {
+	if got, want := strings.TrimSpace(formatOut.String()), "worker-squ-940 codex logs ticket_to_pr implement agent-team job logs squ-940 --follow"; got != want {
 		t.Fatalf("formatted pipeline resume-plan = %q, want %q", got, want)
 	}
 

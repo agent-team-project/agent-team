@@ -281,6 +281,7 @@ type teamRuntimeResumePlanCommandConfig struct {
 func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *cobra.Command {
 	var (
 		repo          string
+		stepID        string
 		statusFilters []string
 		runtimeFilter []string
 		actionFilters []string
@@ -315,7 +316,7 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 			if err != nil {
 				return err
 			}
-			plans, err := collectTeamRuntimeResumePlans(teamDir, args[0], statusFilters, runtimeFilter, actionFilters, staleOnly || runtimeStale, unhealthyOnly)
+			plans, err := collectTeamRuntimeResumePlans(teamDir, args[0], stepID, statusFilters, runtimeFilter, actionFilters, staleOnly || runtimeStale, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", cfg.ErrorName, err)
 				return exitErr(1)
@@ -339,6 +340,7 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&stepID, "step", "", "Only include plans for this pipeline step id.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
@@ -351,7 +353,7 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 	return cmd
 }
 
-func collectTeamRuntimeResumePlans(teamDir, name string, statusFilters []string, runtimeFilters []string, actionFilters []string, staleOnly bool, unhealthyOnly bool) ([]runtimeResumePlan, error) {
+func collectTeamRuntimeResumePlans(teamDir, name string, stepFilter string, statusFilters []string, runtimeFilters []string, actionFilters []string, staleOnly bool, unhealthyOnly bool) ([]runtimeResumePlan, error) {
 	top, team, err := loadTopologyTeam(teamDir, name)
 	if err != nil {
 		return nil, err
@@ -374,6 +376,7 @@ func collectTeamRuntimeResumePlans(teamDir, name string, statusFilters []string,
 	}
 	selected := teamMetadata(top, team, metas)
 	plans := make([]runtimeResumePlan, 0, len(selected))
+	jobCache := map[string]*job.Job{}
 	for _, meta := range selected {
 		if meta == nil {
 			continue
@@ -386,7 +389,11 @@ func collectTeamRuntimeResumePlans(teamDir, name string, statusFilters []string,
 			continue
 		}
 		plan := runtimeResumePlanFromMetadata(meta)
+		plan = runtimeResumePlanWithJobContextFromDisk(teamDir, plan, jobCache)
 		if len(actionSet) > 0 && !actionSet[plan.RecommendedAction] {
+			continue
+		}
+		if !runtimeResumePlanMatchesStep(plan, stepFilter) {
 			continue
 		}
 		if staleOnly && !plan.Stale {

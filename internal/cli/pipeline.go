@@ -1968,6 +1968,7 @@ func newPipelineCancelCmd() *cobra.Command {
 func newPipelineResumePlanCmd() *cobra.Command {
 	var (
 		repo          string
+		stepID        string
 		statusFilters []string
 		runtimeFilter []string
 		actionFilters []string
@@ -2008,7 +2009,7 @@ func newPipelineResumePlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			plans, err := collectPipelineRuntimeResumePlans(teamDir, pipelineName, statusFilters, runtimeFilter, actionFilters, staleOnly || runtimeStale, unhealthyOnly)
+			plans, err := collectPipelineRuntimeResumePlans(teamDir, pipelineName, stepID, statusFilters, runtimeFilter, actionFilters, staleOnly || runtimeStale, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: %v\n", err)
 				return exitErr(1)
@@ -2032,6 +2033,7 @@ func newPipelineResumePlanCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&stepID, "step", "", "Only include plans for this pipeline step id.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
@@ -4912,6 +4914,7 @@ func pipelineQueueItemActions(pipeline string, item *daemon.QueueItem, now time.
 type pipelineOwnedMetadata struct {
 	Metadata       []*daemon.Metadata
 	JobForInstance map[string]string
+	JobByInstance  map[string]*job.Job
 }
 
 func collectPipelineOwnedMetadata(teamDir, pipeline string, metas []*daemon.Metadata) (pipelineOwnedMetadata, error) {
@@ -4929,6 +4932,7 @@ func collectPipelineOwnedMetadata(teamDir, pipeline string, metas []*daemon.Meta
 
 	selected := map[string]*daemon.Metadata{}
 	jobForInstance := map[string]string{}
+	jobByInstance := map[string]*job.Job{}
 	for _, j := range jobs {
 		jobID := job.NormalizeID(j.ID)
 		for _, meta := range metadataForResumePlanJob(metas, byInstance, j) {
@@ -4941,6 +4945,9 @@ func collectPipelineOwnedMetadata(teamDir, pipeline string, metas []*daemon.Meta
 			if jobID != "" && strings.TrimSpace(meta.Job) == "" && jobForInstance[meta.Instance] == "" {
 				jobForInstance[meta.Instance] = jobID
 			}
+			if jobByInstance[meta.Instance] == nil {
+				jobByInstance[meta.Instance] = j
+			}
 		}
 	}
 	names := make([]string, 0, len(selected))
@@ -4952,10 +4959,10 @@ func collectPipelineOwnedMetadata(teamDir, pipeline string, metas []*daemon.Meta
 	for _, name := range names {
 		out = append(out, selected[name])
 	}
-	return pipelineOwnedMetadata{Metadata: out, JobForInstance: jobForInstance}, nil
+	return pipelineOwnedMetadata{Metadata: out, JobForInstance: jobForInstance, JobByInstance: jobByInstance}, nil
 }
 
-func collectPipelineRuntimeResumePlans(teamDir, pipeline string, statusFilters []string, runtimeFilters []string, actionFilters []string, staleOnly bool, unhealthyOnly bool) ([]runtimeResumePlan, error) {
+func collectPipelineRuntimeResumePlans(teamDir, pipeline string, stepFilter string, statusFilters []string, runtimeFilters []string, actionFilters []string, staleOnly bool, unhealthyOnly bool) ([]runtimeResumePlan, error) {
 	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
 	if err != nil {
 		return nil, err
@@ -4987,12 +4994,17 @@ func collectPipelineRuntimeResumePlans(teamDir, pipeline string, statusFilters [
 			continue
 		}
 		plan := runtimeResumePlanFromMetadata(meta)
-		if strings.TrimSpace(plan.Job) == "" {
+		if j := owned.JobByInstance[meta.Instance]; j != nil {
+			plan = runtimeResumePlanWithJobContext(plan, j)
+		} else if strings.TrimSpace(plan.Job) == "" {
 			if jobID := owned.JobForInstance[meta.Instance]; jobID != "" {
 				plan = runtimeResumePlanWithJobCommands(plan, jobID)
 			}
 		}
 		if len(actionSet) > 0 && !actionSet[plan.RecommendedAction] {
+			continue
+		}
+		if !runtimeResumePlanMatchesStep(plan, stepFilter) {
 			continue
 		}
 		if staleOnly && !plan.Stale {
