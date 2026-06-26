@@ -103,6 +103,7 @@ Flags:
       --no-resume         Leave the instance in stopped state when the runtime exits (default: re-dispatch via the daemon).
       --phase strings     Log compatibility mode: only attach to instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --runtime strings   Log compatibility mode: only attach to instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale     Log compatibility mode: only attach to instances whose recorded runtime PID is no longer live.
       --since string      Log compatibility mode with --no-follow: only print the log if it was modified since this duration ago (for example 10m, 24h) or RFC3339 timestamp.
       --stale             Log compatibility mode: only attach to instances whose status.toml is stale.
       --status strings    Log compatibility mode: only attach to instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.

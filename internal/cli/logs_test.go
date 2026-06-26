@@ -735,6 +735,36 @@ description = "fresh"
 	}
 }
 
+func TestAttachRuntimeStaleFilterNoFollowUsesLocalMetadataWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "crashed", Agent: "worker", Runtime: "codex", Status: daemon.StatusCrashed, PID: 99999998, StartedAt: now.Add(-2 * time.Minute)},
+		{Instance: "runtime-stale", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, StartedAt: now.Add(-time.Minute)},
+		{Instance: "fresh", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+		writeChildLogForTest(t, root, meta.Instance, meta.Instance+" old\n"+meta.Instance+" last\n")
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"attach", "--runtime-stale", "--no-follow", "--tail", "1", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("attach --runtime-stale local: %v\nstderr=%s", err, stderr.String())
+	}
+	if got, want := out.String(), "runtime-stale        | runtime-stale last\n"; got != want {
+		t.Fatalf("attach --runtime-stale output = %q, want %q", got, want)
+	}
+}
+
 func TestAttachNoFollowGrepUsesLocalLogWhenDaemonStopped(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -1528,10 +1558,12 @@ func TestLogsFiltersRejectSingleInstanceAndDaemonLog(t *testing.T) {
 		{"logs", "manager", "--agent", "manager"},
 		{"logs", "manager", "--phase", "blocked"},
 		{"logs", "manager", "--stale"},
+		{"logs", "manager", "--runtime-stale"},
 		{"logs", "manager", "--unhealthy"},
 		{"logs", "--daemon", "--agent", "manager"},
 		{"logs", "--daemon", "--phase", "blocked"},
 		{"logs", "--daemon", "--stale"},
+		{"logs", "--daemon", "--runtime-stale"},
 		{"logs", "--daemon", "--unhealthy"},
 	} {
 		cmd := NewRootCmd()
@@ -1751,7 +1783,7 @@ func TestLogsRequiresInstanceUnlessAll(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected validation error")
 	}
-	if !strings.Contains(stderr.String(), "instance is required unless --all, --latest, --last, --status, --agent, --phase, --stale, or --unhealthy is set") {
+	if !strings.Contains(stderr.String(), "instance is required unless --all, --latest, --last, --status, --runtime, --agent, --phase, --stale, --runtime-stale, or --unhealthy is set") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
@@ -2041,15 +2073,16 @@ func TestAttachLatestValidation(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"attach"}, "instance is required unless --all, --latest, --last, --status, --runtime, --agent, --phase, --stale, or --unhealthy is set"},
+		{[]string{"attach"}, "instance is required unless --all, --latest, --last, --status, --runtime, --agent, --phase, --stale, --runtime-stale, or --unhealthy is set"},
 		{[]string{"attach", "manager", "--all"}, "--all cannot be combined with an instance name"},
 		{[]string{"attach", "manager", "--latest"}, "--latest cannot be combined with an instance name"},
 		{[]string{"attach", "manager", "--last", "2"}, "--last cannot be combined with an instance name"},
-		{[]string{"attach", "manager", "--runtime", "codex"}, "--status, --runtime, --agent, --phase, --stale, and --unhealthy cannot be combined with an instance name"},
-		{[]string{"attach", "manager", "--agent", "worker"}, "--status, --runtime, --agent, --phase, --stale, and --unhealthy cannot be combined with an instance name"},
-		{[]string{"attach", "manager", "--phase", "blocked"}, "--status, --runtime, --agent, --phase, --stale, and --unhealthy cannot be combined with an instance name"},
-		{[]string{"attach", "manager", "--stale"}, "--status, --runtime, --agent, --phase, --stale, and --unhealthy cannot be combined with an instance name"},
-		{[]string{"attach", "manager", "--unhealthy"}, "--status, --runtime, --agent, --phase, --stale, and --unhealthy cannot be combined with an instance name"},
+		{[]string{"attach", "manager", "--runtime", "codex"}, "--status, --runtime, --agent, --phase, --stale, --runtime-stale, and --unhealthy cannot be combined with an instance name"},
+		{[]string{"attach", "manager", "--agent", "worker"}, "--status, --runtime, --agent, --phase, --stale, --runtime-stale, and --unhealthy cannot be combined with an instance name"},
+		{[]string{"attach", "manager", "--phase", "blocked"}, "--status, --runtime, --agent, --phase, --stale, --runtime-stale, and --unhealthy cannot be combined with an instance name"},
+		{[]string{"attach", "manager", "--stale"}, "--status, --runtime, --agent, --phase, --stale, --runtime-stale, and --unhealthy cannot be combined with an instance name"},
+		{[]string{"attach", "manager", "--runtime-stale"}, "--status, --runtime, --agent, --phase, --stale, --runtime-stale, and --unhealthy cannot be combined with an instance name"},
+		{[]string{"attach", "manager", "--unhealthy"}, "--status, --runtime, --agent, --phase, --stale, --runtime-stale, and --unhealthy cannot be combined with an instance name"},
 		{[]string{"attach", "--last", "-1"}, "--last must be >= 0"},
 		{[]string{"attach", "--latest", "--last", "2"}, "choose one of --latest or --last"},
 		{[]string{"attach", "--latest", "--all"}, "--latest cannot be combined with --all"},

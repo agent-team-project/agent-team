@@ -359,7 +359,7 @@ func runLogs(cmd *cobra.Command, target string, args []string, opts logsOptions)
 		if opts.Daemon {
 			return runDaemonLog(cmd, target, opts)
 		}
-		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team logs: instance is required unless --all, --latest, --last, --status, --agent, --phase, --stale, or --unhealthy is set.")
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team logs: instance is required unless --all, --latest, --last, --status, --runtime, --agent, --phase, --stale, --runtime-stale, or --unhealthy is set.")
 		return exitErr(2)
 	}
 	if opts.List {
