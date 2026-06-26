@@ -47,6 +47,7 @@ func NormalizeGitHub(body []byte) (*Event, error) {
 	action := firstString(raw, "action")
 	pr := object(raw["pull_request"])
 	issue := object(raw["issue"])
+	issuePR := object(issue["pull_request"])
 	repo := object(raw["repository"])
 	comment := object(raw["comment"])
 	eventType := githubEventType(action, pr, issue, comment)
@@ -54,10 +55,22 @@ func NormalizeGitHub(body []byte) (*Event, error) {
 		"source": "github",
 		"action": action,
 	}
+	prNumber := firstNestedString(pr, []string{"number"})
+	if prNumber == "" && len(issuePR) > 0 {
+		prNumber = firstNestedString(issue, []string{"number"})
+	}
+	prURL := firstNestedString(pr, []string{"html_url"}, []string{"url"})
+	if prURL == "" && len(issuePR) > 0 {
+		prURL = firstNestedString(issuePR, []string{"html_url"}, []string{"url"})
+	}
+	title := firstNestedString(pr, []string{"title"}, []string{"name"})
+	if title == "" && len(issuePR) > 0 {
+		title = firstNestedString(issue, []string{"title"}, []string{"name"})
+	}
 	copyIf(payload, "repository", firstNestedString(repo, []string{"full_name"}, []string{"name"}))
-	copyIf(payload, "pr", firstNestedString(pr, []string{"number"}))
-	copyIf(payload, "pr_url", firstNestedString(pr, []string{"html_url"}, []string{"url"}))
-	copyIf(payload, "title", firstNestedString(pr, []string{"title"}, []string{"name"}))
+	copyIf(payload, "pr", prNumber)
+	copyIf(payload, "pr_url", prURL)
+	copyIf(payload, "title", title)
 	copyIf(payload, "branch", firstNestedString(pr, []string{"head", "ref"}))
 	copyIf(payload, "base", firstNestedString(pr, []string{"base", "ref"}))
 	copyIf(payload, "comment_url", firstNestedString(comment, []string{"html_url"}, []string{"url"}))

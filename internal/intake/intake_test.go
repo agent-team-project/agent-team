@@ -49,3 +49,33 @@ func TestNormalizeGitHubPRMerged(t *testing.T) {
 		t.Fatalf("payload = %+v", ev.Payload)
 	}
 }
+
+func TestNormalizeGitHubPRComment(t *testing.T) {
+	ev, err := NormalizeGitHub([]byte(`{
+  "action": "created",
+  "repository": {"full_name": "acme/repo"},
+  "issue": {
+    "number": 109,
+    "title": "Review implementation",
+    "pull_request": {
+      "html_url": "https://github.com/acme/repo/pull/109",
+      "url": "https://api.github.com/repos/acme/repo/pulls/109"
+    }
+  },
+  "comment": {
+    "html_url": "https://github.com/acme/repo/pull/109#issuecomment-1"
+  }
+}`))
+	if err != nil {
+		t.Fatalf("NormalizeGitHub: %v", err)
+	}
+	if ev.Type != "pr.commented" {
+		t.Fatalf("type = %q", ev.Type)
+	}
+	if ev.Payload["pr"] != "109" || ev.Payload["pr_url"] != "https://github.com/acme/repo/pull/109" || ev.Payload["issue"] != "109" {
+		t.Fatalf("payload = %+v", ev.Payload)
+	}
+	if ev.Payload["title"] != "Review implementation" || ev.Payload["comment_url"] != "https://github.com/acme/repo/pull/109#issuecomment-1" {
+		t.Fatalf("payload = %+v", ev.Payload)
+	}
+}

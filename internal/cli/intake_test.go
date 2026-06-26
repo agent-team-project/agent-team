@@ -2274,6 +2274,60 @@ func TestIntakeGitHubReconcilesOwningJob(t *testing.T) {
 	}
 }
 
+func TestIntakeGitHubPRCommentReconcilesOwningJob(t *testing.T) {
+	target, _, cleanup := setupIntakePipelineRepo(t)
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+	j := mustNewJob(t, "SQU-109", "worker")
+	j.Status = job.StatusRunning
+	j.PR = "https://github.com/acme/repo/pull/109"
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	payload := `{"action":"created","repository":{"full_name":"acme/repo"},"issue":{"number":109,"title":"Review implementation","pull_request":{"html_url":"https://github.com/acme/repo/pull/109","url":"https://api.github.com/repos/acme/repo/pulls/109"}},"comment":{"html_url":"https://github.com/acme/repo/pull/109#issuecomment-1"}}`
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "github", "--payload", payload, "--target", target, "--reconcile-job", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake github pr comment reconcile: %v\nstderr=%s", err, stderr.String())
+	}
+	var result intakePublishResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode intake github comment json: %v\nbody=%s", err, out.String())
+	}
+	if result.Event == nil || result.Event.Type != "pr.commented" || result.Event.Payload["pr"] != "109" {
+		t.Fatalf("event = %+v", result.Event)
+	}
+	if result.Reconcile == nil || result.Reconcile.Job == nil {
+		t.Fatalf("missing reconcile result: %+v", result)
+	}
+	if result.Reconcile.Job.ID != "squ-109" || result.Reconcile.Job.Status != job.StatusRunning || result.Reconcile.MatchedBy != "pr_url" {
+		t.Fatalf("reconcile = %+v", result.Reconcile)
+	}
+	updated, err := job.Read(teamDir, "squ-109")
+	if err != nil {
+		t.Fatalf("read reconciled job: %v", err)
+	}
+	if updated.Status != job.StatusRunning || updated.LastEvent != "pr.commented" || updated.LastStatus != "pull request commented" {
+		t.Fatalf("updated job = %+v", updated)
+	}
+	events, err := job.ListEvents(teamDir, "squ-109")
+	if err != nil {
+		t.Fatalf("read job events: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatalf("events = %+v", events)
+	}
+	for _, ev := range events {
+		if ev.Type != "pr.commented" || ev.Actor != "github" || ev.Data["pr_url"] != "https://github.com/acme/repo/pull/109" {
+			t.Fatalf("event = %+v, all events = %+v", ev, events)
+		}
+	}
+}
+
 func TestIntakeGitHubDryRunReconcileJobDoesNotMutate(t *testing.T) {
 	target := t.TempDir()
 	initInto(t, target)
