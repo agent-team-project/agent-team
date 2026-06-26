@@ -641,6 +641,117 @@ func TestRuntimeResumePlanClaudeText(t *testing.T) {
 	}
 }
 
+func TestRuntimeResumePlanMarksStaleRunningMetadata(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	oldPIDLiveCheck := daemon.PidLiveCheck
+	daemon.PidLiveCheck = func(pid int) bool {
+		return pid == 99
+	}
+	t.Cleanup(func() {
+		daemon.PidLiveCheck = oldPIDLiveCheck
+	})
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{
+			Instance:      "live-manager",
+			Agent:         "manager",
+			Runtime:       string(runtimebin.KindClaude),
+			RuntimeBinary: "claude",
+			Workspace:     tmp,
+			PID:           99,
+			SessionID:     "sid-live",
+			StartedAt:     now,
+			Status:        daemon.StatusRunning,
+		},
+		{
+			Instance:      "stale-manager",
+			Agent:         "manager",
+			Runtime:       string(runtimebin.KindClaude),
+			RuntimeBinary: "claude",
+			Workspace:     tmp,
+			PID:           4242,
+			SessionID:     "sid-stale",
+			StartedAt:     now,
+			Status:        daemon.StatusRunning,
+		},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata: %v", err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan json: %v\nstderr=%s", err, errOut.String())
+	}
+	var plans []runtimeResumePlan
+	if err := json.Unmarshal(out.Bytes(), &plans); err != nil {
+		t.Fatalf("decode resume plans: %v\nbody=%s", err, out.String())
+	}
+	byInstance := map[string]runtimeResumePlan{}
+	for _, plan := range plans {
+		byInstance[plan.Instance] = plan
+	}
+	live := byInstance["live-manager"]
+	if live.Stale || live.RecommendedAction != "attach" || live.RecommendedCommand != "agent-team attach live-manager --dry-run" {
+		t.Fatalf("live plan = %+v", live)
+	}
+	stale := byInstance["stale-manager"]
+	if !stale.Stale || stale.RecommendedAction != "start" || stale.RecommendedCommand != "agent-team start stale-manager" {
+		t.Fatalf("stale plan = %+v", stale)
+	}
+	if !strings.Contains(stale.Detail, "recorded running pid is not live") {
+		t.Fatalf("stale detail = %q", stale.Detail)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"runtime", "resume-plan", "stale-manager", "--target", tmp})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan text: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "stale:                    yes") ||
+		!strings.Contains(textOut.String(), "recommended_command:      agent-team start stale-manager") {
+		t.Fatalf("stale text = %s", textOut.String())
+	}
+
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--summary", "--json"})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var counts runtimeResumeSummary
+	if err := json.Unmarshal(summaryOut.Bytes(), &counts); err != nil {
+		t.Fatalf("decode resume-plan summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if counts.Total != 2 || counts.Stale != 1 || counts.Actions["start"] != 1 || counts.Actions["attach"] != 1 {
+		t.Fatalf("resume-plan summary = %+v", counts)
+	}
+
+	filtered := NewRootCmd()
+	filteredOut, filteredErr := &bytes.Buffer{}, &bytes.Buffer{}
+	filtered.SetOut(filteredOut)
+	filtered.SetErr(filteredErr)
+	filtered.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--action", "start", "--format", "{{.Instance}} {{.Stale}} {{.RecommendedCommand}}"})
+	if err := filtered.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan action filter: %v\nstderr=%s", err, filteredErr.String())
+	}
+	if got := strings.TrimSpace(filteredOut.String()); got != "stale-manager true agent-team start stale-manager" {
+		t.Fatalf("filtered stale plan = %q", got)
+	}
+}
+
 func TestRuntimeResumePlanCodexJobJSON(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

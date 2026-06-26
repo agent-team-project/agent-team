@@ -24,6 +24,7 @@ type runtimeResumePlan struct {
 	Status                string `json:"status"`
 	PID                   int    `json:"pid,omitempty"`
 	SessionID             string `json:"session_id,omitempty"`
+	Stale                 bool   `json:"stale,omitempty"`
 	ManagedResume         bool   `json:"managed_resume"`
 	CanManagedResume      bool   `json:"can_managed_resume"`
 	DirectResume          bool   `json:"direct_resume"`
@@ -48,6 +49,7 @@ type runtimeResumeSummary struct {
 	ManagedResume    int            `json:"managed_resume"`
 	CanManagedResume int            `json:"can_managed_resume"`
 	DirectResume     int            `json:"direct_resume"`
+	Stale            int            `json:"stale"`
 }
 
 func newRuntimeResumePlanCmd() *cobra.Command {
@@ -304,6 +306,7 @@ func runtimeResumePlanFromMetadata(meta *daemon.Metadata) runtimeResumePlan {
 	canManagedResume := managedResume && sessionID != ""
 	directResume := sessionID != ""
 	instance := strings.TrimSpace(meta.Instance)
+	stale := runtimeResumeMetadataIsStale(meta)
 
 	plan := runtimeResumePlan{
 		Instance:         instance,
@@ -314,6 +317,7 @@ func runtimeResumePlanFromMetadata(meta *daemon.Metadata) runtimeResumePlan {
 		Status:           string(meta.Status),
 		PID:              meta.PID,
 		SessionID:        sessionID,
+		Stale:            stale,
 		ManagedResume:    managedResume,
 		CanManagedResume: canManagedResume,
 		DirectResume:     directResume,
@@ -328,7 +332,7 @@ func runtimeResumePlanFromMetadata(meta *daemon.Metadata) runtimeResumePlan {
 			plan.LastMessageCommand = "agent-team logs " + instance + " --last-message"
 		}
 	}
-	if canManagedResume && meta.Status != daemon.StatusRunning {
+	if canManagedResume && (meta.Status != daemon.StatusRunning || stale) {
 		plan.StartCommand = "agent-team start " + instance
 	}
 	if plan.Job != "" {
@@ -337,6 +341,13 @@ func runtimeResumePlanFromMetadata(meta *daemon.Metadata) runtimeResumePlan {
 	plan.RecommendedCommand, plan.RecommendedAction = runtimeResumeRecommendation(meta, plan)
 	plan.Detail = runtimeResumePlanDetail(meta, plan)
 	return plan
+}
+
+func runtimeResumeMetadataIsStale(meta *daemon.Metadata) bool {
+	if meta == nil || meta.Status != daemon.StatusRunning {
+		return false
+	}
+	return meta.PID > 0 && !daemon.PidLiveCheck(meta.PID)
 }
 
 func runtimeResumePlanWithJobCommands(plan runtimeResumePlan, jobID string) runtimeResumePlan {
@@ -379,10 +390,19 @@ func runtimeResumeRecommendation(meta *daemon.Metadata, plan runtimeResumePlan) 
 
 func runtimeResumePlanDetail(meta *daemon.Metadata, plan runtimeResumePlan) string {
 	if !plan.DirectResume {
+		if plan.Stale {
+			return "recorded running pid is not live; no session id recorded; follow logs or create a new run"
+		}
 		return "no session id recorded; follow logs or create a new run"
 	}
 	if !plan.ManagedResume {
+		if plan.Stale {
+			return lifecycleStaleUnsupportedResumeDetailForInstance(meta, plan.Instance)
+		}
 		return lifecycleUnsupportedResumeDetailForInstance(meta, plan.Instance)
+	}
+	if plan.Stale {
+		return "recorded running pid is not live; managed start can reconcile and resume the recorded runtime session under daemon ownership"
 	}
 	if meta.Status == daemon.StatusRunning {
 		return "managed attach can stop the daemon child, open the session, and resume daemon ownership afterward"
@@ -486,6 +506,9 @@ func renderRuntimeResumePlans(w fmtWriter, plans []runtimeResumePlan) {
 		if plan.SessionID != "" {
 			fmt.Fprintf(w, "session_id:               %s\n", plan.SessionID)
 		}
+		if plan.Stale {
+			fmt.Fprintf(w, "stale:                    yes\n")
+		}
 		fmt.Fprintf(w, "managed_resume:           %s\n", runtimeYesNo(plan.ManagedResume))
 		fmt.Fprintf(w, "can_managed_resume:       %s\n", runtimeYesNo(plan.CanManagedResume))
 		fmt.Fprintf(w, "direct_resume:            %s\n", runtimeYesNo(plan.DirectResume))
@@ -551,6 +574,9 @@ func summarizeRuntimeResumePlans(plans []runtimeResumePlan) runtimeResumeSummary
 		if plan.DirectResume {
 			out.DirectResume++
 		}
+		if plan.Stale {
+			out.Stale++
+		}
 	}
 	return out
 }
@@ -563,6 +589,7 @@ func renderRuntimeResumeSummary(w fmtWriter, summary runtimeResumeSummary) {
 	fmt.Fprintf(w, "managed_resume:     %d\n", summary.ManagedResume)
 	fmt.Fprintf(w, "can_managed_resume: %d\n", summary.CanManagedResume)
 	fmt.Fprintf(w, "direct_resume:      %d\n", summary.DirectResume)
+	fmt.Fprintf(w, "stale:              %d\n", summary.Stale)
 }
 
 func runtimeResumeCountMapText(counts map[string]int, preferred []string) string {

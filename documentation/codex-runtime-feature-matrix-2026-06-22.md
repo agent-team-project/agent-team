@@ -35,9 +35,9 @@ agent-team job step doc-402 implement --status done --advance --json
 ```
 
 The pipeline model works for declaration, job creation, state inspection, and
-manual step mutation. It still has an advancement gap: fresh queued first steps
-are visible to `job advance --dry-run`, but `pipeline advance`, `team advance`,
-and `tick` do not advance them.
+manual step mutation. A later follow-up fixed the queued first-step visibility
+gap: fresh queued steps with no owner are now counted as advanceable by job
+triage, pipeline status, overview/next hints, and the drain loop.
 
 ## Matrix
 
@@ -52,7 +52,7 @@ and `tick` do not advance them.
 | Actual job dispatch | `job create DOC-701`, `job dispatch doc-701 --workspace worktree`, `wait`, `job show` | Partially passed. Dispatch created `worker-doc-701`, branch, and worktree, but the ephemeral instance was removed after exit and the job remained `running`. |
 | Worktree cleanup | `job cleanup doc-701 --merged --dry-run`, then actual cleanup | Passed mechanically. It removed only the job-owned worktree and branch. It also allowed cleanup while the job status was still `running`. |
 | Queue | `queue doctor/ls/show/retry/drop/drain/prune`, `job queue ...`, `team queue ...`, quarantine `ls/show/restore/drop` | Passed. Doctor detected invalid queue files, quarantine worked, retry reset a dead item to pending, and daemon recovery dispatched a persisted pending item. |
-| Pipelines | `pipeline ls/show/doctor/run/jobs/status/ready/advance`, `job step --advance`, `team advance`, `tick` | Mixed. Inspection and manual step changes worked; automatic advancement skipped fresh queued first steps. |
+| Pipelines | `pipeline ls/show/doctor/run/jobs/status/ready/advance`, `job step --advance`, `team advance`, `tick` | Passed after follow-up. Inspection and manual step changes worked; fresh queued first steps are now visible as advanceable work to status, overview, and drain. |
 | Intake | `intake linear/github/schedule` dry-runs, `intake serve`, `/healthz`, `/linear`, `/github`, `deliveries`, `summary`, `doctor`, `replay`, `prune` | Passed. HTTP dry-run server recorded deliveries and replay previews worked. |
 | Channels | `channel publish/ls/show/rm` | Passed with valid `#standup` names. Plain `standup` is correctly rejected. |
 | Lifecycle aliases | `start/up`, `stop/down`, `kill`, `restart`, `reload`, `prune`, `rm`, `plan`, `sync`, `tick`, `repair`, `wait` | Passed in dry-run or safe actual paths. |

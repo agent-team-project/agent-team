@@ -240,7 +240,9 @@ log follow, and Codex last-message commands. Job-linked metadata also includes
 `job attach` and `job logs` variants so recovery can stay scoped to the durable
 work unit. Use `--action start|attach|resume|logs` when scripts or operators
 only need one recovery class, and add `--summary` to count matching plans by
-recommended action, runtime, and lifecycle status.
+recommended action, runtime, lifecycle status, and stale running metadata.
+When a positive recorded `running` PID is no longer live, resume-plan marks the
+row as `stale` and recommends the recovery path that can reconcile or resume it.
 
 The Codex adapter sets `AGENT_TEAM_*` variables through Codex shell-environment policy options, so status, inbox, and channel scripts can find the repo team root and state directory without broadly inheriting the parent process environment.
 
