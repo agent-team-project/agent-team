@@ -416,6 +416,8 @@ func TestRuntimeProbeRejectsInvalidWaitFlags(t *testing.T) {
 	}{
 		{name: "negative timeout", args: []string{"runtime", "probe", "--timeout", "-1s"}, want: "--timeout must be >= 0"},
 		{name: "zero daemon interval", args: []string{"runtime", "probe", "--daemon-interval", "0s"}, want: "--daemon-interval must be > 0"},
+		{name: "exec prompt conflict", args: []string{"runtime", "probe", "--exec-prompt", "hello", "--exec-prompt-file", "prompt.txt"}, want: "provide exec prompt using only one of --exec-prompt or --exec-prompt-file"},
+		{name: "missing exec prompt file", args: []string{"runtime", "probe", "--exec-prompt-file", filepath.Join(t.TempDir(), "missing.txt")}, want: "--exec-prompt-file:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := NewRootCmd()
@@ -488,6 +490,10 @@ func TestRuntimeProbeCodexExecProbeSuccess(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
 	appendRuntimeConfigForRuntimeTest(t, tmp, "codex", "codex-dev")
+	execPromptFile := filepath.Join(tmp, "exec-prompt.txt")
+	if err := os.WriteFile(execPromptFile, []byte("Reply exactly with: custom runtime probe ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	resolvedTmp, err := filepath.EvalSymlinks(tmp)
 	if err != nil {
 		t.Fatalf("eval symlinks: %v", err)
@@ -509,7 +515,7 @@ func TestRuntimeProbeCodexExecProbeSuccess(t *testing.T) {
 		if cwd != resolvedTmp {
 			t.Fatalf("exec cwd = %q, want %q", cwd, resolvedTmp)
 		}
-		if !strings.Contains(stdin, "agent-team runtime probe ok") {
+		if !strings.Contains(stdin, "custom runtime probe ok") {
 			t.Fatalf("exec stdin = %q, want probe prompt", stdin)
 		}
 		if len(args) == 0 || args[0] != "exec" || args[len(args)-1] != "-" {
@@ -531,7 +537,7 @@ func TestRuntimeProbeCodexExecProbeSuccess(t *testing.T) {
 		if lastMessage == "" {
 			t.Fatalf("exec args = %#v, missing last-message path", args)
 		}
-		if err := os.WriteFile(lastMessage, []byte("agent-team runtime probe ok\n"), 0o644); err != nil {
+		if err := os.WriteFile(lastMessage, []byte("custom runtime probe ok\n"), 0o644); err != nil {
 			t.Fatalf("write last-message: %v", err)
 		}
 		return runtimeProbeExecCommandResult{
@@ -544,7 +550,7 @@ func TestRuntimeProbeCodexExecProbeSuccess(t *testing.T) {
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"runtime", "probe", "--target", tmp, "--skip-doctor", "--exec", "--json"})
+	cmd.SetArgs([]string{"runtime", "probe", "--target", tmp, "--skip-doctor", "--exec", "--exec-prompt-file", execPromptFile, "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("runtime probe exec failed: %v\nstderr=%s", err, stderr.String())
 	}
@@ -555,7 +561,7 @@ func TestRuntimeProbeCodexExecProbeSuccess(t *testing.T) {
 	if !result.OK || result.ExecProbe == nil || !result.ExecProbe.LastMessagePresent {
 		t.Fatalf("result = %+v, want successful exec probe", result)
 	}
-	if got := result.ExecProbe.LastMessage; got != "agent-team runtime probe ok" {
+	if got := result.ExecProbe.LastMessage; got != "custom runtime probe ok" {
 		t.Fatalf("last message = %q", got)
 	}
 	if !containsString(result.Actions, "codex doctor --summary") {

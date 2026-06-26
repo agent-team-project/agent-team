@@ -37,6 +37,7 @@ func newRuntimeProbeCmd() *cobra.Command {
 		skipDoctor     bool
 		execProbe      bool
 		execPrompt     string
+		execPromptFile string
 		output         string
 		requireDaemon  bool
 		waitDaemon     bool
@@ -66,6 +67,11 @@ func newRuntimeProbeCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime probe: --daemon-interval must be > 0.")
 				return exitErr(2)
 			}
+			resolvedExecPrompt, err := runtimeProbeExecPromptText(cmd, execPrompt, execPromptFile)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime probe: %v\n", err)
+				return exitErr(2)
+			}
 			tmpl, err := parseRuntimeProbeFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime probe: %v\n", err)
@@ -79,7 +85,7 @@ func newRuntimeProbeCmd() *cobra.Command {
 				DaemonInterval: daemonInterval,
 				SkipDoctor:     skipDoctor,
 				Exec:           execProbe,
-				ExecPrompt:     execPrompt,
+				ExecPrompt:     resolvedExecPrompt,
 				RequireDaemon:  requireDaemon,
 				WaitDaemon:     waitDaemon,
 				StartDaemon:    startDaemon,
@@ -123,11 +129,33 @@ func newRuntimeProbeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "Skip runtime-native diagnostics such as codex doctor --json.")
 	cmd.Flags().BoolVar(&execProbe, "exec", false, "Run a minimal runtime-native execution probe. Currently supports Codex one-shot execution.")
 	cmd.Flags().StringVar(&execPrompt, "exec-prompt", defaultRuntimeProbeExecPrompt, "Prompt sent to the runtime when --exec is set.")
+	cmd.Flags().StringVar(&execPromptFile, "exec-prompt-file", "", "Read --exec probe prompt from a file, or '-' for stdin.")
 	cmd.Flags().StringVar(&output, "output", "", "Write the full probe result as pretty JSON to this file.")
 	cmd.Flags().BoolVar(&requireDaemon, "require-daemon", false, "Fail when the repo daemon is not running and ready.")
 	cmd.Flags().BoolVar(&waitDaemon, "wait-daemon", false, "Wait for the repo daemon to become ready before reporting daemon health.")
 	cmd.Flags().BoolVar(&startDaemon, "start-daemon", false, "Start the detached repo daemon before reporting daemon health when it is not ready.")
 	return cmd
+}
+
+func runtimeProbeExecPromptText(cmd *cobra.Command, prompt, promptFile string) (string, error) {
+	fileSet := strings.TrimSpace(promptFile) != ""
+	promptSet := cmd != nil && cmd.Flags().Changed("exec-prompt")
+	switch {
+	case promptSet && fileSet:
+		return "", fmt.Errorf("provide exec prompt using only one of --exec-prompt or --exec-prompt-file")
+	case fileSet:
+		body, err := readMessageFile(promptFile, "--exec-prompt-file")
+		if err != nil {
+			return "", err
+		}
+		text := strings.TrimSpace(string(body))
+		if text == "" {
+			return "", fmt.Errorf("exec prompt text is required")
+		}
+		return text, nil
+	default:
+		return prompt, nil
+	}
 }
 
 type runtimeProbeOptions struct {
