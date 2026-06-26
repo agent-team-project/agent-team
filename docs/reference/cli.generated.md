@@ -1020,6 +1020,7 @@ Flags:
       --latest                  Stop the most recently started running instance after other filters.
       --phase strings           Stop daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --rm                      Remove selected instance state and daemon metadata after stopping.
+      --runtime-stale           Only stop running instances whose recorded runtime PID is no longer live.
       --stale                   Only stop instances whose status.toml is stale.
       --status strings          Stop daemon-known instances currently in this lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary                 Show aggregate action counts instead of per-instance rows.
@@ -1089,8 +1090,8 @@ agent-team instance rm [<name>...] [flags]
 Flags:
 
 ```text
-      --agent strings     With --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, or --unhealthy, only remove daemon-known instances for this agent. Can repeat or comma-separate.
-  -a, --all               Remove every daemon-known instance. Can combine with --agent, --runtime, --status, --phase, --stale, or --unhealthy.
+      --agent strings     With --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy, only remove daemon-known instances for this agent. Can repeat or comma-separate.
+  -a, --all               Remove every daemon-known instance. Can combine with --agent, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy.
       --dry-run           Preview matching removals without deleting state or daemon metadata.
       --finished          Remove every daemon-known exited or crashed instance.
   -f, --force             Skip confirmation; if the daemon is running, stop a running instance before removal.
@@ -1100,6 +1101,7 @@ Flags:
       --latest            Remove the most recently started daemon-known instance after other filters.
       --phase strings     Remove daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --runtime strings   Remove daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale     Remove only daemon-known running instances whose recorded runtime PID is no longer live.
       --stale             Remove only daemon-known instances whose non-idle work phase has stale status telemetry.
       --status strings    Remove daemon-known instances currently in this lifecycle status: stopped, exited, crashed, running, or unknown. Can repeat or comma-separate.
       --summary           Show aggregate removal counts instead of per-instance rows.
@@ -1155,6 +1157,7 @@ Flags:
       --latest             Start or resume the most recently started instance after other filters.
       --phase strings      Only start or resume instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --prompt string      Override the default kickoff prompt.
+      --runtime-stale      Only start or resume running instances whose recorded runtime PID is no longer live.
       --stale              Only start or resume instances whose status.toml is stale.
       --status strings     Only start or resume instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary            Show aggregate action counts instead of per-instance rows.
@@ -2772,6 +2775,7 @@ Flags:
   -q, --quiet                   Suppress non-error output and use only the exit code.
       --rm                      Remove selected instance state and daemon metadata after killing.
       --runtime strings         Only force-stop running daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale           Only force-stop running instances whose recorded runtime PID is no longer live.
       --stale                   Only force-stop instances whose status.toml is stale.
       --status strings          Force-stop daemon-known instances currently in this lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary                 Show aggregate action counts instead of per-instance rows.
@@ -3906,7 +3910,7 @@ Inherited Flags:
 
 Remove finished daemon-managed instances.
 
-Remove daemon-known exited or crashed instances and their state. Running and stopped instances are intentionally left alone.
+Remove daemon-known exited or crashed instances and their state. Running and stopped instances are intentionally left alone unless selected by --runtime-stale or --unhealthy.
 
 ```text
 agent-team prune [flags]
@@ -3915,19 +3919,20 @@ agent-team prune [flags]
 Flags:
 
 ```text
-      --agent strings         Only remove finished instances for this agent. Can repeat or comma-separate.
-      --dry-run               Preview finished instances that would be pruned without deleting state or daemon metadata.
+      --agent strings         Only remove matching instances for this agent. Can repeat or comma-separate.
+      --dry-run               Preview matching instances that would be pruned without deleting state or daemon metadata.
       --format string         Render each removal result with a Go template, e.g. '{{.Instance}} {{.Path}}'.
       --json                  Emit machine-readable JSON.
       --older-than duration   Only prune finished instances whose terminal timestamp is older than this duration (for example 24h).
       --phase strings         Only remove finished instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
   -q, --quiet                 Suppress non-error output and use only the exit code.
-      --runtime strings       Only remove finished instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime strings       Only remove matching instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale         Also remove daemon-known running instances whose recorded runtime PID is no longer live.
       --stale                 Only remove finished instances whose non-idle work phase has stale status telemetry.
       --status strings        Only remove finished instances in this lifecycle status: exited or crashed. Can repeat or comma-separate.
       --summary               Show aggregate removal counts instead of per-instance rows.
       --target string         Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
-      --unhealthy             Only remove finished instances that are crashed, status-stale, or runtime-stale.
+      --unhealthy             Only remove crashed finished instances, finished status-stale instances, or runtime-stale running instances.
 ```
 
 Inherited Flags:
@@ -4445,6 +4450,7 @@ Flags:
   -q, --quiet                    Suppress non-error output and use only the exit code.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
       --runtime strings          Only restart or resume daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale            Only restart or resume running instances whose recorded runtime PID is no longer live.
       --stale                    Only restart or resume instances whose status.toml is stale.
       --status strings           Only restart or resume instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary                  Show aggregate action counts instead of per-instance rows.
@@ -4475,8 +4481,8 @@ agent-team rm [<instance>...] [flags]
 Flags:
 
 ```text
-      --agent strings     With --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, or --unhealthy, only remove daemon-known instances for this agent. Can repeat or comma-separate.
-  -a, --all               Remove every daemon-known instance. Can combine with --agent, --runtime, --status, --phase, --stale, or --unhealthy.
+      --agent strings     With --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy, only remove daemon-known instances for this agent. Can repeat or comma-separate.
+  -a, --all               Remove every daemon-known instance. Can combine with --agent, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy.
       --dry-run           Preview matching removals without deleting state or daemon metadata.
       --finished          Remove every daemon-known exited or crashed instance.
   -f, --force             Skip confirmation; if the daemon is running, stop a running instance before removal.
@@ -4487,6 +4493,7 @@ Flags:
       --phase strings     Remove daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
   -q, --quiet             Suppress non-error output. Requires --force unless --dry-run is set.
       --runtime strings   Remove daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale     Remove only daemon-known running instances whose recorded runtime PID is no longer live.
       --stale             Remove only daemon-known instances whose non-idle work phase has stale status telemetry.
       --status strings    Remove daemon-known instances currently in this lifecycle status: stopped, exited, crashed, running, or unknown. Can repeat or comma-separate.
       --summary           Show aggregate removal counts instead of per-instance rows.
@@ -5042,6 +5049,7 @@ Flags:
   -q, --quiet                    Suppress non-error output and use only the exit code.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
       --runtime strings          Only start or resume daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale            Only start or resume running instances whose recorded runtime PID is no longer live.
       --stale                    Only start or resume instances whose status.toml is stale.
       --status strings           Only start or resume instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary                  Show aggregate action counts instead of per-instance rows.
@@ -5171,6 +5179,7 @@ Flags:
   -q, --quiet                   Suppress non-error output and use only the exit code.
       --rm                      Remove selected instance state and daemon metadata after stopping.
       --runtime strings         Only stop running daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale           Only stop running instances whose recorded runtime PID is no longer live.
       --stale                   Only stop instances whose status.toml is stale.
       --status strings          Stop daemon-known instances currently in this lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary                 Show aggregate action counts instead of per-instance rows.
@@ -5784,7 +5793,7 @@ Flags:
 
 Remove finished team-owned instances.
 
-Remove daemon-known exited or crashed instances owned by one declared team. Running and stopped instances are intentionally left alone.
+Remove daemon-known exited or crashed instances owned by one declared team. Running and stopped instances are intentionally left alone unless selected by --runtime-stale or --unhealthy.
 
 ```text
 agent-team team prune <team> [flags]
@@ -5793,18 +5802,19 @@ agent-team team prune <team> [flags]
 Flags:
 
 ```text
-      --dry-run               Preview finished team-owned instances that would be pruned without deleting state or daemon metadata.
+      --dry-run               Preview matching team-owned instances that would be pruned without deleting state or daemon metadata.
       --format string         Render each removal result with a Go template, e.g. '{{.Instance}} {{.Path}}'.
       --json                  Emit machine-readable JSON.
       --older-than duration   Only prune finished team-owned instances whose terminal timestamp is older than this duration (for example 24h).
       --phase strings         Only remove finished team-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
   -q, --quiet                 Suppress non-error output and use only the exit code.
       --repo string           Repo root containing .agent_team. (default "<repo>")
-      --runtime strings       Only remove finished team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime strings       Only remove matching team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale         Also remove team-owned running instances whose recorded runtime PID is no longer live.
       --stale                 Only remove finished team-owned instances whose non-idle work phase has stale status telemetry.
       --status strings        Only remove finished team-owned instances in this lifecycle status: exited or crashed. Can repeat or comma-separate.
       --summary               Show aggregate removal counts instead of per-instance rows.
-      --unhealthy             Only remove finished team-owned instances that are crashed, status-stale, or runtime-stale.
+      --unhealthy             Only remove crashed finished team-owned instances, finished status-stale instances, or runtime-stale running instances.
 ```
 
 ## `agent-team team ps`

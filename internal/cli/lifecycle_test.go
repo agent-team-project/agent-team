@@ -430,6 +430,27 @@ func TestLifecycleActionsStaleRejectsExplicitNames(t *testing.T) {
 			t.Fatalf("%v: stderr = %q, want unhealthy/name validation", args, stderr.String())
 		}
 	}
+	for _, args := range [][]string{
+		{"start", "--runtime-stale", "manager"},
+		{"stop", "--runtime-stale", "manager"},
+		{"kill", "--runtime-stale", "manager"},
+		{"restart", "--runtime-stale", "manager"},
+		{"instance", "up", "--runtime-stale", "manager"},
+		{"instance", "down", "--runtime-stale", "manager"},
+	} {
+		cmd := NewRootCmd()
+		stderr := &bytes.Buffer{}
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(stderr)
+		cmd.SetArgs(args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected runtime-stale/name validation error", args)
+		}
+		if !strings.Contains(stderr.String(), "--runtime-stale cannot be combined") {
+			t.Fatalf("%v: stderr = %q, want runtime-stale/name validation", args, stderr.String())
+		}
+	}
 }
 
 func TestStartDryRunJSONDoesNotStartDaemon(t *testing.T) {
@@ -932,6 +953,40 @@ func TestStartUnhealthyDryRunTargetsRuntimeStaleInstance(t *testing.T) {
 	}
 }
 
+func TestStartRuntimeStaleDryRunTargetsOnlyRuntimeStaleInstance(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "crashed", Agent: "worker", Runtime: "codex", Status: daemon.StatusCrashed, PID: 0, StartedAt: now.Add(-2 * time.Minute)},
+		{Instance: "fresh", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now},
+		{Instance: "runtime-stale", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, StartedAt: now.Add(-time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"start", "--runtime-stale", "--dry-run", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("start --runtime-stale --dry-run --json: %v\nstderr=%s", err, stderr.String())
+	}
+
+	var rows []lifecycleActionResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode runtime-stale start json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "runtime-stale" || rows[0].Action != lifecycleActionUnsupported || rows[0].Status != string(daemon.StatusRunning) || !rows[0].DryRun {
+		t.Fatalf("rows = %+v, want runtime-stale unsupported dry-run only", rows)
+	}
+}
+
 func TestRestartUnhealthyDryRunTargetsCrashedAndStaleInstances(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -1077,6 +1132,73 @@ description = "fresh work"
 	}
 	if got["worker"].Action != "skip" || got["worker"].Status != "skipped" || !got["worker"].DryRun {
 		t.Fatalf("worker row = %+v, want crashed worker selected and skipped as not running", got["worker"])
+	}
+}
+
+func TestStopRuntimeStaleDryRunTargetsOnlyRuntimeStaleInstance(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "crashed", Agent: "worker", Runtime: "codex", Status: daemon.StatusCrashed, PID: 0, StartedAt: now.Add(-2 * time.Minute)},
+		{Instance: "fresh", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now},
+		{Instance: "runtime-stale", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, StartedAt: now.Add(-time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"stop", "--runtime-stale", "--dry-run", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("stop --runtime-stale --dry-run --json: %v\nstderr=%s", err, stderr.String())
+	}
+
+	var rows []instanceDownResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode runtime-stale stop json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "runtime-stale" || rows[0].Action != "stop" || rows[0].Status != string(daemon.StatusRunning) || !rows[0].DryRun {
+		t.Fatalf("rows = %+v, want runtime-stale stop dry-run only", rows)
+	}
+}
+
+func TestKillUnhealthyDryRunTargetsRuntimeStaleInstance(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "fresh", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now},
+		{Instance: "runtime-stale", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, StartedAt: now.Add(-time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"kill", "--unhealthy", "--dry-run", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("kill --unhealthy --dry-run --json: %v\nstderr=%s", err, stderr.String())
+	}
+
+	var rows []instanceDownResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode unhealthy runtime-stale kill json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "runtime-stale" || rows[0].Action != "kill" || rows[0].Status != string(daemon.StatusRunning) || !rows[0].DryRun {
+		t.Fatalf("rows = %+v, want runtime-stale kill dry-run only", rows)
 	}
 }
 

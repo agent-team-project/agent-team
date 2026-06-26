@@ -103,10 +103,12 @@ start from a durable job instead of an instance name.
 ```sh
 agent-team rm worker-squ-42 --dry-run
 agent-team prune --older-than 24h --status exited --dry-run
+agent-team prune --runtime-stale --dry-run
 agent-team team prune delivery --older-than 24h --dry-run
 ```
 
 Removal deletes state and daemon metadata. Use dry-runs before destructive cleanup.
+`prune` normally targets finished rows, but `--runtime-stale` also selects rows still recorded as running when the recorded runtime PID is no longer live.
 
 ## Selection Flags
 

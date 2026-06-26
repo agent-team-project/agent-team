@@ -2578,18 +2578,66 @@ func TestRmStaleSelectsMatchingTargets(t *testing.T) {
 	}
 }
 
+func TestPruneRuntimeStaleNarrowsDeadRecordedPIDs(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "fresh", Agent: "manager", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now},
+		{Instance: "runtime-stale", Agent: "manager", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, StartedAt: now.Add(-time.Minute)},
+		{Instance: "exited", Agent: "manager", Runtime: "codex", Status: daemon.StatusExited, PID: 0, StartedAt: now.Add(-2 * time.Minute), ExitedAt: now.Add(-time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"prune", "--runtime-stale", "--dry-run", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("prune --runtime-stale: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []instanceRmResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode prune --runtime-stale json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "runtime-stale" || !rows[0].DryRun || rows[0].StateRemoved || !rows[0].DaemonRemoved {
+		t.Fatalf("rows = %+v, want runtime-stale daemon metadata dry-run removal preview", rows)
+	}
+}
+
 func TestRmUnhealthySelectsCrashedAndStaleTargets(t *testing.T) {
 	targets := selectRmTargetsWithUnhealthy(map[string]daemonInstanceInfo{
 		"crashed-manager": {status: string(daemon.StatusCrashed), agent: "manager"},
 		"fresh-manager":   {status: string(daemon.StatusRunning), agent: "manager"},
+		"runtime-stale":   {status: string(daemon.StatusRunning), agent: "manager", runtimeStale: true},
 		"stale-manager":   {status: string(daemon.StatusRunning), agent: "manager"},
 		"stale-worker":    {status: string(daemon.StatusRunning), agent: "worker"},
-	}, []string{"manager"}, nil, nil, nil, false, false, true, map[string]bool{
+	}, []string{"manager"}, nil, nil, nil, false, false, false, true, map[string]bool{
 		"stale-manager": true,
 		"stale-worker":  true,
 	})
-	if strings.Join(targets, ",") != "crashed-manager,stale-manager" {
-		t.Fatalf("targets = %v, want crashed-manager,stale-manager", targets)
+	if strings.Join(targets, ",") != "crashed-manager,runtime-stale,stale-manager" {
+		t.Fatalf("targets = %v, want crashed-manager,runtime-stale,stale-manager", targets)
+	}
+}
+
+func TestRmRuntimeStaleSelectsDeadRecordedPIDs(t *testing.T) {
+	targets := selectRmTargetsWithUnhealthy(map[string]daemonInstanceInfo{
+		"crashed-manager": {status: string(daemon.StatusCrashed), agent: "manager"},
+		"fresh-manager":   {status: string(daemon.StatusRunning), agent: "manager"},
+		"runtime-stale":   {status: string(daemon.StatusRunning), agent: "manager", runtimeStale: true},
+		"stale-manager":   {status: string(daemon.StatusRunning), agent: "manager"},
+	}, []string{"manager"}, nil, nil, nil, false, false, true, false, map[string]bool{
+		"stale-manager": true,
+	})
+	if strings.Join(targets, ",") != "runtime-stale" {
+		t.Fatalf("targets = %v, want runtime-stale", targets)
 	}
 }
 
@@ -2654,7 +2702,7 @@ func TestRmRequiresNamesUnlessFinished(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected validation error")
 	}
-	if !strings.Contains(stderr.String(), "instance is required unless --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, or --unhealthy") {
+	if !strings.Contains(stderr.String(), "instance is required unless --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
@@ -2783,7 +2831,7 @@ func TestRmAgentRequiresFinished(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected validation error")
 	}
-	if !strings.Contains(stderr.String(), "--agent requires --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, or --unhealthy") {
+	if !strings.Contains(stderr.String(), "--agent requires --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

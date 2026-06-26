@@ -598,6 +598,7 @@ func newInstanceRmCmd() *cobra.Command {
 		latest         bool
 		last           int
 		staleOnly      bool
+		runtimeStale   bool
 		unhealthyOnly  bool
 		agents         []string
 		runtimeFilters []string
@@ -630,6 +631,7 @@ func newInstanceRmCmd() *cobra.Command {
 				Latest:         latest,
 				Limit:          last,
 				Stale:          staleOnly,
+				RuntimeStale:   runtimeStale,
 				Unhealthy:      unhealthyOnly,
 				AgentFilters:   agents,
 				RuntimeFilters: runtimeFilters,
@@ -642,15 +644,16 @@ func newInstanceRmCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
-	c.Flags().BoolVarP(&all, "all", "a", false, "Remove every daemon-known instance. Can combine with --agent, --runtime, --status, --phase, --stale, or --unhealthy.")
+	c.Flags().BoolVarP(&all, "all", "a", false, "Remove every daemon-known instance. Can combine with --agent, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy.")
 	c.Flags().BoolVarP(&force, "force", "f", false, "Skip confirmation; if the daemon is running, stop a running instance before removal.")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching removals without deleting state or daemon metadata.")
 	c.Flags().BoolVar(&finished, "finished", false, "Remove every daemon-known exited or crashed instance.")
 	c.Flags().BoolVar(&latest, "latest", false, "Remove the most recently started daemon-known instance after other filters.")
 	c.Flags().IntVarP(&last, "last", "n", 0, "Remove the N most recently started daemon-known instances after other filters (0 = all).")
 	c.Flags().BoolVar(&staleOnly, "stale", false, "Remove only daemon-known instances whose non-idle work phase has stale status telemetry.")
+	c.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Remove only daemon-known running instances whose recorded runtime PID is no longer live.")
 	c.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Remove only daemon-known instances that are crashed, status-stale, or runtime-stale.")
-	c.Flags().StringSliceVar(&agents, "agent", nil, "With --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, or --unhealthy, only remove daemon-known instances for this agent. Can repeat or comma-separate.")
+	c.Flags().StringSliceVar(&agents, "agent", nil, "With --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy, only remove daemon-known instances for this agent. Can repeat or comma-separate.")
 	c.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Remove daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	c.Flags().StringSliceVar(&statusFilters, "status", nil, "Remove daemon-known instances currently in this lifecycle status: stopped, exited, crashed, running, or unknown. Can repeat or comma-separate.")
 	c.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Remove daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
@@ -672,6 +675,7 @@ type instanceRmOptions struct {
 	Latest         bool
 	Limit          int
 	Stale          bool
+	RuntimeStale   bool
 	Unhealthy      bool
 	OlderThan      time.Duration
 	OlderThanSet   bool
@@ -729,6 +733,10 @@ func runInstanceRmWithOptions(cmd *cobra.Command, target string, names []string,
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --stale cannot be combined with instance names.")
 		return exitErr(2)
 	}
+	if opts.RuntimeStale && len(names) > 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --runtime-stale cannot be combined with instance names.")
+		return exitErr(2)
+	}
 	if opts.Unhealthy && len(names) > 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --unhealthy cannot be combined with instance names.")
 		return exitErr(2)
@@ -754,8 +762,8 @@ func runInstanceRmWithOptions(cmd *cobra.Command, target string, names []string,
 			fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --agent requires at least one non-empty agent.")
 			return exitErr(2)
 		}
-		if !opts.All && !opts.Finished && !opts.Latest && opts.Limit == 0 && len(opts.RuntimeFilters) == 0 && len(opts.StatusFilters) == 0 && len(opts.PhaseFilters) == 0 && !opts.Stale && !opts.Unhealthy {
-			fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --agent requires --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, or --unhealthy.")
+		if !opts.All && !opts.Finished && !opts.Latest && opts.Limit == 0 && len(opts.RuntimeFilters) == 0 && len(opts.StatusFilters) == 0 && len(opts.PhaseFilters) == 0 && !opts.Stale && !opts.RuntimeStale && !opts.Unhealthy {
+			fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --agent requires --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy.")
 			return exitErr(2)
 		}
 	}
@@ -778,8 +786,8 @@ func runInstanceRmWithOptions(cmd *cobra.Command, target string, names []string,
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 		return exitErr(2)
 	}
-	if !opts.All && !opts.Finished && !opts.Latest && opts.Limit == 0 && len(runtimes) == 0 && len(statuses) == 0 && len(phases) == 0 && !opts.Stale && !opts.Unhealthy && len(names) == 0 {
-		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: instance is required unless --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, or --unhealthy is set.")
+	if !opts.All && !opts.Finished && !opts.Latest && opts.Limit == 0 && len(runtimes) == 0 && len(statuses) == 0 && len(phases) == 0 && !opts.Stale && !opts.RuntimeStale && !opts.Unhealthy && len(names) == 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: instance is required unless --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy is set.")
 		return exitErr(2)
 	}
 	if opts.JSON && !opts.Force && !opts.DryRun {
@@ -837,7 +845,7 @@ func runInstanceRmWithOptions(cmd *cobra.Command, target string, names []string,
 			return exitErr(1)
 		}
 		for _, m := range list {
-			daemonByName[m.Instance] = daemonInstanceInfo{status: string(m.Status), agent: m.Agent, runtime: metadataRuntimeKey(m), pid: m.PID, startedAt: m.StartedAt, finishedAt: daemonMetadataFinishedAt(m), client: dc}
+			daemonByName[m.Instance] = daemonInstanceInfo{status: string(m.Status), agent: m.Agent, runtime: metadataRuntimeKey(m), pid: m.PID, startedAt: m.StartedAt, finishedAt: daemonMetadataFinishedAt(m), runtimeStale: runtimeResumeMetadataIsStale(m), client: dc}
 		}
 	} else if errors.Is(err, errDaemonNotRunning) {
 		list, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
@@ -846,15 +854,15 @@ func runInstanceRmWithOptions(cmd *cobra.Command, target string, names []string,
 			return exitErr(1)
 		}
 		for _, m := range list {
-			daemonByName[m.Instance] = daemonInstanceInfo{status: string(m.Status), agent: m.Agent, runtime: metadataRuntimeKey(m), pid: m.PID, startedAt: m.StartedAt, finishedAt: daemonMetadataFinishedAt(m)}
+			daemonByName[m.Instance] = daemonInstanceInfo{status: string(m.Status), agent: m.Agent, runtime: metadataRuntimeKey(m), pid: m.PID, startedAt: m.StartedAt, finishedAt: daemonMetadataFinishedAt(m), runtimeStale: runtimeResumeMetadataIsStale(m)}
 		}
 	} else {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 		return exitErr(2)
 	}
 
-	if opts.All || opts.Finished || opts.Latest || opts.Limit > 0 || len(runtimes) > 0 || len(statuses) > 0 || len(phases) > 0 || opts.Stale || opts.Unhealthy {
-		names = selectRmTargetsWithUnhealthy(daemonByName, opts.AgentFilters, statuses, phases, phaseByInstance, opts.Finished, opts.Stale, opts.Unhealthy, staleInstances)
+	if opts.All || opts.Finished || opts.Latest || opts.Limit > 0 || len(runtimes) > 0 || len(statuses) > 0 || len(phases) > 0 || opts.Stale || opts.RuntimeStale || opts.Unhealthy {
+		names = selectRmTargetsWithUnhealthy(daemonByName, opts.AgentFilters, statuses, phases, phaseByInstance, opts.Finished, opts.Stale, opts.RuntimeStale, opts.Unhealthy, staleInstances)
 		names = filterRmTargetsByRuntime(names, daemonByName, runtimes)
 		if opts.OlderThanSet {
 			names = filterRmTargetsOlderThan(names, daemonByName, opts.OlderThan, time.Now())
@@ -1064,10 +1072,10 @@ func selectFinishedRmTargets(daemonByName map[string]daemonInstanceInfo, agentFi
 }
 
 func selectRmTargets(daemonByName map[string]daemonInstanceInfo, agentFilters []string, statuses, phases map[string]bool, phaseByInstance map[string]string, finishedOnly, staleOnly bool, staleInstances map[string]bool) []string {
-	return selectRmTargetsWithUnhealthy(daemonByName, agentFilters, statuses, phases, phaseByInstance, finishedOnly, staleOnly, false, staleInstances)
+	return selectRmTargetsWithUnhealthy(daemonByName, agentFilters, statuses, phases, phaseByInstance, finishedOnly, staleOnly, false, false, staleInstances)
 }
 
-func selectRmTargetsWithUnhealthy(daemonByName map[string]daemonInstanceInfo, agentFilters []string, statuses, phases map[string]bool, phaseByInstance map[string]string, finishedOnly, staleOnly, unhealthyOnly bool, staleInstances map[string]bool) []string {
+func selectRmTargetsWithUnhealthy(daemonByName map[string]daemonInstanceInfo, agentFilters []string, statuses, phases map[string]bool, phaseByInstance map[string]string, finishedOnly, staleOnly, runtimeStaleOnly, unhealthyOnly bool, staleInstances map[string]bool) []string {
 	agents := map[string]bool{}
 	if len(agentFilters) > 0 {
 		agents = lifecycleAgentFilterSet(agentFilters)
@@ -1084,7 +1092,9 @@ func selectRmTargetsWithUnhealthy(daemonByName map[string]daemonInstanceInfo, ag
 			switch info.status {
 			case string(daemon.StatusExited), string(daemon.StatusCrashed):
 			default:
-				continue
+				if !(runtimeStaleOnly && info.runtimeStale) && !(unhealthyOnly && info.runtimeStale) {
+					continue
+				}
 			}
 		}
 		if len(statuses) > 0 && !statuses[daemonInfoStatusKey(info)] {
@@ -1096,7 +1106,10 @@ func selectRmTargetsWithUnhealthy(daemonByName map[string]daemonInstanceInfo, ag
 		if staleOnly && !staleInstances[name] {
 			continue
 		}
-		if unhealthyOnly && info.status != string(daemon.StatusCrashed) && !staleInstances[name] {
+		if runtimeStaleOnly && !info.runtimeStale {
+			continue
+		}
+		if unhealthyOnly && info.status != string(daemon.StatusCrashed) && !staleInstances[name] && !info.runtimeStale {
 			continue
 		}
 		targets = append(targets, name)
@@ -1113,13 +1126,14 @@ func daemonInfoStatusKey(info daemonInstanceInfo) string {
 }
 
 type daemonInstanceInfo struct {
-	status     string
-	agent      string
-	runtime    string
-	pid        int
-	startedAt  time.Time
-	finishedAt time.Time
-	client     *daemonClient
+	status       string
+	agent        string
+	runtime      string
+	pid          int
+	startedAt    time.Time
+	finishedAt   time.Time
+	runtimeStale bool
+	client       *daemonClient
 }
 
 func daemonMetadataFinishedAt(m *daemon.Metadata) time.Time {
@@ -1217,6 +1231,7 @@ func newInstanceUpCmd() *cobra.Command {
 		statusFilters []string
 		phaseFilters  []string
 		staleOnly     bool
+		runtimeStale  bool
 		unhealthyOnly bool
 		wait          bool
 		timeout       time.Duration
@@ -1262,6 +1277,7 @@ func newInstanceUpCmd() *cobra.Command {
 				StatusFilters: statusFilters,
 				PhaseFilters:  phaseFilters,
 				Stale:         staleOnly,
+				RuntimeStale:  runtimeStale,
 				Unhealthy:     unhealthyOnly,
 				Wait:          wait,
 				Timeout:       timeout,
@@ -1284,6 +1300,7 @@ func newInstanceUpCmd() *cobra.Command {
 	c.Flags().StringSliceVar(&statusFilters, "status", nil, "Only start or resume instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
 	c.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only start or resume instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	c.Flags().BoolVar(&staleOnly, "stale", false, "Only start or resume instances whose status.toml is stale.")
+	c.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Only start or resume running instances whose recorded runtime PID is no longer live.")
 	c.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only start or resume instances that are crashed, status-stale, or runtime-stale.")
 	c.Flags().BoolVar(&wait, "wait", false, "Wait for selected instances to become healthy after starting. With no scoped selection, waits for the fleet.")
 	c.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
@@ -1309,6 +1326,7 @@ type instanceUpOptions struct {
 	StatusFilters  []string
 	PhaseFilters   []string
 	Stale          bool
+	RuntimeStale   bool
 	Unhealthy      bool
 	Wait           bool
 	Timeout        time.Duration
@@ -1394,6 +1412,10 @@ func runInstanceUpWithOptions(cmd *cobra.Command, target, prompt string, names [
 	}
 	if opts.Stale && len(names) > 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --stale cannot be combined with instance names.")
+		return exitErr(2)
+	}
+	if opts.RuntimeStale && len(names) > 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --runtime-stale cannot be combined with instance names.")
 		return exitErr(2)
 	}
 	if opts.Unhealthy && len(names) > 0 {
@@ -1491,7 +1513,7 @@ func runInstanceUpWithOptions(cmd *cobra.Command, target, prompt string, names [
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 		return exitErr(1)
 	}
-	if topo == nil && len(names) == 0 && !opts.All && !opts.Latest && opts.Limit == 0 && len(opts.AgentFilters) == 0 && len(runtimes) == 0 && len(statuses) == 0 && len(phases) == 0 && !opts.Stale && !opts.Unhealthy {
+	if topo == nil && len(names) == 0 && !opts.All && !opts.Latest && opts.Limit == 0 && len(opts.AgentFilters) == 0 && len(runtimes) == 0 && len(statuses) == 0 && len(phases) == 0 && !opts.Stale && !opts.RuntimeStale && !opts.Unhealthy {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: no instances.toml — nothing to bring up.")
 		return exitErr(2)
 	}
@@ -1518,7 +1540,7 @@ func runInstanceUpWithOptions(cmd *cobra.Command, target, prompt string, names [
 	var targets []lifecycleTarget
 	if len(opts.AgentFilters) > 0 {
 		targets, err = selectAgentLifecycleTargets(topo, metas, opts.AgentFilters)
-	} else if opts.All || opts.Latest || opts.Limit > 0 || len(runtimes) > 0 || len(statuses) > 0 || len(phases) > 0 || opts.Stale || opts.Unhealthy {
+	} else if opts.All || opts.Latest || opts.Limit > 0 || len(runtimes) > 0 || len(statuses) > 0 || len(phases) > 0 || opts.Stale || opts.RuntimeStale || opts.Unhealthy {
 		targets, err = selectAllLifecycleTargets(topo, metas)
 	} else {
 		targets, err = selectLifecycleTargets(topo, metas, names)
@@ -1531,6 +1553,7 @@ func runInstanceUpWithOptions(cmd *cobra.Command, target, prompt string, names [
 	targets = filterLifecycleTargetsByStatus(targets, statuses)
 	targets = filterLifecycleTargetsByPhase(targets, phases, phaseByInstance)
 	targets = filterLifecycleTargetsByStale(targets, opts.Stale, staleInstances)
+	targets = filterLifecycleTargetsByRuntimeStale(targets, opts.RuntimeStale)
 	targets = filterLifecycleTargetsByUnhealthy(targets, opts.Unhealthy, staleInstances)
 	if opts.Latest {
 		targets = latestLifecycleTargetsLimit(targets, 1)
@@ -1950,10 +1973,10 @@ func healthOptionsConfigured(opts healthOptions) bool {
 }
 
 func instanceUpSelectionScoped(names []string, opts instanceUpOptions) bool {
-	return lifecycleSelectionScoped(names, opts.AgentFilters, opts.RuntimeFilters, opts.StatusFilters, opts.PhaseFilters, opts.Latest, opts.Limit, opts.Stale, opts.Unhealthy)
+	return lifecycleSelectionScoped(names, opts.AgentFilters, opts.RuntimeFilters, opts.StatusFilters, opts.PhaseFilters, opts.Latest, opts.Limit, opts.Stale, opts.RuntimeStale, opts.Unhealthy)
 }
 
-func lifecycleSelectionScoped(names, agentFilters, runtimeFilters, statusFilters, phaseFilters []string, latest bool, limit int, stale bool, unhealthy bool) bool {
+func lifecycleSelectionScoped(names, agentFilters, runtimeFilters, statusFilters, phaseFilters []string, latest bool, limit int, stale bool, runtimeStale bool, unhealthy bool) bool {
 	return len(names) > 0 ||
 		len(agentFilters) > 0 ||
 		len(runtimeFilters) > 0 ||
@@ -1962,6 +1985,7 @@ func lifecycleSelectionScoped(names, agentFilters, runtimeFilters, statusFilters
 		latest ||
 		limit > 0 ||
 		stale ||
+		runtimeStale ||
 		unhealthy
 }
 
@@ -2340,6 +2364,19 @@ func filterLifecycleTargetsByStale(targets []lifecycleTarget, staleOnly bool, st
 	return out
 }
 
+func filterLifecycleTargetsByRuntimeStale(targets []lifecycleTarget, runtimeStaleOnly bool) []lifecycleTarget {
+	if !runtimeStaleOnly {
+		return targets
+	}
+	out := make([]lifecycleTarget, 0, len(targets))
+	for _, target := range targets {
+		if lifecycleTargetRuntimeStale(target) {
+			out = append(out, target)
+		}
+	}
+	return out
+}
+
 func filterLifecycleTargetsByUnhealthy(targets []lifecycleTarget, unhealthyOnly bool, staleInstances map[string]bool) []lifecycleTarget {
 	if !unhealthyOnly {
 		return targets
@@ -2448,6 +2485,7 @@ func newInstanceDownCmd() *cobra.Command {
 		statusFilters []string
 		phaseFilters  []string
 		staleOnly     bool
+		runtimeStale  bool
 		unhealthyOnly bool
 		force         bool
 		wait          bool
@@ -2476,6 +2514,7 @@ func newInstanceDownCmd() *cobra.Command {
 				StatusFilters:  statusFilters,
 				PhaseFilters:   phaseFilters,
 				Stale:          staleOnly,
+				RuntimeStale:   runtimeStale,
 				Unhealthy:      unhealthyOnly,
 				Force:          force,
 				Wait:           wait,
@@ -2497,6 +2536,7 @@ func newInstanceDownCmd() *cobra.Command {
 	c.Flags().StringSliceVar(&statusFilters, "status", nil, "Stop daemon-known instances currently in this lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
 	c.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Stop daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	c.Flags().BoolVar(&staleOnly, "stale", false, "Only stop instances whose status.toml is stale.")
+	c.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Only stop running instances whose recorded runtime PID is no longer live.")
 	c.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only stop instances that are crashed, status-stale, or runtime-stale.")
 	c.Flags().BoolVarP(&force, "force", "f", false, "Escalate to SIGKILL if an instance does not stop within --timeout.")
 	c.Flags().BoolVar(&wait, "wait", false, "Wait for stopped instances to reach a terminal state.")
@@ -2523,6 +2563,7 @@ type instanceDownOptions struct {
 	StatusFilters  []string
 	PhaseFilters   []string
 	Stale          bool
+	RuntimeStale   bool
 	Unhealthy      bool
 	Force          bool
 	Wait           bool
@@ -2591,6 +2632,10 @@ func runInstanceDownWithOptions(cmd *cobra.Command, target string, names []strin
 	}
 	if opts.Stale && len(names) > 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --stale cannot be combined with instance names.")
+		return exitErr(2)
+	}
+	if opts.RuntimeStale && len(names) > 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --runtime-stale cannot be combined with instance names.")
 		return exitErr(2)
 	}
 	if opts.Unhealthy && len(names) > 0 {
@@ -2684,6 +2729,7 @@ func runInstanceDownWithOptions(cmd *cobra.Command, target string, names []strin
 	}
 	targets, err := selectDownTargetsWithOptions(teamDir, running, metas, names, opts.All || opts.Latest || opts.Limit > 0, opts.AgentFilters, statuses, phases, phaseByInstance, downTargetOptions{
 		Stale:          opts.Stale,
+		RuntimeStale:   opts.RuntimeStale,
 		Unhealthy:      opts.Unhealthy,
 		Runtimes:       runtimes,
 		StaleInstances: staleInstances,
@@ -2723,7 +2769,9 @@ func runInstanceDownWithOptions(cmd *cobra.Command, target string, names []strin
 	metaByName := lifecycleMetadataByName(metas)
 	for _, name := range targets {
 		if opts.DryRun {
-			result := dryRunDownResult(name, metaByName[name], running[name], downAction(opts))
+			meta := metaByName[name]
+			targetRunning := running[name] || downDryRunRuntimeStaleSelected(meta, opts)
+			result := dryRunDownResult(name, meta, targetRunning, downAction(opts))
 			if opts.Remove {
 				if result.Action == "skip" {
 					result.Detail = "not running; would remove"
@@ -2982,6 +3030,10 @@ func dryRunDownResult(name string, meta *daemon.Metadata, running bool, action s
 	return result
 }
 
+func downDryRunRuntimeStaleSelected(meta *daemon.Metadata, opts instanceDownOptions) bool {
+	return (opts.RuntimeStale || opts.Unhealthy) && runtimeResumeMetadataIsStale(meta)
+}
+
 func liveRunningInstanceSetFromMetas(metas []*daemon.Metadata) map[string]bool {
 	out := map[string]bool{}
 	for _, meta := range metas {
@@ -3012,6 +3064,7 @@ func downAction(opts instanceDownOptions) string {
 
 type downTargetOptions struct {
 	Stale          bool
+	RuntimeStale   bool
 	Unhealthy      bool
 	Runtimes       map[string]bool
 	StaleInstances map[string]bool
@@ -3027,9 +3080,9 @@ func selectDownTargets(teamDir string, running map[string]bool, metas []*daemon.
 }
 
 func selectDownTargetsWithOptions(teamDir string, running map[string]bool, metas []*daemon.Metadata, names []string, all bool, agentFilters []string, statuses, phases map[string]bool, phaseByInstance map[string]string, opts downTargetOptions) ([]string, error) {
-	if len(agentFilters) > 0 || len(opts.Runtimes) > 0 || len(statuses) > 0 || len(phases) > 0 || opts.Stale || opts.Unhealthy {
+	if len(agentFilters) > 0 || len(opts.Runtimes) > 0 || len(statuses) > 0 || len(phases) > 0 || opts.Stale || opts.RuntimeStale || opts.Unhealthy {
 		if len(names) > 0 {
-			return nil, errors.New("--agent, --runtime, --status, --phase, --stale, and --unhealthy cannot be combined with instance names")
+			return nil, errors.New("--agent, --runtime, --status, --phase, --stale, --runtime-stale, and --unhealthy cannot be combined with instance names")
 		}
 		agents, err := downAgentFilterSet(agentFilters)
 		if err != nil {
@@ -3037,7 +3090,7 @@ func selectDownTargetsWithOptions(teamDir string, running map[string]bool, metas
 		}
 		targets := make([]string, 0, len(metas))
 		for _, meta := range metas {
-			if len(statuses) == 0 && !opts.Unhealthy && meta.Status != daemon.StatusRunning {
+			if len(statuses) == 0 && !opts.RuntimeStale && !opts.Unhealthy && meta.Status != daemon.StatusRunning {
 				continue
 			}
 			if len(agents) > 0 && !agents[meta.Agent] {
@@ -3055,7 +3108,10 @@ func selectDownTargetsWithOptions(teamDir string, running map[string]bool, metas
 			if opts.Stale && !opts.StaleInstances[meta.Instance] {
 				continue
 			}
-			if opts.Unhealthy && metadataStatusKey(meta) != string(daemon.StatusCrashed) && !opts.StaleInstances[meta.Instance] {
+			if opts.RuntimeStale && !runtimeResumeMetadataIsStale(meta) {
+				continue
+			}
+			if opts.Unhealthy && metadataStatusKey(meta) != string(daemon.StatusCrashed) && !opts.StaleInstances[meta.Instance] && !runtimeResumeMetadataIsStale(meta) {
 				continue
 			}
 			targets = append(targets, meta.Instance)

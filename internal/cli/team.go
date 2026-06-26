@@ -3149,6 +3149,7 @@ func newTeamPruneCmd() *cobra.Command {
 		runtimeFilters []string
 		phaseFilters   []string
 		staleOnly      bool
+		runtimeStale   bool
 		unhealthyOnly  bool
 		dryRun         bool
 		olderThan      time.Duration
@@ -3162,7 +3163,7 @@ func newTeamPruneCmd() *cobra.Command {
 		Use:   "prune <team>",
 		Short: "Remove finished team-owned instances.",
 		Long: "Remove daemon-known exited or crashed instances owned by one declared team. " +
-			"Running and stopped instances are intentionally left alone.",
+			"Running and stopped instances are intentionally left alone unless selected by --runtime-stale or --unhealthy.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if quiet && summary {
@@ -3196,6 +3197,7 @@ func newTeamPruneCmd() *cobra.Command {
 				RuntimeFilters: runtimeFilters,
 				PhaseFilters:   phaseFilters,
 				Stale:          staleOnly,
+				RuntimeStale:   runtimeStale,
 				Unhealthy:      unhealthyOnly,
 				OlderThan:      olderThan,
 				OlderThanSet:   olderThanSet,
@@ -3219,11 +3221,12 @@ func newTeamPruneCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only remove finished team-owned instances in this lifecycle status: exited or crashed. Can repeat or comma-separate.")
-	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only remove finished team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only remove matching team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only remove finished team-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only remove finished team-owned instances whose non-idle work phase has stale status telemetry.")
-	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only remove finished team-owned instances that are crashed, status-stale, or runtime-stale.")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview finished team-owned instances that would be pruned without deleting state or daemon metadata.")
+	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Also remove team-owned running instances whose recorded runtime PID is no longer live.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only remove crashed finished team-owned instances, finished status-stale instances, or runtime-stale running instances.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching team-owned instances that would be pruned without deleting state or daemon metadata.")
 	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "Only prune finished team-owned instances whose terminal timestamp is older than this duration (for example 24h).")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
@@ -4929,6 +4932,7 @@ type teamPruneTargetOptions struct {
 	RuntimeFilters []string
 	PhaseFilters   []string
 	Stale          bool
+	RuntimeStale   bool
 	Unhealthy      bool
 	OlderThan      time.Duration
 	OlderThanSet   bool
@@ -7841,11 +7845,13 @@ func collectTeamPruneTargets(teamDir, name string, opts teamPruneTargetOptions) 
 			continue
 		}
 		daemonByName[meta.Instance] = daemonInstanceInfo{
-			status:     string(meta.Status),
-			agent:      meta.Agent,
-			pid:        meta.PID,
-			startedAt:  meta.StartedAt,
-			finishedAt: daemonMetadataFinishedAt(meta),
+			status:       string(meta.Status),
+			agent:        meta.Agent,
+			runtime:      metadataRuntimeKey(meta),
+			pid:          meta.PID,
+			startedAt:    meta.StartedAt,
+			finishedAt:   daemonMetadataFinishedAt(meta),
+			runtimeStale: runtimeResumeMetadataIsStale(meta),
 		}
 	}
 	var phaseByInstance map[string]string
@@ -7859,7 +7865,7 @@ func collectTeamPruneTargets(teamDir, name string, opts teamPruneTargetOptions) 
 			staleInstances = staleInstanceSet(teamDir, now)
 		}
 	}
-	names := selectRmTargetsWithUnhealthy(daemonByName, nil, statuses, phases, phaseByInstance, true, opts.Stale, opts.Unhealthy, staleInstances)
+	names := selectRmTargetsWithUnhealthy(daemonByName, nil, statuses, phases, phaseByInstance, true, opts.Stale, opts.RuntimeStale, opts.Unhealthy, staleInstances)
 	if opts.OlderThanSet {
 		names = filterRmTargetsOlderThan(names, daemonByName, opts.OlderThan, time.Now())
 	}
