@@ -1872,6 +1872,7 @@ func newPipelineResumePlanCmd() *cobra.Command {
 		statusFilters []string
 		runtimeFilter []string
 		actionFilters []string
+		staleOnly     bool
 		summary       bool
 		jsonOut       bool
 		format        string
@@ -1906,7 +1907,7 @@ func newPipelineResumePlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			plans, err := collectPipelineRuntimeResumePlans(teamDir, pipelineName, statusFilters, runtimeFilter, actionFilters)
+			plans, err := collectPipelineRuntimeResumePlans(teamDir, pipelineName, statusFilters, runtimeFilter, actionFilters, staleOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: %v\n", err)
 				return exitErr(1)
@@ -1933,6 +1934,7 @@ func newPipelineResumePlanCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only include running metadata whose recorded PID is no longer live.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching pipeline resume plans by recommended action, runtime, and status.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.")
@@ -4683,7 +4685,7 @@ func collectPipelineOwnedMetadata(teamDir, pipeline string, metas []*daemon.Meta
 	return pipelineOwnedMetadata{Metadata: out, JobForInstance: jobForInstance}, nil
 }
 
-func collectPipelineRuntimeResumePlans(teamDir, pipeline string, statusFilters []string, runtimeFilters []string, actionFilters []string) ([]runtimeResumePlan, error) {
+func collectPipelineRuntimeResumePlans(teamDir, pipeline string, statusFilters []string, runtimeFilters []string, actionFilters []string, staleOnly bool) ([]runtimeResumePlan, error) {
 	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
 	if err != nil {
 		return nil, err
@@ -4721,6 +4723,9 @@ func collectPipelineRuntimeResumePlans(teamDir, pipeline string, statusFilters [
 			}
 		}
 		if len(actionSet) > 0 && !actionSet[plan.RecommendedAction] {
+			continue
+		}
+		if staleOnly && !plan.Stale {
 			continue
 		}
 		plans = append(plans, plan)

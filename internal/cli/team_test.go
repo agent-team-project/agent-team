@@ -4088,6 +4088,23 @@ instances = ["other", "build-worker"]
 
 func TestTeamRuntimeResumePlanScopesMetadata(t *testing.T) {
 	root := writeOverviewRuntimeFixture(t)
+	teamDir := filepath.Join(root, ".agent_team")
+	oldPIDLiveCheck := daemon.PidLiveCheck
+	daemon.PidLiveCheck = func(pid int) bool {
+		return pid != 4242
+	}
+	t.Cleanup(func() {
+		daemon.PidLiveCheck = oldPIDLiveCheck
+	})
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "worker-squ-902", Agent: "worker", Status: daemon.StatusRunning, Runtime: "claude", RuntimeBinary: "claude", PID: 4242, SessionID: "team-stale-session", StartedAt: now.Add(-15 * time.Minute)},
+		{Instance: "support-stale", Agent: "support", Status: daemon.StatusRunning, Runtime: "claude", RuntimeBinary: "claude", PID: 4242, SessionID: "foreign-stale-session", StartedAt: now.Add(-10 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -4131,6 +4148,18 @@ func TestTeamRuntimeResumePlanScopesMetadata(t *testing.T) {
 	}
 	if counts.Total != 2 || counts.Actions["logs"] != 2 || counts.Runtimes["claude"] != 1 || counts.Runtimes["codex"] != 1 || counts.Statuses["crashed"] != 2 || counts.ManagedResume != 1 || counts.CanManagedResume != 0 || counts.DirectResume != 0 {
 		t.Fatalf("team resume-plan summary = %+v", counts)
+	}
+
+	stale := NewRootCmd()
+	staleOut, staleErr := &bytes.Buffer{}, &bytes.Buffer{}
+	stale.SetOut(staleOut)
+	stale.SetErr(staleErr)
+	stale.SetArgs([]string{"team", "runtime", "resume-plan", "delivery", "--repo", root, "--stale", "--format", "{{.Instance}} {{.Stale}} {{.RecommendedAction}}"})
+	if err := stale.Execute(); err != nil {
+		t.Fatalf("team runtime resume-plan stale filter: %v\nstderr=%s", err, staleErr.String())
+	}
+	if got, want := strings.TrimSpace(staleOut.String()), "worker-squ-902 true start"; got != want {
+		t.Fatalf("team stale resume-plan = %q, want %q", got, want)
 	}
 }
 

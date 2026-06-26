@@ -3166,6 +3166,13 @@ target = "worker"
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
+	oldPIDLiveCheck := daemon.PidLiveCheck
+	daemon.PidLiveCheck = func(pid int) bool {
+		return pid != 4242
+	}
+	t.Cleanup(func() {
+		daemon.PidLiveCheck = oldPIDLiveCheck
+	})
 	for _, j := range []*job.Job{
 		{
 			ID:        "squ-940",
@@ -3193,6 +3200,17 @@ target = "worker"
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
+		{
+			ID:        "squ-942",
+			Ticket:    "SQU-942",
+			Target:    "worker",
+			Kickoff:   "stale worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-942",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
 	} {
 		if err := job.Write(teamDir, j); err != nil {
 			t.Fatalf("write %s: %v", j.ID, err)
@@ -3202,6 +3220,7 @@ target = "worker"
 		{Instance: "worker-squ-940", Agent: "worker", Runtime: "codex", RuntimeBinary: "codex", Status: daemon.StatusCrashed, StartedAt: now.Add(-time.Hour), ExitedAt: now.Add(-10 * time.Minute)},
 		{Instance: "manager-squ-940", Job: "squ-940", Agent: "manager", Runtime: "claude", RuntimeBinary: "claude", Status: daemon.StatusCrashed, StartedAt: now.Add(-30 * time.Minute), ExitedAt: now.Add(-5 * time.Minute)},
 		{Instance: "worker-squ-941", Job: "squ-941", Agent: "worker", Runtime: "codex", RuntimeBinary: "codex", Status: daemon.StatusCrashed, StartedAt: now.Add(-20 * time.Minute), ExitedAt: now.Add(-2 * time.Minute)},
+		{Instance: "worker-squ-942", Job: "squ-942", Agent: "worker", Runtime: "claude", RuntimeBinary: "claude", PID: 4242, SessionID: "stale-session", Status: daemon.StatusRunning, StartedAt: now.Add(-15 * time.Minute)},
 	} {
 		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
 			t.Fatalf("write metadata %s: %v", meta.Instance, err)
@@ -3253,6 +3272,18 @@ target = "worker"
 	}
 	if counts.Total != 2 || counts.Actions["logs"] != 2 || counts.Runtimes["claude"] != 1 || counts.Runtimes["codex"] != 1 || counts.Statuses["crashed"] != 2 {
 		t.Fatalf("pipeline resume-plan summary = %+v", counts)
+	}
+
+	stale := NewRootCmd()
+	staleOut, staleErr := &bytes.Buffer{}, &bytes.Buffer{}
+	stale.SetOut(staleOut)
+	stale.SetErr(staleErr)
+	stale.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--stale", "--format", "{{.Job}} {{.Instance}} {{.Stale}} {{.RecommendedAction}}"})
+	if err := stale.Execute(); err != nil {
+		t.Fatalf("pipeline resume-plan stale filter: %v\nstderr=%s", err, staleErr.String())
+	}
+	if got, want := strings.TrimSpace(staleOut.String()), "squ-942 worker-squ-942 true start"; got != want {
+		t.Fatalf("pipeline stale resume-plan = %q, want %q", got, want)
 	}
 }
 

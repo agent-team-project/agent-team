@@ -224,9 +224,10 @@ agent-team job resume-plan squ-42
 agent-team runtime resume-plan --runtime codex --status exited
 agent-team runtime resume-plan --action resume --format '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'
 agent-team runtime resume-plan --status crashed --summary --json
+agent-team runtime resume-plan --stale --summary
 agent-team runtime resume-plan --json
 agent-team team runtime resume-plan delivery --status crashed
-agent-team team runtime resume-plan delivery --action logs --summary
+agent-team team runtime resume-plan delivery --stale --summary
 ```
 
 `agent-team overview` also summarizes runtime metadata and links crashed
@@ -239,7 +240,8 @@ recommended action plus managed start, attach dry-run, unmanaged runtime resume,
 log follow, and Codex last-message commands. Job-linked metadata also includes
 `job attach` and `job logs` variants so recovery can stay scoped to the durable
 work unit. Use `--action start|attach|resume|logs` when scripts or operators
-only need one recovery class, and add `--summary` to count matching plans by
+only need one recovery class, add `--stale` to isolate recorded running PIDs
+that are no longer live, and add `--summary` to count matching plans by
 recommended action, runtime, lifecycle status, and stale running metadata.
 When a positive recorded `running` PID is no longer live, resume-plan marks the
 row as `stale` and recommends the recovery path that can reconcile or resume it.

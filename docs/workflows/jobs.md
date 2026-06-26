@@ -93,7 +93,8 @@ If a Codex one-shot captured `.agent_team/state/<instance>/last-message.txt`,
 `job show` includes an action hint for `agent-team job logs <job-id> --last-message`.
 If daemon metadata says a job-owned instance crashed, it also suggests
 `agent-team job resume-plan <job-id> --status crashed`; add
-`--action resume` or `--action logs` to narrow the recovery path.
+`--stale` for recorded running PIDs that are no longer live, or
+`--action resume`/`--action logs` to narrow the recovery path.
 
 ## Waiting For Jobs
 

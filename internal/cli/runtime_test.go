@@ -653,6 +653,17 @@ func TestRuntimeResumePlanMarksStaleRunningMetadata(t *testing.T) {
 		daemon.PidLiveCheck = oldPIDLiveCheck
 	})
 	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-55",
+		Ticket:    "SQU-55",
+		Target:    "manager",
+		Instance:  "stale-manager",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
 	for _, meta := range []*daemon.Metadata{
 		{
 			Instance:      "live-manager",
@@ -743,12 +754,40 @@ func TestRuntimeResumePlanMarksStaleRunningMetadata(t *testing.T) {
 	filteredOut, filteredErr := &bytes.Buffer{}, &bytes.Buffer{}
 	filtered.SetOut(filteredOut)
 	filtered.SetErr(filteredErr)
-	filtered.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--action", "start", "--format", "{{.Instance}} {{.Stale}} {{.RecommendedCommand}}"})
+	filtered.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--action", "start", "--stale", "--format", "{{.Instance}} {{.Stale}} {{.RecommendedCommand}}"})
 	if err := filtered.Execute(); err != nil {
-		t.Fatalf("runtime resume-plan action filter: %v\nstderr=%s", err, filteredErr.String())
+		t.Fatalf("runtime resume-plan stale action filter: %v\nstderr=%s", err, filteredErr.String())
 	}
 	if got := strings.TrimSpace(filteredOut.String()); got != "stale-manager true agent-team start stale-manager" {
 		t.Fatalf("filtered stale plan = %q", got)
+	}
+
+	staleSummary := NewRootCmd()
+	staleSummaryOut, staleSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	staleSummary.SetOut(staleSummaryOut)
+	staleSummary.SetErr(staleSummaryErr)
+	staleSummary.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--stale", "--summary", "--json"})
+	if err := staleSummary.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan stale summary: %v\nstderr=%s", err, staleSummaryErr.String())
+	}
+	var staleCounts runtimeResumeSummary
+	if err := json.Unmarshal(staleSummaryOut.Bytes(), &staleCounts); err != nil {
+		t.Fatalf("decode stale resume-plan summary: %v\nbody=%s", err, staleSummaryOut.String())
+	}
+	if staleCounts.Total != 1 || staleCounts.Stale != 1 || staleCounts.Actions["start"] != 1 {
+		t.Fatalf("stale resume-plan summary = %+v", staleCounts)
+	}
+
+	jobFiltered := NewRootCmd()
+	jobFilteredOut, jobFilteredErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jobFiltered.SetOut(jobFilteredOut)
+	jobFiltered.SetErr(jobFilteredErr)
+	jobFiltered.SetArgs([]string{"job", "resume-plan", "SQU-55", "--repo", tmp, "--stale", "--format", "{{.Job}} {{.Instance}} {{.Stale}} {{.RecommendedCommand}}"})
+	if err := jobFiltered.Execute(); err != nil {
+		t.Fatalf("job resume-plan stale filter: %v\nstderr=%s", err, jobFilteredErr.String())
+	}
+	if got := strings.TrimSpace(jobFilteredOut.String()); got != "squ-55 stale-manager true agent-team start stale-manager" {
+		t.Fatalf("job stale plan = %q", got)
 	}
 }
 
