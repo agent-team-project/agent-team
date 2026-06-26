@@ -2169,6 +2169,7 @@ Flags:
       --event-type strings    With --all, filter by event type; repeat or comma-separate values.
       --format string         Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --json                  Emit drop results as JSON.
+      --limit int             With --all, drop at most this many matching job-owned quarantined files; 0 means no limit.
       --older-than duration   With --all, only drop files older than this duration based on file mtime.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --restorable            With --all, only drop quarantined files that can be restored.
@@ -2195,6 +2196,7 @@ Flags:
       --force                Overwrite an existing active queue file with the same restore path.
       --format string        Render each restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --json                 Emit restore result as JSON.
+      --limit int            With --all, restore at most this many matching job-owned quarantined files; 0 means no limit.
       --repo string          Repo root containing .agent_team. (default "<repo>")
       --state string         With --all, filter by queue state: pending or dead.
 ```
@@ -3459,6 +3461,7 @@ Flags:
       --format string         Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --job strings           With --all, filter by job id or ticket; repeat or comma-separate values.
       --json                  Emit drop results as JSON.
+      --limit int             With --all, drop at most this many matching pipeline-owned quarantined files; 0 means no limit.
       --older-than duration   With --all, only drop files older than this duration based on file mtime.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --restorable            With --all, only drop quarantined files that can be restored.
@@ -3473,7 +3476,7 @@ Restore pipeline-owned quarantined queue files.
 Restore one pipeline-owned quarantined queue file by path, or restore a filtered pipeline-owned batch of restorable files with --all.
 
 ```text
-agent-team pipeline queue quarantine restore <pipeline> <quarantine-path> [flags]
+agent-team pipeline queue quarantine restore <pipeline> [quarantine-path] [flags]
 ```
 
 Flags:
@@ -3486,6 +3489,7 @@ Flags:
       --format string        Render each restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --job strings          With --all, filter by job id or ticket; repeat or comma-separate values.
       --json                 Emit restore result as JSON.
+      --limit int            With --all, restore at most this many matching pipeline-owned quarantined files; 0 means no limit.
       --repo string          Repo root containing .agent_team. (default "<repo>")
       --state string         With --all, filter by queue state: pending or dead.
 ```
@@ -4222,7 +4226,7 @@ Drop quarantined queue files after inspection.
 Drop one quarantined queue file by path, or drop a filtered batch with --all.
 
 ```text
-agent-team queue quarantine drop <quarantine-path> [flags]
+agent-team queue quarantine drop [quarantine-path] [flags]
 ```
 
 Flags:
@@ -4235,6 +4239,7 @@ Flags:
       --instance strings      With --all, filter by target instance name; repeat or comma-separate values.
       --job strings           With --all, filter by job id or ticket; repeat or comma-separate values.
       --json                  Emit drop results as JSON.
+      --limit int             With --all, drop at most this many matching quarantined files; 0 means no limit.
       --older-than duration   With --all, only drop files older than this duration based on file mtime.
       --restorable            With --all, only drop quarantined files that can be restored.
       --state string          With --all, filter by queue state: pending or dead.
@@ -4283,7 +4288,7 @@ Restore validated quarantined queue files.
 Restore one validated quarantined queue file by path, or restore a filtered batch of restorable files with --all.
 
 ```text
-agent-team queue quarantine restore <quarantine-path> [flags]
+agent-team queue quarantine restore [quarantine-path] [flags]
 ```
 
 Flags:
@@ -4297,6 +4302,7 @@ Flags:
       --instance strings     With --all, filter by target instance name; repeat or comma-separate values.
       --job strings          With --all, filter by job id or ticket; repeat or comma-separate values.
       --json                 Emit restore result as JSON.
+      --limit int            With --all, restore at most this many matching quarantined files; 0 means no limit.
       --state string         With --all, filter by queue state: pending or dead.
       --target string        Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
@@ -6020,6 +6026,7 @@ Flags:
       --format string         Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --job strings           With --all, filter by job id or ticket; repeat or comma-separate values.
       --json                  Emit drop results as JSON.
+      --limit int             With --all, drop at most this many matching team-owned quarantined files; 0 means no limit.
       --older-than duration   With --all, only drop files older than this duration based on file mtime.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --restorable            With --all, only drop quarantined files that can be restored.
@@ -6034,7 +6041,7 @@ Restore team-owned quarantined queue files.
 Restore one team-owned quarantined queue file by path, or restore a filtered team-owned batch of restorable files with --all.
 
 ```text
-agent-team team queue quarantine restore <team> <quarantine-path> [flags]
+agent-team team queue quarantine restore <team> [quarantine-path] [flags]
 ```
 
 Flags:
@@ -6047,6 +6054,7 @@ Flags:
       --format string        Render each restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --job strings          With --all, filter by job id or ticket; repeat or comma-separate values.
       --json                 Emit restore result as JSON.
+      --limit int            With --all, restore at most this many matching team-owned quarantined files; 0 means no limit.
       --repo string          Repo root containing .agent_team. (default "<repo>")
       --state string         With --all, filter by queue state: pending or dead.
 ```

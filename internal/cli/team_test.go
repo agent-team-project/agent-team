@@ -5632,6 +5632,22 @@ instances = ["other"]
 		t.Fatalf("path filter stderr = %q", filterPathDropErr.String())
 	}
 
+	dropLimitDry := NewRootCmd()
+	dropLimitDryOut, dropLimitDryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropLimitDry.SetOut(dropLimitDryOut)
+	dropLimitDry.SetErr(dropLimitDryErr)
+	dropLimitDry.SetArgs([]string{"team", "queue", "quarantine", "drop", "delivery", "--repo", root, "--all", "--limit", "1", "--dry-run", "--json"})
+	if err := dropLimitDry.Execute(); err != nil {
+		t.Fatalf("team queue quarantine drop --all limit dry-run: %v\nstderr=%s", err, dropLimitDryErr.String())
+	}
+	var dropLimitResults []queueQuarantineDropResult
+	if err := json.Unmarshal(dropLimitDryOut.Bytes(), &dropLimitResults); err != nil {
+		t.Fatalf("decode team queue quarantine drop --all limit dry-run: %v\nbody=%s", err, dropLimitDryOut.String())
+	}
+	if len(dropLimitResults) != 1 || dropLimitResults[0].ID != "q-team-quarantined" {
+		t.Fatalf("drop --all limit results = %+v", dropLimitResults)
+	}
+
 	dropAllDry := NewRootCmd()
 	dropAllDryOut, dropAllDryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dropAllDry.SetOut(dropAllDryOut)

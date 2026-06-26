@@ -995,6 +995,80 @@ func TestQueueQuarantineDropExplicitAndBatch(t *testing.T) {
 	}
 }
 
+func TestQueueQuarantineBatchLimit(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC().Truncate(time.Second)
+	stamp := "20260619T030000.000000000Z"
+	for _, id := range []string{"q-limit-a", "q-limit-b", "q-limit-c"} {
+		writeQuarantinedQueueItem(t, teamDir, stamp, daemon.QueueStateDead, &daemon.QueueItem{
+			ID:             id,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     "worker-" + id,
+			Payload:        map[string]any{"target": "worker", "ticket": "SQU-130"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-time.Hour),
+			UpdatedAt:      now.Add(-time.Hour),
+			DeadLetteredAt: now.Add(-time.Hour),
+		})
+	}
+
+	restore := NewRootCmd()
+	restoreOut, restoreErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restore.SetOut(restoreOut)
+	restore.SetErr(restoreErr)
+	restore.SetArgs([]string{"queue", "quarantine", "restore", "--target", tmp, "--all", "--limit", "2", "--dry-run", "--format", "{{.ID}}"})
+	if err := restore.Execute(); err != nil {
+		t.Fatalf("queue quarantine restore --all limit dry-run: %v\nstderr=%s", err, restoreErr.String())
+	}
+	if got, want := restoreOut.String(), "q-limit-a\nq-limit-b\n"; got != want {
+		t.Fatalf("restore --limit output = %q, want %q", got, want)
+	}
+
+	drop := NewRootCmd()
+	dropOut, dropErr := &bytes.Buffer{}, &bytes.Buffer{}
+	drop.SetOut(dropOut)
+	drop.SetErr(dropErr)
+	drop.SetArgs([]string{"queue", "quarantine", "drop", "--target", tmp, "--all", "--limit", "1", "--dry-run", "--json"})
+	if err := drop.Execute(); err != nil {
+		t.Fatalf("queue quarantine drop --all limit dry-run: %v\nstderr=%s", err, dropErr.String())
+	}
+	var dropped []queueQuarantineDropResult
+	if err := json.Unmarshal(dropOut.Bytes(), &dropped); err != nil {
+		t.Fatalf("decode drop --limit dry-run: %v\nbody=%s", err, dropOut.String())
+	}
+	if len(dropped) != 1 || dropped[0].ID != "q-limit-a" || !dropped[0].DryRun {
+		t.Fatalf("drop --limit results = %+v", dropped)
+	}
+
+	invalidLimit := NewRootCmd()
+	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidLimit.SetOut(invalidOut)
+	invalidLimit.SetErr(invalidErr)
+	invalidLimit.SetArgs([]string{"queue", "quarantine", "drop", "--target", tmp, "--all", "--limit", "-1"})
+	if err := invalidLimit.Execute(); err == nil {
+		t.Fatalf("queue quarantine drop negative limit succeeded: stdout=%s", invalidOut.String())
+	}
+	if !strings.Contains(invalidErr.String(), "--limit must be >= 0") {
+		t.Fatalf("negative limit stderr = %q", invalidErr.String())
+	}
+
+	pathLimit := NewRootCmd()
+	pathLimitOut, pathLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pathLimit.SetOut(pathLimitOut)
+	pathLimit.SetErr(pathLimitErr)
+	pathLimit.SetArgs([]string{"queue", "quarantine", "restore", "--target", tmp, "--limit", "1", filepath.Join("quarantine", stamp, daemon.QueueStateDead, "q-limit-a.json")})
+	if err := pathLimit.Execute(); err == nil {
+		t.Fatalf("queue quarantine restore path with limit succeeded: stdout=%s", pathLimitOut.String())
+	}
+	if !strings.Contains(pathLimitErr.String(), "--limit requires --all") {
+		t.Fatalf("path limit stderr = %q", pathLimitErr.String())
+	}
+}
+
 func TestQueueQuarantineFormatValidation(t *testing.T) {
 	tests := []struct {
 		name string

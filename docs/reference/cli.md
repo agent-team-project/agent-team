@@ -130,9 +130,9 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team job queue quarantine <job-id>` | List job-owned quarantined queue files |
 | `agent-team job queue quarantine show <job-id> <path>` | Inspect one preserved file |
 | `agent-team job queue quarantine restore <job-id> <path>` | Restore one preserved file |
-| `agent-team job queue quarantine restore <job-id> --all` | Restore matching restorable files |
+| `agent-team job queue quarantine restore <job-id> --all` | Restore matching restorable files; cap batch actions with `--limit` |
 | `agent-team job queue quarantine drop <job-id> <path>` | Drop one preserved file |
-| `agent-team job queue quarantine drop <job-id> --all` | Drop matching preserved files |
+| `agent-team job queue quarantine drop <job-id> --all` | Drop matching preserved files; cap batch actions with `--limit` |
 
 ## Global Queue
 
@@ -151,6 +151,8 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team queue quarantine show <path>` | Inspect quarantined queue file |
 | `agent-team queue quarantine restore <path>` | Restore one preserved file |
 | `agent-team queue quarantine drop <path>` | Drop one preserved file |
+| `agent-team queue quarantine restore --all` | Restore matching restorable files; cap batch actions with `--limit` |
+| `agent-team queue quarantine drop --all` | Drop matching preserved files; cap batch actions with `--limit` |
 
 ## Pipelines
 

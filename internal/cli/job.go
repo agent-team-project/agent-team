@@ -311,6 +311,7 @@ func newJobQueueQuarantineRestoreCmd() *cobra.Command {
 		force       bool
 		stateFilter string
 		eventTypes  []string
+		limit       int
 		jsonOut     bool
 		format      string
 	)
@@ -330,6 +331,10 @@ func newJobQueueQuarantineRestoreCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job queue quarantine restore: %v\n", err)
 				return exitErr(2)
 			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue quarantine restore: --limit must be >= 0.")
+				return exitErr(2)
+			}
 			if restoreAll {
 				if len(args) != 1 {
 					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue quarantine restore: --all requires exactly one job and cannot be combined with a path.")
@@ -345,7 +350,7 @@ func newJobQueueQuarantineRestoreCmd() *cobra.Command {
 					return exitErr(1)
 				}
 				items = filterQueueQuarantineRestorable(items, true, false)
-				results, err := restoreQueueQuarantineItems(teamDir, items, dryRun, force)
+				results, err := restoreQueueQuarantineItems(teamDir, items, dryRun, force, limit)
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job queue quarantine restore: %v\n", err)
 					return exitErr(1)
@@ -356,8 +361,8 @@ func newJobQueueQuarantineRestoreCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue quarantine restore: requires <job-id> and one path unless --all is set.")
 				return exitErr(2)
 			}
-			if !filters.empty() {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue quarantine restore: filters require --all.")
+			if !filters.empty() || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue quarantine restore: filters require --all; --limit requires --all.")
 				return exitErr(2)
 			}
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
@@ -382,6 +387,7 @@ func newJobQueueQuarantineRestoreCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing active queue file with the same restore path.")
 	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead.")
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, restore at most this many matching job-owned quarantined files; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit restore result as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	return cmd
@@ -397,6 +403,7 @@ func newJobQueueQuarantineDropCmd() *cobra.Command {
 		restorable   bool
 		unrestorable bool
 		olderThan    time.Duration
+		limit        int
 		jsonOut      bool
 		format       string
 	)
@@ -409,6 +416,10 @@ func newJobQueueQuarantineDropCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if olderThan < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue quarantine drop: --older-than must be >= 0.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue quarantine drop: --limit must be >= 0.")
 				return exitErr(2)
 			}
 			if restorable && unrestorable {
@@ -439,7 +450,7 @@ func newJobQueueQuarantineDropCmd() *cobra.Command {
 					return exitErr(1)
 				}
 				items = filterQueueQuarantineRestorable(items, restorable, unrestorable)
-				results, err := dropQueueQuarantineItems(teamDir, items, dryRun, olderThan, unrestorable, time.Now().UTC())
+				results, err := dropQueueQuarantineItems(teamDir, items, dryRun, olderThan, unrestorable, limit, time.Now().UTC())
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job queue quarantine drop: %v\n", err)
 					return exitErr(1)
@@ -450,8 +461,8 @@ func newJobQueueQuarantineDropCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue quarantine drop: requires <job-id> and one path unless --all is set.")
 				return exitErr(2)
 			}
-			if olderThan > 0 || restorable || unrestorable || !filters.empty() {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue quarantine drop: filters require --all.")
+			if olderThan > 0 || restorable || unrestorable || !filters.empty() || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue quarantine drop: filters require --all; --limit requires --all.")
 				return exitErr(2)
 			}
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
@@ -479,6 +490,7 @@ func newJobQueueQuarantineDropCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&restorable, "restorable", false, "With --all, only drop quarantined files that can be restored.")
 	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "With --all, only drop quarantined files that cannot be restored.")
 	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "With --all, only drop files older than this duration based on file mtime.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, drop at most this many matching job-owned quarantined files; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit drop results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	return cmd
@@ -5589,10 +5601,10 @@ func actionsForJobTriageItem(item jobTriageItem) []string {
 		if item.QueueQuarantineRestorable == 1 && len(item.QueueQuarantineRestorablePaths) == 1 {
 			add(fmt.Sprintf("agent-team job queue quarantine restore %s %s --dry-run", item.JobID, item.QueueQuarantineRestorablePaths[0]))
 		} else if item.QueueQuarantineRestorable > 1 {
-			add(fmt.Sprintf("agent-team job queue quarantine restore %s --all --dry-run", item.JobID))
+			add(fmt.Sprintf("agent-team job queue quarantine restore %s --all --limit %d --dry-run", item.JobID, queueRecoveryHintLimit))
 		}
 		if item.QueueQuarantineUnrestorable > 0 {
-			add(fmt.Sprintf("agent-team job queue quarantine drop %s --all --unrestorable --dry-run", item.JobID))
+			add(fmt.Sprintf("agent-team job queue quarantine drop %s --all --unrestorable --limit %d --dry-run", item.JobID, queueRecoveryHintLimit))
 		}
 	}
 	if stringSliceContains(item.Reasons, "failed") || stringSliceContains(item.Reasons, "failed_step") {

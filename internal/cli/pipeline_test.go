@@ -5067,6 +5067,16 @@ target = "worker"
 			UpdatedAt: now,
 		},
 		{
+			ID:        "squ-903",
+			Ticket:    "SQU-903",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Instance:  "worker-squ-903",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
 			ID:        "ops-902",
 			Ticket:    "OPS-902",
 			Target:    "worker",
@@ -5089,6 +5099,15 @@ target = "worker"
 		Instance:   "worker",
 		InstanceID: "worker-squ-902",
 		Payload:    map[string]any{"job_id": "squ-902", "ticket": "SQU-902", "target": "worker"},
+		QueuedAt:   now.Add(-2 * time.Hour),
+		UpdatedAt:  now.Add(-time.Hour),
+	})
+	writeQuarantinedQueueItem(t, teamDir, stamp, daemon.QueueStatePending, &daemon.QueueItem{
+		ID:         "q-pipeline-quarantined-extra",
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-903",
+		Payload:    map[string]any{"job_id": "squ-903", "ticket": "SQU-903", "target": "worker"},
 		QueuedAt:   now.Add(-2 * time.Hour),
 		UpdatedAt:  now.Add(-time.Hour),
 	})
@@ -5128,7 +5147,7 @@ target = "worker"
 	if err := json.Unmarshal(listOut.Bytes(), &listed); err != nil {
 		t.Fatalf("decode pipeline quarantine list: %v\nbody=%s", err, listOut.String())
 	}
-	if got := queueQuarantineItemIDs(listed); got != "q-pipeline-quarantined,q-pipeline-unrestorable" {
+	if got := queueQuarantineItemIDs(listed); got != "q-pipeline-quarantined,q-pipeline-quarantined-extra,q-pipeline-unrestorable" {
 		t.Fatalf("listed pipeline quarantined items = %s\nbody=%s", got, listOut.String())
 	}
 
@@ -5144,7 +5163,7 @@ target = "worker"
 	if err := json.Unmarshal(restorableOut.Bytes(), &restorableRows); err != nil {
 		t.Fatalf("decode restorable rows: %v\nbody=%s", err, restorableOut.String())
 	}
-	if got := queueQuarantineItemIDs(restorableRows); got != "q-pipeline-quarantined" {
+	if got := queueQuarantineItemIDs(restorableRows); got != "q-pipeline-quarantined,q-pipeline-quarantined-extra" {
 		t.Fatalf("restorable rows = %s\nbody=%s", got, restorableOut.String())
 	}
 
@@ -5202,6 +5221,18 @@ target = "worker"
 	}
 	if len(restoreRows) != 1 || restoreRows[0].ID != "q-pipeline-quarantined" || restoreRows[0].Action != "would_restore" {
 		t.Fatalf("restore rows = %+v", restoreRows)
+	}
+
+	restoreLimit := NewRootCmd()
+	restoreLimitOut, restoreLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreLimit.SetOut(restoreLimitOut)
+	restoreLimit.SetErr(restoreLimitErr)
+	restoreLimit.SetArgs([]string{"pipeline", "queue", "quarantine", "restore", "ticket_to_pr", "--repo", root, "--all", "--limit", "1", "--dry-run", "--format", "{{.ID}}"})
+	if err := restoreLimit.Execute(); err != nil {
+		t.Fatalf("pipeline queue quarantine restore --all limit dry-run: %v\nstderr=%s", err, restoreLimitErr.String())
+	}
+	if got, want := restoreLimitOut.String(), "q-pipeline-quarantined-extra\n"; got != want {
+		t.Fatalf("pipeline restore --limit output = %q, want %q", got, want)
 	}
 
 	restoreOne := NewRootCmd()

@@ -1651,6 +1651,18 @@ func TestJobQueueQuarantineScopesOwnedFiles(t *testing.T) {
 		t.Fatalf("listed job quarantined items = %+v", listed)
 	}
 
+	restoreLimit := NewRootCmd()
+	restoreLimitOut, restoreLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreLimit.SetOut(restoreLimitOut)
+	restoreLimit.SetErr(restoreLimitErr)
+	restoreLimit.SetArgs([]string{"job", "queue", "quarantine", "restore", "SQU-123", "--repo", tmp, "--all", "--limit", "1", "--dry-run", "--format", "{{.ID}}"})
+	if err := restoreLimit.Execute(); err != nil {
+		t.Fatalf("job queue quarantine restore --all limit: %v\nstderr=%s", err, restoreLimitErr.String())
+	}
+	if got, want := restoreLimitOut.String(), "q-job-quarantined-drop\n"; got != want {
+		t.Fatalf("job restore --limit output = %q, want %q", got, want)
+	}
+
 	show := NewRootCmd()
 	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
 	show.SetOut(showOut)
