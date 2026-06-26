@@ -791,6 +791,74 @@ func TestRuntimeResumePlanMarksStaleRunningMetadata(t *testing.T) {
 	}
 }
 
+func TestRuntimeResumePlanUnhealthyFilter(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	oldPIDLiveCheck := daemon.PidLiveCheck
+	daemon.PidLiveCheck = func(pid int) bool {
+		return pid == 99
+	}
+	t.Cleanup(func() {
+		daemon.PidLiveCheck = oldPIDLiveCheck
+	})
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{
+			Instance:      "crashed-worker",
+			Agent:         "worker",
+			Runtime:       string(runtimebin.KindCodex),
+			RuntimeBinary: "codex",
+			Workspace:     tmp,
+			StartedAt:     now.Add(-20 * time.Minute),
+			Status:        daemon.StatusCrashed,
+		},
+		{
+			Instance:      "live-manager",
+			Agent:         "manager",
+			Runtime:       string(runtimebin.KindClaude),
+			RuntimeBinary: "claude",
+			Workspace:     tmp,
+			PID:           99,
+			SessionID:     "sid-live",
+			StartedAt:     now,
+			Status:        daemon.StatusRunning,
+		},
+		{
+			Instance:      "stale-manager",
+			Agent:         "manager",
+			Runtime:       string(runtimebin.KindClaude),
+			RuntimeBinary: "claude",
+			Workspace:     tmp,
+			PID:           4242,
+			SessionID:     "sid-stale",
+			StartedAt:     now,
+			Status:        daemon.StatusRunning,
+		},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--unhealthy", "--format", "{{.Instance}} {{.RecommendedAction}} {{.Stale}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan unhealthy filter: %v\nstderr=%s", err, errOut.String())
+	}
+	got := strings.TrimSpace(out.String())
+	want := strings.Join([]string{
+		"crashed-worker logs false",
+		"stale-manager start true",
+	}, "\n")
+	if got != want {
+		t.Fatalf("unhealthy resume-plan = %q, want %q", got, want)
+	}
+}
+
 func TestRuntimeResumePlanCodexJobJSON(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

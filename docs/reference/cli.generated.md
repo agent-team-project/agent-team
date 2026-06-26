@@ -2458,6 +2458,7 @@ Flags:
       --stale             Only include running metadata whose recorded PID is no longer live.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --summary           Summarize matching resume plans by recommended action, runtime, and status.
+      --unhealthy         Only include crashed or stale running metadata.
 ```
 
 ## `agent-team job rm`
@@ -3639,6 +3640,7 @@ Flags:
       --stale             Only include running metadata whose recorded PID is no longer live.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --summary           Summarize matching pipeline resume plans by recommended action, runtime, and status.
+      --unhealthy         Only include crashed or stale running metadata.
 ```
 
 ## `agent-team pipeline retry`
@@ -4706,6 +4708,7 @@ Flags:
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --summary           Summarize matching resume plans by recommended action, runtime, and status.
       --target string     Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --unhealthy         Only include crashed or stale running metadata.
 ```
 
 Inherited Flags:
@@ -6254,6 +6257,7 @@ Flags:
       --stale             Only include running metadata whose recorded PID is no longer live.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --summary           Summarize matching team resume plans by recommended action, runtime, and status.
+      --unhealthy         Only include crashed or stale running metadata.
 ```
 
 ## `agent-team team schedules`

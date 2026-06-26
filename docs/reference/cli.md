@@ -40,7 +40,7 @@ as the output directory instead.
 | `agent-team runtime ls` | List supported runtime profiles, availability, and capabilities |
 | `agent-team runtime probe` | Probe runtime selection, daemon readiness, Codex doctor health, optional Codex exec readiness, and write diagnostics with `--output`; aliases: `doctor`, `check` |
 | `agent-team runtime adopt <instance>` | Adopt a live external runtime process into daemon metadata |
-| `agent-team runtime resume-plan` | Show resume, attach, and log fallback commands from daemon metadata; filter by `--action`/`--stale` or summarize with `--summary` |
+| `agent-team runtime resume-plan` | Show resume, attach, and log fallback commands from daemon metadata; filter by `--action`/`--stale`/`--unhealthy` or summarize with `--summary` |
 
 ## Instance Lifecycle
 
@@ -175,7 +175,7 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team pipeline reject <pipeline>` | Reject blocked manual gates |
 | `agent-team pipeline skip <pipeline> --step <id>` | Mark matching non-running steps intentionally skipped |
 | `agent-team pipeline cancel <pipeline>` | Cancel non-terminal pipeline jobs without stopping instances |
-| `agent-team pipeline resume-plan <pipeline>` | Pipeline-scoped runtime recovery commands; filter by `--action`/`--stale` or summarize with `--summary` |
+| `agent-team pipeline resume-plan <pipeline>` | Pipeline-scoped runtime recovery commands; filter by `--action`/`--stale`/`--unhealthy` or summarize with `--summary` |
 | `agent-team pipeline send <pipeline>` | Send a mailbox message to pipeline-owned daemon-known instances |
 | `agent-team pipeline logs <pipeline>` | Read daemon-captured logs for pipeline-owned instances |
 | `agent-team pipeline events <pipeline>` | Read lifecycle events for pipeline-owned instances |
@@ -194,7 +194,7 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team team graph <team>` | Render team-owned instance, schedule, and pipeline wiring |
 | `agent-team team overview <team>` | Scoped operator overview |
 | `agent-team team health <team>` | Scoped health |
-| `agent-team team runtime resume-plan <team>` | Team-scoped runtime recovery commands; filter by `--action`/`--stale` or summarize with `--summary` |
+| `agent-team team runtime resume-plan <team>` | Team-scoped runtime recovery commands; filter by `--action`/`--stale`/`--unhealthy` or summarize with `--summary` |
 | `agent-team team status <team>` | Scoped status |
 | `agent-team team monitor <team>` | Scoped dashboard |
 | `agent-team team run <team> <ticket>` | Create a team-owned job; `--dispatch` accepts runtime overrides |

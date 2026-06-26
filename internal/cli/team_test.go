@@ -4161,6 +4161,22 @@ func TestTeamRuntimeResumePlanScopesMetadata(t *testing.T) {
 	if got, want := strings.TrimSpace(staleOut.String()), "worker-squ-902 true start"; got != want {
 		t.Fatalf("team stale resume-plan = %q, want %q", got, want)
 	}
+
+	unhealthy := NewRootCmd()
+	unhealthyOut, unhealthyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	unhealthy.SetOut(unhealthyOut)
+	unhealthy.SetErr(unhealthyErr)
+	unhealthy.SetArgs([]string{"team", "runtime", "resume-plan", "delivery", "--repo", root, "--unhealthy", "--format", "{{.Instance}} {{.RecommendedAction}} {{.Stale}}"})
+	if err := unhealthy.Execute(); err != nil {
+		t.Fatalf("team runtime resume-plan unhealthy filter: %v\nstderr=%s", err, unhealthyErr.String())
+	}
+	if got, want := strings.TrimSpace(unhealthyOut.String()), strings.Join([]string{
+		"manager logs false",
+		"worker-squ-900 logs false",
+		"worker-squ-902 start true",
+	}, "\n"); got != want {
+		t.Fatalf("team unhealthy resume-plan = %q, want %q", got, want)
+	}
 }
 
 func TestTeamStatusFiltersByRuntime(t *testing.T) {

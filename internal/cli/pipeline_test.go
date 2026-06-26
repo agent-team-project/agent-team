@@ -3285,6 +3285,22 @@ target = "worker"
 	if got, want := strings.TrimSpace(staleOut.String()), "squ-942 worker-squ-942 true start"; got != want {
 		t.Fatalf("pipeline stale resume-plan = %q, want %q", got, want)
 	}
+
+	unhealthy := NewRootCmd()
+	unhealthyOut, unhealthyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	unhealthy.SetOut(unhealthyOut)
+	unhealthy.SetErr(unhealthyErr)
+	unhealthy.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--unhealthy", "--format", "{{.Instance}} {{.RecommendedAction}} {{.Stale}}"})
+	if err := unhealthy.Execute(); err != nil {
+		t.Fatalf("pipeline resume-plan unhealthy filter: %v\nstderr=%s", err, unhealthyErr.String())
+	}
+	if got, want := strings.TrimSpace(unhealthyOut.String()), strings.Join([]string{
+		"manager-squ-940 logs false",
+		"worker-squ-940 logs false",
+		"worker-squ-942 start true",
+	}, "\n"); got != want {
+		t.Fatalf("pipeline unhealthy resume-plan = %q, want %q", got, want)
+	}
 }
 
 func TestPipelineSendScopesRecipients(t *testing.T) {

@@ -60,6 +60,7 @@ func newRuntimeResumePlanCmd() *cobra.Command {
 		runtimeFilter []string
 		actionFilters []string
 		staleOnly     bool
+		unhealthyOnly bool
 		summary       bool
 		jsonOut       bool
 		format        string
@@ -93,7 +94,7 @@ func newRuntimeResumePlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			plans, err := collectRuntimeResumePlans(teamDir, args, jobID, statusFilters, runtimeFilter, actionFilters, staleOnly)
+			plans, err := collectRuntimeResumePlans(teamDir, args, jobID, statusFilters, runtimeFilter, actionFilters, staleOnly, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime resume-plan: %v\n", err)
 				return exitErr(1)
@@ -122,6 +123,7 @@ func newRuntimeResumePlanCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only include running metadata whose recorded PID is no longer live.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only include crashed or stale running metadata.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching resume plans by recommended action, runtime, and status.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.")
@@ -135,6 +137,7 @@ func newJobResumePlanCmd() *cobra.Command {
 		runtimeFilter []string
 		actionFilters []string
 		staleOnly     bool
+		unhealthyOnly bool
 		summary       bool
 		jsonOut       bool
 		format        string
@@ -164,7 +167,7 @@ func newJobResumePlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			plans, err := collectRuntimeResumePlans(teamDir, nil, args[0], statusFilters, runtimeFilter, actionFilters, staleOnly)
+			plans, err := collectRuntimeResumePlans(teamDir, nil, args[0], statusFilters, runtimeFilter, actionFilters, staleOnly, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job resume-plan: %v\n", err)
 				return exitErr(1)
@@ -192,13 +195,14 @@ func newJobResumePlanCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only include running metadata whose recorded PID is no longer live.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only include crashed or stale running metadata.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching resume plans by recommended action, runtime, and status.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.")
 	return cmd
 }
 
-func collectRuntimeResumePlans(teamDir string, instances []string, jobID string, statusFilters []string, runtimeFilters []string, actionFilters []string, staleOnly bool) ([]runtimeResumePlan, error) {
+func collectRuntimeResumePlans(teamDir string, instances []string, jobID string, statusFilters []string, runtimeFilters []string, actionFilters []string, staleOnly bool, unhealthyOnly bool) ([]runtimeResumePlan, error) {
 	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
 	if err != nil {
 		return nil, err
@@ -274,12 +278,19 @@ func collectRuntimeResumePlans(teamDir string, instances []string, jobID string,
 		if staleOnly && !plan.Stale {
 			continue
 		}
+		if unhealthyOnly && !runtimeResumePlanUnhealthy(plan) {
+			continue
+		}
 		plans = append(plans, plan)
 	}
 	sort.SliceStable(plans, func(i, j int) bool {
 		return plans[i].Instance < plans[j].Instance
 	})
 	return plans, nil
+}
+
+func runtimeResumePlanUnhealthy(plan runtimeResumePlan) bool {
+	return plan.Stale || strings.EqualFold(strings.TrimSpace(plan.Status), string(daemon.StatusCrashed))
 }
 
 func metadataForResumePlanJob(metas []*daemon.Metadata, byInstance map[string]*daemon.Metadata, j *job.Job) []*daemon.Metadata {
