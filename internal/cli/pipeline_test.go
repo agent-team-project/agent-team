@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2604,6 +2605,217 @@ pipelines = ["ticket_to_pr"]
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("pipeline status text missing %q:\n%s", want, textOut.String())
 		}
+	}
+}
+
+func TestPipelineTriageScopesJobsQueueAndActions(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "triage"
+target = "ticket-manager"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+after = ["triage"]
+
+[pipelines.ops_review]
+trigger.event = "ops.created"
+
+[[pipelines.ops_review.steps]]
+id = "audit"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	old := now.Add(-48 * time.Hour)
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-830",
+			Ticket:    "SQU-830",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusFailed,
+			CreatedAt: old,
+			UpdatedAt: old,
+			Steps: []job.Step{
+				{ID: "triage", Target: "ticket-manager", Status: job.StatusDone, StartedAt: old, FinishedAt: old.Add(time.Hour)},
+				{ID: "implement", Target: "worker", Status: job.StatusFailed, After: []string{"triage"}, StartedAt: old.Add(time.Hour), FinishedAt: old.Add(2 * time.Hour)},
+			},
+		},
+		{
+			ID:        "squ-831",
+			Ticket:    "SQU-831",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: old,
+			UpdatedAt: old,
+			Steps: []job.Step{
+				{ID: "triage", Target: "ticket-manager", Status: job.StatusDone, StartedAt: old, FinishedAt: old.Add(time.Hour)},
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, After: []string{"triage"}, StartedAt: old.Add(time.Hour)},
+			},
+		},
+		{
+			ID:        "squ-832",
+			Ticket:    "SQU-832",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusQueued},
+			},
+		},
+		{
+			ID:        "squ-833",
+			Ticket:    "SQU-833",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusQueued},
+			},
+		},
+		{
+			ID:        "squ-834",
+			Ticket:    "SQU-834",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "triage", Target: "ticket-manager", Status: job.StatusDone},
+				{ID: "implement", Target: "worker", Status: job.StatusQueued, After: []string{"triage"}},
+			},
+		},
+		{
+			ID:        "ops-830",
+			Ticket:    "OPS-830",
+			Target:    "worker",
+			Pipeline:  "ops_review",
+			Status:    job.StatusFailed,
+			CreatedAt: old,
+			UpdatedAt: old,
+			Steps: []job.Step{
+				{ID: "audit", Target: "worker", Status: job.StatusFailed},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), &daemon.QueueItem{
+		ID:             "q-pipeline-triage-dead",
+		State:          daemon.QueueStateDead,
+		EventType:      "agent.dispatch",
+		Instance:       "worker",
+		InstanceID:     "worker-squ-832",
+		Payload:        map[string]any{"job_id": "squ-832", "ticket": "SQU-832", "target": "worker"},
+		Attempts:       daemon.MaxQueueAttempts,
+		LastError:      "spawn failed",
+		QueuedAt:       old,
+		UpdatedAt:      now,
+		DeadLetteredAt: now,
+	}); err != nil {
+		t.Fatalf("write dead queue item: %v", err)
+	}
+	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), &daemon.QueueItem{
+		ID:             "q-ops-triage-dead",
+		State:          daemon.QueueStateDead,
+		EventType:      "agent.dispatch",
+		Instance:       "worker",
+		InstanceID:     "worker-ops-830",
+		Payload:        map[string]any{"job_id": "ops-830", "ticket": "OPS-830", "target": "worker"},
+		Attempts:       daemon.MaxQueueAttempts,
+		LastError:      "foreign",
+		QueuedAt:       old,
+		UpdatedAt:      now,
+		DeadLetteredAt: now,
+	}); err != nil {
+		t.Fatalf("write foreign queue item: %v", err)
+	}
+	quarantineStamp := "20260619T040000.000000000Z"
+	quarantinePath := filepath.Join("quarantine", quarantineStamp, daemon.QueueStatePending, "q-pipeline-triage-quarantined.json")
+	writeQuarantinedQueueItem(t, teamDir, quarantineStamp, daemon.QueueStatePending, &daemon.QueueItem{
+		ID:         "q-pipeline-triage-quarantined",
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-squ-833",
+		Payload:    map[string]any{"job_id": "squ-833", "ticket": "SQU-833", "target": "worker"},
+		QueuedAt:   old,
+		UpdatedAt:  now,
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"pipeline", "triage", "ticket_to_pr", "--repo", root, "--stale-after", "24h", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline triage: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot jobTriageSnapshot
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode pipeline triage json: %v\nbody=%s", err, out.String())
+	}
+	if snapshot.Summary.Total != 5 || snapshot.Queue.Dead != 1 || snapshot.Queue.Quarantined != 1 || snapshot.Queue.QuarantineRestorable != 1 {
+		t.Fatalf("pipeline triage summary = %+v queue=%+v", snapshot.Summary, snapshot.Queue)
+	}
+	if len(snapshot.Attention) != 4 {
+		t.Fatalf("attention = %+v", snapshot.Attention)
+	}
+	attention := map[string]jobTriageItem{}
+	for _, item := range snapshot.Attention {
+		attention[item.JobID] = item
+		if strings.HasPrefix(item.JobID, "ops-") {
+			t.Fatalf("pipeline triage leaked foreign job: %+v", item)
+		}
+	}
+	if !containsString(attention["squ-830"].Actions, "agent-team pipeline retry ticket_to_pr --step implement --dry-run --dispatch --preview-routes") ||
+		containsString(attention["squ-830"].Actions, "agent-team job retry squ-830 --dispatch") {
+		t.Fatalf("failed job actions = %+v", attention["squ-830"].Actions)
+	}
+	if !containsString(attention["squ-831"].Actions, "agent-team pipeline timeout ticket_to_pr --step implement --target-agent worker --dry-run") ||
+		!containsString(attention["squ-831"].Actions, "agent-team pipeline adopt ticket_to_pr squ-831 --step implement --pid <pid> --dry-run") {
+		t.Fatalf("stale running actions = %+v", attention["squ-831"].Actions)
+	}
+	if containsString(attention["squ-831"].Actions, "agent-team job timeout squ-831 --dry-run") ||
+		containsString(attention["squ-831"].Actions, "agent-team job adopt squ-831 --step implement --pid <pid> --dry-run") {
+		t.Fatalf("stale running actions should be pipeline-scoped: %+v", attention["squ-831"].Actions)
+	}
+	if !containsString(attention["squ-832"].Actions, "agent-team pipeline queue retry ticket_to_pr q-pipeline-triage-dead") ||
+		containsString(attention["squ-832"].Actions, "agent-team job queue retry squ-832 q-pipeline-triage-dead") {
+		t.Fatalf("dead queue actions = %+v", attention["squ-832"].Actions)
+	}
+	if !containsString(attention["squ-833"].Actions, "agent-team pipeline queue quarantine ticket_to_pr --job squ-833") ||
+		!containsString(attention["squ-833"].Actions, fmt.Sprintf("agent-team pipeline queue quarantine restore ticket_to_pr %s --dry-run", quarantinePath)) {
+		t.Fatalf("quarantine actions = %+v", attention["squ-833"].Actions)
+	}
+	if len(snapshot.ReadySteps) != 3 {
+		t.Fatalf("ready steps = %+v", snapshot.ReadySteps)
+	}
+	ready := map[string]jobReadyRow{}
+	for _, row := range snapshot.ReadySteps {
+		ready[row.JobID] = row
+	}
+	if !containsString(ready["squ-832"].Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") ||
+		!containsString(ready["squ-834"].Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") {
+		t.Fatalf("ready actions = %+v", snapshot.ReadySteps)
 	}
 }
 

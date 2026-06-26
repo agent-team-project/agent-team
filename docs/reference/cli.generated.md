@@ -3219,6 +3219,7 @@ Subcommands:
 - `agent-team pipeline snapshot` - Capture a read-only diagnostic snapshot for one pipeline.
 - `agent-team pipeline status` - Summarize pipeline jobs and next steps.
 - `agent-team pipeline timeout` - Mark stale running pipeline steps failed.
+- `agent-team pipeline triage` - Show pipeline-owned jobs that need operator attention.
 - `agent-team pipeline unblock` - Answer blocked pipeline workers.
 - `agent-team pipeline wait` - Wait for pipeline jobs to reach a lifecycle status or event.
 
@@ -4133,6 +4134,30 @@ Flags:
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --step string           Mark only stale running steps with this id.
       --target-agent string   Mark only stale running steps targeting this agent.
+```
+
+## `agent-team pipeline triage`
+
+Show pipeline-owned jobs that need operator attention.
+
+Show a compact pipeline-scoped work queue triage view from durable jobs, persisted daemon queue items, status-file update previews, and ready pipeline steps.
+
+```text
+agent-team pipeline triage <pipeline> [flags]
+```
+
+Flags:
+
+```text
+      --format string          Render the pipeline triage snapshot with a Go template, e.g. '{{.Summary.Total}} {{len .Attention}}'.
+      --interval duration      Refresh interval for --watch. (default 2s)
+      --json                   Emit pipeline triage snapshot as JSON.
+      --min-severity string    Only show attention rows at least this severe: critical, warning, or info.
+      --no-clear               With --watch, append snapshots instead of redrawing the terminal.
+      --reason strings         Only show attention rows with this reason. Can repeat or comma-separate.
+      --repo string            Repo root containing .agent_team. (default "<repo>")
+      --stale-after duration   Flag queued or running jobs with no update after this duration (default: [health].job_stale_after or 24h; 0 disables stale checks). (default 24h0m0s)
+  -w, --watch                  Refresh the pipeline triage view until interrupted.
 ```
 
 ## `agent-team pipeline unblock`

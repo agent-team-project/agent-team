@@ -34,6 +34,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineDoctorCmd())
 	cmd.AddCommand(newPipelineJobsCmd())
 	cmd.AddCommand(newPipelineStatusCmd())
+	cmd.AddCommand(newPipelineTriageCmd())
 	cmd.AddCommand(newPipelineExplainCmd())
 	cmd.AddCommand(newPipelineSnapshotCmd())
 	cmd.AddCommand(newPipelineNextCmd())
@@ -443,6 +444,85 @@ func newPipelineStatusCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline status rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.Pipeline}} {{.Jobs}} {{.ReadySteps}}'.")
 	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, or quarantined.")
+	return cmd
+}
+
+func newPipelineTriageCmd() *cobra.Command {
+	var (
+		repo        string
+		staleAfter  time.Duration
+		minSeverity string
+		reasons     []string
+		watch       bool
+		noClear     bool
+		interval    time.Duration
+		jsonOut     bool
+		format      string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "triage <pipeline>",
+		Short: "Show pipeline-owned jobs that need operator attention.",
+		Long: "Show a compact pipeline-scoped work queue triage view from durable jobs, " +
+			"persisted daemon queue items, status-file update previews, and ready pipeline steps.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline triage: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if format != "" && (watch || jsonOut) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline triage: --format cannot be combined with --watch or --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseJobTriageFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline triage: %v\n", err)
+				return exitErr(2)
+			}
+			filters, err := parseJobTriageFilters(minSeverity, reasons)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline triage: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			if !cmd.Flags().Changed("stale-after") {
+				configured, err := configuredJobTriageStaleAfter(teamDir)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline triage: %v\n", err)
+					return exitErr(2)
+				}
+				staleAfter = configured
+			}
+			if staleAfter < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline triage: --stale-after must be >= 0.")
+				return exitErr(2)
+			}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				return runPipelineTriageWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], staleAfter, filters, jsonOut, interval, !noClear)
+			}
+			snapshot, err := collectPipelineTriage(teamDir, args[0], time.Now().UTC(), staleAfter, filters)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline triage: %v\n", err)
+				return exitErr(1)
+			}
+			return renderJobTriage(cmd.OutOrStdout(), snapshot, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().DurationVar(&staleAfter, "stale-after", defaultJobTriageStaleAfter, "Flag queued or running jobs with no update after this duration (default: [health].job_stale_after or 24h; 0 disables stale checks).")
+	cmd.Flags().StringVar(&minSeverity, "min-severity", "", "Only show attention rows at least this severe: critical, warning, or info.")
+	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show attention rows with this reason. Can repeat or comma-separate.")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the pipeline triage view until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline triage snapshot as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the pipeline triage snapshot with a Go template, e.g. '{{.Summary.Total}} {{len .Attention}}'.")
 	return cmd
 }
 
@@ -4663,6 +4743,241 @@ func selectedPipelineJobs(teamDir, pipeline string) ([]*job.Job, error) {
 		out = append(out, j)
 	}
 	return out, nil
+}
+
+func collectPipelineTriage(teamDir, pipeline string, now time.Time, staleAfter time.Duration, filters jobTriageFilters) (jobTriageSnapshot, error) {
+	pipeline = strings.TrimSpace(pipeline)
+	if pipeline == "" {
+		return jobTriageSnapshot{}, fmt.Errorf("pipeline name is required")
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	jobs, err := selectedPipelineJobs(teamDir, pipeline)
+	if err != nil {
+		return jobTriageSnapshot{}, err
+	}
+	ownedIDs := jobIDSet(jobs)
+	queueItems, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return jobTriageSnapshot{}, err
+	}
+	pipelineQueue := queueItemsForJobs(queueItems, jobs)
+	quarantineItems, err := listQueueQuarantine(teamDir)
+	if err != nil {
+		return jobTriageSnapshot{}, err
+	}
+	pipelineQuarantine := queueQuarantineItemsForJobs(quarantineItems, jobs)
+	snapshot, err := collectJobTriage(teamDir, now, staleAfter)
+	if err != nil {
+		return jobTriageSnapshot{}, err
+	}
+	snapshot.Summary = summarizeJobsWithRuntime(teamDir, jobs)
+	snapshot.Queue = summarizeQueueItems(pipelineQueue, now)
+	applyQueueQuarantineSummary(&snapshot.Queue, pipelineQuarantine)
+	snapshot.Attention = scopePipelineTriageActions(pipeline, filterJobTriageItemsByJobIDs(snapshot.Attention, ownedIDs))
+	snapshot.ReadySteps = scopePipelineReadyRows(pipeline, filterJobReadyRowsByJobIDs(snapshot.ReadySteps, ownedIDs))
+	snapshot.StatusPreviews = filterJobStatusPreviewsByJobIDs(snapshot.StatusPreviews, ownedIDs)
+	return filterJobTriageSnapshot(snapshot, filters), nil
+}
+
+func runPipelineTriageWatch(ctx context.Context, w io.Writer, teamDir, pipeline string, staleAfter time.Duration, filters jobTriageFilters, jsonOut bool, interval time.Duration, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		snapshot, err := collectPipelineTriage(teamDir, pipeline, time.Now().UTC(), staleAfter, filters)
+		if err != nil {
+			return err
+		}
+		if jsonOut {
+			if err := json.NewEncoder(w).Encode(snapshot); err != nil {
+				return err
+			}
+		} else {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+			if err := renderJobTriage(w, snapshot, false, nil); err != nil {
+				return err
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
+}
+
+func scopePipelineReadyRows(pipeline string, rows []jobReadyRow) []jobReadyRow {
+	if len(rows) == 0 || strings.TrimSpace(pipeline) == "" {
+		return rows
+	}
+	out := make([]jobReadyRow, len(rows))
+	copy(out, rows)
+	for idx := range out {
+		out[idx].Actions = pipelineReadyRowActions(pipeline, out[idx])
+	}
+	return out
+}
+
+func pipelineReadyRowActions(pipeline string, row jobReadyRow) []string {
+	if jobReadyRowIsAdvanceable(row) {
+		actions := []string{fmt.Sprintf("agent-team pipeline advance %s --dry-run --preview-routes", pipeline)}
+		if row.ParallelReadySteps > 1 {
+			actions = append(actions, fmt.Sprintf("agent-team pipeline advance %s --all-ready-steps --dry-run --preview-routes", pipeline))
+		}
+		return actions
+	}
+	if row.State == "queued" {
+		return []string{fmt.Sprintf("agent-team pipeline advance %s --dry-run --preview-routes", pipeline)}
+	}
+	return row.Actions
+}
+
+func scopePipelineTriageActions(pipeline string, items []jobTriageItem) []jobTriageItem {
+	if len(items) == 0 || strings.TrimSpace(pipeline) == "" {
+		return items
+	}
+	out := make([]jobTriageItem, len(items))
+	copy(out, items)
+	for idx := range out {
+		out[idx].Actions = scopePipelineTriageItemActions(pipeline, out[idx])
+	}
+	return out
+}
+
+func scopePipelineTriageItemActions(pipeline string, item jobTriageItem) []string {
+	jobID := strings.TrimSpace(item.JobID)
+	if jobID == "" {
+		return item.Actions
+	}
+	actions := append([]string(nil), item.Actions...)
+	actions = scopePipelineTriageQueueActions(pipeline, jobID, item, actions)
+	if stringSliceContains(item.Reasons, "failed") || stringSliceContains(item.Reasons, "failed_step") {
+		actions = replaceOrAppendScopedTriageAction(actions,
+			fmt.Sprintf("agent-team job retry %s --dispatch", jobID),
+			pipelineTriageRetryAction(pipeline, item),
+		)
+	}
+	if stringSliceContains(item.Reasons, "blocked") || stringSliceContains(item.Reasons, "blocked_step") || stringSliceContains(item.Reasons, "status_file_blocked") {
+		actions = replaceOrAppendScopedTriageAction(actions,
+			jobUnblockAction(jobID, item.StepID),
+			pipelineTriageUnblockAction(pipeline, item),
+		)
+	}
+	if stringSliceContains(item.Reasons, "held") || stringSliceContains(item.Reasons, "expired_hold") {
+		actions = replaceOrAppendScopedTriageAction(actions,
+			fmt.Sprintf("agent-team job release %s", jobID),
+			pipelineTriageReleaseAction(pipeline, item),
+		)
+	}
+	if stringSliceContains(item.Reasons, "cleanup_ready") {
+		actions = replaceOrAppendScopedTriageAction(actions,
+			fmt.Sprintf("agent-team job cleanup %s --dry-run", jobID),
+			fmt.Sprintf("agent-team pipeline cleanup %s --dry-run", pipeline),
+		)
+	}
+	if stringSliceContains(item.Reasons, "stale_running") && strings.TrimSpace(item.StepID) != "" {
+		actions = replaceOrAppendScopedTriageAction(actions,
+			fmt.Sprintf("agent-team job timeout %s --dry-run", jobID),
+			pipelineTriageTimeoutAction(pipeline, item),
+		)
+	}
+	if stringSliceContains(item.Reasons, "running_without_instance") {
+		jobAction := fmt.Sprintf("agent-team job adopt %s --pid <pid> --dry-run", jobID)
+		pipelineAction := fmt.Sprintf("agent-team pipeline adopt %s %s --pid <pid> --dry-run", pipeline, jobID)
+		if stepID := strings.TrimSpace(item.StepID); stepID != "" {
+			jobAction = fmt.Sprintf("agent-team job adopt %s --step %s --pid <pid> --dry-run", jobID, stepID)
+			pipelineAction = fmt.Sprintf("agent-team pipeline adopt %s %s --step %s --pid <pid> --dry-run", pipeline, jobID, stepID)
+		}
+		actions = replaceOrAppendScopedTriageAction(actions, jobAction, pipelineAction)
+	}
+	return actions
+}
+
+func scopePipelineTriageQueueActions(pipeline, jobID string, item jobTriageItem, actions []string) []string {
+	if stringSliceContains(item.Reasons, "queue_dead") {
+		if len(item.QueueIDs) == 1 {
+			queueID := item.QueueIDs[0]
+			actions = replaceOrAppendScopedTriageAction(actions,
+				fmt.Sprintf("agent-team job queue retry %s %s", jobID, queueID),
+				fmt.Sprintf("agent-team pipeline queue retry %s %s", pipeline, queueID),
+			)
+		} else {
+			actions = replaceOrAppendScopedTriageAction(actions,
+				jobQueueRetryAllRecoveryAction(jobID, false),
+				queueRetryAllRecoveryAction(fmt.Sprintf("agent-team pipeline queue retry %s", pipeline), false, fmt.Sprintf("--job %s", jobID)),
+			)
+		}
+	}
+	if stringSliceContains(item.Reasons, "queue_quarantined") {
+		actions = replaceOrAppendScopedTriageAction(actions,
+			fmt.Sprintf("agent-team job queue quarantine %s", jobID),
+			fmt.Sprintf("agent-team pipeline queue quarantine %s --job %s", pipeline, jobID),
+		)
+		if item.QueueQuarantineRestorable == 1 && len(item.QueueQuarantineRestorablePaths) == 1 {
+			path := item.QueueQuarantineRestorablePaths[0]
+			actions = replaceOrAppendScopedTriageAction(actions,
+				fmt.Sprintf("agent-team job queue quarantine restore %s %s --dry-run", jobID, path),
+				fmt.Sprintf("agent-team pipeline queue quarantine restore %s %s --dry-run", pipeline, path),
+			)
+		} else if item.QueueQuarantineRestorable > 1 {
+			actions = replaceOrAppendScopedTriageAction(actions,
+				fmt.Sprintf("agent-team job queue quarantine restore %s --all --limit %d --dry-run", jobID, queueRecoveryHintLimit),
+				fmt.Sprintf("agent-team pipeline queue quarantine restore %s --all --job %s --limit %d --dry-run", pipeline, jobID, queueRecoveryHintLimit),
+			)
+		}
+		if item.QueueQuarantineUnrestorable > 0 {
+			actions = replaceOrAppendScopedTriageAction(actions,
+				fmt.Sprintf("agent-team job queue quarantine drop %s --all --unrestorable --limit %d --dry-run", jobID, queueRecoveryHintLimit),
+				fmt.Sprintf("agent-team pipeline queue quarantine drop %s --all --job %s --unrestorable --limit %d --dry-run", pipeline, jobID, queueRecoveryHintLimit),
+			)
+		}
+	}
+	return actions
+}
+
+func pipelineTriageRetryAction(pipeline string, item jobTriageItem) string {
+	action := fmt.Sprintf("agent-team pipeline retry %s", pipeline)
+	if stepID := strings.TrimSpace(item.StepID); stepID != "" {
+		action = fmt.Sprintf("%s --step %s", action, stepID)
+	}
+	return action + " --dry-run --dispatch --preview-routes"
+}
+
+func pipelineTriageUnblockAction(pipeline string, item jobTriageItem) string {
+	action := fmt.Sprintf("agent-team pipeline unblock %s", pipeline)
+	if stepID := strings.TrimSpace(item.StepID); stepID != "" {
+		action = fmt.Sprintf("%s --step %s", action, stepID)
+	}
+	return action + " <answer...> --dry-run"
+}
+
+func pipelineTriageReleaseAction(pipeline string, item jobTriageItem) string {
+	action := fmt.Sprintf("agent-team pipeline release %s", pipeline)
+	if stringSliceContains(item.Reasons, "expired_hold") {
+		action += " --expired"
+	}
+	return action + " --dry-run"
+}
+
+func pipelineTriageTimeoutAction(pipeline string, item jobTriageItem) string {
+	action := fmt.Sprintf("agent-team pipeline timeout %s", pipeline)
+	if stepID := strings.TrimSpace(item.StepID); stepID != "" {
+		action = fmt.Sprintf("%s --step %s", action, stepID)
+	}
+	if target := strings.TrimSpace(item.StepTarget); target != "" {
+		action = fmt.Sprintf("%s --target-agent %s", action, target)
+	}
+	return action + " --dry-run"
 }
 
 type pipelineWaitTimeoutError struct {

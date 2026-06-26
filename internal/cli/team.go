@@ -6439,32 +6439,32 @@ func scopeTeamTriageItemActions(teamName string, item jobTriageItem) []string {
 	actions = scopeTeamTriageQueueActions(teamName, jobID, item, actions)
 	if strings.TrimSpace(item.Pipeline) != "" {
 		if stringSliceContains(item.Reasons, "failed") || stringSliceContains(item.Reasons, "failed_step") {
-			actions = replaceOrAppendTeamTriageAction(actions,
+			actions = replaceOrAppendScopedTriageAction(actions,
 				fmt.Sprintf("agent-team job retry %s --dispatch", jobID),
 				teamTriageRetryAction(teamName, item),
 			)
 		}
 		if stringSliceContains(item.Reasons, "blocked") || stringSliceContains(item.Reasons, "blocked_step") || stringSliceContains(item.Reasons, "status_file_blocked") {
-			actions = replaceOrAppendTeamTriageAction(actions,
+			actions = replaceOrAppendScopedTriageAction(actions,
 				jobUnblockAction(jobID, item.StepID),
 				teamTriageUnblockAction(teamName, item),
 			)
 		}
 		if stringSliceContains(item.Reasons, "held") || stringSliceContains(item.Reasons, "expired_hold") {
-			actions = replaceOrAppendTeamTriageAction(actions,
+			actions = replaceOrAppendScopedTriageAction(actions,
 				fmt.Sprintf("agent-team job release %s", jobID),
 				teamTriageReleaseAction(teamName, item),
 			)
 		}
 	}
 	if stringSliceContains(item.Reasons, "cleanup_ready") {
-		actions = replaceOrAppendTeamTriageAction(actions,
+		actions = replaceOrAppendScopedTriageAction(actions,
 			fmt.Sprintf("agent-team job cleanup %s --dry-run", jobID),
 			fmt.Sprintf("agent-team team cleanup %s --dry-run", teamName),
 		)
 	}
 	if stringSliceContains(item.Reasons, "stale_running") {
-		actions = replaceOrAppendTeamTriageAction(actions,
+		actions = replaceOrAppendScopedTriageAction(actions,
 			fmt.Sprintf("agent-team job timeout %s --dry-run", jobID),
 			teamTriageTimeoutAction(teamName, item),
 		)
@@ -6478,43 +6478,43 @@ func scopeTeamTriageItemActions(teamName string, item jobTriageItem) []string {
 		jobAction = fmt.Sprintf("agent-team job adopt %s --step %s --pid <pid> --dry-run", jobID, stepID)
 		teamAction = fmt.Sprintf("agent-team team adopt %s %s --step %s --pid <pid> --dry-run", teamName, jobID, stepID)
 	}
-	return replaceOrAppendTeamTriageAction(actions, jobAction, teamAction)
+	return replaceOrAppendScopedTriageAction(actions, jobAction, teamAction)
 }
 
 func scopeTeamTriageQueueActions(teamName, jobID string, item jobTriageItem, actions []string) []string {
 	if stringSliceContains(item.Reasons, "queue_dead") {
 		if len(item.QueueIDs) == 1 {
 			queueID := item.QueueIDs[0]
-			actions = replaceOrAppendTeamTriageAction(actions,
+			actions = replaceOrAppendScopedTriageAction(actions,
 				fmt.Sprintf("agent-team job queue retry %s %s", jobID, queueID),
 				fmt.Sprintf("agent-team team queue retry %s %s", teamName, queueID),
 			)
 		} else {
-			actions = replaceOrAppendTeamTriageAction(actions,
+			actions = replaceOrAppendScopedTriageAction(actions,
 				jobQueueRetryAllRecoveryAction(jobID, false),
 				teamJobQueueRetryAllRecoveryAction(teamName, jobID, false),
 			)
 		}
 	}
 	if stringSliceContains(item.Reasons, "queue_quarantined") {
-		actions = replaceOrAppendTeamTriageAction(actions,
+		actions = replaceOrAppendScopedTriageAction(actions,
 			fmt.Sprintf("agent-team job queue quarantine %s", jobID),
 			fmt.Sprintf("agent-team team queue quarantine %s --job %s", teamName, jobID),
 		)
 		if item.QueueQuarantineRestorable == 1 && len(item.QueueQuarantineRestorablePaths) == 1 {
 			path := item.QueueQuarantineRestorablePaths[0]
-			actions = replaceOrAppendTeamTriageAction(actions,
+			actions = replaceOrAppendScopedTriageAction(actions,
 				fmt.Sprintf("agent-team job queue quarantine restore %s %s --dry-run", jobID, path),
 				fmt.Sprintf("agent-team team queue quarantine restore %s %s --dry-run", teamName, path),
 			)
 		} else if item.QueueQuarantineRestorable > 1 {
-			actions = replaceOrAppendTeamTriageAction(actions,
+			actions = replaceOrAppendScopedTriageAction(actions,
 				fmt.Sprintf("agent-team job queue quarantine restore %s --all --limit %d --dry-run", jobID, queueRecoveryHintLimit),
 				fmt.Sprintf("agent-team team queue quarantine restore %s --all --job %s --limit %d --dry-run", teamName, jobID, queueRecoveryHintLimit),
 			)
 		}
 		if item.QueueQuarantineUnrestorable > 0 {
-			actions = replaceOrAppendTeamTriageAction(actions,
+			actions = replaceOrAppendScopedTriageAction(actions,
 				fmt.Sprintf("agent-team job queue quarantine drop %s --all --unrestorable --limit %d --dry-run", jobID, queueRecoveryHintLimit),
 				fmt.Sprintf("agent-team team queue quarantine drop %s --all --job %s --unrestorable --limit %d --dry-run", teamName, jobID, queueRecoveryHintLimit),
 			)
@@ -6562,7 +6562,7 @@ func teamTriageTimeoutAction(teamName string, item jobTriageItem) string {
 	return action + " --dry-run"
 }
 
-func replaceOrAppendTeamTriageAction(actions []string, oldAction, newAction string) []string {
+func replaceOrAppendScopedTriageAction(actions []string, oldAction, newAction string) []string {
 	oldAction = strings.TrimSpace(oldAction)
 	newAction = strings.TrimSpace(newAction)
 	if newAction == "" {
