@@ -2152,7 +2152,7 @@ func newPipelineCleanupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cleanup <pipeline>",
 		Short: "Clean up done jobs owned by one pipeline.",
-		Long:  "Preview or remove job-owned worktrees and branches for done jobs owned by one declared pipeline.",
+		Long:  "Preview or remove job-owned worktrees and branches for done jobs owned by one declared pipeline. Applying cleanup requires --merged after confirming the matching PRs have merged.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
@@ -2197,8 +2197,8 @@ func newPipelineCleanupCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview pipeline-owned cleanup without removing worktrees or branches.")
-	cmd.Flags().BoolVar(&merged, "merged", false, "Confirm matching pipeline jobs' PRs are merged and apply cleanup.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview done pipeline-owned job cleanup without removing worktrees or branches.")
+	cmd.Flags().BoolVar(&merged, "merged", false, "Confirm matching done pipeline jobs' PRs are merged and apply cleanup.")
 	cmd.Flags().BoolVar(&forceBranch, "force-branch", false, "Delete recorded branches even when git does not consider them merged.")
 	cmd.Flags().BoolVar(&verifyPR, "verify-pr", false, "Use gh to verify each recorded PR is merged before cleanup.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline cleanup result as JSON.")

@@ -274,7 +274,9 @@ automation records the cancellation.
 
 ## Cleanup
 
-Jobs can own branches and worktrees.
+Jobs can own branches and worktrees. Applying cleanup only removes workspace
+metadata for terminal jobs marked `done`; running, queued, blocked, or failed
+jobs must be reconciled before their owned workspace is removed.
 
 Preview cleanup:
 
@@ -283,12 +285,13 @@ agent-team job cleanup squ-42 --dry-run
 agent-team job cleanup --all --dry-run
 ```
 
-After confirming the PR is merged:
+After the job is done and the PR is confirmed merged:
 
 ```sh
 agent-team job cleanup squ-42 --merged
 ```
 
+Use `job close squ-42 --status done` only when the work really is complete.
 Add `--verify-pr` to check the recorded GitHub PR with `gh` before cleanup.
 Use `--force-branch` only when the PR is merged but the local branch is not recognized as merged by Git.
 

@@ -1754,7 +1754,7 @@ Subcommands:
 - `agent-team job attach` - Attach to a job&#39;s owning instance.
 - `agent-team job block` - Mark a job blocked with an operator reason.
 - `agent-team job cancel` - Cancel a job as failed.
-- `agent-team job cleanup` - Remove a job-owned worker worktree and branch after merge.
+- `agent-team job cleanup` - Remove a done job&#39;s owned worker worktree and branch after merge.
 - `agent-team job close` - Close a job as done or failed.
 - `agent-team job create` - Create a durable job for a ticket.
 - `agent-team job dispatch` - Dispatch a job to its target agent.
@@ -1942,7 +1942,9 @@ Flags:
 
 ## `agent-team job cleanup`
 
-Remove a job-owned worker worktree and branch after merge.
+Remove a done job&#39;s owned worker worktree and branch after merge.
+
+Preview or remove job-owned worktrees and branches. Applying cleanup requires jobs marked done plus --merged after confirming the matching PR has merged.
 
 ```text
 agent-team job cleanup <job-id>|--all [flags]
@@ -1956,7 +1958,7 @@ Flags:
       --force-branch    With --merged, delete the job branch with git branch -D if it is not locally merged.
       --format string   Render the cleanup result with a Go template, e.g. '{{.ID}} {{.LastStatus}}' or '{{.Total}} {{.Cleaned}}'.
       --json            Emit the updated job as JSON.
-      --merged          Confirm the job's PR has merged before removing its worktree and branch.
+      --merged          Confirm the job's PR has merged before removing a done job's worktree and branch.
       --repo string     Repo root containing .agent_team. (default "<repo>")
       --verify-pr       Verify the recorded GitHub PR is merged with gh before cleanup.
 ```
@@ -3302,7 +3304,7 @@ Flags:
 
 Clean up done jobs owned by one pipeline.
 
-Preview or remove job-owned worktrees and branches for done jobs owned by one declared pipeline.
+Preview or remove job-owned worktrees and branches for done jobs owned by one declared pipeline. Applying cleanup requires --merged after confirming the matching PRs have merged.
 
 ```text
 agent-team pipeline cleanup <pipeline> [flags]
@@ -3311,11 +3313,11 @@ agent-team pipeline cleanup <pipeline> [flags]
 Flags:
 
 ```text
-      --dry-run         Preview pipeline-owned cleanup without removing worktrees or branches.
+      --dry-run         Preview done pipeline-owned job cleanup without removing worktrees or branches.
       --force-branch    Delete recorded branches even when git does not consider them merged.
       --format string   Render the cleanup result with a Go template, e.g. '{{.Pipeline}} {{.Cleaned}} {{.Failed}}'.
       --json            Emit pipeline cleanup result as JSON.
-      --merged          Confirm matching pipeline jobs' PRs are merged and apply cleanup.
+      --merged          Confirm matching done pipeline jobs' PRs are merged and apply cleanup.
       --repo string     Repo root containing .agent_team. (default "<repo>")
       --verify-pr       Use gh to verify each recorded PR is merged before cleanup.
 ```
@@ -5707,7 +5709,7 @@ Flags:
 
 Clean up done jobs owned by one team.
 
-Preview or remove job-owned worktrees and branches for done jobs owned by one declared team.
+Preview or remove job-owned worktrees and branches for done jobs owned by one declared team. Applying cleanup requires --merged after confirming the matching PRs have merged.
 
 ```text
 agent-team team cleanup <team> [flags]
@@ -5716,11 +5718,11 @@ agent-team team cleanup <team> [flags]
 Flags:
 
 ```text
-      --dry-run         Preview team-owned job cleanup without removing anything.
+      --dry-run         Preview done team-owned job cleanup without removing anything.
       --force-branch    With --merged, delete job branches with git branch -D if they are not locally merged.
       --format string   Render the cleanup batch with a Go template, e.g. '{{.Team}} {{.Cleaned}} {{.Failed}}'.
       --json            Emit the cleanup batch as JSON.
-      --merged          Confirm the team's matching PRs have merged before removing worktrees and branches.
+      --merged          Confirm the team's matching done-job PRs have merged before removing worktrees and branches.
       --repo string     Repo root containing .agent_team. (default "<repo>")
       --verify-pr       Verify recorded GitHub PRs are merged with gh before cleanup.
 ```

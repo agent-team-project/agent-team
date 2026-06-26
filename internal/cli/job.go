@@ -3563,7 +3563,8 @@ func newJobCleanupCmd() *cobra.Command {
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "cleanup <job-id>|--all",
-		Short: "Remove a job-owned worker worktree and branch after merge.",
+		Short: "Remove a done job's owned worker worktree and branch after merge.",
+		Long:  "Preview or remove job-owned worktrees and branches. Applying cleanup requires jobs marked done plus --merged after confirming the matching PR has merged.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if all {
 				if len(args) != 0 {
@@ -3662,7 +3663,7 @@ func newJobCleanupCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&all, "all", false, "Clean all done jobs that still own a recorded worktree or branch.")
-	cmd.Flags().BoolVar(&merged, "merged", false, "Confirm the job's PR has merged before removing its worktree and branch.")
+	cmd.Flags().BoolVar(&merged, "merged", false, "Confirm the job's PR has merged before removing a done job's worktree and branch.")
 	cmd.Flags().BoolVar(&forceBranch, "force-branch", false, "With --merged, delete the job branch with git branch -D if it is not locally merged.")
 	cmd.Flags().BoolVar(&verifyPR, "verify-pr", false, "Verify the recorded GitHub PR is merged with gh before cleanup.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the job-owned worktree and branch cleanup without removing anything.")

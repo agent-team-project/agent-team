@@ -1205,7 +1205,7 @@ func newTeamCleanupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cleanup <team>",
 		Short: "Clean up done jobs owned by one team.",
-		Long:  "Preview or remove job-owned worktrees and branches for done jobs owned by one declared team.",
+		Long:  "Preview or remove job-owned worktrees and branches for done jobs owned by one declared team. Applying cleanup requires --merged after confirming the matching PRs have merged.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
@@ -1255,10 +1255,10 @@ func newTeamCleanupCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
-	cmd.Flags().BoolVar(&merged, "merged", false, "Confirm the team's matching PRs have merged before removing worktrees and branches.")
+	cmd.Flags().BoolVar(&merged, "merged", false, "Confirm the team's matching done-job PRs have merged before removing worktrees and branches.")
 	cmd.Flags().BoolVar(&forceBranch, "force-branch", false, "With --merged, delete job branches with git branch -D if they are not locally merged.")
 	cmd.Flags().BoolVar(&verifyPR, "verify-pr", false, "Verify recorded GitHub PRs are merged with gh before cleanup.")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview team-owned job cleanup without removing anything.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview done team-owned job cleanup without removing anything.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the cleanup batch as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the cleanup batch with a Go template, e.g. '{{.Team}} {{.Cleaned}} {{.Failed}}'.")
 	return cmd

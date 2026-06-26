@@ -249,7 +249,7 @@ Add `--runtime codex` or `--runtime-bin <path>` when repair retry or final tick 
 | One stuck job | `agent-team job show <job-id> --events all` |
 | One team stuck | `agent-team team overview <team>` |
 | Worker blocked | `agent-team job unblock <job-id> <answer...>` |
-| Cleanup after merge | `agent-team job cleanup <job-id> --dry-run`, then `--merged --verify-pr` |
+| Done job cleanup after merge | `agent-team job cleanup <job-id> --dry-run`, then `--merged --verify-pr` |
 
 ## Design Requirements for New Diagnostics
 
