@@ -862,6 +862,82 @@ pipelines = ["ticket_to_pr"]
 	}
 }
 
+func TestTeamTriageScopesStepAdoptionHint(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.ticket-manager]
+agent = "ticket-manager"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "triage"
+target = "ticket-manager"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+after = ["triage"]
+
+[teams.delivery]
+instances = ["manager", "ticket-manager", "worker"]
+pipelines = ["ticket_to_pr"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	old := now.Add(-48 * time.Hour)
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-812",
+		Ticket:    "SQU-812",
+		Target:    "worker",
+		Status:    job.StatusRunning,
+		Pipeline:  "ticket_to_pr",
+		CreatedAt: old,
+		UpdatedAt: old,
+		Steps: []job.Step{
+			{ID: "triage", Target: "ticket-manager", Status: job.StatusDone, StartedAt: old, FinishedAt: old.Add(time.Hour)},
+			{ID: "implement", Target: "worker", Status: job.StatusRunning, After: []string{"triage"}, StartedAt: old.Add(time.Hour)},
+		},
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "triage", "delivery", "--repo", root, "--stale-after", "24h", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team triage: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot jobTriageSnapshot
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode team triage json: %v\nbody=%s", err, out.String())
+	}
+	if len(snapshot.Attention) != 1 {
+		t.Fatalf("attention = %+v", snapshot.Attention)
+	}
+	item := snapshot.Attention[0]
+	if item.JobID != "squ-812" || item.StepID != "implement" {
+		t.Fatalf("triage item = %+v", item)
+	}
+	if !containsString(item.Reasons, "running_without_instance") {
+		t.Fatalf("triage reasons = %+v", item.Reasons)
+	}
+	if !containsString(item.Actions, "agent-team team adopt delivery squ-812 --step implement --pid <pid> --dry-run") {
+		t.Fatalf("triage actions = %+v", item.Actions)
+	}
+	if containsString(item.Actions, "agent-team job adopt squ-812 --step implement --pid <pid> --dry-run") {
+		t.Fatalf("triage actions should use team-scoped adoption: %+v", item.Actions)
+	}
+}
+
 func TestTeamAdoptRejectsJobOutsideTeam(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

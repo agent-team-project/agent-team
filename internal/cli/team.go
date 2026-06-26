@@ -6418,6 +6418,47 @@ func teamReadyRowActions(teamName string, row jobReadyRow) []string {
 	return row.Actions
 }
 
+func scopeTeamTriageActions(teamName string, items []jobTriageItem) []jobTriageItem {
+	if len(items) == 0 || strings.TrimSpace(teamName) == "" {
+		return items
+	}
+	out := make([]jobTriageItem, len(items))
+	copy(out, items)
+	for idx := range out {
+		out[idx].Actions = scopeTeamTriageItemActions(teamName, out[idx])
+	}
+	return out
+}
+
+func scopeTeamTriageItemActions(teamName string, item jobTriageItem) []string {
+	if !stringSliceContains(item.Reasons, "running_without_instance") {
+		return item.Actions
+	}
+	jobID := strings.TrimSpace(item.JobID)
+	if jobID == "" {
+		return item.Actions
+	}
+	jobAction := fmt.Sprintf("agent-team job adopt %s --pid <pid> --dry-run", jobID)
+	teamAction := fmt.Sprintf("agent-team team adopt %s %s --pid <pid> --dry-run", teamName, jobID)
+	if stepID := strings.TrimSpace(item.StepID); stepID != "" {
+		jobAction = fmt.Sprintf("agent-team job adopt %s --step %s --pid <pid> --dry-run", jobID, stepID)
+		teamAction = fmt.Sprintf("agent-team team adopt %s %s --step %s --pid <pid> --dry-run", teamName, jobID, stepID)
+	}
+	actions := append([]string(nil), item.Actions...)
+	for idx, action := range actions {
+		if strings.TrimSpace(action) == jobAction {
+			actions[idx] = teamAction
+			return actions
+		}
+	}
+	for _, action := range actions {
+		if strings.TrimSpace(action) == teamAction {
+			return actions
+		}
+	}
+	return append(actions, teamAction)
+}
+
 func runTeamReady(w io.Writer, teamDir, name string, states map[string]bool, opts jobReadyOptions, jsonOut bool, tmpl *template.Template) error {
 	rows, err := collectTeamReadyRows(teamDir, name, states)
 	if err != nil {
@@ -6504,7 +6545,7 @@ func collectTeamTriage(teamDir, name string, now time.Time, staleAfter time.Dura
 	snapshot.Summary = summarizeJobsWithRuntime(teamDir, ownedJobs)
 	snapshot.Queue = summarizeQueueItems(teamQueue, now)
 	applyQueueQuarantineSummary(&snapshot.Queue, teamQuarantine)
-	snapshot.Attention = filterJobTriageItemsByJobIDs(snapshot.Attention, ownedIDs)
+	snapshot.Attention = scopeTeamTriageActions(team.Name, filterJobTriageItemsByJobIDs(snapshot.Attention, ownedIDs))
 	snapshot.ReadySteps = filterJobReadyRowsByJobIDs(snapshot.ReadySteps, ownedIDs)
 	snapshot.StatusPreviews = filterJobStatusPreviewsByJobIDs(snapshot.StatusPreviews, ownedIDs)
 	return filterJobTriageSnapshot(snapshot, filters), nil
