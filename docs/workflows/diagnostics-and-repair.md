@@ -37,8 +37,8 @@ strings) and `action_details` with a command, source, reason, and team scope
 where applicable.
 
 When daemon metadata contains crashed instances or stale recorded running PIDs,
-overview includes runtime counts and suggests `agent-team runtime resume-plan
---status crashed`, `agent-team runtime resume-plan --runtime-stale`, or the matching
+overview includes runtime counts and suggests `agent-team resume-plan
+--status crashed`, `agent-team resume-plan --runtime-stale`, or the matching
 team-scoped `agent-team team resume-plan <team> ...` command. Add
 `--unhealthy` when one report should include both crashed and stale-running
 metadata, `--action start|attach|resume|logs` when you only want one recovery
@@ -235,7 +235,7 @@ Add `--runtime codex` or `--runtime-bin <path>` when repair retry or final tick 
 | Need scripted before/after drift detection | `agent-team snapshot diff before.json after.json --exit-code` |
 | Queue parsing fails | `agent-team queue doctor --quarantine --dry-run` |
 | Dead queue entries | `agent-team repair --dry-run --jobs` |
-| Crashed or stale runtime metadata | `agent-team runtime resume-plan --unhealthy` |
+| Crashed or stale runtime metadata | `agent-team resume-plan --unhealthy` |
 | Stale running jobs | `agent-team repair --timeout-jobs --dry-run` |
 | Stale workflow work | `agent-team pipeline repair ticket_to_pr --timeout-jobs --dry-run --preview-routes` |
 | Stale agent-role work across workflows | `agent-team repair --timeout-jobs --timeout-target-agent worker --dry-run` |

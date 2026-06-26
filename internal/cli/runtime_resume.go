@@ -53,7 +53,37 @@ type runtimeResumeSummary struct {
 	Unhealthy        int            `json:"unhealthy"`
 }
 
+func newResumePlanCmd() *cobra.Command {
+	return newRuntimeResumePlanCommand(runtimeResumePlanCommandConfig{
+		Use:       "resume-plan [<instance>...]",
+		ErrorName: "agent-team resume-plan",
+		Long: "Show runtime resume and fallback commands for daemon metadata without contacting the daemon. " +
+			"This is a shorter alias for `agent-team runtime resume-plan`.",
+		RepoFlag:    true,
+		SummaryHelp: "Summarize matching resume plans by recommended action, runtime, and status.",
+	})
+}
+
 func newRuntimeResumePlanCmd() *cobra.Command {
+	return newRuntimeResumePlanCommand(runtimeResumePlanCommandConfig{
+		Use:       "resume-plan [<instance>...]",
+		ErrorName: "agent-team runtime resume-plan",
+		Long: "Show runtime resume and fallback commands for daemon metadata without contacting the daemon. " +
+			"This explains whether an instance can be resumed through agent-team, which direct runtime command is available, and which log commands are safest for runtimes without managed resume.",
+		RepoFlag:    false,
+		SummaryHelp: "Summarize matching resume plans by recommended action, runtime, and status.",
+	})
+}
+
+type runtimeResumePlanCommandConfig struct {
+	Use         string
+	ErrorName   string
+	Long        string
+	RepoFlag    bool
+	SummaryHelp string
+}
+
+func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Command {
 	var (
 		target        string
 		jobID         string
@@ -69,36 +99,35 @@ func newRuntimeResumePlanCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "resume-plan [<instance>...]",
+		Use:   cfg.Use,
 		Short: "Show runtime resume and fallback commands for daemon metadata.",
-		Long: "Show runtime resume and fallback commands for daemon metadata without contacting the daemon. " +
-			"This explains whether an instance can be resumed through agent-team, which direct runtime command is available, and which log commands are safest for runtimes without managed resume.",
-		Args: cobra.ArbitraryArgs,
+		Long:  cfg.Long,
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime resume-plan: --format cannot be combined with --json.")
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --format cannot be combined with --json.\n", cfg.ErrorName)
 				return exitErr(2)
 			}
 			if summary && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime resume-plan: --summary cannot be combined with --format.")
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --summary cannot be combined with --format.\n", cfg.ErrorName)
 				return exitErr(2)
 			}
 			if strings.TrimSpace(jobID) != "" && len(args) > 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime resume-plan: --job cannot be combined with instance names.")
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --job cannot be combined with instance names.\n", cfg.ErrorName)
 				return exitErr(2)
 			}
 			tmpl, err := parseRuntimeResumePlanFormat(format)
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime resume-plan: %v\n", err)
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", cfg.ErrorName, err)
 				return exitErr(2)
 			}
-			teamDir, err := resolveTeamDir(cmd, effectiveRepoTarget(cmd, target))
+			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
 			}
 			plans, err := collectRuntimeResumePlans(teamDir, args, jobID, statusFilters, runtimeFilter, actionFilters, staleOnly || runtimeStale, unhealthyOnly)
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime resume-plan: %v\n", err)
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", cfg.ErrorName, err)
 				return exitErr(1)
 			}
 			if summary {
@@ -119,7 +148,11 @@ func newRuntimeResumePlanCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
+	if cfg.RepoFlag {
+		cmd.Flags().StringVar(&target, "repo", cwd, repoFlagHelp)
+	} else {
+		cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
+	}
 	cmd.Flags().StringVar(&jobID, "job", "", "Select the instance recorded on or associated with this job id.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
@@ -127,7 +160,7 @@ func newRuntimeResumePlanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.")
 	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Only include running metadata whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only include crashed or stale running metadata.")
-	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching resume plans by recommended action, runtime, and status.")
+	cmd.Flags().BoolVar(&summary, "summary", false, cfg.SummaryHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.")
 	return cmd

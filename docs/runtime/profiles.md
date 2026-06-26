@@ -213,30 +213,31 @@ command plus `logs --follow` and `logs --last-message` fallbacks. Non-dry-run
 `attach` still refuses Codex managed handoff so it does not stop a child it
 cannot later supervise with the same session contract.
 
-Use `runtime resume-plan` when you want the same guidance without contacting
-the daemon:
+Use `resume-plan` when you want the same guidance without contacting the
+daemon:
 
 ```sh
-agent-team runtime resume-plan
-agent-team runtime resume-plan worker-squ-42
-agent-team runtime resume-plan --job squ-42
+agent-team resume-plan
+agent-team resume-plan worker-squ-42
+agent-team resume-plan --job squ-42
 agent-team job resume-plan squ-42
-agent-team runtime resume-plan --runtime codex --status exited
-agent-team runtime resume-plan --action resume --format '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'
-agent-team runtime resume-plan --status crashed --summary --json
-agent-team runtime resume-plan --runtime-stale --summary
-agent-team runtime resume-plan --unhealthy --summary
-agent-team runtime resume-plan --json
+agent-team resume-plan --runtime codex --status exited
+agent-team resume-plan --action resume --format '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'
+agent-team resume-plan --status crashed --summary --json
+agent-team resume-plan --runtime-stale --summary
+agent-team resume-plan --unhealthy --summary
+agent-team resume-plan --json
+agent-team runtime resume-plan --status crashed
 agent-team team resume-plan delivery --status crashed
 agent-team team resume-plan delivery --runtime-stale --summary
 agent-team team runtime resume-plan delivery --status crashed
 ```
 
 `agent-team overview` also summarizes runtime metadata and links crashed or
-stale-running instances to `runtime resume-plan`; `agent-team team overview <team>`
-and `agent-team team next <team> --source runtime` use
-`agent-team team resume-plan <team>` for team-scoped recovery. The older
-`team runtime resume-plan` path remains available for compatibility.
+stale-running instances to `resume-plan`; `agent-team team overview <team>` and
+`agent-team team next <team> --source runtime` use `agent-team team resume-plan
+<team>` for team-scoped recovery. The older `runtime resume-plan` and `team
+runtime resume-plan` paths remain available for compatibility.
 
 The command reads `.agent_team/daemon/*/meta.json` directly and prints the
 recommended action plus managed start, attach dry-run, unmanaged runtime resume,

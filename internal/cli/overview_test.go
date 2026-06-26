@@ -196,10 +196,10 @@ func TestOverviewReportsRuntimeResumePlanActions(t *testing.T) {
 	if overview.Runtime.Total != 4 || overview.Runtime.Crashed != 3 || overview.Runtime.Exited != 1 {
 		t.Fatalf("runtime summary = %+v", overview.Runtime)
 	}
-	if !stringSliceContains(overview.Actions, "agent-team runtime resume-plan --status crashed") {
+	if !stringSliceContains(overview.Actions, "agent-team resume-plan --status crashed") {
 		t.Fatalf("actions missing runtime resume plan: %+v", overview.Actions)
 	}
-	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team runtime resume-plan --status crashed"); !ok || detail.Source != "runtime" || detail.Reason != "crashed=3" {
+	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team resume-plan --status crashed"); !ok || detail.Source != "runtime" || detail.Reason != "crashed=3" {
 		t.Fatalf("runtime action detail = %+v ok=%v", detail, ok)
 	}
 
@@ -270,10 +270,10 @@ func TestOverviewReportsStaleRuntimeResumePlanActions(t *testing.T) {
 	if overview.Runtime.StaleRunning != 2 || !stringSliceContains(overview.Runtime.StaleInstances, "support-stale") || !stringSliceContains(overview.Runtime.StaleInstances, "worker-squ-902") {
 		t.Fatalf("runtime stale summary = %+v", overview.Runtime)
 	}
-	if !stringSliceContains(overview.Actions, "agent-team runtime resume-plan --runtime-stale") {
+	if !stringSliceContains(overview.Actions, "agent-team resume-plan --runtime-stale") {
 		t.Fatalf("actions missing stale runtime resume plan: %+v", overview.Actions)
 	}
-	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team runtime resume-plan --runtime-stale"); !ok || detail.Source != "runtime" || detail.Reason != "stale=2" {
+	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team resume-plan --runtime-stale"); !ok || detail.Source != "runtime" || detail.Reason != "stale=2" {
 		t.Fatalf("stale runtime action detail = %+v ok=%v", detail, ok)
 	}
 

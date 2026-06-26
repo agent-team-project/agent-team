@@ -57,6 +57,7 @@ Subcommands:
 - `agent-team reload` - Reload daemon topology and reconcile runtime metadata.
 - `agent-team repair` - Recover common unhealthy orchestration state.
 - `agent-team restart` - Restart or resume instances.
+- `agent-team resume-plan` - Show runtime resume and fallback commands for daemon metadata.
 - `agent-team rm` - Remove instance state and daemon metadata.
 - `agent-team run` - Launch an LLM runtime session as the named agent.
 - `agent-team runtime` - Inspect the selected LLM runtime profile.
@@ -4524,6 +4525,32 @@ Inherited Flags:
 
 ```text
       --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team resume-plan`
+
+Show runtime resume and fallback commands for daemon metadata.
+
+Show runtime resume and fallback commands for daemon metadata without contacting the daemon. This is a shorter alias for `agent-team runtime resume-plan`.
+
+```text
+agent-team resume-plan [<instance>...] [flags]
+```
+
+Flags:
+
+```text
+      --action strings    Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.
+      --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
+      --job string        Select the instance recorded on or associated with this job id.
+      --json              Emit machine-readable JSON.
+      --repo string       Repo root containing .agent_team. (default "<repo>")
+      --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
+      --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
+      --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
+      --summary           Summarize matching resume plans by recommended action, runtime, and status.
+      --unhealthy         Only include crashed or stale running metadata.
 ```
 
 ## `agent-team rm`

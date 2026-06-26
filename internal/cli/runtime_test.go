@@ -750,6 +750,22 @@ func TestRuntimeResumePlanMarksStaleRunningMetadata(t *testing.T) {
 		t.Fatalf("resume-plan summary = %+v", counts)
 	}
 
+	shortcut := NewRootCmd()
+	shortcutOut, shortcutErr := &bytes.Buffer{}, &bytes.Buffer{}
+	shortcut.SetOut(shortcutOut)
+	shortcut.SetErr(shortcutErr)
+	shortcut.SetArgs([]string{"resume-plan", "--repo", tmp, "--summary", "--json"})
+	if err := shortcut.Execute(); err != nil {
+		t.Fatalf("resume-plan shortcut summary: %v\nstderr=%s", err, shortcutErr.String())
+	}
+	var shortcutCounts runtimeResumeSummary
+	if err := json.Unmarshal(shortcutOut.Bytes(), &shortcutCounts); err != nil {
+		t.Fatalf("decode shortcut resume-plan summary: %v\nbody=%s", err, shortcutOut.String())
+	}
+	if shortcutCounts.Total != counts.Total || shortcutCounts.Stale != counts.Stale || shortcutCounts.Actions["start"] != counts.Actions["start"] || shortcutCounts.Actions["attach"] != counts.Actions["attach"] {
+		t.Fatalf("shortcut resume-plan summary = %+v, want %+v", shortcutCounts, counts)
+	}
+
 	filtered := NewRootCmd()
 	filteredOut, filteredErr := &bytes.Buffer{}, &bytes.Buffer{}
 	filtered.SetOut(filteredOut)

@@ -1059,9 +1059,9 @@ func crashedInstanceHealthActions(row instanceRow) []string {
 		return []string{fmt.Sprintf("agent-team job resume-plan %s --status crashed", id)}
 	}
 	if instance := strings.TrimSpace(row.Instance); instance != "" {
-		return []string{fmt.Sprintf("agent-team runtime resume-plan %s --status crashed", instance)}
+		return []string{fmt.Sprintf("agent-team resume-plan %s --status crashed", instance)}
 	}
-	return []string{"agent-team runtime resume-plan --status crashed"}
+	return []string{"agent-team resume-plan --status crashed"}
 }
 
 func runtimeStaleHealthActions(row instanceRow) []string {
@@ -1069,9 +1069,9 @@ func runtimeStaleHealthActions(row instanceRow) []string {
 		return []string{fmt.Sprintf("agent-team job resume-plan %s --runtime-stale", id)}
 	}
 	if instance := strings.TrimSpace(row.Instance); instance != "" {
-		return []string{fmt.Sprintf("agent-team runtime resume-plan %s --runtime-stale", instance)}
+		return []string{fmt.Sprintf("agent-team resume-plan %s --runtime-stale", instance)}
 	}
-	return []string{"agent-team runtime resume-plan --runtime-stale"}
+	return []string{"agent-team resume-plan --runtime-stale"}
 }
 
 func (r *healthResult) addIssue(code, instance, status, phase, message string) {

@@ -5710,7 +5710,8 @@ func scopeTeamHealthIssueActions(result *healthResult, teamName string) {
 
 func teamHealthActionIsInstanceRuntimeResumePlan(action string) bool {
 	action = strings.TrimSpace(action)
-	return strings.HasPrefix(action, "agent-team runtime resume-plan ") &&
+	return (strings.HasPrefix(action, "agent-team resume-plan ") ||
+		strings.HasPrefix(action, "agent-team runtime resume-plan ")) &&
 		!strings.Contains(action, " --job ") &&
 		strings.HasSuffix(action, " --status crashed")
 }
