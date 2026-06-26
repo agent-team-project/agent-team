@@ -1736,14 +1736,15 @@ func newPipelineRejectCmd() *cobra.Command {
 
 func newPipelineSkipCmd() *cobra.Command {
 	var (
-		repo    string
-		all     bool
-		limit   int
-		step    string
-		message string
-		dryRun  bool
-		jsonOut bool
-		format  string
+		repo        string
+		all         bool
+		limit       int
+		step        string
+		message     string
+		messageFile string
+		dryRun      bool
+		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1786,11 +1787,16 @@ func newPipelineSkipCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline skip: pipeline name is required.")
 				return exitErr(2)
 			}
+			skipMessage, err := optionalSendMessageBody(message, messageFile, nil)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline skip: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
 			}
-			results, err := skipPipelineSteps(teamDir, pipelineName, step, message, limit, dryRun)
+			results, err := skipPipelineSteps(teamDir, pipelineName, step, skipMessage, limit, dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline skip: %v\n", err)
 				return exitErr(1)
@@ -1803,6 +1809,7 @@ func newPipelineSkipCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum matching steps to skip or report (0 = no limit).")
 	cmd.Flags().StringVar(&step, "step", "", "Required pipeline step id to mark skipped.")
 	cmd.Flags().StringVar(&message, "message", "", "Skip reason recorded on each updated job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read skip reason from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview skipped steps without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit skip results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each skip result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
@@ -1811,14 +1818,15 @@ func newPipelineSkipCmd() *cobra.Command {
 
 func newPipelineCancelCmd() *cobra.Command {
 	var (
-		repo    string
-		all     bool
-		actor   string
-		message string
-		limit   int
-		dryRun  bool
-		jsonOut bool
-		format  string
+		repo        string
+		all         bool
+		actor       string
+		message     string
+		messageFile string
+		limit       int
+		dryRun      bool
+		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1857,11 +1865,16 @@ func newPipelineCancelCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline cancel: pipeline name is required.")
 				return exitErr(2)
 			}
+			cancelMessage, err := optionalSendMessageBody(message, messageFile, nil)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline cancel: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
 			}
-			results, err := cancelPipelineJobs(teamDir, pipelineName, message, actor, limit, dryRun)
+			results, err := cancelPipelineJobs(teamDir, pipelineName, cancelMessage, actor, limit, dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline cancel: %v\n", err)
 				return exitErr(1)
@@ -1873,6 +1886,7 @@ func newPipelineCancelCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&all, "all", false, "Cancel non-terminal jobs across all pipelines.")
 	cmd.Flags().StringVar(&actor, "actor", "cli", "Actor label recorded in cancellation audit events.")
 	cmd.Flags().StringVar(&message, "message", "", "Cancellation reason recorded on each cancelled job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read cancellation reason from a file, or '-' for stdin.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum matching jobs to cancel (0 = no limit).")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview cancellations without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit cancellation results as JSON.")
@@ -2421,6 +2435,7 @@ func newPipelineRetryCmd() *cobra.Command {
 		runtimeBin    string
 		step          string
 		message       string
+		messageFile   string
 		force         bool
 		dryRun        bool
 		previewRoutes bool
@@ -2468,11 +2483,16 @@ func newPipelineRetryCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: pipeline name is required.")
 				return exitErr(2)
 			}
+			retryMessage, err := optionalSendMessageBody(message, messageFile, nil)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline retry: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
 			}
-			results, err := retryPipelineJobs(cmd, teamDir, pipelineName, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin}, step, message, limit, force, dispatchNow, dryRun, previewRoutes)
+			results, err := retryPipelineJobs(cmd, teamDir, pipelineName, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin}, step, retryMessage, limit, force, dispatchNow, dryRun, previewRoutes)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline retry: %v\n", err)
 				return exitErr(1)
@@ -2489,6 +2509,7 @@ func newPipelineRetryCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtimeBin, "runtime-bin", "", "Runtime binary for --dispatch. Overrides env and repo config.")
 	cmd.Flags().StringVar(&step, "step", "", "Retry only failed jobs whose next failed step has this id.")
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each retried job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read retry message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&force, "force", false, "Ignore step max_attempts caps for this explicit retry.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview failed-step resets and optional dispatches without writing job or daemon state.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run --dispatch, include route and payload previews.")

@@ -1525,13 +1525,14 @@ func newTeamRejectCmd() *cobra.Command {
 
 func newTeamSkipCmd() *cobra.Command {
 	var (
-		repo    string
-		limit   int
-		step    string
-		message string
-		dryRun  bool
-		jsonOut bool
-		format  string
+		repo        string
+		limit       int
+		step        string
+		message     string
+		messageFile string
+		dryRun      bool
+		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1558,6 +1559,11 @@ func newTeamSkipCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team skip: %v\n", err)
 				return exitErr(2)
 			}
+			skipMessage, err := optionalSendMessageBody(message, messageFile, nil)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team skip: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -1567,7 +1573,7 @@ func newTeamSkipCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team skip: %v\n", err)
 				return exitErr(1)
 			}
-			results, err := skipTeamPipelineSteps(teamDir, team, step, message, limit, dryRun)
+			results, err := skipTeamPipelineSteps(teamDir, team, step, skipMessage, limit, dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team skip: %v\n", err)
 				return exitErr(1)
@@ -1579,6 +1585,7 @@ func newTeamSkipCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Skip or report at most this many matching team steps; 0 means no limit.")
 	cmd.Flags().StringVar(&step, "step", "", "Required pipeline step id to mark skipped.")
 	cmd.Flags().StringVar(&message, "message", "", "Skip reason recorded on each updated team job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read skip reason from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview skipped team steps without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit skip results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
@@ -1587,13 +1594,14 @@ func newTeamSkipCmd() *cobra.Command {
 
 func newTeamCancelCmd() *cobra.Command {
 	var (
-		repo    string
-		actor   string
-		message string
-		limit   int
-		dryRun  bool
-		jsonOut bool
-		format  string
+		repo        string
+		actor       string
+		message     string
+		messageFile string
+		limit       int
+		dryRun      bool
+		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1616,6 +1624,11 @@ func newTeamCancelCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team cancel: %v\n", err)
 				return exitErr(2)
 			}
+			cancelMessage, err := optionalSendMessageBody(message, messageFile, nil)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team cancel: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -1625,7 +1638,7 @@ func newTeamCancelCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team cancel: %v\n", err)
 				return exitErr(1)
 			}
-			results, err := cancelTeamPipelineJobs(teamDir, team, message, actor, limit, dryRun)
+			results, err := cancelTeamPipelineJobs(teamDir, team, cancelMessage, actor, limit, dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team cancel: %v\n", err)
 				return exitErr(1)
@@ -1636,6 +1649,7 @@ func newTeamCancelCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&actor, "actor", "cli", "Actor label recorded in cancellation audit events.")
 	cmd.Flags().StringVar(&message, "message", "", "Cancellation reason recorded on each cancelled team job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read cancellation reason from a file, or '-' for stdin.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Cancel at most this many non-terminal team jobs; 0 means no limit.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview team cancellations without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit cancellation results as JSON.")
@@ -1653,6 +1667,7 @@ func newTeamRetryCmd() *cobra.Command {
 		dispatchNow   bool
 		step          string
 		message       string
+		messageFile   string
 		force         bool
 		dryRun        bool
 		previewRoutes bool
@@ -1684,6 +1699,11 @@ func newTeamRetryCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team retry: %v\n", err)
 				return exitErr(2)
 			}
+			retryMessage, err := optionalSendMessageBody(message, messageFile, nil)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team retry: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -1693,7 +1713,7 @@ func newTeamRetryCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team retry: %v\n", err)
 				return exitErr(1)
 			}
-			results, err := retryTeamPipelineJobs(cmd, teamDir, team, "", workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin}, step, message, limit, force, dispatchNow, dryRun, previewRoutes)
+			results, err := retryTeamPipelineJobs(cmd, teamDir, team, "", workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin}, step, retryMessage, limit, force, dispatchNow, dryRun, previewRoutes)
 			if err != nil {
 				if errors.Is(err, errDaemonNotRunning) {
 					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team retry: daemon is not running — start it with `agent-team start`, or use --dry-run without --dispatch.")
@@ -1713,6 +1733,7 @@ func newTeamRetryCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dispatchNow, "dispatch", false, "Dispatch each reset failed step immediately.")
 	cmd.Flags().StringVar(&step, "step", "", "Retry only failed team jobs whose next failed step has this id.")
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each retried team job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read retry message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&force, "force", false, "Ignore step max_attempts caps for this explicit team retry.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview failed-step resets and optional dispatches without writing job or daemon state.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run --dispatch, include local topology route and dispatch payload previews.")

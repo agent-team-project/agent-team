@@ -1349,12 +1349,16 @@ pipelines = ["platform_ops"]
 	if got := strings.TrimSpace(formatOut.String()); got != "squ-901 would_retry implement" {
 		t.Fatalf("team retry format = %q", got)
 	}
+	retryFile := filepath.Join(root, "team-retry-message.txt")
+	if err := os.WriteFile(retryFile, []byte("delivery retry approved from file\n"), 0o644); err != nil {
+		t.Fatalf("write team retry message file: %v", err)
+	}
 
 	run := NewRootCmd()
 	runOut, runErr := &bytes.Buffer{}, &bytes.Buffer{}
 	run.SetOut(runOut)
 	run.SetErr(runErr)
-	run.SetArgs([]string{"team", "retry", "delivery", "--repo", root, "--message", "delivery retry approved", "--json"})
+	run.SetArgs([]string{"team", "retry", "delivery", "--repo", root, "--message-file", retryFile, "--json"})
 	if err := run.Execute(); err != nil {
 		t.Fatalf("team retry: %v\nstderr=%s", err, runErr.String())
 	}
@@ -1362,7 +1366,7 @@ pipelines = ["platform_ops"]
 	if err := json.Unmarshal(runOut.Bytes(), &runRows); err != nil {
 		t.Fatalf("decode team retry: %v\nbody=%s", err, runOut.String())
 	}
-	if len(runRows) != 1 || runRows[0].Action != "retried" || runRows[0].StepStatus != job.StatusBlocked || runRows[0].Message != "delivery retry approved" {
+	if len(runRows) != 1 || runRows[0].Action != "retried" || runRows[0].StepStatus != job.StatusBlocked || runRows[0].Message != "delivery retry approved from file" {
 		t.Fatalf("run rows = %+v", runRows)
 	}
 	delivery, err := job.Read(teamDir, "squ-901")
@@ -1373,7 +1377,7 @@ pipelines = ["platform_ops"]
 	if err != nil {
 		t.Fatalf("read platform: %v", err)
 	}
-	if delivery.Status != job.StatusQueued || delivery.LastStatus != "delivery retry approved" || delivery.Steps[0].Status != job.StatusBlocked || delivery.Steps[0].Instance != "" {
+	if delivery.Status != job.StatusQueued || delivery.LastStatus != "delivery retry approved from file" || delivery.Steps[0].Status != job.StatusBlocked || delivery.Steps[0].Instance != "" {
 		t.Fatalf("delivery job = %+v", delivery)
 	}
 	if platform.Status != job.StatusFailed || platform.Steps[0].Status != job.StatusFailed || platform.Steps[0].Instance != "platform-old" {
@@ -2561,12 +2565,16 @@ pipelines = ["ticket_to_pr"]
 	if unchanged.Status != job.StatusBlocked || unchanged.Steps[1].Status != job.StatusBlocked || unchanged.Steps[1].Skipped {
 		t.Fatalf("dry-run mutated delivery job = %+v", unchanged)
 	}
+	skipFile := filepath.Join(root, "team-skip-reason.txt")
+	if err := os.WriteFile(skipFile, []byte("delivery review bypassed from file\n"), 0o644); err != nil {
+		t.Fatalf("write team skip reason file: %v", err)
+	}
 
 	run := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	run.SetOut(out)
 	run.SetErr(stderr)
-	run.SetArgs([]string{"team", "skip", "delivery", "--repo", root, "--step", "review", "--message", "delivery review bypassed", "--json"})
+	run.SetArgs([]string{"team", "skip", "delivery", "--repo", root, "--step", "review", "--message-file", skipFile, "--json"})
 	if err := run.Execute(); err != nil {
 		t.Fatalf("team skip: %v\nstderr=%s", err, stderr.String())
 	}
@@ -2574,7 +2582,7 @@ pipelines = ["ticket_to_pr"]
 	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
 		t.Fatalf("decode team skip: %v\nbody=%s", err, out.String())
 	}
-	if len(rows) != 1 || rows[0].JobID != "squ-934" || rows[0].Action != "skipped" || !rows[0].Skipped || rows[0].SkipReason != "delivery review bypassed" {
+	if len(rows) != 1 || rows[0].JobID != "squ-934" || rows[0].Action != "skipped" || !rows[0].Skipped || rows[0].SkipReason != "delivery review bypassed from file" {
 		t.Fatalf("team skip rows = %+v", rows)
 	}
 	delivery, err := job.Read(teamDir, "squ-934")
@@ -2679,12 +2687,16 @@ pipelines = ["ticket_to_pr"]
 	if unchanged.Status != job.StatusQueued || unchanged.LastEvent == "cancelled" {
 		t.Fatalf("dry-run mutated delivery job = %+v", unchanged)
 	}
+	cancelFile := filepath.Join(root, "team-cancel-reason.txt")
+	if err := os.WriteFile(cancelFile, []byte("superseded from file\n"), 0o644); err != nil {
+		t.Fatalf("write team cancel reason file: %v", err)
+	}
 
 	run := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	run.SetOut(out)
 	run.SetErr(stderr)
-	run.SetArgs([]string{"team", "cancel", "delivery", "--repo", root, "--message", "superseded", "--json"})
+	run.SetArgs([]string{"team", "cancel", "delivery", "--repo", root, "--message-file", cancelFile, "--json"})
 	if err := run.Execute(); err != nil {
 		t.Fatalf("team cancel: %v\nstderr=%s", err, stderr.String())
 	}
@@ -2692,14 +2704,14 @@ pipelines = ["ticket_to_pr"]
 	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
 		t.Fatalf("decode team cancel: %v\nbody=%s", err, out.String())
 	}
-	if len(rows) != 1 || rows[0].JobID != "squ-936" || rows[0].Action != "cancelled" || rows[0].Message != "superseded" {
+	if len(rows) != 1 || rows[0].JobID != "squ-936" || rows[0].Action != "cancelled" || rows[0].Message != "superseded from file" {
 		t.Fatalf("team cancel rows = %+v", rows)
 	}
 	delivery, err := job.Read(teamDir, "squ-936")
 	if err != nil {
 		t.Fatalf("read delivery job: %v", err)
 	}
-	if delivery.Status != job.StatusFailed || delivery.LastEvent != "cancelled" || delivery.LastStatus != "superseded" {
+	if delivery.Status != job.StatusFailed || delivery.LastEvent != "cancelled" || delivery.LastStatus != "superseded from file" {
 		t.Fatalf("delivery job = %+v", delivery)
 	}
 	foreign, err := job.Read(teamDir, "squ-937")

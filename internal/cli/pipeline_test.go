@@ -2998,30 +2998,34 @@ after = ["implement"]
 	if unchanged.Status != job.StatusBlocked || unchanged.Steps[1].Status != job.StatusBlocked || unchanged.Steps[1].Skipped {
 		t.Fatalf("dry-run mutated skipped job = %+v", unchanged)
 	}
+	skipFile := filepath.Join(root, "skip-reason.txt")
+	if err := os.WriteFile(skipFile, []byte("review covered from file\n"), 0o644); err != nil {
+		t.Fatalf("write skip reason file: %v", err)
+	}
 
 	run := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	run.SetOut(out)
 	run.SetErr(stderr)
-	run.SetArgs([]string{"pipeline", "skip", "ticket_to_pr", "--repo", root, "--step", "review", "--message", "review covered elsewhere", "--format", "{{.JobID}} {{.Action}} {{.StepID}} {{.Skipped}} {{.Message}}"})
+	run.SetArgs([]string{"pipeline", "skip", "ticket_to_pr", "--repo", root, "--step", "review", "--message-file", skipFile, "--format", "{{.JobID}} {{.Action}} {{.StepID}} {{.Skipped}} {{.Message}}"})
 	if err := run.Execute(); err != nil {
 		t.Fatalf("pipeline skip: %v\nstderr=%s", err, stderr.String())
 	}
-	if got := out.String(); got != "squ-905 skipped review true review covered elsewhere\nsqu-906 skipped review false step is running; timeout or stop the owner before skipping\n" {
+	if got := out.String(); got != "squ-905 skipped review true review covered from file\nsqu-906 skipped review false step is running; timeout or stop the owner before skipping\n" {
 		t.Fatalf("skip format = %q", got)
 	}
 	skipped, err := job.Read(teamDir, "squ-905")
 	if err != nil {
 		t.Fatalf("read skipped job: %v", err)
 	}
-	if skipped.Status != job.StatusDone || skipped.Steps[1].Status != job.StatusDone || !skipped.Steps[1].Skipped || skipped.Steps[1].SkipReason != "review covered elsewhere" {
+	if skipped.Status != job.StatusDone || skipped.Steps[1].Status != job.StatusDone || !skipped.Steps[1].Skipped || skipped.Steps[1].SkipReason != "review covered from file" {
 		t.Fatalf("skipped job = %+v", skipped)
 	}
 	events, err := job.ListEvents(teamDir, "squ-905")
 	if err != nil {
 		t.Fatalf("list skip events: %v", err)
 	}
-	if len(events) == 0 || events[len(events)-1].Type != "step_skipped" || events[len(events)-1].Message != "review covered elsewhere" {
+	if len(events) == 0 || events[len(events)-1].Type != "step_skipped" || events[len(events)-1].Message != "review covered from file" {
 		t.Fatalf("skip events = %+v", events)
 	}
 	running, err := job.Read(teamDir, "squ-906")
@@ -3106,23 +3110,27 @@ target = "worker"
 	if unchanged.Status != job.StatusRunning || unchanged.LastEvent == "cancelled" {
 		t.Fatalf("dry-run mutated job = %+v", unchanged)
 	}
+	cancelFile := filepath.Join(root, "cancel-reason.txt")
+	if err := os.WriteFile(cancelFile, []byte("duplicate ticket from file\n"), 0o644); err != nil {
+		t.Fatalf("write cancel reason file: %v", err)
+	}
 
 	run := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	run.SetOut(out)
 	run.SetErr(stderr)
-	run.SetArgs([]string{"pipeline", "cancel", "ticket_to_pr", "--repo", root, "--message", "duplicate ticket", "--format", "{{.JobID}} {{.Action}} {{.StatusBefore}} {{.StatusAfter}} {{.Instance}} {{.Message}}"})
+	run.SetArgs([]string{"pipeline", "cancel", "ticket_to_pr", "--repo", root, "--message-file", cancelFile, "--format", "{{.JobID}} {{.Action}} {{.StatusBefore}} {{.StatusAfter}} {{.Instance}} {{.Message}}"})
 	if err := run.Execute(); err != nil {
 		t.Fatalf("pipeline cancel: %v\nstderr=%s", err, stderr.String())
 	}
-	if got := out.String(); got != "squ-907 cancelled running failed worker-squ-907 duplicate ticket\n" {
+	if got := out.String(); got != "squ-907 cancelled running failed worker-squ-907 duplicate ticket from file\n" {
 		t.Fatalf("cancel format = %q", got)
 	}
 	cancelled, err := job.Read(teamDir, "squ-907")
 	if err != nil {
 		t.Fatalf("read cancelled job: %v", err)
 	}
-	if cancelled.Status != job.StatusFailed || cancelled.LastEvent != "cancelled" || cancelled.LastStatus != "duplicate ticket" || cancelled.Instance != "worker-squ-907" {
+	if cancelled.Status != job.StatusFailed || cancelled.LastEvent != "cancelled" || cancelled.LastStatus != "duplicate ticket from file" || cancelled.Instance != "worker-squ-907" {
 		t.Fatalf("cancelled job = %+v", cancelled)
 	}
 	done, err := job.Read(teamDir, "squ-908")
@@ -3136,7 +3144,7 @@ target = "worker"
 	if err != nil {
 		t.Fatalf("list cancel events: %v", err)
 	}
-	if len(events) == 0 || events[len(events)-1].Type != "cancelled" || events[len(events)-1].Message != "duplicate ticket" || events[len(events)-1].Data["instance"] != "worker-squ-907" {
+	if len(events) == 0 || events[len(events)-1].Type != "cancelled" || events[len(events)-1].Message != "duplicate ticket from file" || events[len(events)-1].Data["instance"] != "worker-squ-907" {
 		t.Fatalf("cancel events = %+v", events)
 	}
 }
@@ -5899,12 +5907,16 @@ func TestPipelineRetryFailedSteps(t *testing.T) {
 	if got := formatOut.String(); got != "squ-601 would_retry blocked\n" {
 		t.Fatalf("retry format = %q", got)
 	}
+	retryFile := filepath.Join(target, "retry-message.txt")
+	if err := os.WriteFile(retryFile, []byte("operator retry approved from file\n"), 0o644); err != nil {
+		t.Fatalf("write retry message file: %v", err)
+	}
 
 	run := NewRootCmd()
 	runOut, runErr := &bytes.Buffer{}, &bytes.Buffer{}
 	run.SetOut(runOut)
 	run.SetErr(runErr)
-	run.SetArgs([]string{"pipeline", "retry", "ticket_triage", "--repo", target, "--limit", "1", "--message", "operator retry approved", "--json"})
+	run.SetArgs([]string{"pipeline", "retry", "ticket_triage", "--repo", target, "--limit", "1", "--message-file", retryFile, "--json"})
 	if err := run.Execute(); err != nil {
 		t.Fatalf("pipeline retry: %v\nstderr=%s", err, runErr.String())
 	}
@@ -5912,14 +5924,14 @@ func TestPipelineRetryFailedSteps(t *testing.T) {
 	if err := json.Unmarshal(runOut.Bytes(), &runRows); err != nil {
 		t.Fatalf("decode retry: %v\nbody=%s", err, runOut.String())
 	}
-	if len(runRows) != 1 || runRows[0].Action != "retried" || runRows[0].StepStatus != job.StatusBlocked || runRows[0].Instance != "" || runRows[0].Message != "operator retry approved" {
+	if len(runRows) != 1 || runRows[0].Action != "retried" || runRows[0].StepStatus != job.StatusBlocked || runRows[0].Instance != "" || runRows[0].Message != "operator retry approved from file" {
 		t.Fatalf("run rows = %+v", runRows)
 	}
 	retried, err := job.Read(teamDir, "squ-601")
 	if err != nil {
 		t.Fatalf("read retried: %v", err)
 	}
-	if retried.Status != job.StatusQueued || retried.LastEvent != "reopened" || retried.LastStatus != "operator retry approved" || retried.Steps[0].Status != job.StatusBlocked || retried.Steps[0].Instance != "" || !retried.Steps[0].FinishedAt.IsZero() {
+	if retried.Status != job.StatusQueued || retried.LastEvent != "reopened" || retried.LastStatus != "operator retry approved from file" || retried.Steps[0].Status != job.StatusBlocked || retried.Steps[0].Instance != "" || !retried.Steps[0].FinishedAt.IsZero() {
 		t.Fatalf("retried job = %+v", retried)
 	}
 	events, err := job.ListEvents(teamDir, "squ-601")

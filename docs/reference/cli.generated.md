@@ -3063,14 +3063,15 @@ agent-team pipeline cancel <pipeline>|--all [flags]
 Flags:
 
 ```text
-      --actor string     Actor label recorded in cancellation audit events. (default "cli")
-      --all              Cancel non-terminal jobs across all pipelines.
-      --dry-run          Preview cancellations without writing job state.
-      --format string    Render each cancellation result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StatusAfter}}'.
-      --json             Emit cancellation results as JSON.
-      --limit int        Maximum matching jobs to cancel (0 = no limit).
-      --message string   Cancellation reason recorded on each cancelled job.
-      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --actor string          Actor label recorded in cancellation audit events. (default "cli")
+      --all                   Cancel non-terminal jobs across all pipelines.
+      --dry-run               Preview cancellations without writing job state.
+      --format string         Render each cancellation result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StatusAfter}}'.
+      --json                  Emit cancellation results as JSON.
+      --limit int             Maximum matching jobs to cancel (0 = no limit).
+      --message string        Cancellation reason recorded on each cancelled job.
+      --message-file string   Read cancellation reason from a file, or '-' for stdin.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
 ```
 
 ## `agent-team pipeline cleanup`
@@ -3677,20 +3678,21 @@ agent-team pipeline retry <pipeline>|--all [flags]
 Flags:
 
 ```text
-      --all                  Retry failed steps across all pipelines.
-      --dispatch             Dispatch each reset failed step immediately.
-      --dry-run              Preview failed-step resets and optional dispatches without writing job or daemon state.
-      --force                Ignore step max_attempts caps for this explicit retry.
-      --format string        Render each retry result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
-      --json                 Emit retry results as JSON.
-      --limit int            Maximum failed jobs to retry (0 = no limit).
-      --message string       Status message recorded on each retried job.
-      --preview-routes       With --dry-run --dispatch, include route and payload previews.
-      --repo string          Repo root containing .agent_team. (default "<repo>")
-      --runtime string       Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
-      --runtime-bin string   Runtime binary for --dispatch. Overrides env and repo config.
-      --step string          Retry only failed jobs whose next failed step has this id.
-      --workspace string     Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
+      --all                   Retry failed steps across all pipelines.
+      --dispatch              Dispatch each reset failed step immediately.
+      --dry-run               Preview failed-step resets and optional dispatches without writing job or daemon state.
+      --force                 Ignore step max_attempts caps for this explicit retry.
+      --format string         Render each retry result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json                  Emit retry results as JSON.
+      --limit int             Maximum failed jobs to retry (0 = no limit).
+      --message string        Status message recorded on each retried job.
+      --message-file string   Read retry message from a file, or '-' for stdin.
+      --preview-routes        With --dry-run --dispatch, include route and payload previews.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --runtime string        Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
+      --runtime-bin string    Runtime binary for --dispatch. Overrides env and repo config.
+      --step string           Retry only failed jobs whose next failed step has this id.
+      --workspace string      Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team pipeline run`
@@ -3778,14 +3780,15 @@ agent-team pipeline skip <pipeline>|--all --step <id> [flags]
 Flags:
 
 ```text
-      --all              Skip matching steps across all pipelines.
-      --dry-run          Preview skipped steps without writing job state.
-      --format string    Render each skip result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
-      --json             Emit skip results as JSON.
-      --limit int        Maximum matching steps to skip or report (0 = no limit).
-      --message string   Skip reason recorded on each updated job.
-      --repo string      Repo root containing .agent_team. (default "<repo>")
-      --step string      Required pipeline step id to mark skipped.
+      --all                   Skip matching steps across all pipelines.
+      --dry-run               Preview skipped steps without writing job state.
+      --format string         Render each skip result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json                  Emit skip results as JSON.
+      --limit int             Maximum matching steps to skip or report (0 = no limit).
+      --message string        Skip reason recorded on each updated job.
+      --message-file string   Read skip reason from a file, or '-' for stdin.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --step string           Required pipeline step id to mark skipped.
 ```
 
 ## `agent-team pipeline snapshot`
@@ -5368,13 +5371,14 @@ agent-team team cancel <team> [flags]
 Flags:
 
 ```text
-      --actor string     Actor label recorded in cancellation audit events. (default "cli")
-      --dry-run          Preview team cancellations without writing job state.
-      --format string    Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StatusAfter}}'.
-      --json             Emit cancellation results as JSON.
-      --limit int        Cancel at most this many non-terminal team jobs; 0 means no limit.
-      --message string   Cancellation reason recorded on each cancelled team job.
-      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --actor string          Actor label recorded in cancellation audit events. (default "cli")
+      --dry-run               Preview team cancellations without writing job state.
+      --format string         Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StatusAfter}}'.
+      --json                  Emit cancellation results as JSON.
+      --limit int             Cancel at most this many non-terminal team jobs; 0 means no limit.
+      --message string        Cancellation reason recorded on each cancelled team job.
+      --message-file string   Read cancellation reason from a file, or '-' for stdin.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
 ```
 
 ## `agent-team team cleanup`
@@ -6217,19 +6221,20 @@ agent-team team retry <team> [flags]
 Flags:
 
 ```text
-      --dispatch             Dispatch each reset failed step immediately.
-      --dry-run              Preview failed-step resets and optional dispatches without writing job or daemon state.
-      --force                Ignore step max_attempts caps for this explicit team retry.
-      --format string        Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
-      --json                 Emit retry results as JSON.
-      --limit int            Retry at most this many failed team jobs; 0 means no limit.
-      --message string       Status message recorded on each retried team job.
-      --preview-routes       With --dry-run --dispatch, include local topology route and dispatch payload previews.
-      --repo string          Repo root containing .agent_team. (default "<repo>")
-      --runtime string       Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
-      --runtime-bin string   Runtime binary for --dispatch. Overrides env and repo config.
-      --step string          Retry only failed team jobs whose next failed step has this id.
-      --workspace string     Workspace mode for retried dispatches: auto, worktree, or repo. (default "auto")
+      --dispatch              Dispatch each reset failed step immediately.
+      --dry-run               Preview failed-step resets and optional dispatches without writing job or daemon state.
+      --force                 Ignore step max_attempts caps for this explicit team retry.
+      --format string         Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json                  Emit retry results as JSON.
+      --limit int             Retry at most this many failed team jobs; 0 means no limit.
+      --message string        Status message recorded on each retried team job.
+      --message-file string   Read retry message from a file, or '-' for stdin.
+      --preview-routes        With --dry-run --dispatch, include local topology route and dispatch payload previews.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --runtime string        Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
+      --runtime-bin string    Runtime binary for --dispatch. Overrides env and repo config.
+      --step string           Retry only failed team jobs whose next failed step has this id.
+      --workspace string      Workspace mode for retried dispatches: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team team run`
@@ -6380,13 +6385,14 @@ agent-team team skip <team> --step <id> [flags]
 Flags:
 
 ```text
-      --dry-run          Preview skipped team steps without writing job state.
-      --format string    Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
-      --json             Emit skip results as JSON.
-      --limit int        Skip or report at most this many matching team steps; 0 means no limit.
-      --message string   Skip reason recorded on each updated team job.
-      --repo string      Repo root containing .agent_team. (default "<repo>")
-      --step string      Required pipeline step id to mark skipped.
+      --dry-run               Preview skipped team steps without writing job state.
+      --format string         Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json                  Emit skip results as JSON.
+      --limit int             Skip or report at most this many matching team steps; 0 means no limit.
+      --message string        Skip reason recorded on each updated team job.
+      --message-file string   Read skip reason from a file, or '-' for stdin.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --step string           Required pipeline step id to mark skipped.
 ```
 
 ## `agent-team team snapshot`
