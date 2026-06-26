@@ -1710,6 +1710,7 @@ func newJobUnblockCmd() *cobra.Command {
 		from         string
 		message      string
 		messageFile  string
+		stepID       string
 		status       string
 		force        bool
 		allowMissing bool
@@ -1753,15 +1754,26 @@ func newJobUnblockCmd() *cobra.Command {
 				return err
 			}
 			statusPreview, hasStatusBlock := blockedStatusPreviewForUnblock(statusPreviews)
-			if j.Status != job.StatusBlocked && !hasStatusBlock && !force {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job unblock: job %q is %s; pass --force to unblock anyway.\n", j.ID, j.Status)
-				return exitErr(2)
-			}
 			if hasStatusBlock {
 				applyStatusPreviewOwnership(j, statusPreview)
 			}
-			if strings.TrimSpace(j.Instance) == "" {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job unblock: job %q has no owning instance; use `agent-team job retry %s --dispatch` to start a new attempt.\n", j.ID, j.ID)
+			selection, err := selectJobUnblockInstance(j, stepID)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job unblock: %v\n", err)
+				return exitErr(2)
+			}
+			stepBlocked := selectedJobStepHasStatus(j, selection.StepID, job.StatusBlocked)
+			if j.Status != job.StatusBlocked && !stepBlocked && !hasStatusBlock && !force {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job unblock: job %q is %s; pass --force to unblock anyway.\n", j.ID, j.Status)
+				return exitErr(2)
+			}
+			instance := strings.TrimSpace(selection.Instance)
+			if instance == "" {
+				if strings.TrimSpace(selection.StepID) != "" {
+					printMissingJobInstanceError(cmd.ErrOrStderr(), "unblock", j, selection.StepID, "dispatch or adopt it first")
+				} else {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job unblock: job %q has no owning instance; use `agent-team job retry %s --dispatch` to start a new attempt.\n", j.ID, j.ID)
+				}
 				return exitErr(2)
 			}
 			client, err := sendClientForTeamDir(teamDir)
@@ -1769,23 +1781,28 @@ func newJobUnblockCmd() *cobra.Command {
 				return err
 			}
 			fromLabel := normalizedJobUnblockSender(from)
-			if err := runSendWithClient(io.Discard, cmd.ErrOrStderr(), client, j.Instance, body, sendOptions{
+			if err := runSendWithClient(io.Discard, cmd.ErrOrStderr(), client, instance, body, sendOptions{
 				From:         fromLabel,
 				AllowMissing: allowMissing,
 				DryRun:       dryRun,
 			}); err != nil {
 				return err
 			}
+			now := time.Now().UTC()
 			j.Status = next
+			if strings.TrimSpace(selection.StepID) != "" {
+				applySelectedJobStepStatus(j, selection.StepID, next, now)
+			}
 			j.LastEvent = "unblocked"
 			j.LastStatus = body
-			j.UpdatedAt = time.Now().UTC()
+			j.UpdatedAt = now
 			if dryRun {
 				if jsonOut {
 					return json.NewEncoder(cmd.OutOrStdout()).Encode(jobUnblockPreview{
 						DryRun:        true,
 						Job:           j,
-						Instance:      j.Instance,
+						Instance:      instance,
+						StepID:        selection.StepID,
 						From:          fromLabel,
 						Message:       body,
 						StatusPreview: hasStatusBlock,
@@ -1794,13 +1811,16 @@ func newJobUnblockCmd() *cobra.Command {
 				if tmpl != nil {
 					return renderJobTemplate(cmd.OutOrStdout(), j, tmpl)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "  would-unblock   %-20s job=%s status=%s\n", j.Instance, j.ID, j.Status)
+				fmt.Fprintf(cmd.OutOrStdout(), "  would-unblock   %-20s job=%s status=%s\n", instance, j.ID, j.Status)
 				return nil
 			}
 			data := map[string]string{
 				"from":     fromLabel,
-				"instance": j.Instance,
+				"instance": instance,
 				"status":   string(next),
+			}
+			if strings.TrimSpace(selection.StepID) != "" {
+				data["step"] = strings.TrimSpace(selection.StepID)
 			}
 			if hasStatusBlock {
 				data["status_preview"] = "true"
@@ -1816,7 +1836,7 @@ func newJobUnblockCmd() *cobra.Command {
 			if tmpl != nil {
 				return renderJobTemplate(cmd.OutOrStdout(), j, tmpl)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "  unblocked   %-20s job=%s status=%s\n", j.Instance, j.ID, j.Status)
+			fmt.Fprintf(cmd.OutOrStdout(), "  unblocked   %-20s job=%s status=%s\n", instance, j.ID, j.Status)
 			return nil
 		},
 	}
@@ -1824,6 +1844,7 @@ func newJobUnblockCmd() *cobra.Command {
 	cmd.Flags().StringVar(&from, "from", "(cli)", "Sender label recorded with the unblock message.")
 	cmd.Flags().StringVar(&message, "message", "", "Message text to send.")
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read message text from a file, or '-' for stdin.")
+	cmd.Flags().StringVar(&stepID, "step", "", "Use this pipeline step's owning instance.")
 	cmd.Flags().StringVar(&status, "status", string(job.StatusRunning), "Status after unblocking: running or queued.")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Allow unblocking a job not currently marked blocked.")
 	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing a message for an owning instance the daemon does not know yet.")
@@ -1837,6 +1858,7 @@ type jobUnblockPreview struct {
 	DryRun        bool     `json:"dry_run"`
 	Job           *job.Job `json:"job"`
 	Instance      string   `json:"instance"`
+	StepID        string   `json:"step_id,omitempty"`
 	From          string   `json:"from"`
 	Message       string   `json:"message"`
 	StatusPreview bool     `json:"status_preview,omitempty"`
@@ -1914,14 +1936,31 @@ func selectJobOwningInstance(j *job.Job, requestedStepID string) (jobInstanceSel
 	return jobInstanceSelection{Instance: strings.TrimSpace(j.Instance)}, nil
 }
 
+func selectJobUnblockInstance(j *job.Job, requestedStepID string) (jobInstanceSelection, error) {
+	if strings.TrimSpace(requestedStepID) != "" {
+		return selectJobOwningInstance(j, requestedStepID)
+	}
+	if step := uniqueJobStepWithStatusAndInstance(j, job.StatusBlocked); step != nil {
+		return jobInstanceSelection{
+			Instance: strings.TrimSpace(step.Instance),
+			StepID:   step.ID,
+		}, nil
+	}
+	return selectJobOwningInstance(j, "")
+}
+
 func uniqueRunningJobStepWithInstance(j *job.Job) *job.Step {
+	return uniqueJobStepWithStatusAndInstance(j, job.StatusRunning)
+}
+
+func uniqueJobStepWithStatusAndInstance(j *job.Job, status job.Status) *job.Step {
 	if j == nil {
 		return nil
 	}
 	var found *job.Step
 	for i := range j.Steps {
 		step := &j.Steps[i]
-		if step.Status != job.StatusRunning || strings.TrimSpace(step.Instance) == "" {
+		if step.Status != status || strings.TrimSpace(step.Instance) == "" {
 			continue
 		}
 		if found != nil {
@@ -1930,6 +1969,14 @@ func uniqueRunningJobStepWithInstance(j *job.Job) *job.Step {
 		found = step
 	}
 	return found
+}
+
+func selectedJobStepHasStatus(j *job.Job, stepID string, status job.Status) bool {
+	if j == nil || strings.TrimSpace(stepID) == "" {
+		return false
+	}
+	idx := jobStepIndex(j, strings.TrimSpace(stepID))
+	return idx >= 0 && j.Steps[idx].Status == status
 }
 
 func printMissingJobInstanceError(w io.Writer, command string, j *job.Job, stepID, hint string) {
@@ -5794,7 +5841,7 @@ func actionsForJobTriageItem(item jobTriageItem) []string {
 		add(fmt.Sprintf("agent-team job retry %s --dispatch", item.JobID))
 	}
 	if stringSliceContains(item.Reasons, "blocked") || stringSliceContains(item.Reasons, "blocked_step") || stringSliceContains(item.Reasons, "status_file_blocked") {
-		add(fmt.Sprintf("agent-team job unblock %s <answer...>", item.JobID))
+		add(jobUnblockAction(item.JobID, item.StepID))
 	}
 	if stringSliceContains(item.Reasons, "stale_queued") {
 		add(fmt.Sprintf("agent-team job dispatch %s", item.JobID))
@@ -5897,7 +5944,7 @@ func addStatusPreviewsToJobTriage(items []jobTriageItem, jobs []*job.Job, previe
 			Status:    preview.After,
 			Severity:  "warning",
 			Reasons:   []string{"status_file_blocked"},
-			Actions:   []string{fmt.Sprintf("agent-team job unblock %s <answer...>", preview.JobID)},
+			Actions:   []string{jobUnblockAction(preview.JobID, "")},
 			Message:   preview.Message,
 			Instance:  preview.Instance,
 			UpdatedAt: now,
@@ -6376,7 +6423,7 @@ func actionsForJobReadyRow(row jobReadyRow) []string {
 		if row.Gate == job.StepGatePR {
 			return prGateRecoveryActions(row.JobID)
 		}
-		return []string{fmt.Sprintf("agent-team job unblock %s <answer...>", row.JobID)}
+		return []string{jobUnblockAction(row.JobID, row.StepID)}
 	case "held":
 		return []string{fmt.Sprintf("agent-team job release %s", row.JobID)}
 	default:
@@ -6722,9 +6769,9 @@ func applySelectedJobStepStatus(j *job.Job, stepID string, status job.Status, no
 	}
 	step := &j.Steps[idx]
 	switch status {
-	case job.StatusRunning:
+	case job.StatusRunning, job.StatusQueued:
 		if step.Status != job.StatusDone {
-			step.Status = job.StatusRunning
+			step.Status = status
 			if step.StartedAt.IsZero() {
 				step.StartedAt = now
 			}
@@ -10474,7 +10521,7 @@ func jobDetailActions(j *job.Job, teamDir string, queueItems []*daemon.QueueItem
 	}
 	for _, preview := range statusPreviews {
 		if preview.Changed && preview.After == job.StatusBlocked {
-			add(fmt.Sprintf("agent-team job unblock %s <answer...>", j.ID))
+			add(jobUnblockAction(j.ID, ""))
 		}
 	}
 	if j.Held {
@@ -10488,6 +10535,15 @@ func jobDetailActions(j *job.Job, teamDir string, queueItems []*daemon.QueueItem
 		add(fmt.Sprintf("agent-team job dispatch %s", j.ID))
 	}
 	return actions
+}
+
+func jobUnblockAction(jobID, stepID string) string {
+	jobID = strings.TrimSpace(jobID)
+	stepID = strings.TrimSpace(stepID)
+	if stepID == "" {
+		return fmt.Sprintf("agent-team job unblock %s <answer...>", jobID)
+	}
+	return fmt.Sprintf("agent-team job unblock %s --step %s <answer...>", jobID, stepID)
 }
 
 func jobHasCrashedRuntimeMetadata(teamDir string, j *job.Job) bool {

@@ -6750,6 +6750,151 @@ func TestJobUnblockSendsMessageAndMarksRunning(t *testing.T) {
 	}
 }
 
+func TestJobUnblockSendsMessageToExplicitStepAndMarksStepRunning(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now().UTC()
+	blocked := &job.Job{
+		ID:       "squ-182",
+		Ticket:   "SQU-182",
+		Target:   "manager",
+		Instance: "manager-squ-182",
+		Pipeline: "ticket_to_pr",
+		Status:   job.StatusRunning,
+		Steps: []job.Step{
+			{ID: "triage", Target: "manager", Status: job.StatusDone, Instance: "manager-squ-182", StartedAt: now.Add(-2 * time.Hour), FinishedAt: now.Add(-90 * time.Minute)},
+			{ID: "implement", Target: "worker", Status: job.StatusBlocked, Instance: "worker-squ-182-implement", After: []string{"triage"}, StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+		},
+		LastEvent:  "status_blocked",
+		LastStatus: "needs credentials",
+		CreatedAt:  now.Add(-2 * time.Hour),
+		UpdatedAt:  now.Add(-30 * time.Minute),
+	}
+	if err := job.Write(teamDir, blocked); err != nil {
+		t.Fatalf("write blocked job: %v", err)
+	}
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager-squ-182", Agent: "manager", Status: daemon.StatusRunning, StartedAt: now.Add(-2 * time.Hour), Job: "squ-182", Ticket: "SQU-182"},
+		{Instance: "worker-squ-182-implement", Agent: "worker", Status: daemon.StatusRunning, StartedAt: now.Add(-time.Hour), Job: "squ-182", Ticket: "SQU-182"},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "unblock", "SQU-182", "credentials are configured", "--repo", tmp, "--step", "implement", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job unblock step: %v\nstderr=%s", err, stderr.String())
+	}
+	var updated job.Job
+	if err := json.Unmarshal(out.Bytes(), &updated); err != nil {
+		t.Fatalf("decode unblock step json: %v\nbody=%s", err, out.String())
+	}
+	idx := jobStepIndex(&updated, "implement")
+	if updated.Status != job.StatusRunning || updated.Instance != "manager-squ-182" || updated.LastEvent != "unblocked" || updated.LastStatus != "credentials are configured" {
+		t.Fatalf("updated = %+v", updated)
+	}
+	if idx < 0 || updated.Steps[idx].Status != job.StatusRunning || !updated.Steps[idx].FinishedAt.IsZero() {
+		t.Fatalf("updated step = %+v", updated.Steps)
+	}
+	workerMessages, err := daemon.ReadMessages(root, "worker-squ-182-implement")
+	if err != nil {
+		t.Fatalf("read worker messages: %v", err)
+	}
+	if len(workerMessages) != 1 || workerMessages[0].From != "(cli)" || workerMessages[0].Body != "credentials are configured" {
+		t.Fatalf("worker messages = %+v", workerMessages)
+	}
+	managerMessages, err := daemon.ReadMessages(root, "manager-squ-182")
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read manager messages: %v", err)
+	}
+	if len(managerMessages) != 0 {
+		t.Fatalf("manager messages = %+v, want none", managerMessages)
+	}
+	events, err := job.ListEvents(teamDir, "squ-182")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "unblocked" || events[0].Status != job.StatusRunning || events[0].Data["instance"] != "worker-squ-182-implement" || events[0].Data["step"] != "implement" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestJobUnblockInfersUniqueBlockedStepInstance(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now().UTC()
+	blocked := &job.Job{
+		ID:       "squ-183",
+		Ticket:   "SQU-183",
+		Target:   "manager",
+		Instance: "manager-squ-183",
+		Pipeline: "ticket_to_pr",
+		Status:   job.StatusRunning,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusBlocked, Instance: "worker-squ-183-implement", StartedAt: now.Add(-time.Hour)},
+		},
+		CreatedAt: now.Add(-time.Hour),
+		UpdatedAt: now.Add(-30 * time.Minute),
+	}
+	if err := job.Write(teamDir, blocked); err != nil {
+		t.Fatalf("write blocked job: %v", err)
+	}
+	if err := daemon.WriteMetadata(root, &daemon.Metadata{
+		Instance:  "worker-squ-183-implement",
+		Agent:     "worker",
+		Status:    daemon.StatusRunning,
+		StartedAt: now.Add(-time.Hour),
+		Job:       "squ-183",
+		Ticket:    "SQU-183",
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "unblock", "SQU-183", "continue", "--repo", tmp, "--status", "queued", "--dry-run", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job unblock inferred step dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var preview jobUnblockPreview
+	if err := json.Unmarshal(out.Bytes(), &preview); err != nil {
+		t.Fatalf("decode unblock inferred preview: %v\nbody=%s", err, out.String())
+	}
+	if !preview.DryRun || preview.Instance != "worker-squ-183-implement" || preview.StepID != "implement" || preview.Job == nil {
+		t.Fatalf("preview = %+v", preview)
+	}
+	idx := jobStepIndex(preview.Job, "implement")
+	if preview.Job.Status != job.StatusQueued || idx < 0 || preview.Job.Steps[idx].Status != job.StatusQueued {
+		t.Fatalf("preview job = %+v", preview.Job)
+	}
+	persisted, err := job.Read(teamDir, "squ-183")
+	if err != nil {
+		t.Fatalf("read persisted job: %v", err)
+	}
+	idx = jobStepIndex(persisted, "implement")
+	if persisted.Status != job.StatusRunning || idx < 0 || persisted.Steps[idx].Status != job.StatusBlocked || persisted.LastEvent != "" {
+		t.Fatalf("dry-run mutated job = %+v", persisted)
+	}
+	messages, err := daemon.ReadMessages(root, "worker-squ-183-implement")
+	if err != nil {
+		t.Fatalf("read messages: %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("dry-run sent messages = %+v", messages)
+	}
+}
+
 func TestJobUnblockMessageSourceValidation(t *testing.T) {
 	cases := []struct {
 		args []string
@@ -7863,6 +8008,11 @@ func TestJobNextReportsPipelineState(t *testing.T) {
 	}
 	if len(ready.Actions) != 1 || ready.Actions[0] != "agent-team job advance squ-203" {
 		t.Fatalf("ready actions = %+v", ready.Actions)
+	}
+
+	blockedActions := actionsForJobReadyRow(jobReadyRow{JobID: "squ-205", State: "blocked", StepID: "review"})
+	if !containsString(blockedActions, "agent-team job unblock squ-205 --step review <answer...>") {
+		t.Fatalf("blocked actions = %+v", blockedActions)
 	}
 
 	j.Steps[1].Status = job.StatusRunning

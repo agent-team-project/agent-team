@@ -2819,6 +2819,7 @@ Flags:
       --message-file string   Read message text from a file, or '-' for stdin.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --status string         Status after unblocking: running or queued. (default "running")
+      --step string           Use this pipeline step's owning instance.
 ```
 
 ## `agent-team job update`
