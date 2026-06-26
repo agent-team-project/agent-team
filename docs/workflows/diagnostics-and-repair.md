@@ -116,7 +116,7 @@ agent-team watch --jobs
 agent-team team monitor delivery --jobs --schedules
 ```
 
-Monitor combines health, instance rows, resources, events, jobs, schedules, and plan previews.
+Monitor combines health, inbox counts, instance rows, resources, events, jobs, schedules, and plan previews.
 
 ## Snapshot
 

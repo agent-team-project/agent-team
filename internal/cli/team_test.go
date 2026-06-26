@@ -7070,6 +7070,15 @@ since = "2026-06-18T12:00:00Z"
 		}
 	}
 	daemonRoot := daemon.DaemonRoot(teamDir)
+	for _, target := range []string{"manager", "other-oth-702"} {
+		if err := daemon.AppendMessage(daemonRoot, target, &daemon.Message{
+			ID:   "msg-monitor-" + target,
+			From: "operator",
+			Body: "monitor inbox " + target,
+		}); err != nil {
+			t.Fatalf("append message %s: %v", target, err)
+		}
+	}
 	for _, ev := range []*daemon.LifecycleEvent{
 		{TS: now.Add(-3 * time.Minute), Action: "start", Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, Message: "manager up"},
 		{TS: now.Add(-2 * time.Minute), Action: "dispatch", Instance: "worker-squ-702", Agent: "worker", Status: daemon.StatusRunning, Message: "delivery worker"},
@@ -7098,6 +7107,9 @@ since = "2026-06-18T12:00:00Z"
 	if snapshot.Health == nil || snapshot.Health.Jobs != nil || snapshot.Health.Queue.Total != 1 {
 		t.Fatalf("health = %+v", snapshot.Health)
 	}
+	if snapshot.Inbox.Total != 1 || snapshot.Inbox.Unread != 1 || snapshot.Inbox.UnreadInstances != 1 || !stringSliceContains(snapshot.Inbox.UnreadNames, "manager") || stringSliceContains(snapshot.Inbox.UnreadNames, "other-oth-702") {
+		t.Fatalf("inbox = %+v", snapshot.Inbox)
+	}
 	if len(snapshot.Instances) != 2 || snapshot.Instances[0].Instance == "other-oth-702" || snapshot.Instances[1].Instance == "other-oth-702" {
 		t.Fatalf("instances = %+v", snapshot.Instances)
 	}
@@ -7120,7 +7132,7 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("events = %v\nbody=%s", got, out.String())
 	}
 	body := out.String()
-	for _, leak := range []string{"platform_due", "platform_work", "oth-702", "q-platform-monitor", "platform worker", "build-worker-1"} {
+	for _, leak := range []string{"platform_due", "platform_work", "oth-702", "q-platform-monitor", "platform worker", "build-worker-1", "monitor inbox"} {
 		if strings.Contains(body, leak) {
 			t.Fatalf("team monitor json leaked %q:\n%s", leak, body)
 		}
@@ -7177,12 +7189,12 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team monitor text: %v\nstderr=%s", err, textErr.String())
 	}
 	textBody := textOut.String()
-	for _, want := range []string{"Team: delivery", "jobs:", "schedules:", "instances:", "events:", "stats:"} {
+	for _, want := range []string{"Team: delivery", "inbox: instances=2 total=1 unread=1 unread_instances=1", "jobs:", "schedules:", "instances:", "events:", "stats:"} {
 		if !strings.Contains(textBody, want) {
 			t.Fatalf("team monitor text missing %q:\n%s", want, textBody)
 		}
 	}
-	for _, leak := range []string{"platform_due", "platform_work", "oth-702", "q-platform-monitor"} {
+	for _, leak := range []string{"platform_due", "platform_work", "oth-702", "q-platform-monitor", "monitor inbox"} {
 		if strings.Contains(textBody, leak) {
 			t.Fatalf("team monitor text leaked %q:\n%s", leak, textBody)
 		}

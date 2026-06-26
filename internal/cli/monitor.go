@@ -55,9 +55,9 @@ func newMonitorCmd() *cobra.Command {
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "monitor",
-		Short: "Show a combined health, instance, and resource snapshot.",
-		Long: "Show a Docker-style operator snapshot combining fleet health, the instance table, " +
-			"and daemon-managed process stats. With --watch, refresh until interrupted.",
+		Short: "Show a combined health, inbox, instance, and resource snapshot.",
+		Long: "Show a Docker-style operator snapshot combining fleet health, inbox state, " +
+			"the instance table, and daemon-managed process stats. With --watch, refresh until interrupted.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team monitor: --interval must be >= 0.")
@@ -270,6 +270,8 @@ type monitorSnapshot struct {
 	JobStatus      []jobStatusReconcileResult `json:"job_status_preview,omitempty"`
 	PipelineStatus []pipelineStatusRow        `json:"pipeline_status,omitempty"`
 	Schedules      *scheduleForecast          `json:"schedules,omitempty"`
+	Inbox          overviewInboxSummary       `json:"inbox"`
+	InboxError     string                     `json:"inbox_error,omitempty"`
 	Instances      []psJSONRow                `json:"instances"`
 	Stats          []statsJSONRow             `json:"stats"`
 	StatsError     string                     `json:"stats_error,omitempty"`
@@ -291,6 +293,8 @@ type monitorSummarySnapshot struct {
 	JobStatus      []jobStatusReconcileResult    `json:"job_status_preview,omitempty"`
 	PipelineStatus []pipelineStatusRow           `json:"pipeline_status,omitempty"`
 	Schedules      *scheduleForecast             `json:"schedules,omitempty"`
+	Inbox          overviewInboxSummary          `json:"inbox"`
+	InboxError     string                        `json:"inbox_error,omitempty"`
 	Events         *eventSummaryJSON             `json:"events,omitempty"`
 	EventsError    string                        `json:"events_error,omitempty"`
 }
@@ -491,6 +495,11 @@ func collectMonitorSummarySnapshot(teamDir string, now time.Time, opts monitorOp
 		return nil, err
 	}
 	snapshot := &monitorSummarySnapshot{Health: health}
+	if inbox, err := collectMonitorInbox(teamDir, nil, nil, nil); err != nil {
+		snapshot.InboxError = err.Error()
+	} else {
+		snapshot.Inbox = inbox
+	}
 	var selectedInstances map[string]bool
 	if opts.IncludeResources || opts.IncludePlan || opts.EventTail > 0 {
 		selectedInstances, err = monitorSummarySelectedInstanceSet(teamDir, now, opts.PS)
@@ -674,6 +683,8 @@ func monitorSummarySelectedInstanceSet(teamDir string, now time.Time, opts psOpt
 
 func renderMonitorSummarySnapshot(w io.Writer, snapshot *monitorSummarySnapshot) {
 	renderHealth(w, snapshot.Health)
+	fmt.Fprintln(w)
+	renderMonitorInboxSummary(w, snapshot.Inbox, snapshot.InboxError)
 	if snapshot.ResourcesError != "" || snapshot.Resources != nil {
 		fmt.Fprintln(w)
 		if snapshot.ResourcesError != "" {
@@ -787,12 +798,18 @@ func collectMonitorSnapshot(teamDir string, now time.Time, probe processStatsPro
 	})
 	displayRows := filterLimitSortPsRows(rows, opts.PS)
 	selectedInstances := monitorSelectedInstanceSet(displayRows, opts.PS)
+	selectedInboxInstances := monitorInboxSelectedInstanceSet(displayRows, opts.PS)
 	snapshot := &monitorSnapshot{
 		Health:       health,
 		Instances:    psJSONRows(displayRows),
 		Stats:        []statsJSONRow{},
 		instanceRows: displayRows,
 		statsEmpty:   "(no running instances; use --all to include stopped/exited instances)",
+	}
+	if inbox, err := collectMonitorInbox(teamDir, nil, nil, selectedInboxInstances); err != nil {
+		snapshot.InboxError = err.Error()
+	} else {
+		snapshot.Inbox = inbox
 	}
 	if opts.Stats.All {
 		snapshot.statsEmpty = "(no daemon-managed instances)"
@@ -924,6 +941,7 @@ func collectTeamMonitorSnapshot(teamDir, name string, now time.Time, probe proce
 	}
 	displayRows := filterLimitSortPsRows(teamRows, opts.PS)
 	selectedInstances := monitorSelectedInstanceSet(displayRows, opts.PS)
+	selectedInboxInstances := monitorInboxSelectedInstanceSet(displayRows, opts.PS)
 	info := teamInfoFromTopology(team)
 	snapshot := &monitorSnapshot{
 		Team:         &info,
@@ -932,6 +950,11 @@ func collectTeamMonitorSnapshot(teamDir, name string, now time.Time, probe proce
 		Stats:        []statsJSONRow{},
 		instanceRows: displayRows,
 		statsEmpty:   "(no running team-owned instances; use --all to include stopped/exited instances)",
+	}
+	if inbox, err := collectMonitorInbox(teamDir, top, team, selectedInboxInstances); err != nil {
+		snapshot.InboxError = err.Error()
+	} else {
+		snapshot.Inbox = inbox
 	}
 	if opts.Stats.All {
 		snapshot.statsEmpty = "(no daemon-managed team-owned instances)"
@@ -1036,6 +1059,38 @@ func collectTeamScheduleForecast(teamDir string, team *topology.Team, now time.T
 	return forecast, nil
 }
 
+func collectMonitorInbox(teamDir string, top *topology.Topology, team *topology.Team, selectedInstances map[string]bool) (overviewInboxSummary, error) {
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	instances, metaByInstance, err := listInboxInstances(daemonRoot)
+	if err != nil {
+		return overviewInboxSummary{}, err
+	}
+	if team != nil {
+		instances = filterInboxInstancesForTeam(top, team, instances, metaByInstance)
+	}
+	if len(selectedInstances) > 0 {
+		instances = filterMonitorInboxInstances(instances, selectedInstances)
+	}
+	rows, err := collectInboxSummaryRows(daemonRoot, instances, metaByInstance, false)
+	if err != nil {
+		return overviewInboxSummary{}, err
+	}
+	return overviewInboxFromRows(rows), nil
+}
+
+func filterMonitorInboxInstances(instances []string, selected map[string]bool) []string {
+	if len(instances) == 0 || len(selected) == 0 {
+		return instances
+	}
+	out := make([]string, 0, len(instances))
+	for _, instance := range instances {
+		if selected[instance] {
+			out = append(out, instance)
+		}
+	}
+	return out
+}
+
 func teamMonitorEventFilters(teamDir, name string, opts monitorOptions, selectedInstances map[string]bool) (eventFilters, error) {
 	filters, err := teamEventFilters(teamDir, name, nil, nil, "", time.Now)
 	if err != nil {
@@ -1060,6 +1115,37 @@ func monitorSelectedInstanceSet(rows []instanceRow, opts psOptions) map[string]b
 	if opts.Limit <= 0 && len(opts.runtimes) == 0 && len(opts.phases) == 0 && !opts.stale && !opts.runtimeStale && !opts.unhealthy {
 		return nil
 	}
+	return monitorInstanceSetFromRows(rows)
+}
+
+func monitorInboxSelectedInstanceSet(rows []instanceRow, opts psOptions) map[string]bool {
+	if len(opts.instances) > 0 {
+		out := make(map[string]bool, len(opts.instances))
+		for instance, ok := range opts.instances {
+			if ok {
+				out[instance] = true
+			}
+		}
+		if len(out) == 0 {
+			out[""] = false
+		}
+		return out
+	}
+	if opts.Limit <= 0 &&
+		len(opts.statuses) == 0 &&
+		len(opts.runtimes) == 0 &&
+		len(opts.agents) == 0 &&
+		len(opts.phases) == 0 &&
+		len(opts.instances) == 0 &&
+		!opts.stale &&
+		!opts.runtimeStale &&
+		!opts.unhealthy {
+		return nil
+	}
+	return monitorInstanceSetFromRows(rows)
+}
+
+func monitorInstanceSetFromRows(rows []instanceRow) map[string]bool {
 	out := make(map[string]bool, len(rows))
 	for _, row := range rows {
 		out[row.Instance] = true
@@ -1133,6 +1219,8 @@ func renderMonitor(w io.Writer, snapshot *monitorSnapshot) error {
 		}
 	}
 	renderHealth(w, snapshot.Health)
+	fmt.Fprintln(w)
+	renderMonitorInboxSummary(w, snapshot.Inbox, snapshot.InboxError)
 
 	if snapshot.Plan != nil {
 		fmt.Fprintln(w)
@@ -1189,6 +1277,18 @@ func renderMonitor(w io.Writer, snapshot *monitorSnapshot) error {
 		empty = "(no running instances; use --all to include stopped/exited instances)"
 	}
 	return renderStatsTable(w, snapshot.statsRows, empty)
+}
+
+func renderMonitorInboxSummary(w io.Writer, inbox overviewInboxSummary, inboxErr string) {
+	if inboxErr != "" {
+		fmt.Fprintf(w, "inbox: unavailable: %s\n", inboxErr)
+		return
+	}
+	fmt.Fprintf(w, "inbox: instances=%d total=%d unread=%d unread_instances=%d\n",
+		inbox.Instances,
+		inbox.Total,
+		inbox.Unread,
+		inbox.UnreadInstances)
 }
 
 func collectMonitorEvents(ctx context.Context, client eventsClient, tail int, filters eventFilters) ([]daemon.LifecycleEvent, error) {

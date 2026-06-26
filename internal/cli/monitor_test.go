@@ -63,6 +63,76 @@ func TestMonitorCommandJSONDoesNotExitUnhealthy(t *testing.T) {
 	}
 }
 
+func TestMonitorReportsUnreadInboxSummary(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := daemon.AppendMessage(daemon.DaemonRoot(teamDir), "manager", &daemon.Message{
+		ID:   "msg-monitor-inbox",
+		From: "operator",
+		Body: "please check diagnostics",
+	}); err != nil {
+		t.Fatalf("append message: %v", err)
+	}
+	if err := daemon.AppendMessage(daemon.DaemonRoot(teamDir), "worker", &daemon.Message{
+		ID:   "msg-monitor-worker",
+		From: "operator",
+		Body: "worker-only diagnostics",
+	}); err != nil {
+		t.Fatalf("append worker message: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --json unread inbox: %v\nstderr=%s", err, stderr.String())
+	}
+	var body monitorSnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor inbox json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Inbox.Total != 2 || body.Inbox.Unread != 2 || body.Inbox.UnreadInstances != 2 || !stringSliceContains(body.Inbox.UnreadNames, "manager") || !stringSliceContains(body.Inbox.UnreadNames, "worker") {
+		t.Fatalf("inbox summary = %+v", body.Inbox)
+	}
+	if strings.Contains(stdout.String(), "please check diagnostics") || strings.Contains(stdout.String(), "worker-only diagnostics") {
+		t.Fatalf("monitor json should not include inbox bodies:\n%s", stdout.String())
+	}
+
+	filtered := NewRootCmd()
+	filteredOut, filteredErr := &bytes.Buffer{}, &bytes.Buffer{}
+	filtered.SetOut(filteredOut)
+	filtered.SetErr(filteredErr)
+	filtered.SetArgs([]string{"monitor", "--json", "--instance", "manager", "--target", tmp})
+	if err := filtered.Execute(); err != nil {
+		t.Fatalf("monitor --instance manager inbox: %v\nstderr=%s", err, filteredErr.String())
+	}
+	var filteredBody monitorSnapshot
+	if err := json.Unmarshal(filteredOut.Bytes(), &filteredBody); err != nil {
+		t.Fatalf("decode filtered monitor inbox json: %v\nbody=%s", err, filteredOut.String())
+	}
+	if filteredBody.Inbox.Total != 1 || filteredBody.Inbox.Unread != 1 || !stringSliceContains(filteredBody.Inbox.UnreadNames, "manager") || stringSliceContains(filteredBody.Inbox.UnreadNames, "worker") {
+		t.Fatalf("filtered inbox summary = %+v", filteredBody.Inbox)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"monitor", "--target", tmp})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("monitor text unread inbox: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "inbox: instances=2 total=2 unread=2 unread_instances=2") {
+		t.Fatalf("monitor text missing inbox summary:\n%s", textOut.String())
+	}
+	if strings.Contains(textOut.String(), "please check diagnostics") || strings.Contains(textOut.String(), "worker-only diagnostics") {
+		t.Fatalf("monitor text should not include inbox bodies:\n%s", textOut.String())
+	}
+}
+
 func TestMonitorSummaryJSONUsesHealthSnapshot(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
