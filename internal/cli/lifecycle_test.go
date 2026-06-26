@@ -4114,7 +4114,7 @@ func TestWaitFilteredInstanceNamesByRuntime(t *testing.T) {
 			{Instance: "unknown-runtime", Agent: "worker", Status: daemon.StatusRunning},
 		},
 	}}
-	names, err := waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, nil, nil, []string{"codex"}, nil, nil, nil, false, false)
+	names, err := waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, nil, nil, []string{"codex"}, nil, nil, nil, false, false, false)
 	if err != nil {
 		t.Fatalf("waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy: %v", err)
 	}
@@ -4122,7 +4122,7 @@ func TestWaitFilteredInstanceNamesByRuntime(t *testing.T) {
 		t.Fatalf("names = %v, want codex-worker only", names)
 	}
 
-	names, err = waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, nil, nil, []string{"unknown"}, nil, nil, nil, false, false)
+	names, err = waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, nil, nil, []string{"unknown"}, nil, nil, nil, false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "unknown --runtime") {
 		t.Fatalf("unknown runtime error = %v, want unknown --runtime", err)
 	}
@@ -4274,7 +4274,7 @@ func TestWaitLatestInstanceNamesFiltersRuntimeBeforeLimit(t *testing.T) {
 			{Instance: "claude-newer", Agent: "worker", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, StartedAt: now.Add(-1 * time.Hour)},
 		},
 	}}
-	names, err := waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister, nil, nil, []string{"codex"}, nil, nil, nil, false, false, 1)
+	names, err := waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister, nil, nil, []string{"codex"}, nil, nil, nil, false, false, false, 1)
 	if err != nil {
 		t.Fatalf("waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy: %v", err)
 	}
@@ -4755,6 +4755,49 @@ description = "fresh work"
 	}
 }
 
+func TestWaitRuntimeStaleDryRunUsesLocalMetadataWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	old := now.Add(-staleAfter - time.Minute)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "crashed", Agent: "worker", Runtime: "codex", Status: daemon.StatusCrashed, StartedAt: old},
+		{Instance: "runtime-stale", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, StartedAt: old},
+		{Instance: "status-stale", Agent: "manager", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: old},
+		{Instance: "fresh", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "status-stale"), `[status]
+phase = "implementing"
+description = "old status"
+`, old)
+	writeStatus(t, filepath.Join(teamDir, "state", "fresh"), `[status]
+phase = "idle"
+description = "fresh"
+`, now)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"wait", "--runtime-stale", "--dry-run", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("wait --runtime-stale --dry-run local metadata: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []waitResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode wait --runtime-stale json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "runtime-stale" || rows[0].Status != string(daemon.StatusRunning) {
+		t.Fatalf("rows = %+v, want runtime-stale only", rows)
+	}
+}
+
 func TestWaitDryRunReportsCurrentStateWithoutWaiting(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -5097,6 +5140,21 @@ func TestWaitStaleRejectsExplicitNames(t *testing.T) {
 		t.Fatalf("expected validation error")
 	}
 	if !strings.Contains(stderr.String(), "--stale cannot be combined") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestWaitRuntimeStaleRejectsExplicitNames(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"wait", "--runtime-stale", "manager"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	if !strings.Contains(stderr.String(), "--runtime-stale cannot be combined") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

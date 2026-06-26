@@ -1482,6 +1482,7 @@ func newWaitCmd() *cobra.Command {
 		runtimeFilters []string
 		phaseFilters   []string
 		staleOnly      bool
+		runtimeStale   bool
 		unhealthyOnly  bool
 		untilPhases    []string
 		untilRaw       string
@@ -1544,12 +1545,16 @@ func newWaitCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --stale cannot be combined with instance names.")
 				return exitErr(2)
 			}
+			if runtimeStale && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --runtime-stale cannot be combined with instance names.")
+				return exitErr(2)
+			}
 			if unhealthyOnly && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --unhealthy cannot be combined with instance names.")
 				return exitErr(2)
 			}
-			if !all && !latest && last == 0 && len(agents) == 0 && len(statusFilters) == 0 && len(runtimeFilters) == 0 && len(phaseFilters) == 0 && !staleOnly && !unhealthyOnly && len(args) == 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: instance is required unless --all, --latest, --last, --agent, --status, --runtime, --phase, --stale, or --unhealthy is set.")
+			if !all && !latest && last == 0 && len(agents) == 0 && len(statusFilters) == 0 && len(runtimeFilters) == 0 && len(phaseFilters) == 0 && !staleOnly && !runtimeStale && !unhealthyOnly && len(args) == 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: instance is required unless --all, --latest, --last, --agent, --status, --runtime, --phase, --stale, --runtime-stale, or --unhealthy is set.")
 				return exitErr(2)
 			}
 			if timeout < 0 {
@@ -1631,17 +1636,17 @@ func newWaitCmd() *cobra.Command {
 			}
 			names := args
 			if latest {
-				names, err = waitLatestInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, agents, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, unhealthyOnly)
+				names, err = waitLatestInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, agents, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, runtimeStale, unhealthyOnly)
 				if err != nil {
 					return err
 				}
 			} else if last > 0 {
-				names, err = waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister, agents, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, unhealthyOnly, last)
+				names, err = waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister, agents, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, runtimeStale, unhealthyOnly, last)
 				if err != nil {
 					return err
 				}
-			} else if len(agents) > 0 || len(statusFilters) > 0 || len(runtimeFilters) > 0 || len(phaseFilters) > 0 || staleOnly || unhealthyOnly {
-				names, err = waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, agents, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, unhealthyOnly)
+			} else if len(agents) > 0 || len(statusFilters) > 0 || len(runtimeFilters) > 0 || len(phaseFilters) > 0 || staleOnly || runtimeStale || unhealthyOnly {
+				names, err = waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, agents, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, runtimeStale, unhealthyOnly)
 				if err != nil {
 					return err
 				}
@@ -1669,7 +1674,7 @@ func newWaitCmd() *cobra.Command {
 				return nil
 			}
 			var phaseSource waitPhaseSource
-			if len(untilPhaseSet) > 0 || len(phaseFilters) > 0 || staleOnly || unhealthyOnly || summary || dryRun {
+			if len(untilPhaseSet) > 0 || len(phaseFilters) > 0 || staleOnly || runtimeStale || unhealthyOnly || summary || dryRun {
 				phaseSource = func() map[string]string {
 					return waitPhaseByInstance(teamDir, time.Now())
 				}
@@ -1732,6 +1737,7 @@ func newWaitCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Wait for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Wait for daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Wait for daemon-known instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Wait for daemon-known running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Wait for daemon-known instances that are crashed, status-stale, or runtime-stale.")
 	cmd.Flags().StringVar(&untilRaw, "until", string(waitUntilTerminal), "Lifecycle condition to wait for: terminal, running, stopped, exited, crashed, or removed.")
 	cmd.Flags().StringSliceVar(&untilPhases, "until-phase", nil, "Work phase condition to wait for: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
@@ -1974,10 +1980,10 @@ func waitFilteredInstanceNamesWithPhasesAndStale(lister instanceLister, agentFil
 }
 
 func waitFilteredInstanceNamesWithPhasesStaleAndUnhealthy(lister instanceLister, agentFilters, statusFilters, phaseFilters []string, phaseByInstance map[string]string, staleInstances map[string]bool, staleOnly bool, unhealthyOnly bool) ([]string, error) {
-	return waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, agentFilters, statusFilters, nil, phaseFilters, phaseByInstance, staleInstances, staleOnly, unhealthyOnly)
+	return waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, agentFilters, statusFilters, nil, phaseFilters, phaseByInstance, staleInstances, staleOnly, false, unhealthyOnly)
 }
 
-func waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister instanceLister, agentFilters, statusFilters, runtimeFilters, phaseFilters []string, phaseByInstance map[string]string, staleInstances map[string]bool, staleOnly bool, unhealthyOnly bool) ([]string, error) {
+func waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister instanceLister, agentFilters, statusFilters, runtimeFilters, phaseFilters []string, phaseByInstance map[string]string, staleInstances map[string]bool, staleOnly bool, runtimeStaleOnly bool, unhealthyOnly bool) ([]string, error) {
 	agents := lifecycleAgentFilterSet(agentFilters)
 	if len(agentFilters) > 0 && len(agents) == 0 {
 		return nil, errors.New("--agent requires at least one non-empty agent")
@@ -2003,7 +2009,7 @@ func waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister instance
 	}
 	names := make([]string, 0, len(metas))
 	for _, meta := range metas {
-		if !waitMetaMatchesFilters(meta, agents, statuses, runtimes, phases, phaseByInstance, staleInstances, staleOnly, unhealthyOnly) {
+		if !waitMetaMatchesFilters(meta, agents, statuses, runtimes, phases, phaseByInstance, staleInstances, staleOnly, runtimeStaleOnly, unhealthyOnly) {
 			continue
 		}
 		names = append(names, meta.Instance)
@@ -2041,14 +2047,14 @@ func waitLatestInstanceNamesWithPhasesStaleAndUnhealthy(lister instanceLister, a
 }
 
 func waitLatestInstanceNamesLimitWithPhasesStaleAndUnhealthy(lister instanceLister, agentFilters, statusFilters, phaseFilters []string, phaseByInstance map[string]string, staleInstances map[string]bool, staleOnly bool, unhealthyOnly bool, limit int) ([]string, error) {
-	return waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister, agentFilters, statusFilters, nil, phaseFilters, phaseByInstance, staleInstances, staleOnly, unhealthyOnly, limit)
+	return waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister, agentFilters, statusFilters, nil, phaseFilters, phaseByInstance, staleInstances, staleOnly, false, unhealthyOnly, limit)
 }
 
-func waitLatestInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister instanceLister, agentFilters, statusFilters, runtimeFilters, phaseFilters []string, phaseByInstance map[string]string, staleInstances map[string]bool, staleOnly bool, unhealthyOnly bool) ([]string, error) {
-	return waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister, agentFilters, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, unhealthyOnly, 1)
+func waitLatestInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister instanceLister, agentFilters, statusFilters, runtimeFilters, phaseFilters []string, phaseByInstance map[string]string, staleInstances map[string]bool, staleOnly bool, runtimeStaleOnly bool, unhealthyOnly bool) ([]string, error) {
+	return waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister, agentFilters, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, runtimeStaleOnly, unhealthyOnly, 1)
 }
 
-func waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister instanceLister, agentFilters, statusFilters, runtimeFilters, phaseFilters []string, phaseByInstance map[string]string, staleInstances map[string]bool, staleOnly bool, unhealthyOnly bool, limit int) ([]string, error) {
+func waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister instanceLister, agentFilters, statusFilters, runtimeFilters, phaseFilters []string, phaseByInstance map[string]string, staleInstances map[string]bool, staleOnly bool, runtimeStaleOnly bool, unhealthyOnly bool, limit int) ([]string, error) {
 	agents := lifecycleAgentFilterSet(agentFilters)
 	if len(agentFilters) > 0 && len(agents) == 0 {
 		return nil, errors.New("--agent requires at least one non-empty agent")
@@ -2074,7 +2080,7 @@ func waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister insta
 	}
 	filtered := make([]*daemon.Metadata, 0, len(metas))
 	for _, meta := range metas {
-		if !waitMetaMatchesFilters(meta, agents, statuses, runtimes, phases, phaseByInstance, staleInstances, staleOnly, unhealthyOnly) {
+		if !waitMetaMatchesFilters(meta, agents, statuses, runtimes, phases, phaseByInstance, staleInstances, staleOnly, runtimeStaleOnly, unhealthyOnly) {
 			continue
 		}
 		filtered = append(filtered, meta)
@@ -2087,7 +2093,7 @@ func waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister insta
 	return names, nil
 }
 
-func waitMetaMatchesFilters(meta *daemon.Metadata, agents, statuses, runtimes, phases map[string]bool, phaseByInstance map[string]string, staleInstances map[string]bool, staleOnly bool, unhealthyOnly bool) bool {
+func waitMetaMatchesFilters(meta *daemon.Metadata, agents, statuses, runtimes, phases map[string]bool, phaseByInstance map[string]string, staleInstances map[string]bool, staleOnly bool, runtimeStaleOnly bool, unhealthyOnly bool) bool {
 	if len(agents) > 0 && !agents[meta.Agent] {
 		return false
 	}
@@ -2101,6 +2107,9 @@ func waitMetaMatchesFilters(meta *daemon.Metadata, agents, statuses, runtimes, p
 		return false
 	}
 	if staleOnly && !staleInstances[meta.Instance] {
+		return false
+	}
+	if runtimeStaleOnly && !runtimeResumeMetadataIsStale(meta) {
 		return false
 	}
 	if unhealthyOnly && metadataStatusKey(meta) != string(daemon.StatusCrashed) && !staleInstances[meta.Instance] && !runtimeResumeMetadataIsStale(meta) {

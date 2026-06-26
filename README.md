@@ -234,10 +234,10 @@ agent-team attach <instance> [--dry-run] [--no-resume]
                                                 # preview or run an interactive managed-resume handoff; daemon resumes supervision afterward
 agent-team events [-f] [--tail N] [--latest | --last N] [--since 24h] [--summary] [--runtime codex] [--format '{{.Action}} {{.Instance}}'] [--action dispatch] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--json]
                                                 # show/follow lifecycle events; phase/stale/unhealthy narrow by current status.toml; reads local history if the daemon is down
-agent-team wait [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--runtime codex] [--phase idle] [--stale] [--unhealthy] [--until terminal|running|stopped|exited|crashed|removed] [--until-phase done] [--timeout 5m] [--interval 500ms] [--dry-run] [--fail-on-crash] [--summary] [--format '{{.Instance}} {{.Status}} {{.Phase}}'] [--json]
+agent-team wait [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--runtime codex] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--until terminal|running|stopped|exited|crashed|removed] [--until-phase done] [--timeout 5m] [--interval 500ms] [--dry-run] [--fail-on-crash] [--summary] [--format '{{.Instance}} {{.Status}} {{.Phase}}'] [--json]
                                                 # wait for lifecycle or work-phase conditions, using persisted metadata if the daemon is down
-agent-team send [<instance>] [message...] [--message "..."] [--message-file <path|->] [--all] [--latest | --last N] [--agent manager] [--runtime codex] [--status running] [--phase idle] [--stale] [--unhealthy] [--from user] [--allow-missing] [--dry-run] [--format '{{.To}} {{.ID}}'] [--json]
-                                                # send a daemon mailbox message; phase/stale/unhealthy selectors use current status.toml; appends locally if the daemon is down
+agent-team send [<instance>] [message...] [--message "..."] [--message-file <path|->] [--all] [--latest | --last N] [--agent manager] [--runtime codex] [--status running] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--from user] [--allow-missing] [--dry-run] [--format '{{.To}} {{.ID}}'] [--json]
+                                                # send a daemon mailbox message; phase/stale/runtime-stale/unhealthy selectors use current metadata; appends locally if the daemon is down
 agent-team dispatch <target> <ticket> [kickoff...] [--name <instance>] [--source <instance>] [--workspace auto|worktree|repo] [--runtime claude|codex] [--runtime-bin <path>] [--kickoff "..."] [--kickoff-file <path>] [--dry-run] [--format <template>] [--json]
                                                 # publish an agent.dispatch topology event, or preview local topology matches without a daemon
 agent-team job create <ticket> [kickoff...] [--target worker] [--ticket-url <url>] [--pipeline ticket_to_pr] [--dispatch] [--workspace auto|worktree|repo] [--runtime claude|codex] [--runtime-bin <path>] [--instance <name>] [--dry-run] [--json]
@@ -270,7 +270,7 @@ agent-team pipeline cancel <pipeline>|--all [--message "..."] [--actor cli] [--l
                                                 # cancel non-terminal pipeline jobs without stopping instances
 agent-team pipeline resume-plan <pipeline> [--status crashed] [--runtime codex] [--action start|attach|resume|logs] [--runtime-stale|--unhealthy] [--summary] [--format '{{.Instance}} {{.RecommendedAction}}'] [--json]
                                                 # show pipeline-scoped runtime resume, attach, start, and log fallback commands
-agent-team pipeline send <pipeline> [message...] [--message "..."] [--message-file <path|->] [--all] [--latest|--last N] [--runtime codex] [--dry-run] [--format '{{.To}} {{.ID}}'] [--json]
+agent-team pipeline send <pipeline> [message...] [--message "..."] [--message-file <path|->] [--all] [--latest|--last N] [--runtime codex] [--stale] [--runtime-stale] [--unhealthy] [--dry-run] [--format '{{.To}} {{.ID}}'] [--json]
                                                 # send a mailbox message to pipeline-owned daemon-known instances
 agent-team pipeline logs <pipeline> [--list] [--runtime codex] [--latest|--last N] [--last-message] [--clean] [--tail N] [--format '{{.Instance}} {{.LogPath}}'] [--json]
                                                 # read daemon-captured logs for pipeline-owned instances

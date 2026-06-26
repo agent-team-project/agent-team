@@ -2026,6 +2026,7 @@ func newPipelineSendCmd() *cobra.Command {
 		runtimeFilters []string
 		phaseFilters   []string
 		staleOnly      bool
+		runtimeStale   bool
 		unhealthyOnly  bool
 		dryRun         bool
 		jsonOut        bool
@@ -2036,7 +2037,7 @@ func newPipelineSendCmd() *cobra.Command {
 		Use:   "send <pipeline> [message...]",
 		Short: "Send a mailbox message to pipeline-owned instances.",
 		Long: "Send a mailbox message to daemon-known instances owned by jobs in one declared pipeline. " +
-			"Use --all to include every lifecycle status, or combine selectors such as --status, --runtime, --phase, --latest, --last, --stale, and --unhealthy.",
+			"Use --all to include every lifecycle status, or combine selectors such as --status, --runtime, --phase, --latest, --last, --stale, --runtime-stale, and --unhealthy.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
@@ -2079,7 +2080,7 @@ func newPipelineSendCmd() *cobra.Command {
 				return err
 			}
 			effectiveStatuses := append([]string(nil), statusFilters...)
-			if !allStatuses && len(effectiveStatuses) == 0 && !staleOnly && !unhealthyOnly {
+			if !allStatuses && len(effectiveStatuses) == 0 && !staleOnly && !runtimeStale && !unhealthyOnly {
 				effectiveStatuses = []string{string(daemon.StatusRunning)}
 			}
 			opts := sendOptions{
@@ -2091,6 +2092,7 @@ func newPipelineSendCmd() *cobra.Command {
 				RuntimeFilters:  runtimeFilters,
 				PhaseFilters:    phaseFilters,
 				Stale:           staleOnly,
+				RuntimeStale:    runtimeStale,
 				Unhealthy:       unhealthyOnly,
 				StaleByInstance: staleInstanceSet(teamDir, time.Now()),
 				DryRun:          dryRun,
@@ -2115,6 +2117,7 @@ func newPipelineSendCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Send to pipeline-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Send to pipeline-owned instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Send to pipeline-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Send to pipeline-owned running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Send to pipeline-owned instances that are crashed, status-stale, or runtime-stale.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching recipients without appending mailbox messages.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")

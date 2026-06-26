@@ -583,6 +583,66 @@ description = "fresh"
 	}
 }
 
+func TestSendRuntimeStaleFilterUsesLocalMailboxWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	old := now.Add(-staleAfter - time.Minute)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "crashed", Agent: "manager", Runtime: "codex", Status: daemon.StatusCrashed, PID: 0, StartedAt: old},
+		{Instance: "runtime-stale", Agent: "manager", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, StartedAt: old},
+		{Instance: "status-stale", Agent: "manager", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: old},
+		{Instance: "fresh", Agent: "manager", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "status-stale"), `[status]
+phase = "implementing"
+description = "old status"
+`, old)
+	writeStatus(t, filepath.Join(teamDir, "state", "fresh"), `[status]
+phase = "implementing"
+description = "fresh"
+`, now)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"send", "--runtime-stale", "runtime stale hello", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("send --runtime-stale local mailbox: %v\nstderr=%s", err, stderr.String())
+	}
+
+	var rows []sendJSON
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode send --runtime-stale json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || !rows[0].Delivered || rows[0].To != "runtime-stale" {
+		t.Fatalf("send --runtime-stale json = %+v, want delivery to runtime-stale only", rows)
+	}
+	messages, err := daemon.ReadMessages(root, "runtime-stale")
+	if err != nil {
+		t.Fatalf("read runtime-stale mailbox: %v", err)
+	}
+	if len(messages) != 1 || messages[0].Body != "runtime stale hello" {
+		t.Fatalf("runtime-stale messages = %+v, want runtime-stale-filtered message", messages)
+	}
+	for _, name := range []string{"crashed", "status-stale", "fresh"} {
+		messages, err := daemon.ReadMessages(root, name)
+		if err != nil {
+			t.Fatalf("read %s mailbox: %v", name, err)
+		}
+		if len(messages) != 0 {
+			t.Fatalf("%s messages = %+v, want none", name, messages)
+		}
+	}
+}
+
 func TestSendRuntimeFilterUsesLocalMailboxWhenDaemonStopped(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -871,7 +931,7 @@ func TestSendLatestLastValidation(t *testing.T) {
 		{[]string{"send", "--last", "-1", "hello"}, "--last must be >= 0"},
 		{[]string{"send", "--latest", "--last", "2", "hello"}, "choose one of --latest or --last"},
 		{[]string{"send", "--latest"}, "message body is required"},
-		{[]string{"send"}, "instance and message body are required unless --all, --latest, --last, --agent, --runtime, --status, --phase, --stale, or --unhealthy"},
+		{[]string{"send"}, "instance and message body are required unless --all, --latest, --last, --agent, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

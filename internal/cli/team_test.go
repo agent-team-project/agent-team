@@ -3961,6 +3961,53 @@ since = "2026-06-18T12:00:00Z"
 	}
 }
 
+func TestTeamWaitRuntimeStaleScopesInstances(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.build-worker]
+agent = "worker"
+ephemeral = true
+
+[teams.delivery]
+instances = ["manager", "worker"]
+
+[teams.platform]
+instances = ["build-worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "worker-squ-101", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: 99999999, StartedAt: now.Add(-2 * time.Minute), Workspace: root},
+		{Instance: "worker-squ-102", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-time.Minute), Workspace: root},
+		{Instance: "build-worker-1", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: 99999999, StartedAt: now, Workspace: root},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "wait", "delivery", "--repo", root, "--runtime-stale", "--dry-run", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team wait --runtime-stale dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []waitResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode team wait --runtime-stale: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "worker-squ-101" || rows[0].Status != string(daemon.StatusRunning) {
+		t.Fatalf("team wait --runtime-stale rows = %+v, want delivery runtime-stale worker only", rows)
+	}
+}
+
 func TestTeamPruneScopesFinishedInstances(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
@@ -4599,6 +4646,53 @@ instances = ["other", "build-worker"]
 		if len(messages) != 2 || messages[1].Body != "file\nsync" {
 			t.Fatalf("messages after file send %s = %+v", instance, messages)
 		}
+	}
+}
+
+func TestTeamSendRuntimeStaleScopesRecipients(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.build-worker]
+agent = "worker"
+ephemeral = true
+
+[teams.delivery]
+instances = ["manager", "worker"]
+
+[teams.platform]
+instances = ["build-worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "worker-squ-101", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: 99999999, StartedAt: now.Add(-2 * time.Minute), Workspace: root},
+		{Instance: "worker-squ-102", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-time.Minute), Workspace: root},
+		{Instance: "build-worker-1", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: 99999999, StartedAt: now, Workspace: root},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "send", "delivery", "--repo", root, "--runtime-stale", "--dry-run", "--json", "hello"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team send --runtime-stale dry-run: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []sendJSON
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode team send --runtime-stale: %v\nbody=%s", err, out.String())
+	}
+	if got := sendTargets(rows); strings.Join(got, ",") != "worker-squ-101" {
+		t.Fatalf("team send --runtime-stale targets = %v", got)
 	}
 }
 

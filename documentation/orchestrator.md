@@ -237,7 +237,7 @@ agent-team team drain <team> [--max-cycles N] [--interval 2s] [--limit N] [--wor
                                   # scoped finite maintenance loop until one team's schedule, queue, and pipeline work is idle
 agent-team team repair <team> [--dry-run] [--jobs] [--skip-daemon] [--skip-queue] [--skip-tick] [--until-idle] [--limit N] [--workspace auto|worktree|repo] [--json]
                                   # scoped recovery loop for one team's daemon readiness, dead-letter queue, and tickable work
-agent-team team wait <team> [<instance>...] [-q] [--latest | --last N] [--status running] [--runtime codex] [--phase idle] [--stale] [--unhealthy] [--until running|terminal|stopped|exited|crashed|removed] [--until-phase done] [--timeout 5m] [--interval 500ms] [--dry-run] [--fail-on-crash] [--summary] [--format '{{.Instance}} {{.Status}} {{.Phase}}'] [--json]
+agent-team team wait <team> [<instance>...] [-q] [--latest | --last N] [--status running] [--runtime codex] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--until running|terminal|stopped|exited|crashed|removed] [--until-phase done] [--timeout 5m] [--interval 500ms] [--dry-run] [--fail-on-crash] [--summary] [--format '{{.Instance}} {{.Status}} {{.Phase}}'] [--json]
                                   # scoped wait for declared persistent team members and live team-owned ephemeral children
 agent-team team run <team> <ticket> [kickoff...] [--pipeline name] [--ticket-url <url>] [--dispatch] [--workspace auto|worktree|repo] [--dry-run] [--format '{{.ID}} {{.Pipeline}}'] [--json]
                                   # create a durable job through the team's single declared pipeline, or a selected pipeline for multi-pipeline teams
@@ -257,9 +257,9 @@ agent-team team snapshot <team> [--events N|-1] [--schedule-limit N] [--no-redac
                                   # scoped read-only diagnostic artifact for one team's instances, jobs, queue, schedules, pipelines, runtime, and events
 agent-team inspect [<instance>...] [--all] [--latest | --last N] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--format '{{.Instance}} {{if .Runtime}}{{.Runtime.Lifecycle}}{{end}}'] [--json]
                                   # runtime metadata + state/status/topology detail; reads persisted runtime metadata if the daemon is down
-agent-team wait [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--runtime codex] [--phase idle] [--stale] [--unhealthy] [--until terminal|running|stopped|exited|crashed|removed] [--until-phase done] [--timeout 5m] [--interval 500ms] [--dry-run] [--fail-on-crash] [--summary] [--format '{{.Instance}} {{.Status}} {{.Phase}}'] [--json] # wait for lifecycle or work-phase condition; uses persisted metadata if daemon is down
-agent-team send [<instance>] <message...> [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--unhealthy] [--from user] [--allow-missing] [--dry-run] [--format '{{.To}} {{.ID}}'] [--json]
-                                  # append a message to one instance mailbox or a filtered set; phase/stale/unhealthy selectors use current status.toml
+agent-team wait [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--runtime codex] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--until terminal|running|stopped|exited|crashed|removed] [--until-phase done] [--timeout 5m] [--interval 500ms] [--dry-run] [--fail-on-crash] [--summary] [--format '{{.Instance}} {{.Status}} {{.Phase}}'] [--json] # wait for lifecycle or work-phase condition; uses persisted metadata if daemon is down
+agent-team send [<instance>] <message...> [--all] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--from user] [--allow-missing] [--dry-run] [--format '{{.To}} {{.ID}}'] [--json]
+                                  # append a message to one instance mailbox or a filtered set; phase/stale/runtime-stale/unhealthy selectors use current metadata
 agent-team channels
                                   # list pub/sub channels; reads local channel state if the daemon is down
 agent-team channel show <name>

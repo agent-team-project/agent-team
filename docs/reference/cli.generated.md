@@ -3714,7 +3714,7 @@ Flags:
 
 Send a mailbox message to pipeline-owned instances.
 
-Send a mailbox message to daemon-known instances owned by jobs in one declared pipeline. Use --all to include every lifecycle status, or combine selectors such as --status, --runtime, --phase, --latest, --last, --stale, and --unhealthy.
+Send a mailbox message to daemon-known instances owned by jobs in one declared pipeline. Use --all to include every lifecycle status, or combine selectors such as --status, --runtime, --phase, --latest, --last, --stale, --runtime-stale, and --unhealthy.
 
 ```text
 agent-team pipeline send <pipeline> [message...] [flags]
@@ -3735,6 +3735,7 @@ Flags:
       --phase strings         Send to pipeline-owned instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --runtime strings       Send to pipeline-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale         Send to pipeline-owned running instances whose recorded runtime PID is no longer live.
       --stale                 Send to pipeline-owned instances whose status.toml is stale.
       --status strings        Send to pipeline-owned instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --unhealthy             Send to pipeline-owned instances that are crashed, status-stale, or runtime-stale.
@@ -4922,7 +4923,7 @@ Flags:
 
 Send a mailbox message to a daemon-managed instance.
 
-Send a direct message through the daemon mailbox. By default the target must already be known to the daemon, which catches typos. Use --allow-missing to intentionally queue a message for a future instance. Use --all, --latest, --last, --agent, --runtime, --status, --phase, --stale, or --unhealthy to send the same message to a selected set of daemon-known instances.
+Send a direct message through the daemon mailbox. By default the target must already be known to the daemon, which catches typos. Use --allow-missing to intentionally queue a message for a future instance. Use --all, --latest, --last, --agent, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy to send the same message to a selected set of daemon-known instances.
 
 ```text
 agent-team send [<instance>] <message...> [flags]
@@ -4944,6 +4945,7 @@ Flags:
       --message-file string   Read message text from a file, or '-' for stdin.
       --phase strings         Send to daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --runtime strings       Send to daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale         Send to daemon-known running instances whose recorded runtime PID is no longer live.
       --stale                 Send to daemon-known instances whose status.toml is stale.
       --status strings        Send to daemon-known instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --target string         Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
@@ -6306,7 +6308,7 @@ Flags:
 
 Send a mailbox message to team-owned instances.
 
-Send a mailbox message to running daemon-known instances owned by one declared team. Use --all to include every lifecycle status, or combine selectors such as --status, --runtime, --phase, --latest, --last, --stale, and --unhealthy.
+Send a mailbox message to running daemon-known instances owned by one declared team. Use --all to include every lifecycle status, or combine selectors such as --status, --runtime, --phase, --latest, --last, --stale, --runtime-stale, and --unhealthy.
 
 ```text
 agent-team team send <team> [message...] [flags]
@@ -6327,6 +6329,7 @@ Flags:
       --phase strings         Send to team-owned instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --runtime strings       Send to team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale         Send to team-owned running instances whose recorded runtime PID is no longer live.
       --stale                 Send to team-owned instances whose status.toml is stale.
       --status strings        Send to team-owned instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --unhealthy             Send to team-owned instances that are crashed, status-stale, or runtime-stale.
@@ -6602,6 +6605,7 @@ Flags:
   -q, --quiet                 Suppress output and use only the exit code.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --runtime strings       Wait for team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale         Wait for team-owned running instances whose recorded runtime PID is no longer live.
       --stale                 Wait for team-owned instances whose status.toml is stale.
       --status strings        Wait for team-owned instances currently in this lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary               Show aggregate final status and phase counts instead of per-instance rows.
@@ -6963,6 +6967,7 @@ Flags:
       --phase strings         Wait for daemon-known instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
   -q, --quiet                 Suppress output and use only the exit code.
       --runtime strings       Wait for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale         Wait for daemon-known running instances whose recorded runtime PID is no longer live.
       --stale                 Wait for daemon-known instances whose status.toml is stale.
       --status strings        Wait for daemon-known instances currently in this lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --summary               Show aggregate final status and phase counts instead of per-instance rows.

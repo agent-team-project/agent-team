@@ -2783,6 +2783,7 @@ func newTeamSendCmd() *cobra.Command {
 		runtimeFilters []string
 		phaseFilters   []string
 		staleOnly      bool
+		runtimeStale   bool
 		unhealthyOnly  bool
 		dryRun         bool
 		jsonOut        bool
@@ -2793,7 +2794,7 @@ func newTeamSendCmd() *cobra.Command {
 		Use:   "send <team> [message...]",
 		Short: "Send a mailbox message to team-owned instances.",
 		Long: "Send a mailbox message to running daemon-known instances owned by one declared team. " +
-			"Use --all to include every lifecycle status, or combine selectors such as --status, --runtime, --phase, --latest, --last, --stale, and --unhealthy.",
+			"Use --all to include every lifecycle status, or combine selectors such as --status, --runtime, --phase, --latest, --last, --stale, --runtime-stale, and --unhealthy.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
@@ -2832,7 +2833,7 @@ func newTeamSendCmd() *cobra.Command {
 				return err
 			}
 			effectiveStatuses := append([]string(nil), statusFilters...)
-			if !allStatuses && len(effectiveStatuses) == 0 && !staleOnly && !unhealthyOnly {
+			if !allStatuses && len(effectiveStatuses) == 0 && !staleOnly && !runtimeStale && !unhealthyOnly {
 				effectiveStatuses = []string{string(daemon.StatusRunning)}
 			}
 			opts := sendOptions{
@@ -2844,6 +2845,7 @@ func newTeamSendCmd() *cobra.Command {
 				RuntimeFilters:  runtimeFilters,
 				PhaseFilters:    phaseFilters,
 				Stale:           staleOnly,
+				RuntimeStale:    runtimeStale,
 				Unhealthy:       unhealthyOnly,
 				StaleByInstance: staleInstanceSet(teamDir, time.Now()),
 				DryRun:          dryRun,
@@ -2868,6 +2870,7 @@ func newTeamSendCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Send to team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Send to team-owned instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Send to team-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Send to team-owned running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Send to team-owned instances that are crashed, status-stale, or runtime-stale.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching recipients without appending mailbox messages.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
@@ -2884,6 +2887,7 @@ func newTeamWaitCmd() *cobra.Command {
 		runtimeFilters []string
 		phaseFilters   []string
 		staleOnly      bool
+		runtimeStale   bool
 		unhealthyOnly  bool
 		untilPhases    []string
 		untilRaw       string
@@ -2937,6 +2941,10 @@ func newTeamWaitCmd() *cobra.Command {
 			}
 			if staleOnly && len(names) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --stale cannot be combined with instance names.")
+				return exitErr(2)
+			}
+			if runtimeStale && len(names) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --runtime-stale cannot be combined with instance names.")
 				return exitErr(2)
 			}
 			if unhealthyOnly && len(names) > 0 {
@@ -3028,11 +3036,11 @@ func newTeamWaitCmd() *cobra.Command {
 				}
 			}
 			if latest {
-				names, err = waitLatestInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, nil, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, unhealthyOnly)
+				names, err = waitLatestInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, nil, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, runtimeStale, unhealthyOnly)
 			} else if last > 0 {
-				names, err = waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister, nil, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, unhealthyOnly, last)
-			} else if len(statusFilters) > 0 || len(runtimeFilters) > 0 || len(phaseFilters) > 0 || staleOnly || unhealthyOnly {
-				names, err = waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, nil, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, unhealthyOnly)
+				names, err = waitLatestInstanceNamesLimitWithPhasesStaleRuntimeAndUnhealthy(lister, nil, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, runtimeStale, unhealthyOnly, last)
+			} else if len(statusFilters) > 0 || len(runtimeFilters) > 0 || len(phaseFilters) > 0 || staleOnly || runtimeStale || unhealthyOnly {
+				names, err = waitFilteredInstanceNamesWithPhasesStaleRuntimeAndUnhealthy(lister, nil, statusFilters, runtimeFilters, phaseFilters, phaseByInstance, staleInstances, staleOnly, runtimeStale, unhealthyOnly)
 			} else if len(names) == 0 {
 				names, err = waitAllInstanceNames(lister)
 			}
@@ -3058,7 +3066,7 @@ func newTeamWaitCmd() *cobra.Command {
 				return nil
 			}
 			var phaseSource waitPhaseSource
-			if len(untilPhaseSet) > 0 || len(phaseFilters) > 0 || staleOnly || unhealthyOnly || summary || dryRun {
+			if len(untilPhaseSet) > 0 || len(phaseFilters) > 0 || staleOnly || runtimeStale || unhealthyOnly || summary || dryRun {
 				phaseSource = func() map[string]string {
 					return waitPhaseByInstance(teamDir, time.Now())
 				}
@@ -3119,6 +3127,7 @@ func newTeamWaitCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Wait for team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Wait for team-owned instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Wait for team-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Wait for team-owned running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Wait for team-owned instances that are crashed, status-stale, or runtime-stale.")
 	cmd.Flags().StringVar(&untilRaw, "until", string(waitUntilRunning), "Lifecycle condition to wait for: running, terminal, stopped, exited, crashed, or removed.")
 	cmd.Flags().StringSliceVar(&untilPhases, "until-phase", nil, "Work phase condition to wait for: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
