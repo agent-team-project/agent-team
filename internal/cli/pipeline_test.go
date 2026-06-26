@@ -1875,7 +1875,7 @@ target = "worker"
 			CreatedAt: now,
 			UpdatedAt: now,
 			Steps: []job.Step{
-				{ID: "implement", Target: "worker", Status: job.StatusBlocked},
+				{ID: "implement", Target: "worker", Instance: "worker-squ-704-implement", Status: job.StatusBlocked},
 			},
 		},
 		{
@@ -1888,7 +1888,7 @@ target = "worker"
 			CreatedAt: now,
 			UpdatedAt: now,
 			Steps: []job.Step{
-				{ID: "implement", Target: "worker", Status: job.StatusBlocked},
+				{ID: "implement", Target: "worker", Instance: "worker-squ-705-implement", Status: job.StatusBlocked},
 			},
 		},
 	} {
@@ -1945,6 +1945,23 @@ target = "worker"
 		QueuedAt:   now.Add(-2 * time.Minute),
 		UpdatedAt:  now.Add(-2 * time.Minute),
 	})
+	for _, msg := range []struct {
+		instance string
+		id       string
+		body     string
+	}{
+		{instance: "worker-squ-704-implement", id: "msg-ticket-pipeline", body: "ticket pipeline inbox secret"},
+		{instance: "worker-squ-705-implement", id: "msg-platform-pipeline", body: "platform pipeline inbox secret"},
+	} {
+		if err := daemon.AppendMessage(daemon.DaemonRoot(teamDir), msg.instance, &daemon.Message{
+			ID:   msg.id,
+			From: "manager",
+			Body: msg.body,
+			TS:   now.Add(-30 * time.Second),
+		}); err != nil {
+			t.Fatalf("append inbox message %s: %v", msg.id, err)
+		}
+	}
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -1973,6 +1990,12 @@ target = "worker"
 	if len(snapshot.Jobs) != 1 || snapshot.Jobs[0].ID != "squ-704" {
 		t.Fatalf("snapshot jobs = %+v", snapshot.Jobs)
 	}
+	if snapshot.InboxSummary == nil || snapshot.InboxSummary.Total != 1 || snapshot.InboxSummary.Unread != 1 || snapshot.InboxSummary.UnreadInstances != 1 {
+		t.Fatalf("snapshot inbox summary = %+v", snapshot.InboxSummary)
+	}
+	if len(snapshot.Inbox) != 1 || snapshot.Inbox[0].Instance != "worker-squ-704-implement" || snapshot.Inbox[0].LatestID != "msg-ticket-pipeline" || snapshot.Inbox[0].LatestBody != snapshotRedactedValue {
+		t.Fatalf("snapshot inbox = %+v", snapshot.Inbox)
+	}
 	if len(snapshot.Queue) != 1 || snapshot.Queue[0].ID != "q-ticket-pipeline" || snapshot.QueueSummary == nil || snapshot.QueueSummary.Total != 1 || snapshot.QueueSummary.Quarantined != 1 || snapshot.QueueSummary.QuarantineRestorable != 1 {
 		t.Fatalf("snapshot queue = %+v summary=%+v", snapshot.Queue, snapshot.QueueSummary)
 	}
@@ -1989,8 +2012,27 @@ target = "worker"
 	if preview == nil || preview.Step == nil || preview.Step.ID != "implement" || preview.Dispatch == nil || preview.Dispatch.RequestedName != "worker-squ-704-implement" {
 		t.Fatalf("snapshot route preview = %+v", preview)
 	}
-	if strings.Contains(out.String(), "platform_work") || strings.Contains(out.String(), "squ-705") || strings.Contains(out.String(), "q-platform") || strings.Contains(out.String(), "ticket-secret") {
+	if strings.Contains(out.String(), "platform_work") || strings.Contains(out.String(), "squ-705") || strings.Contains(out.String(), "q-platform") || strings.Contains(out.String(), "ticket-secret") || strings.Contains(out.String(), "ticket pipeline inbox secret") || strings.Contains(out.String(), "platform pipeline inbox secret") {
 		t.Fatalf("pipeline snapshot leaked unrelated workflow:\n%s", out.String())
+	}
+
+	raw := NewRootCmd()
+	rawOut, rawErr := &bytes.Buffer{}, &bytes.Buffer{}
+	raw.SetOut(rawOut)
+	raw.SetErr(rawErr)
+	raw.SetArgs([]string{"pipeline", "snapshot", "ticket_to_pr", "--repo", target, "--no-redact", "--json"})
+	if err := raw.Execute(); err != nil {
+		t.Fatalf("pipeline snapshot no-redact: %v\nstderr=%s", err, rawErr.String())
+	}
+	var rawSnapshot pipelineSnapshotResult
+	if err := json.Unmarshal(rawOut.Bytes(), &rawSnapshot); err != nil {
+		t.Fatalf("decode raw pipeline snapshot json: %v\nbody=%s", err, rawOut.String())
+	}
+	if len(rawSnapshot.Inbox) != 1 || rawSnapshot.Inbox[0].LatestBody != "ticket pipeline inbox secret" {
+		t.Fatalf("raw pipeline inbox = %+v", rawSnapshot.Inbox)
+	}
+	if strings.Contains(rawOut.String(), "platform pipeline inbox secret") {
+		t.Fatalf("raw pipeline snapshot leaked platform inbox:\n%s", rawOut.String())
 	}
 
 	text := NewRootCmd()
@@ -2001,12 +2043,12 @@ target = "worker"
 	if err := text.Execute(); err != nil {
 		t.Fatalf("pipeline snapshot text: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"pipeline snapshot:", "pipeline: ticket_to_pr", "status: jobs=1 ready_steps=1", "explain: jobs=1 steps=1", "jobs: total=1", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "advance: ready=1 route_previews=1"} {
+	for _, want := range []string{"pipeline snapshot:", "pipeline: ticket_to_pr", "status: jobs=1 ready_steps=1", "explain: jobs=1 steps=1", "jobs: total=1", "inbox: instances=1 total=1 unread=1 unread_instances=1", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "advance: ready=1 route_previews=1"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("pipeline snapshot text missing %q:\n%s", want, textOut.String())
 		}
 	}
-	for _, leak := range []string{"platform_work", "squ-705", "q-platform"} {
+	for _, leak := range []string{"platform_work", "squ-705", "q-platform", "ticket pipeline inbox secret", "platform pipeline inbox secret"} {
 		if strings.Contains(textOut.String(), leak) {
 			t.Fatalf("pipeline snapshot text leaked %q:\n%s", leak, textOut.String())
 		}

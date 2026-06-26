@@ -27,7 +27,7 @@ func newPipelineSnapshotCmd() *cobra.Command {
 		Use:   "snapshot <pipeline>",
 		Short: "Capture a read-only diagnostic snapshot for one pipeline.",
 		Long: "Capture a compact read-only diagnostic artifact for one pipeline, including status, " +
-			"step explanations, owned jobs, queue ownership, and dry-run advance previews.",
+			"step explanations, owned jobs, inbox summaries, queue ownership, and dry-run advance previews.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOut && output != "" && output != "-" {
@@ -70,7 +70,7 @@ func newPipelineSnapshotCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write the full JSON pipeline snapshot to this file. Use '-' for stdout.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the full pipeline snapshot JSON to stdout.")
-	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "Include raw payload values instead of redacting sensitive keys.")
+	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "Include raw payload values and latest inbox bodies instead of redacting them.")
 	return cmd
 }
 
@@ -90,6 +90,8 @@ type pipelineSnapshotResult struct {
 	Status          *pipelineStatusRow      `json:"status,omitempty"`
 	Explain         *pipelineExplainRow     `json:"explain,omitempty"`
 	Jobs            []*job.Job              `json:"jobs,omitempty"`
+	Inbox           []inboxSummaryRow       `json:"inbox,omitempty"`
+	InboxSummary    *overviewInboxSummary   `json:"inbox_summary,omitempty"`
 	Queue           []*daemon.QueueItem     `json:"queue,omitempty"`
 	QueueSummary    *queueSummary           `json:"queue_summary,omitempty"`
 	QueueQuarantine []queueQuarantineItem   `json:"queue_quarantine,omitempty"`
@@ -138,6 +140,12 @@ func collectPipelineSnapshot(teamDir, repoRoot, pipeline string, opts pipelineSn
 		summary := summarizeQueueItems(out.Queue, now)
 		out.QueueSummary = &summary
 	}
+	if inbox, summary, err := collectPipelineSnapshotInbox(teamDir, out.Jobs); err != nil {
+		out.addError("inbox", err)
+	} else if len(inbox) > 0 {
+		out.Inbox = inbox
+		out.InboxSummary = &summary
+	}
 	if quarantine, err := listQueueQuarantine(teamDir); err != nil {
 		out.addError("queue_quarantine", err)
 	} else {
@@ -153,6 +161,55 @@ func collectPipelineSnapshot(teamDir, repoRoot, pipeline string, opts pipelineSn
 		redactPipelineSnapshotResult(out)
 	}
 	return out
+}
+
+func collectPipelineSnapshotInbox(teamDir string, jobs []*job.Job) ([]inboxSummaryRow, overviewInboxSummary, error) {
+	if len(jobs) == 0 {
+		return nil, overviewInboxSummary{}, nil
+	}
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	instances := map[string]bool{}
+	metaByInstance := map[string]*daemon.Metadata{}
+	addInstance := func(instance string) {
+		instance = strings.TrimSpace(instance)
+		if instance != "" {
+			instances[instance] = true
+		}
+	}
+	for _, j := range jobs {
+		if j == nil {
+			continue
+		}
+		addInstance(j.Instance)
+		for _, step := range j.Steps {
+			addInstance(step.Instance)
+		}
+	}
+	metas, err := daemon.ListMetadata(daemonRoot)
+	if err != nil {
+		return nil, overviewInboxSummary{}, err
+	}
+	for _, meta := range metas {
+		if meta == nil || strings.TrimSpace(meta.Instance) == "" {
+			continue
+		}
+		metaByInstance[meta.Instance] = meta
+		for _, j := range jobs {
+			if jobSnapshotMetadataMatches(meta, j) {
+				addInstance(meta.Instance)
+				break
+			}
+		}
+	}
+	names := sortedInboxInstances(instances)
+	if len(names) == 0 {
+		return nil, overviewInboxSummary{}, nil
+	}
+	rows, err := collectInboxSummaryRows(daemonRoot, names, metaByInstance, false)
+	if err != nil {
+		return nil, overviewInboxSummary{}, err
+	}
+	return rows, overviewInboxFromRows(rows), nil
 }
 
 func ensurePipelineSnapshotQueueSummary(snapshot *pipelineSnapshotResult, now time.Time) *queueSummary {
@@ -208,6 +265,11 @@ func redactPipelineSnapshotResult(snapshot *pipelineSnapshotResult) {
 			continue
 		}
 		item.Payload = redactSnapshotMap(item.Payload)
+	}
+	for i := range snapshot.Inbox {
+		if snapshot.Inbox[i].LatestBody != "" {
+			snapshot.Inbox[i].LatestBody = snapshotRedactedValue
+		}
 	}
 	for i := range snapshot.AdvancePreview {
 		redactSnapshotPipelineAdvance(&snapshot.AdvancePreview[i])
@@ -293,6 +355,13 @@ func renderPipelineSnapshotSummary(w io.Writer, snapshot *pipelineSnapshotResult
 			countPipelineExplainStateSteps([]pipelineExplainRow{*snapshot.Explain}, "blocked"))
 	}
 	renderSnapshotJobSummary(w, snapshot.Jobs)
+	if snapshot.InboxSummary != nil {
+		fmt.Fprintf(w, "inbox: instances=%d total=%d unread=%d unread_instances=%d\n",
+			snapshot.InboxSummary.Instances,
+			snapshot.InboxSummary.Total,
+			snapshot.InboxSummary.Unread,
+			snapshot.InboxSummary.UnreadInstances)
+	}
 	if snapshot.QueueSummary != nil {
 		fmt.Fprintln(w, queueSummaryLine(*snapshot.QueueSummary))
 	}

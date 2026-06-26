@@ -4037,7 +4037,7 @@ Flags:
 
 Capture a read-only diagnostic snapshot for one pipeline.
 
-Capture a compact read-only diagnostic artifact for one pipeline, including status, step explanations, owned jobs, queue ownership, and dry-run advance previews.
+Capture a compact read-only diagnostic artifact for one pipeline, including status, step explanations, owned jobs, inbox summaries, queue ownership, and dry-run advance previews.
 
 ```text
 agent-team pipeline snapshot <pipeline> [flags]
@@ -4047,7 +4047,7 @@ Flags:
 
 ```text
       --json            Emit the full pipeline snapshot JSON to stdout.
-      --no-redact       Include raw payload values instead of redacting sensitive keys.
+      --no-redact       Include raw payload values and latest inbox bodies instead of redacting them.
   -o, --output string   Write the full JSON pipeline snapshot to this file. Use '-' for stdout.
       --repo string     Repo root containing .agent_team. (default "<repo>")
 ```
