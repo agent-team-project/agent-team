@@ -6431,14 +6431,37 @@ func scopeTeamTriageActions(teamName string, items []jobTriageItem) []jobTriageI
 }
 
 func scopeTeamTriageItemActions(teamName string, item jobTriageItem) []string {
-	if !stringSliceContains(item.Reasons, "stale_running") && !stringSliceContains(item.Reasons, "running_without_instance") {
-		return item.Actions
-	}
 	jobID := strings.TrimSpace(item.JobID)
 	if jobID == "" {
 		return item.Actions
 	}
 	actions := append([]string(nil), item.Actions...)
+	if strings.TrimSpace(item.Pipeline) != "" {
+		if stringSliceContains(item.Reasons, "failed") || stringSliceContains(item.Reasons, "failed_step") {
+			actions = replaceOrAppendTeamTriageAction(actions,
+				fmt.Sprintf("agent-team job retry %s --dispatch", jobID),
+				teamTriageRetryAction(teamName, item),
+			)
+		}
+		if stringSliceContains(item.Reasons, "blocked") || stringSliceContains(item.Reasons, "blocked_step") || stringSliceContains(item.Reasons, "status_file_blocked") {
+			actions = replaceOrAppendTeamTriageAction(actions,
+				jobUnblockAction(jobID, item.StepID),
+				teamTriageUnblockAction(teamName, item),
+			)
+		}
+		if stringSliceContains(item.Reasons, "held") || stringSliceContains(item.Reasons, "expired_hold") {
+			actions = replaceOrAppendTeamTriageAction(actions,
+				fmt.Sprintf("agent-team job release %s", jobID),
+				teamTriageReleaseAction(teamName, item),
+			)
+		}
+	}
+	if stringSliceContains(item.Reasons, "cleanup_ready") {
+		actions = replaceOrAppendTeamTriageAction(actions,
+			fmt.Sprintf("agent-team job cleanup %s --dry-run", jobID),
+			fmt.Sprintf("agent-team team cleanup %s --dry-run", teamName),
+		)
+	}
 	if stringSliceContains(item.Reasons, "stale_running") {
 		actions = replaceOrAppendTeamTriageAction(actions,
 			fmt.Sprintf("agent-team job timeout %s --dry-run", jobID),
@@ -6455,6 +6478,30 @@ func scopeTeamTriageItemActions(teamName string, item jobTriageItem) []string {
 		teamAction = fmt.Sprintf("agent-team team adopt %s %s --step %s --pid <pid> --dry-run", teamName, jobID, stepID)
 	}
 	return replaceOrAppendTeamTriageAction(actions, jobAction, teamAction)
+}
+
+func teamTriageRetryAction(teamName string, item jobTriageItem) string {
+	action := fmt.Sprintf("agent-team team retry %s", teamName)
+	if stepID := strings.TrimSpace(item.StepID); stepID != "" {
+		action = fmt.Sprintf("%s --step %s", action, stepID)
+	}
+	return action + " --dry-run --dispatch --preview-routes"
+}
+
+func teamTriageUnblockAction(teamName string, item jobTriageItem) string {
+	action := fmt.Sprintf("agent-team team unblock %s", teamName)
+	if stepID := strings.TrimSpace(item.StepID); stepID != "" {
+		action = fmt.Sprintf("%s --step %s", action, stepID)
+	}
+	return action + " <answer...> --dry-run"
+}
+
+func teamTriageReleaseAction(teamName string, item jobTriageItem) string {
+	action := fmt.Sprintf("agent-team team release %s", teamName)
+	if stringSliceContains(item.Reasons, "expired_hold") {
+		action += " --expired"
+	}
+	return action + " --dry-run"
 }
 
 func teamTriageTimeoutAction(teamName string, item jobTriageItem) string {

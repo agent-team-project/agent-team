@@ -1000,6 +1000,63 @@ instances = ["manager", "worker"]
 	}
 }
 
+func TestScopeTeamTriageActionsUsesTeamRecoveryCommands(t *testing.T) {
+	items := []jobTriageItem{
+		{
+			JobID:    "squ-820",
+			Pipeline: "ticket_to_pr",
+			StepID:   "implement",
+			Reasons:  []string{"failed_step"},
+			Actions:  []string{"agent-team job retry squ-820 --dispatch"},
+		},
+		{
+			JobID:    "squ-821",
+			Pipeline: "ticket_to_pr",
+			StepID:   "review",
+			Reasons:  []string{"blocked_step"},
+			Actions:  []string{"agent-team job unblock squ-821 --step review <answer...>"},
+		},
+		{
+			JobID:    "squ-822",
+			Pipeline: "ticket_to_pr",
+			Reasons:  []string{"expired_hold"},
+			Actions:  []string{"agent-team job release squ-822"},
+		},
+		{
+			JobID:   "squ-823",
+			Reasons: []string{"cleanup_ready"},
+			Actions: []string{"agent-team job cleanup squ-823 --dry-run"},
+		},
+		{
+			JobID:   "squ-824",
+			Reasons: []string{"failed"},
+			Actions: []string{"agent-team job retry squ-824 --dispatch"},
+		},
+	}
+
+	scoped := scopeTeamTriageActions("delivery", items)
+	if !containsString(scoped[0].Actions, "agent-team team retry delivery --step implement --dry-run --dispatch --preview-routes") ||
+		containsString(scoped[0].Actions, "agent-team job retry squ-820 --dispatch") {
+		t.Fatalf("retry actions = %+v", scoped[0].Actions)
+	}
+	if !containsString(scoped[1].Actions, "agent-team team unblock delivery --step review <answer...> --dry-run") ||
+		containsString(scoped[1].Actions, "agent-team job unblock squ-821 --step review <answer...>") {
+		t.Fatalf("unblock actions = %+v", scoped[1].Actions)
+	}
+	if !containsString(scoped[2].Actions, "agent-team team release delivery --expired --dry-run") ||
+		containsString(scoped[2].Actions, "agent-team job release squ-822") {
+		t.Fatalf("release actions = %+v", scoped[2].Actions)
+	}
+	if !containsString(scoped[3].Actions, "agent-team team cleanup delivery --dry-run") ||
+		containsString(scoped[3].Actions, "agent-team job cleanup squ-823 --dry-run") {
+		t.Fatalf("cleanup actions = %+v", scoped[3].Actions)
+	}
+	if !containsString(scoped[4].Actions, "agent-team job retry squ-824 --dispatch") ||
+		containsString(scoped[4].Actions, "agent-team team retry delivery --dry-run --dispatch --preview-routes") {
+		t.Fatalf("standalone retry actions = %+v", scoped[4].Actions)
+	}
+}
+
 func TestTeamAdoptRejectsJobOutsideTeam(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
