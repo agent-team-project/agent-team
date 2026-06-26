@@ -32,6 +32,7 @@ type templateRunConfig struct {
 	keep          bool
 	force         bool
 	prompt        string
+	promptFile    string
 	name          string
 	setStrings    []string
 	noInput       bool
@@ -65,6 +66,7 @@ func newTemplateRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&cfg.keep, "keep", false, "Keep the auto-created tempdir on exit (no-op when --target is set).")
 	cmd.Flags().BoolVar(&cfg.force, "force", false, "Overwrite an existing .agent_team/ at --target.")
 	cmd.Flags().StringVarP(&cfg.prompt, "prompt", "p", "", "Kickoff message for the agent (one-shot mode if set, interactive otherwise).")
+	cmd.Flags().StringVar(&cfg.promptFile, "prompt-file", "", "Read kickoff message from a file, or '-' for stdin.")
 	cmd.Flags().StringVarP(&cfg.name, "name", "n", "", "Instance name (defaults to the agent name).")
 	cmd.Flags().StringArrayVar(&cfg.setStrings, "set", nil, "Set a template parameter, e.g. --set linear.team_id=<uuid>. Repeatable.")
 	cmd.Flags().BoolVar(&cfg.noInput, "no-input", false, "Fail if required parameters are missing instead of prompting.")
@@ -75,6 +77,13 @@ func newTemplateRunCmd() *cobra.Command {
 }
 
 func runTemplateRun(cmd *cobra.Command, cfg templateRunConfig, ref, agent string, forwarded []string) error {
+	prompt, err := promptTextWithFile(cfg.prompt, cfg.promptFile)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team template run: %v\n", err)
+		return exitErr(2)
+	}
+	cfg.prompt = prompt
+
 	target, autoCreated, err := prepareTemplateRunTarget(cmd, cfg, agent)
 	if err != nil {
 		return err

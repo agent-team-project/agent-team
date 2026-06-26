@@ -30,6 +30,10 @@ func runsRootEnv(t *testing.T) string {
 // completion.
 func TestTemplateRun_TargetUsed(t *testing.T) {
 	target := t.TempDir()
+	promptFile := filepath.Join(t.TempDir(), "prompt.txt")
+	if err := os.WriteFile(promptFile, []byte("hello from file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cap, restore := captureRun(t, nil)
 	defer restore()
 
@@ -39,7 +43,7 @@ func TestTemplateRun_TargetUsed(t *testing.T) {
 	cmd.SetArgs([]string{
 		"template", "run", "bundled", "manager",
 		"--target", target,
-		"--prompt", "hello",
+		"--prompt-file", promptFile,
 		"--set", "linear.team_id=tt-team",
 		"--set", "linear.ticket_prefix=TT",
 	})
@@ -62,7 +66,7 @@ func TestTemplateRun_TargetUsed(t *testing.T) {
 	// Forwarded prompt.
 	foundPrompt := false
 	for i := 0; i < len(cap.args)-1; i++ {
-		if cap.args[i] == "-p" && cap.args[i+1] == "hello" {
+		if cap.args[i] == "-p" && cap.args[i+1] == "hello from file" {
 			foundPrompt = true
 		}
 	}

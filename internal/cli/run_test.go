@@ -280,6 +280,36 @@ func TestRun_ExecsClaudeWithExpectedArgs(t *testing.T) {
 	}
 }
 
+func TestRunPromptFileFromStdin(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	oldInput := sendMessageInput
+	sendMessageInput = strings.NewReader("prompt from stdin\n")
+	defer func() { sendMessageInput = oldInput }()
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt-file", "-"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run prompt file stdin: %v", err)
+	}
+
+	foundPromptFlag := false
+	for i := 0; i < len(cap.args)-1; i++ {
+		if cap.args[i] == "-p" && cap.args[i+1] == "prompt from stdin" {
+			foundPromptFlag = true
+		}
+	}
+	if !foundPromptFlag {
+		t.Fatalf("-p prompt from stdin not forwarded: %v", cap.args)
+	}
+}
+
 func TestRun_RepoFlagOverridesTarget(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -842,6 +872,30 @@ func TestRunJSONRequiresPrompt(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--json requires --prompt or --detach") {
 		t.Fatalf("stderr = %q, want --json requires --prompt or --detach", stderr.String())
+	}
+}
+
+func TestRunPromptFileValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"run", "manager", "--prompt", "hello", "--prompt-file", "task.txt"}, "provide prompt text using only one of --prompt or --prompt-file"},
+		{[]string{"run", "manager", "--prompt-file", filepath.Join(t.TempDir(), "missing.txt")}, "--prompt-file:"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		stderr := &bytes.Buffer{}
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
 	}
 }
 

@@ -317,7 +317,7 @@ agent-team channel rm <name> -f                 # delete a channel and its durab
 agent-team rm [<instance>...] [-q] [--all] [--finished] [--latest | --last N] [--runtime codex] [--status stopped] [--phase done] [--stale] [--runtime-stale] [--unhealthy] [--agent manager] [--dry-run] [--summary] [-f] [--format '{{.Instance}} {{.Path}}'] [--json]
                                                 # remove instance state and daemon metadata, using persisted metadata if the daemon is down
 agent-team prune [-q] [--dry-run] [--runtime codex] [--older-than 24h] [--agent manager] [--status exited] [--phase done] [--stale] [--runtime-stale] [--unhealthy] [--summary] [--format '{{.Instance}} {{.Path}}'] [--json] # remove finished or runtime-stale persisted daemon metadata and state
-agent-team run <agent> [-n <instance>] [--runtime claude|codex] [--runtime-bin <path>] [-d | --attach --tail N|all] [--ready-timeout 3s] [--set k=v]... [-p "..."] [--format '{{.Instance}} {{.PID}}'] [--json]
+agent-team run <agent> [-n <instance>] [--runtime claude|codex] [--runtime-bin <path>] [-d | --attach --tail N|all] [--ready-timeout 3s] [--set k=v]... [-p "..."|--prompt-file <path|->] [--format '{{.Instance}} {{.PID}}'] [--json]
                                                 # launch the selected LLM runtime as <agent>; --detach dispatches via daemon
 agent-team upgrade (--check|--apply) [--to <ref>] [--strict] [--dry-run] [--format '{{.Differs}}'] [--json]
                                                 # compare or apply clean three-way template changes; --dry-run previews apply actions
@@ -331,7 +331,7 @@ agent-team template pull <ref> [--as <n>]       # copy a local template or clone
 agent-team template rm <ref>                    # remove a cached template
 agent-team template smoke [<ref>] [--set k=v]... [--keep] [--json]
                                                 # init a template into a temp repo and run doctor/pipeline/team validation
-agent-team template run <ref> <agent> [--target <dir>] [--keep] [--runtime claude|codex] [--runtime-bin <path>] [--last-message] [--set k=v]... [-p "..."]
+agent-team template run <ref> <agent> [--target <dir>] [--keep] [--runtime claude|codex] [--runtime-bin <path>] [--last-message] [--set k=v]... [-p "..."|--prompt-file <path|->]
                                                 # one-shot: init into a (temp)dir + spawn the agent
 
 agent-team instance ls                          # list instance state dirs (.agent_team/state/*)

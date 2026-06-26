@@ -29,6 +29,7 @@ type runConfig struct {
 	target         string
 	name           string
 	prompt         string
+	promptFile     string
 	setStrings     []string
 	instanceConfig string
 	noDaemon       bool
@@ -61,12 +62,19 @@ func newRunCmd() *cobra.Command {
 		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.tailSet = cmd.Flags().Changed("tail")
+			prompt, err := promptTextWithFile(cfg.prompt, cfg.promptFile)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
+				return exitErr(2)
+			}
+			cfg.prompt = prompt
 			return runAgent(cmd, cfg, args[0], args[1:])
 		},
 	}
 	cmd.Flags().StringVar(&cfg.target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().StringVarP(&cfg.name, "name", "n", "", "Instance name (defaults to the agent name). State dir: .agent_team/state/<name>/.")
 	cmd.Flags().StringVarP(&cfg.prompt, "prompt", "p", "", "Kickoff message. With this, the runtime runs in one-shot mode when supported; without, interactive.")
+	cmd.Flags().StringVar(&cfg.promptFile, "prompt-file", "", "Read kickoff message from a file, or '-' for stdin.")
 	cmd.Flags().StringArrayVar(&cfg.setStrings, "set", nil, "Override a config value for this spawn, e.g. --set linear.team_id=<x>. Repeatable.")
 	cmd.Flags().StringVar(&cfg.instanceConfig, "instance-config", "", "Path to a per-instance TOML config that layers on top of repo config (below --set).")
 	cmd.Flags().BoolVar(&cfg.noDaemon, "no-daemon", false, "Bypass the daemon: exec the runtime directly even if the daemon is running. Useful for debugging.")
@@ -80,6 +88,27 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cfg.runtimeKind, "runtime", "", "Runtime profile for this invocation (claude or codex). Overrides env and repo config.")
 	cmd.Flags().StringVar(&cfg.runtimeBinary, "runtime-bin", "", "Runtime binary for this invocation. Overrides env and repo config.")
 	return cmd
+}
+
+func promptTextWithFile(prompt, promptFile string) (string, error) {
+	promptSet := strings.TrimSpace(prompt) != ""
+	fileSet := strings.TrimSpace(promptFile) != ""
+	switch {
+	case promptSet && fileSet:
+		return "", fmt.Errorf("provide prompt text using only one of --prompt or --prompt-file")
+	case fileSet:
+		body, err := readMessageFile(promptFile, "--prompt-file")
+		if err != nil {
+			return "", err
+		}
+		text := strings.TrimSpace(string(body))
+		if text == "" {
+			return "", fmt.Errorf("prompt text is required")
+		}
+		return text, nil
+	default:
+		return prompt, nil
+	}
 }
 
 func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []string) error {

@@ -4548,6 +4548,7 @@ Flags:
   -n, --name string              Instance name (defaults to the agent name). State dir: .agent_team/state/<name>/.
       --no-daemon                Bypass the daemon: exec the runtime directly even if the daemon is running. Useful for debugging.
   -p, --prompt string            Kickoff message. With this, the runtime runs in one-shot mode when supported; without, interactive.
+      --prompt-file string       Read kickoff message from a file, or '-' for stdin.
       --ready-timeout duration   Maximum time to wait for daemon readiness with --detach or --attach (0 = no timeout). (default 3s)
       --runtime string           Runtime profile for this invocation (claude or codex). Overrides env and repo config.
       --runtime-bin string       Runtime binary for this invocation. Overrides env and repo config.
@@ -6751,6 +6752,7 @@ Flags:
   -n, --name string          Instance name (defaults to the agent name).
       --no-input             Fail if required parameters are missing instead of prompting.
   -p, --prompt string        Kickoff message for the agent (one-shot mode if set, interactive otherwise).
+      --prompt-file string   Read kickoff message from a file, or '-' for stdin.
       --runtime string       Runtime profile for this invocation (claude or codex). Overrides env and rendered repo config.
       --runtime-bin string   Runtime binary for this invocation. Overrides env and rendered repo config.
       --set stringArray      Set a template parameter, e.g. --set linear.team_id=<uuid>. Repeatable.
