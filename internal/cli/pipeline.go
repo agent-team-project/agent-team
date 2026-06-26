@@ -3440,6 +3440,8 @@ type pipelineDoctorFinding struct {
 	Pipeline     string   `json:"pipeline,omitempty"`
 	Step         string   `json:"step,omitempty"`
 	Target       string   `json:"target,omitempty"`
+	Runtime      string   `json:"runtime,omitempty"`
+	RuntimeBin   string   `json:"runtime_bin,omitempty"`
 	Routes       []string `json:"routes,omitempty"`
 	Dependencies []string `json:"dependencies,omitempty"`
 	Cycle        []string `json:"cycle,omitempty"`
@@ -3581,7 +3583,7 @@ func collectPipelineDoctor(teamDir, pipelineName string) (*pipelineDoctorResult,
 		pipelines = []*topology.Pipeline{pipeline}
 	}
 	for _, pipeline := range pipelines {
-		report := doctorPipeline(top, pipeline)
+		report := doctorPipeline(top, pipeline, teamDir)
 		result.Pipelines = append(result.Pipelines, report)
 		result.Problems = append(result.Problems, report.Problems...)
 		result.Warnings = append(result.Warnings, report.Warnings...)
@@ -3590,7 +3592,7 @@ func collectPipelineDoctor(teamDir, pipelineName string) (*pipelineDoctorResult,
 	return result, nil
 }
 
-func doctorPipeline(top *topology.Topology, pipeline *topology.Pipeline) pipelineDoctorPipeline {
+func doctorPipeline(top *topology.Topology, pipeline *topology.Pipeline, teamDir string) pipelineDoctorPipeline {
 	report := pipelineDoctorPipeline{}
 	if pipeline == nil {
 		report.Problems = append(report.Problems, pipelineDoctorFinding{
@@ -3617,8 +3619,51 @@ func doctorPipeline(top *topology.Topology, pipeline *topology.Pipeline) pipelin
 	report.Warnings = append(report.Warnings, routeWarnings...)
 	report.Warnings = append(report.Warnings, pipelineScheduleWarnings(top, pipeline)...)
 	report.Warnings = append(report.Warnings, pipelineOrderingWarnings(pipeline)...)
+	report.Warnings = append(report.Warnings, pipelineRuntimeWarnings(teamDir, pipeline)...)
 	report.OK = len(report.Problems) == 0
 	return report
+}
+
+func pipelineRuntimeWarnings(teamDir string, pipeline *topology.Pipeline) []pipelineDoctorFinding {
+	if pipeline == nil {
+		return nil
+	}
+	configPath := filepath.Join(teamDir, "config.toml")
+	var warnings []pipelineDoctorFinding
+	for _, step := range pipeline.Steps {
+		if step == nil {
+			continue
+		}
+		selection := runtimeSelection{Kind: strings.TrimSpace(step.Runtime), Binary: strings.TrimSpace(step.RuntimeBin)}
+		if selection.Kind == "" && selection.Binary == "" {
+			continue
+		}
+		info, err := collectRuntimeInfoForConfigWithSelection(configPath, selection)
+		if err != nil {
+			warnings = append(warnings, pipelineDoctorFinding{
+				Code:       "step_runtime_invalid",
+				Message:    fmt.Sprintf("pipeline %q step %q runtime default could not be resolved: %v", pipeline.Name, step.ID, err),
+				Pipeline:   pipeline.Name,
+				Step:       step.ID,
+				Target:     step.Target,
+				Runtime:    selection.Kind,
+				RuntimeBin: selection.Binary,
+			})
+			continue
+		}
+		if !info.Available {
+			warnings = append(warnings, pipelineDoctorFinding{
+				Code:       "step_runtime_unavailable",
+				Message:    fmt.Sprintf("pipeline %q step %q defaults to runtime %q with binary %q, but that binary was not found in PATH", pipeline.Name, step.ID, info.Runtime, info.Binary),
+				Pipeline:   pipeline.Name,
+				Step:       step.ID,
+				Target:     step.Target,
+				Runtime:    info.Runtime,
+				RuntimeBin: info.Binary,
+			})
+		}
+	}
+	return warnings
 }
 
 func pipelineRouteFindings(top *topology.Topology, pipeline *topology.Pipeline) ([]pipelineDoctorFinding, []pipelineDoctorFinding) {

@@ -389,6 +389,8 @@ type teamDoctorFinding struct {
 	Pipeline     string   `json:"pipeline,omitempty"`
 	Step         string   `json:"step,omitempty"`
 	Target       string   `json:"target,omitempty"`
+	Runtime      string   `json:"runtime,omitempty"`
+	RuntimeBin   string   `json:"runtime_bin,omitempty"`
 	Routes       []string `json:"routes,omitempty"`
 	Dependencies []string `json:"dependencies,omitempty"`
 	Cycle        []string `json:"cycle,omitempty"`
@@ -400,7 +402,7 @@ func collectTeamDoctor(teamDir, name string) (*teamDoctorResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return doctorTeam(top, team), nil
+	return doctorTeam(top, team, teamDir), nil
 }
 
 func collectAllTeamDoctor(teamDir string) (*allTeamDoctorResult, error) {
@@ -420,7 +422,7 @@ func collectAllTeamDoctor(teamDir string) (*allTeamDoctorResult, error) {
 		if team == nil {
 			continue
 		}
-		teamResult := doctorTeam(top, team)
+		teamResult := doctorTeam(top, team, teamDir)
 		result.Teams = append(result.Teams, *teamResult)
 		result.Problems = append(result.Problems, teamResult.Problems...)
 		result.Warnings = append(result.Warnings, teamResult.Warnings...)
@@ -429,7 +431,7 @@ func collectAllTeamDoctor(teamDir string) (*allTeamDoctorResult, error) {
 	return result, nil
 }
 
-func doctorTeam(top *topology.Topology, team *topology.Team) *teamDoctorResult {
+func doctorTeam(top *topology.Topology, team *topology.Team, teamDir string) *teamDoctorResult {
 	result := &teamDoctorResult{Team: teamInfoFromTopology(team)}
 	if top == nil || team == nil {
 		result.OK = false
@@ -460,7 +462,7 @@ func doctorTeam(top *topology.Topology, team *topology.Team) *teamDoctorResult {
 		if pipeline == nil {
 			continue
 		}
-		pipelineReport := doctorPipeline(top, pipeline)
+		pipelineReport := doctorPipeline(top, pipeline, teamDir)
 		for _, problem := range pipelineReport.Problems {
 			result.Problems = append(result.Problems, teamDoctorFindingFromPipeline(teamName, problem))
 		}
@@ -522,6 +524,8 @@ func teamDoctorFindingFromPipeline(teamName string, finding pipelineDoctorFindin
 		Pipeline:     finding.Pipeline,
 		Step:         finding.Step,
 		Target:       finding.Target,
+		Runtime:      finding.Runtime,
+		RuntimeBin:   finding.RuntimeBin,
 		Routes:       append([]string(nil), finding.Routes...),
 		Dependencies: append([]string(nil), finding.Dependencies...),
 		Cycle:        append([]string(nil), finding.Cycle...),

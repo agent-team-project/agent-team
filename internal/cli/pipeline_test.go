@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -417,6 +418,66 @@ after = ["implement"]
 	}
 	if got, want := formatOut.String(), "true 1 0 0\n"; got != want {
 		t.Fatalf("pipeline doctor format output = %q, want %q", got, want)
+	}
+}
+
+func TestPipelineDoctorWarnsWhenStepRuntimeUnavailable(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+runtime = "codex"
+runtime_bin = "missing-codex"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "missing-codex" {
+			t.Fatalf("look path bin = %q, want missing-codex", bin)
+		}
+		return "", exec.ErrNotFound
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"pipeline", "doctor", "ticket_to_pr", "--repo", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline doctor json: %v\nstderr=%s", err, stderr.String())
+	}
+	var result pipelineDoctorResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode pipeline doctor json: %v\nbody=%s", err, out.String())
+	}
+	if !result.OK || len(result.Problems) != 0 || !hasPipelineDoctorFinding(result.Warnings, "step_runtime_unavailable") {
+		t.Fatalf("doctor result = %+v", result)
+	}
+	if got := result.Warnings[0]; got.Runtime != "codex" || got.RuntimeBin != "missing-codex" || got.Step != "implement" {
+		t.Fatalf("runtime warning = %+v", got)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"pipeline", "doctor", "ticket_to_pr", "--repo", root})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("pipeline doctor text: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "agent-team pipeline doctor: OK (ticket_to_pr)") {
+		t.Fatalf("doctor text stdout = %q", textOut.String())
+	}
+	if !strings.Contains(textErr.String(), `runtime "codex" with binary "missing-codex"`) {
+		t.Fatalf("doctor text stderr = %q", textErr.String())
 	}
 }
 
