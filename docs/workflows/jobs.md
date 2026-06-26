@@ -153,6 +153,7 @@ a durable job, adopt it from the job namespace:
 
 ```sh
 agent-team job adopt squ-42 --instance worker-squ-42 --pid 12345 --dry-run --json
+agent-team job adopt squ-42 --instance worker-squ-42 --pid-file worker.pid --dry-run --json
 agent-team job adopt squ-42 --instance worker-squ-42 --pid 12345
 ```
 

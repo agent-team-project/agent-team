@@ -16,6 +16,7 @@ func newJobAdoptCmd() *cobra.Command {
 		instance      string
 		agent         string
 		pid           int
+		pidFile       string
 		workspace     string
 		runtimeKind   string
 		runtimeBinary string
@@ -84,6 +85,7 @@ func newJobAdoptCmd() *cobra.Command {
 			return runDaemonAdopt(cmd, repoRoot, selectedInstance, daemonAdoptOptions{
 				Agent:         selectedAgent,
 				PID:           pid,
+				PIDFile:       pidFile,
 				Workspace:     selectedWorkspace,
 				Runtime:       runtimeKind,
 				RuntimeBinary: runtimeBinary,
@@ -105,6 +107,7 @@ func newJobAdoptCmd() *cobra.Command {
 	cmd.Flags().StringVar(&instance, "instance", "", "Instance name that should own the job. Defaults to the job instance, then <target>-<job-id>.")
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent name for the adopted instance. Defaults to the job target.")
 	cmd.Flags().IntVar(&pid, "pid", 0, "Live process PID to adopt.")
+	cmd.Flags().StringVar(&pidFile, "pid-file", "", "Read the live process PID to adopt from this file. Cannot be combined with --pid.")
 	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace path for the adopted process. Defaults to the job worktree, then repo root.")
 	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile for the adopted process (claude or codex). Defaults to repo/env selection.")
 	cmd.Flags().StringVar(&runtimeBinary, "runtime-bin", "", "Runtime binary or wrapper used by the adopted process.")

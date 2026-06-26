@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -19,6 +21,7 @@ import (
 type daemonAdoptOptions struct {
 	Agent         string
 	PID           int
+	PIDFile       string
 	Workspace     string
 	Runtime       string
 	RuntimeBinary string
@@ -85,6 +88,7 @@ func newAdoptExternalProcessCmd(cfg adoptExternalProcessCommandConfig) *cobra.Co
 		target        string
 		agent         string
 		pid           int
+		pidFile       string
 		workspace     string
 		runtimeKind   string
 		runtimeBinary string
@@ -120,6 +124,7 @@ func newAdoptExternalProcessCmd(cfg adoptExternalProcessCommandConfig) *cobra.Co
 			return runDaemonAdopt(cmd, target, args[0], daemonAdoptOptions{
 				Agent:         agent,
 				PID:           pid,
+				PIDFile:       pidFile,
 				Workspace:     workspace,
 				Runtime:       runtimeKind,
 				RuntimeBinary: runtimeBinary,
@@ -144,6 +149,7 @@ func newAdoptExternalProcessCmd(cfg adoptExternalProcessCommandConfig) *cobra.Co
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent name for the adopted instance. Inferred from instances.toml when omitted.")
 	cmd.Flags().IntVar(&pid, "pid", 0, "Live process PID to adopt.")
+	cmd.Flags().StringVar(&pidFile, "pid-file", "", "Read the live process PID to adopt from this file. Cannot be combined with --pid.")
 	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace path for the adopted process. Defaults to the repo root.")
 	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile for the adopted process (claude or codex). Defaults to repo/env selection.")
 	cmd.Flags().StringVar(&runtimeBinary, "runtime-bin", "", "Runtime binary or wrapper used by the adopted process.")
@@ -175,10 +181,37 @@ func parseDaemonAdoptFormat(format string) (*template.Template, error) {
 	return parseDaemonFormat("daemon-adopt-format", format)
 }
 
+func resolveDaemonAdoptPID(pid int, pidFile string) (int, error) {
+	pidFile = strings.TrimSpace(pidFile)
+	if pid > 0 && pidFile != "" {
+		return 0, fmt.Errorf("--pid and --pid-file cannot be combined")
+	}
+	if pidFile == "" {
+		if pid <= 0 {
+			return 0, fmt.Errorf("--pid or --pid-file is required and must be > 0")
+		}
+		return pid, nil
+	}
+	body, err := os.ReadFile(pidFile)
+	if err != nil {
+		return 0, fmt.Errorf("read --pid-file: %w", err)
+	}
+	raw := strings.TrimSpace(string(body))
+	if raw == "" {
+		return 0, fmt.Errorf("--pid-file must contain a positive integer PID")
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("--pid-file must contain a positive integer PID")
+	}
+	return parsed, nil
+}
+
 func runDaemonAdopt(cmd *cobra.Command, target, instance string, opts daemonAdoptOptions) error {
 	label := daemonAdoptCommandLabel(cmd)
-	if opts.PID <= 0 {
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --pid is required and must be > 0.\n", label)
+	pid, err := resolveDaemonAdoptPID(opts.PID, opts.PIDFile)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", label, err)
 		return exitErr(2)
 	}
 	teamDir, err := resolveTeamDir(cmd, target)
@@ -239,7 +272,7 @@ func runDaemonAdopt(cmd *cobra.Command, target, instance string, opts daemonAdop
 		Runtime:       string(rt.Kind),
 		RuntimeBinary: rt.Binary,
 		Workspace:     workspace,
-		PID:           opts.PID,
+		PID:           pid,
 		SessionID:     opts.SessionID,
 		StartedAt:     startedAt,
 		LogPath:       logPath,

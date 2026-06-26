@@ -473,12 +473,16 @@ func TestJobAdoptDryRunDoesNotMutateJobOrMetadata(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("write job: %v", err)
 	}
+	pidPath := filepath.Join(tmp, "worker.pid")
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"job", "adopt", "squ-69", "--repo", tmp, "--pid", strconv.Itoa(os.Getpid()), "--dry-run", "--json"})
+	cmd.SetArgs([]string{"job", "adopt", "squ-69", "--repo", tmp, "--pid-file", pidPath, "--dry-run", "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("job adopt --dry-run: %v\nstdout=%s\nstderr=%s", err, out.String(), stderr.String())
 	}
@@ -488,6 +492,9 @@ func TestJobAdoptDryRunDoesNotMutateJobOrMetadata(t *testing.T) {
 	}
 	if !result.DryRun || result.Job == nil || !result.JobChanged || result.Job.Status != job.StatusRunning || result.Job.Instance != "worker-squ-69" {
 		t.Fatalf("dry-run result = %+v", result)
+	}
+	if result.Metadata == nil || result.Metadata.PID != os.Getpid() {
+		t.Fatalf("dry-run metadata = %+v, want pid %d", result.Metadata, os.Getpid())
 	}
 	unchanged, err := job.Read(teamDir, "squ-69")
 	if err != nil {

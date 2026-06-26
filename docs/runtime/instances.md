@@ -76,6 +76,7 @@ the daemon:
 
 ```sh
 agent-team adopt manager --pid 12345 --workspace "$PWD" --agent manager
+agent-team adopt manager --pid-file ./manager.pid --workspace "$PWD" --agent manager
 agent-team runtime adopt manager --pid 12345 --workspace "$PWD" --agent manager
 agent-team inspect manager
 agent-team ps --status running
@@ -91,7 +92,9 @@ agent-team daemon reconcile
 
 If the instance is declared in `instances.toml`, `--agent` is inferred. Include
 `--session-id` for Claude-compatible processes when you want future
-managed-resume attempts to have the session identifier available.
+managed-resume attempts to have the session identifier available. Use
+`--pid-file <path>` when the PID comes from a service manager, wrapper, or
+existing runtime pidfile.
 
 Add `--job <id>` when the external process owns a durable job. If that job file
 exists, adoption records the instance, branch, PR, running status, and an
@@ -100,7 +103,8 @@ commands immediately point at the recovered process.
 
 `agent-team runtime adopt` and `agent-team daemon adopt` are the same metadata
 operation from narrower namespaces. Use `agent-team job adopt <job-id> --pid
-<pid>` when you want to start from a durable job instead of an instance name.
+<pid>` or `agent-team job adopt <job-id> --pid-file <path>` when you want to
+start from a durable job instead of an instance name.
 
 ## Remove and Prune
 

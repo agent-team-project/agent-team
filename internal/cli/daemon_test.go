@@ -344,6 +344,55 @@ func TestAdoptShortcutDryRunDoesNotWriteMetadata(t *testing.T) {
 	}
 }
 
+func TestAdoptShortcutReadsPIDFile(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	pidPath := filepath.Join(tmp, "runtime.pid")
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"adopt", "external-worker", "--repo", tmp, "--agent", "worker", "--pid-file", pidPath, "--dry-run", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("adopt shortcut --pid-file: %v", err)
+	}
+	var result daemonAdoptResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode adopt shortcut pid-file json: %v\nbody=%s", err, out.String())
+	}
+	if result.Metadata == nil || result.Metadata.PID != os.Getpid() {
+		t.Fatalf("adopt shortcut metadata = %+v, want pid %d", result.Metadata, os.Getpid())
+	}
+	if _, err := daemon.ReadMetadata(daemon.DaemonRoot(filepath.Join(tmp, ".agent_team")), "external-worker"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("metadata should not exist after dry-run: %v", err)
+	}
+}
+
+func TestAdoptShortcutRejectsPIDAndPIDFile(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	pidPath := filepath.Join(tmp, "runtime.pid")
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"adopt", "external-worker", "--repo", tmp, "--agent", "worker", "--pid", strconv.Itoa(os.Getpid()), "--pid-file", pidPath, "--dry-run"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("adopt shortcut accepted --pid and --pid-file")
+	}
+	if !strings.Contains(stderr.String(), "--pid and --pid-file cannot be combined") {
+		t.Fatalf("stderr = %q, want pid conflict", stderr.String())
+	}
+}
+
 func TestDaemonAdoptUpdatesOwningJob(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

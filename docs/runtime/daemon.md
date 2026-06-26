@@ -63,6 +63,7 @@ the same operator views, adopt its live PID:
 
 ```sh
 agent-team adopt manager --pid 12345 --workspace "$PWD" --agent manager
+agent-team adopt manager --pid-file /var/run/agent-team/manager.pid --workspace "$PWD" --agent manager
 agent-team runtime adopt manager --pid 12345 --workspace "$PWD" --agent manager
 agent-team daemon adopt manager --pid 12345 --workspace "$PWD" --agent manager
 agent-team daemon adopt worker-squ-42 --pid 12346 --agent worker --job squ-42 --ticket SQU-42 --runtime codex
@@ -70,6 +71,8 @@ agent-team adopt manager --pid 12345 --dry-run --json
 ```
 
 When the instance name is declared in `instances.toml`, `--agent` is inferred.
+Use `--pid-file <path>` instead of `--pid <pid>` when a service manager or
+wrapper already writes the live runtime PID to disk.
 Adoption writes `.agent_team/daemon/<instance>/meta.json`, appends an `adopt`
 lifecycle event, and asks a running daemon to reconcile so `ps`, `inspect`,
 `monitor`, `stop`, and `health` see the process immediately.

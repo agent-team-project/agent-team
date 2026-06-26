@@ -101,6 +101,7 @@ Flags:
       --json                 Emit machine-readable JSON.
       --log-path string      Runtime log path, if the external process already writes to one.
       --pid int              Live process PID to adopt.
+      --pid-file string      Read the live process PID to adopt from this file. Cannot be combined with --pid.
       --pr string            PR URL to record on the adopted metadata.
       --repo string          Repo root containing .agent_team. (default "<repo>")
       --runtime string       Runtime profile for the adopted process (claude or codex). Defaults to repo/env selection.
@@ -499,6 +500,7 @@ Flags:
       --json                 Emit machine-readable JSON.
       --log-path string      Runtime log path, if the external process already writes to one.
       --pid int              Live process PID to adopt.
+      --pid-file string      Read the live process PID to adopt from this file. Cannot be combined with --pid.
       --pr string            PR URL to record on the adopted metadata.
       --runtime string       Runtime profile for the adopted process (claude or codex). Defaults to repo/env selection.
       --runtime-bin string   Runtime binary or wrapper used by the adopted process.
@@ -1652,6 +1654,7 @@ Flags:
       --json                 Emit machine-readable JSON.
       --log-path string      Runtime log path, if the external process already writes to one.
       --pid int              Live process PID to adopt.
+      --pid-file string      Read the live process PID to adopt from this file. Cannot be combined with --pid.
       --pr string            PR URL to record. Defaults to the job PR.
       --repo string          Repo root containing .agent_team. (default "<repo>")
       --runtime string       Runtime profile for the adopted process (claude or codex). Defaults to repo/env selection.
@@ -4723,6 +4726,7 @@ Flags:
       --json                 Emit machine-readable JSON.
       --log-path string      Runtime log path, if the external process already writes to one.
       --pid int              Live process PID to adopt.
+      --pid-file string      Read the live process PID to adopt from this file. Cannot be combined with --pid.
       --pr string            PR URL to record on the adopted metadata.
       --runtime string       Runtime profile for the adopted process (claude or codex). Defaults to repo/env selection.
       --runtime-bin string   Runtime binary or wrapper used by the adopted process.
