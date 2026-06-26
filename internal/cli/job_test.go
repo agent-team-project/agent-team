@@ -1969,6 +1969,11 @@ func TestJobQueuePruneRejectsFormatCombinations(t *testing.T) {
 			want: "--older-than must be >= 0",
 		},
 		{
+			name: "negative limit",
+			args: []string{"job", "queue", "prune", "SQU-122", "--limit", "-1"},
+			want: "--limit must be >= 0",
+		},
+		{
 			name: "invalid state",
 			args: []string{"job", "queue", "prune", "SQU-122", "--state", "stuck"},
 			want: "--state must be dead, pending, or all",

@@ -4644,6 +4644,25 @@ target = "worker"
 	}
 }
 
+func TestPipelineQueuePruneRejectsNegativeLimit(t *testing.T) {
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"pipeline", "queue", "prune", "ticket_to_pr", "--limit", "-1"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("pipeline queue prune negative limit succeeded: stdout=%s", out.String())
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 2 {
+		t.Fatalf("pipeline queue prune err = %v, want exit code 2", err)
+	}
+	if !strings.Contains(stderr.String(), "--limit must be >= 0") {
+		t.Fatalf("stderr = %q, want negative limit message", stderr.String())
+	}
+}
+
 func TestPipelineRepairScopesQueueAndRetry(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

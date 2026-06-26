@@ -536,6 +536,7 @@ func newQueuePruneCmd() *cobra.Command {
 		jsonOut   bool
 		format    string
 		runtimes  []string
+		limit     int
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -550,6 +551,10 @@ func newQueuePruneCmd() *cobra.Command {
 			}
 			if olderThan < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue prune: --older-than must be >= 0.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue prune: --limit must be >= 0.")
 				return exitErr(2)
 			}
 			tmpl, err := parseQueuePruneFormat(format)
@@ -571,7 +576,7 @@ func newQueuePruneCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			results, err := pruneQueueItems(teamDir, state, olderThan, time.Now().UTC(), dryRun, filters)
+			results, err := pruneQueueItems(teamDir, state, olderThan, time.Now().UTC(), dryRun, filters, limit)
 			if err != nil {
 				return err
 			}
@@ -582,6 +587,7 @@ func newQueuePruneCmd() *cobra.Command {
 	cmd.Flags().StringVar(&stateFlag, "state", daemon.QueueStateDead, "Queue state to prune: dead, pending, or all.")
 	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "Only prune items older than this duration based on retry/dead-letter/update time.")
 	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Filter by queued dispatch runtime before pruning: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Prune at most this many matching queue items; 0 means no limit.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview queue items that would be pruned without dropping them.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit prune results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.ID}} {{.State}}'.")
@@ -999,7 +1005,7 @@ func parseQueuePruneState(raw string) (string, error) {
 	}
 }
 
-func pruneQueueItems(teamDir, state string, olderThan time.Duration, now time.Time, dryRun bool, filters queueListFilters) ([]queuePruneResult, error) {
+func pruneQueueItems(teamDir, state string, olderThan time.Duration, now time.Time, dryRun bool, filters queueListFilters, limit int) ([]queuePruneResult, error) {
 	items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
 	if err != nil {
 		return nil, err
@@ -1012,7 +1018,32 @@ func pruneQueueItems(teamDir, state string, olderThan time.Duration, now time.Ti
 			matches = append(matches, item)
 		}
 	}
+	matches = prepareQueuePruneMatches(matches, limit)
 	return pruneQueueItemMatches(teamDir, matches, dryRun)
+}
+
+func prepareQueuePruneMatches(items []*daemon.QueueItem, limit int) []*daemon.QueueItem {
+	sort.SliceStable(items, func(i, j int) bool {
+		left, right := items[i], items[j]
+		leftRef, rightRef := queuePruneReferenceTime(left), queuePruneReferenceTime(right)
+		if !leftRef.Equal(rightRef) {
+			if leftRef.IsZero() {
+				return false
+			}
+			if rightRef.IsZero() {
+				return true
+			}
+			return leftRef.Before(rightRef)
+		}
+		if left != nil && right != nil && !left.QueuedAt.Equal(right.QueuedAt) {
+			return left.QueuedAt.Before(right.QueuedAt)
+		}
+		if left == nil || right == nil {
+			return right != nil
+		}
+		return left.ID < right.ID
+	})
+	return limitQueueItems(items, limit)
 }
 
 func pruneQueueItemMatches(teamDir string, items []*daemon.QueueItem, dryRun bool) ([]queuePruneResult, error) {
@@ -1311,6 +1342,9 @@ func renderQueueSummary(w io.Writer, summary queueSummary) {
 }
 
 func queueItemMatchesPrune(item *daemon.QueueItem, state string, olderThan time.Duration, now time.Time) bool {
+	if item == nil {
+		return false
+	}
 	if state != queuePruneStateAll && item.State != state {
 		return false
 	}
@@ -1325,6 +1359,9 @@ func queueItemMatchesPrune(item *daemon.QueueItem, state string, olderThan time.
 }
 
 func queuePruneReferenceTime(item *daemon.QueueItem) time.Time {
+	if item == nil {
+		return time.Time{}
+	}
 	if !item.DeadLetteredAt.IsZero() {
 		return item.DeadLetteredAt
 	}

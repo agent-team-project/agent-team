@@ -6143,6 +6143,11 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 			want: "--older-than must be >= 0",
 		},
 		{
+			name: "prune negative limit",
+			args: []string{"team", "queue", "prune", "delivery", "--limit", "-1"},
+			want: "--limit must be >= 0",
+		},
+		{
 			name: "prune invalid state",
 			args: []string{"team", "queue", "prune", "delivery", "--state", "active"},
 			want: "--state must be dead, pending, or all",

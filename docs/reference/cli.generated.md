@@ -2113,6 +2113,7 @@ Flags:
       --dry-run               Preview job-owned queue items that would be pruned without dropping them.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json                  Emit prune results as JSON.
+      --limit int             Prune at most this many matching job-owned queue items; 0 means no limit.
       --older-than duration   Only prune job-owned items older than this duration based on retry/dead-letter/update time.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --runtime strings       Filter by queued dispatch runtime before pruning: claude or codex. Can repeat or comma-separate.
@@ -3397,6 +3398,7 @@ Flags:
       --dry-run               Preview pipeline-owned queue items that would be pruned without dropping them.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json                  Emit prune results as JSON.
+      --limit int             Prune at most this many matching pipeline-owned queue items; 0 means no limit.
       --older-than duration   Only prune pipeline-owned items older than this duration based on retry/dead-letter/update time.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --runtime strings       Filter by queued dispatch runtime before pruning: claude or codex. Can repeat or comma-separate.
@@ -4163,6 +4165,7 @@ Flags:
       --dry-run               Preview queue items that would be pruned without dropping them.
       --format string         Render each result with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json                  Emit prune results as JSON.
+      --limit int             Prune at most this many matching queue items; 0 means no limit.
       --older-than duration   Only prune items older than this duration based on retry/dead-letter/update time.
       --runtime strings       Filter by queued dispatch runtime before pruning: claude or codex. Can repeat or comma-separate.
       --state string          Queue state to prune: dead, pending, or all. (default "dead")
@@ -5945,6 +5948,7 @@ Flags:
       --dry-run               Preview team-owned queue items that would be pruned without dropping them.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json                  Emit prune results as JSON.
+      --limit int             Prune at most this many matching team-owned queue items; 0 means no limit.
       --older-than duration   Only prune team-owned items older than this duration based on retry/dead-letter/update time.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --runtime strings       Filter by queued dispatch runtime before pruning: claude or codex. Can repeat or comma-separate.

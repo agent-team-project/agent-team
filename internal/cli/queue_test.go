@@ -1952,6 +1952,138 @@ func TestQueuePruneRuntimeFiltersItems(t *testing.T) {
 	}
 }
 
+func TestQueuePruneLimitPrunesOldestMatches(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:             "q-newer",
+			State:          daemon.QueueStateDead,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     "worker-squ-812",
+			Payload:        map[string]any{"target": "worker", "ticket": "SQU-812"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-24 * time.Hour),
+			UpdatedAt:      now.Add(-24 * time.Hour),
+			DeadLetteredAt: now.Add(-24 * time.Hour),
+		},
+		{
+			ID:             "q-oldest",
+			State:          daemon.QueueStateDead,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     "worker-squ-810",
+			Payload:        map[string]any{"target": "worker", "ticket": "SQU-810"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-72 * time.Hour),
+			UpdatedAt:      now.Add(-72 * time.Hour),
+			DeadLetteredAt: now.Add(-72 * time.Hour),
+		},
+		{
+			ID:             "q-middle",
+			State:          daemon.QueueStateDead,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     "worker-squ-811",
+			Payload:        map[string]any{"target": "worker", "ticket": "SQU-811"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-48 * time.Hour),
+			UpdatedAt:      now.Add(-48 * time.Hour),
+			DeadLetteredAt: now.Add(-48 * time.Hour),
+		},
+	} {
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+			t.Fatalf("WriteQueueItem %s: %v", item.ID, err)
+		}
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"queue", "prune", "--target", tmp, "--limit", "2", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("queue prune limit dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryRows []queuePruneResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryRows); err != nil {
+		t.Fatalf("decode prune limit dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if got, want := queuePruneResultIDs(dryRows), []string{"q-oldest", "q-middle"}; !queuePruneStringSlicesEqual(got, want) {
+		t.Fatalf("dry-run ids = %v, want %v", got, want)
+	}
+	for _, row := range dryRows {
+		if !row.DryRun || row.Dropped {
+			t.Fatalf("dry-run row = %+v", row)
+		}
+	}
+
+	prune := NewRootCmd()
+	pruneOut, pruneErr := &bytes.Buffer{}, &bytes.Buffer{}
+	prune.SetOut(pruneOut)
+	prune.SetErr(pruneErr)
+	prune.SetArgs([]string{"queue", "prune", "--target", tmp, "--limit", "1", "--format", "{{.ID}} {{.Dropped}}"})
+	if err := prune.Execute(); err != nil {
+		t.Fatalf("queue prune limit: %v\nstderr=%s", err, pruneErr.String())
+	}
+	if got, want := strings.TrimSpace(pruneOut.String()), "q-oldest true"; got != want {
+		t.Fatalf("prune output = %q, want %q", got, want)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-oldest"); !os.IsNotExist(err) {
+		t.Fatalf("oldest item err=%v, want not exist", err)
+	}
+	for _, id := range []string{"q-middle", "q-newer"} {
+		if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id); err != nil {
+			t.Fatalf("queue item %s should remain: %v", id, err)
+		}
+	}
+}
+
+func TestQueuePruneRejectsNegativeLimit(t *testing.T) {
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"queue", "prune", "--limit", "-1"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("queue prune negative limit succeeded: stdout=%s", out.String())
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 2 {
+		t.Fatalf("queue prune err = %v, want exit code 2", err)
+	}
+	if !strings.Contains(stderr.String(), "--limit must be >= 0") {
+		t.Fatalf("stderr = %q, want negative limit message", stderr.String())
+	}
+}
+
+func queuePruneResultIDs(rows []queuePruneResult) []string {
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	return ids
+}
+
+func queuePruneStringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestQueueRetryDryRunSingleDoesNotRequireDaemon(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
