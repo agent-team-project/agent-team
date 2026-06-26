@@ -53,7 +53,7 @@ func newDoctorCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&strictDaemon, "strict-daemon", false, "Fail when the companion agent-teamd binary is not discoverable.")
-	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when the selected LLM runtime binary is not discoverable.")
+	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when the selected LLM runtime binary or pipeline/team step runtime defaults are not discoverable.")
 	cmd.Flags().BoolVar(&strictTemplate, "strict-template", false, "Fail when .template.lock no longer matches its resolved template ref.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.")
@@ -174,6 +174,9 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 	if pipelineDoctor, err := collectPipelineDoctor(teamDir, ""); err != nil {
 		problems = append(problems, fmt.Sprintf("pipeline workflow validation failed: %v", err))
 	} else if pipelineDoctor != nil {
+		if strictRuntime {
+			promotePipelineDoctorRuntimeWarnings(pipelineDoctor)
+		}
 		for _, problem := range pipelineDoctor.Problems {
 			problems = append(problems, "pipeline workflow: "+problem.Message)
 		}
@@ -187,6 +190,9 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 	if teamDoctor, err := collectAllTeamDoctor(teamDir); err != nil {
 		problems = append(problems, fmt.Sprintf("team topology validation failed: %v", err))
 	} else if teamDoctor != nil {
+		if strictRuntime {
+			promoteAllTeamDoctorRuntimeWarnings(teamDoctor)
+		}
 		for _, problem := range teamDoctor.Problems {
 			if isPipelineWorkflowFindingCode(problem.Code) {
 				continue

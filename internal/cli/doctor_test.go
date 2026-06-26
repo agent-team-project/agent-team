@@ -302,6 +302,118 @@ func TestDoctorStrictRuntimeFailsWhenRuntimeBinaryMissing(t *testing.T) {
 	}
 }
 
+func TestDoctorStrictRuntimePromotesPipelineAndTeamRuntimeWarnings(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		switch bin {
+		case "claude":
+			return "/usr/local/bin/claude", nil
+		case "missing-codex":
+			return "", exec.ErrNotFound
+		default:
+			t.Fatalf("unexpected runtime lookup for %q", bin)
+			return "", exec.ErrNotFound
+		}
+	})
+	oldFind := findAgentTeamd
+	findAgentTeamd = func() (string, error) {
+		return "/usr/local/bin/agent-teamd", nil
+	}
+	defer func() { findAgentTeamd = oldFind }()
+
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	instancesPath := filepath.Join(tmp, ".agent_team", "instances.toml")
+	if err := os.WriteFile(instancesPath, []byte(`
+[instances.worker]
+agent = "worker"
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+runtime = "codex"
+runtime_bin = "missing-codex"
+
+[teams.delivery]
+instances = ["worker"]
+pipelines = ["ticket_to_pr"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	nonStrict := NewRootCmd()
+	nonStrictOut, nonStrictErr := &bytes.Buffer{}, &bytes.Buffer{}
+	nonStrict.SetOut(nonStrictOut)
+	nonStrict.SetErr(nonStrictErr)
+	nonStrict.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	if err := nonStrict.Execute(); err != nil {
+		t.Fatalf("doctor warning-only runtime defaults should not fail: %v\nstderr=%s", err, nonStrictErr.String())
+	}
+	var nonStrictResult doctorResult
+	if err := json.Unmarshal(nonStrictOut.Bytes(), &nonStrictResult); err != nil {
+		t.Fatalf("decode non-strict doctor json: %v\nbody=%s", err, nonStrictOut.String())
+	}
+	if !nonStrictResult.OK || len(nonStrictResult.Problems) != 0 {
+		t.Fatalf("non-strict doctor result = %+v, want ok with warnings", nonStrictResult)
+	}
+	for _, want := range []string{
+		"pipeline workflow:",
+		"team topology:",
+		`runtime "codex" with binary "missing-codex"`,
+	} {
+		if !containsDoctorMessage(nonStrictResult.Warnings, want) {
+			t.Fatalf("non-strict doctor warnings missing %q: %+v", want, nonStrictResult.Warnings)
+		}
+	}
+	if nonStrictErr.Len() != 0 {
+		t.Fatalf("doctor --json should not write warnings to stderr: %s", nonStrictErr.String())
+	}
+
+	strict := NewRootCmd()
+	strictOut, strictErr := &bytes.Buffer{}, &bytes.Buffer{}
+	strict.SetOut(strictOut)
+	strict.SetErr(strictErr)
+	strict.SetArgs([]string{"doctor", "--target", tmp, "--strict-runtime", "--json"})
+	err := strict.Execute()
+	if err == nil {
+		t.Fatal("expected strict doctor to fail on missing step runtime")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("strict doctor err = %v, want exit 1", err)
+	}
+	var strictResult doctorResult
+	if err := json.Unmarshal(strictOut.Bytes(), &strictResult); err != nil {
+		t.Fatalf("decode strict doctor json: %v\nbody=%s", err, strictOut.String())
+	}
+	if strictResult.OK || len(strictResult.Problems) == 0 {
+		t.Fatalf("strict doctor result = %+v, want problems", strictResult)
+	}
+	for _, want := range []string{
+		"pipeline workflow:",
+		"team topology:",
+		`runtime "codex" with binary "missing-codex"`,
+	} {
+		if !containsDoctorMessage(strictResult.Problems, want) {
+			t.Fatalf("strict doctor problems missing %q: %+v", want, strictResult.Problems)
+		}
+	}
+	if containsDoctorMessage(strictResult.Warnings, "missing-codex") {
+		t.Fatalf("strict doctor left runtime warning unpromoted: %+v", strictResult.Warnings)
+	}
+	if strictErr.Len() != 0 {
+		t.Fatalf("doctor --json should not write strict problems to stderr: %s", strictErr.String())
+	}
+}
+
 func TestDoctorFailsOnInvalidRuntimeEnv(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "bad")
 
