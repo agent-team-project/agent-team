@@ -6431,12 +6431,22 @@ func scopeTeamTriageActions(teamName string, items []jobTriageItem) []jobTriageI
 }
 
 func scopeTeamTriageItemActions(teamName string, item jobTriageItem) []string {
-	if !stringSliceContains(item.Reasons, "running_without_instance") {
+	if !stringSliceContains(item.Reasons, "stale_running") && !stringSliceContains(item.Reasons, "running_without_instance") {
 		return item.Actions
 	}
 	jobID := strings.TrimSpace(item.JobID)
 	if jobID == "" {
 		return item.Actions
+	}
+	actions := append([]string(nil), item.Actions...)
+	if stringSliceContains(item.Reasons, "stale_running") {
+		actions = replaceOrAppendTeamTriageAction(actions,
+			fmt.Sprintf("agent-team job timeout %s --dry-run", jobID),
+			teamTriageTimeoutAction(teamName, item),
+		)
+	}
+	if !stringSliceContains(item.Reasons, "running_without_instance") {
+		return actions
 	}
 	jobAction := fmt.Sprintf("agent-team job adopt %s --pid <pid> --dry-run", jobID)
 	teamAction := fmt.Sprintf("agent-team team adopt %s %s --pid <pid> --dry-run", teamName, jobID)
@@ -6444,19 +6454,42 @@ func scopeTeamTriageItemActions(teamName string, item jobTriageItem) []string {
 		jobAction = fmt.Sprintf("agent-team job adopt %s --step %s --pid <pid> --dry-run", jobID, stepID)
 		teamAction = fmt.Sprintf("agent-team team adopt %s %s --step %s --pid <pid> --dry-run", teamName, jobID, stepID)
 	}
-	actions := append([]string(nil), item.Actions...)
+	return replaceOrAppendTeamTriageAction(actions, jobAction, teamAction)
+}
+
+func teamTriageTimeoutAction(teamName string, item jobTriageItem) string {
+	if stepID := strings.TrimSpace(item.StepID); stepID != "" {
+		action := fmt.Sprintf("agent-team team timeout %s --step %s", teamName, stepID)
+		if target := strings.TrimSpace(item.StepTarget); target != "" {
+			action = fmt.Sprintf("%s --target-agent %s", action, target)
+		}
+		return action + " --dry-run"
+	}
+	action := fmt.Sprintf("agent-team team timeout %s --jobs", teamName)
+	if target := strings.TrimSpace(item.Target); target != "" {
+		action = fmt.Sprintf("%s --target-agent %s", action, target)
+	}
+	return action + " --dry-run"
+}
+
+func replaceOrAppendTeamTriageAction(actions []string, oldAction, newAction string) []string {
+	oldAction = strings.TrimSpace(oldAction)
+	newAction = strings.TrimSpace(newAction)
+	if newAction == "" {
+		return actions
+	}
 	for idx, action := range actions {
-		if strings.TrimSpace(action) == jobAction {
-			actions[idx] = teamAction
+		if strings.TrimSpace(action) == oldAction {
+			actions[idx] = newAction
 			return actions
 		}
 	}
 	for _, action := range actions {
-		if strings.TrimSpace(action) == teamAction {
+		if strings.TrimSpace(action) == newAction {
 			return actions
 		}
 	}
-	return append(actions, teamAction)
+	return append(actions, newAction)
 }
 
 func runTeamReady(w io.Writer, teamDir, name string, states map[string]bool, opts jobReadyOptions, jsonOut bool, tmpl *template.Template) error {

@@ -933,8 +933,70 @@ pipelines = ["ticket_to_pr"]
 	if !containsString(item.Actions, "agent-team team adopt delivery squ-812 --step implement --pid <pid> --dry-run") {
 		t.Fatalf("triage actions = %+v", item.Actions)
 	}
+	if !containsString(item.Actions, "agent-team team timeout delivery --step implement --target-agent worker --dry-run") {
+		t.Fatalf("triage actions missing team timeout: %+v", item.Actions)
+	}
 	if containsString(item.Actions, "agent-team job adopt squ-812 --step implement --pid <pid> --dry-run") {
 		t.Fatalf("triage actions should use team-scoped adoption: %+v", item.Actions)
+	}
+	if containsString(item.Actions, "agent-team job timeout squ-812 --dry-run") {
+		t.Fatalf("triage actions should use team-scoped timeout: %+v", item.Actions)
+	}
+}
+
+func TestTeamTriageScopesLifecycleTimeoutHint(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[teams.delivery]
+instances = ["manager", "worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	old := now.Add(-48 * time.Hour)
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-813",
+		Ticket:    "SQU-813",
+		Target:    "worker",
+		Instance:  "worker-squ-813",
+		Status:    job.StatusRunning,
+		CreatedAt: old,
+		UpdatedAt: old,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "triage", "delivery", "--repo", root, "--stale-after", "24h", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team triage: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot jobTriageSnapshot
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode team triage json: %v\nbody=%s", err, out.String())
+	}
+	if len(snapshot.Attention) != 1 {
+		t.Fatalf("attention = %+v", snapshot.Attention)
+	}
+	item := snapshot.Attention[0]
+	if item.JobID != "squ-813" || item.StepID != "" {
+		t.Fatalf("triage item = %+v", item)
+	}
+	if !containsString(item.Reasons, "stale_running") || containsString(item.Reasons, "running_without_instance") {
+		t.Fatalf("triage reasons = %+v", item.Reasons)
+	}
+	if !containsString(item.Actions, "agent-team team timeout delivery --jobs --target-agent worker --dry-run") {
+		t.Fatalf("triage actions = %+v", item.Actions)
+	}
+	if containsString(item.Actions, "agent-team job timeout squ-813 --dry-run") {
+		t.Fatalf("triage actions should use team-scoped timeout: %+v", item.Actions)
 	}
 }
 
