@@ -284,6 +284,8 @@ agent-team pipeline skip <pipeline>|--all --step <id> [--message "..."] [--messa
                                                 # mark matching non-running pipeline steps intentionally skipped
 agent-team pipeline cancel <pipeline>|--all [--message "..."] [--message-file <path|->] [--actor cli] [--limit N] [--dry-run] [--format '{{.JobID}} {{.Action}}'] [--json]
                                                 # cancel non-terminal pipeline jobs without stopping instances
+agent-team pipeline adopt <pipeline> <job-id> [--step <id>] [--instance <name>] [--pid <pid>|--pid-file <path>] [--workspace <path>] [--runtime claude|codex] [--runtime-bin <path>] [--dry-run] [--format '{{.Job.ID}} {{.Metadata.Instance}}'] [--json]
+                                                # adopt a live external process for a pipeline-owned job after checking pipeline ownership
 agent-team pipeline resume-plan <pipeline> [--step <id>] [--status crashed] [--runtime codex] [--action start|attach|resume|logs] [--runtime-stale|--unhealthy] [--summary] [--format '{{.Instance}} {{.RecommendedAction}}'] [--json]
                                                 # show pipeline-scoped runtime resume, attach, start, and log fallback commands
 agent-team pipeline send <pipeline> [message...] [--message "..."] [--message-file <path|->] [--all] [--latest|--last N] [--runtime codex] [--stale] [--runtime-stale] [--unhealthy] [--dry-run] [--format '{{.To}} {{.ID}}'] [--json]

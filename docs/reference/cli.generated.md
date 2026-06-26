@@ -3191,6 +3191,7 @@ Inherited Flags:
 
 Subcommands:
 
+- `agent-team pipeline adopt` - Adopt a live external process for a pipeline-owned job.
 - `agent-team pipeline advance` - Dispatch ready pipeline steps.
 - `agent-team pipeline approve` - Approve blocked manual pipeline gates.
 - `agent-team pipeline cancel` - Cancel non-terminal pipeline jobs.
@@ -3220,6 +3221,39 @@ Subcommands:
 - `agent-team pipeline timeout` - Mark stale running pipeline steps failed.
 - `agent-team pipeline unblock` - Answer blocked pipeline workers.
 - `agent-team pipeline wait` - Wait for pipeline jobs to reach a lifecycle status or event.
+
+## `agent-team pipeline adopt`
+
+Adopt a live external process for a pipeline-owned job.
+
+Adopt a live external process into daemon metadata and sync the durable job ownership fields, after verifying the job belongs to the named pipeline.
+
+```text
+agent-team pipeline adopt <pipeline> <job-id> [flags]
+```
+
+Flags:
+
+```text
+      --agent string         Agent name for the adopted instance. Defaults to the selected step target or job target.
+      --branch string        Branch name to record. Defaults to the job branch.
+      --dry-run              Preview adoption without writing metadata or job state.
+      --force                Replace existing live metadata for the instance.
+      --format string        Render the adoption result with a Go template, e.g. '{{.Job.ID}} {{.Metadata.Instance}}'.
+      --instance string      Instance name that should own the job. Defaults to selected or active step ownership, then job ownership.
+      --json                 Emit machine-readable JSON.
+      --log-path string      Runtime log path, if the external process already writes to one.
+      --pid int              Live process PID to adopt.
+      --pid-file string      Read the live process PID to adopt from this file. Cannot be combined with --pid.
+      --pr string            PR URL to record. Defaults to the job PR.
+      --repo string          Repo root containing .agent_team. (default "<repo>")
+      --runtime string       Runtime profile for the adopted process (claude or codex). Defaults to repo/env selection.
+      --runtime-bin string   Runtime binary or wrapper used by the adopted process.
+      --session-id string    Runtime session id, when known and resumable.
+      --started-at string    Process start time as RFC3339. Defaults to now, or existing metadata for the same PID.
+      --step string          Pipeline step id to mark as owned by the adopted process.
+      --workspace string     Workspace path for the adopted process. Defaults to the job worktree, then repo root.
+```
 
 ## `agent-team pipeline advance`
 

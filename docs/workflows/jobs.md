@@ -165,7 +165,9 @@ instance. It defaults `--agent` to the job target, `--workspace` to the job
 worktree, and branch/PR metadata to the existing job fields. Use top-level
 `agent-team adopt <instance> --job <id>` for the same recovery path when you
 are starting from an instance PID instead of a job; `runtime adopt` and
-`daemon adopt` remain available from narrower namespaces.
+`daemon adopt` remain available from narrower namespaces. When the job belongs
+to a declared pipeline and you want that ownership checked before metadata is
+written, use `agent-team pipeline adopt <pipeline> <job-id> --step <id>`.
 
 ## Blocking And Unblocking Jobs
 

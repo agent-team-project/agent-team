@@ -3,14 +3,13 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/spf13/cobra"
 )
 
-func newJobAdoptCmd() *cobra.Command {
+func newPipelineAdoptCmd() *cobra.Command {
 	var (
 		repo          string
 		instance      string
@@ -33,26 +32,44 @@ func newJobAdoptCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "adopt <job-id>",
-		Short: "Adopt a live external process as a job's owning instance.",
-		Long: "Adopt a live external process into daemon metadata and sync the durable job ownership fields. " +
-			"Defaults such as agent, workspace, branch, PR, and ticket come from the job file when present.",
-		Args: cobra.ExactArgs(1),
+		Use:   "adopt <pipeline> <job-id>",
+		Short: "Adopt a live external process for a pipeline-owned job.",
+		Long: "Adopt a live external process into daemon metadata and sync the durable job ownership fields, " +
+			"after verifying the job belongs to the named pipeline.",
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOut && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job adopt: --format cannot be combined with --json.")
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline adopt: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
 			tmpl, err := parseDaemonAdoptFormat(format)
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job adopt: %v\n", err)
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline adopt: %v\n", err)
 				return exitErr(2)
 			}
-			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
+			pipelineName := strings.TrimSpace(args[0])
+			if pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline adopt: pipeline name is required.")
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
 			}
-			return runJobAdoptForJob(cmd, "agent-team job adopt", teamDir, j, jobAdoptCommandOptions{
+			if _, err := loadPipelineInfo(teamDir, pipelineName); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline adopt: %v\n", err)
+				return exitErr(1)
+			}
+			j, err := job.Read(teamDir, args[1])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline adopt: %v\n", err)
+				return exitErr(1)
+			}
+			if strings.TrimSpace(j.Pipeline) != pipelineName {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline adopt: job %q belongs to pipeline %q, not %q.\n", j.ID, strings.TrimSpace(j.Pipeline), pipelineName)
+				return exitErr(2)
+			}
+			return runJobAdoptForJob(cmd, "agent-team pipeline adopt", teamDir, j, jobAdoptCommandOptions{
 				Instance: strings.TrimSpace(instance),
 				Daemon: daemonAdoptOptions{
 					Agent:         strings.TrimSpace(agent),
@@ -78,7 +95,7 @@ func newJobAdoptCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&instance, "instance", "", "Instance name that should own the job. Defaults to selected or active step ownership, then job ownership.")
 	cmd.Flags().StringVar(&stepID, "step", "", "Pipeline step id to mark as owned by the adopted process.")
-	cmd.Flags().StringVar(&agent, "agent", "", "Agent name for the adopted instance. Defaults to the job target.")
+	cmd.Flags().StringVar(&agent, "agent", "", "Agent name for the adopted instance. Defaults to the selected step target or job target.")
 	cmd.Flags().IntVar(&pid, "pid", 0, "Live process PID to adopt.")
 	cmd.Flags().StringVar(&pidFile, "pid-file", "", "Read the live process PID to adopt from this file. Cannot be combined with --pid.")
 	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace path for the adopted process. Defaults to the job worktree, then repo root.")
@@ -94,91 +111,4 @@ func newJobAdoptCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the adoption result with a Go template, e.g. '{{.Job.ID}} {{.Metadata.Instance}}'.")
 	return cmd
-}
-
-type jobAdoptCommandOptions struct {
-	Instance string
-	Daemon   daemonAdoptOptions
-}
-
-func runJobAdoptForJob(cmd *cobra.Command, label, teamDir string, j *job.Job, opts jobAdoptCommandOptions) error {
-	selectedStep, err := jobStepForAdoptionByID(j, opts.Daemon.Step)
-	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", label, err)
-		return exitErr(2)
-	}
-	selectedInstance := strings.TrimSpace(opts.Instance)
-	if selectedInstance == "" {
-		selectedInstance = defaultJobAdoptInstanceForStep(j, selectedStep)
-	}
-	if selectedInstance == "" {
-		selectedInstance = strings.TrimSpace(j.Instance)
-	}
-	if selectedInstance == "" {
-		selectedInstance = defaultJobAdoptInstanceForJob(j)
-	}
-	if selectedInstance == "" {
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --instance is required when it cannot be inferred from the job.\n", label)
-		return exitErr(2)
-	}
-	repoRoot := filepath.Dir(teamDir)
-	adopt := opts.Daemon
-	if strings.TrimSpace(adopt.Agent) == "" {
-		adopt.Agent = defaultJobAdoptAgentForStep(j, selectedStep)
-	}
-	if strings.TrimSpace(adopt.Workspace) == "" {
-		adopt.Workspace = strings.TrimSpace(j.Worktree)
-	}
-	if strings.TrimSpace(adopt.Workspace) == "" {
-		adopt.Workspace = repoRoot
-	}
-	if strings.TrimSpace(adopt.Branch) == "" {
-		adopt.Branch = strings.TrimSpace(j.Branch)
-	}
-	if strings.TrimSpace(adopt.PR) == "" {
-		adopt.PR = strings.TrimSpace(j.PR)
-	}
-	adopt.Job = j.ID
-	adopt.Ticket = j.Ticket
-	return runDaemonAdopt(cmd, repoRoot, selectedInstance, adopt)
-}
-
-func defaultJobAdoptInstanceForStep(j *job.Job, step *job.Step) string {
-	if j == nil || step == nil {
-		return ""
-	}
-	if instance := strings.TrimSpace(step.Instance); instance != "" {
-		return instance
-	}
-	target := job.NormalizeID(step.Target)
-	id := job.NormalizeID(j.ID)
-	stepID := job.NormalizeID(step.ID)
-	if target == "" || id == "" || stepID == "" {
-		return ""
-	}
-	return target + "-" + id + "-" + stepID
-}
-
-func defaultJobAdoptInstanceForJob(j *job.Job) string {
-	if j == nil {
-		return ""
-	}
-	target := job.NormalizeID(j.Target)
-	id := job.NormalizeID(j.ID)
-	if target == "" || id == "" {
-		return ""
-	}
-	return target + "-" + id
-}
-
-func defaultJobAdoptAgentForStep(j *job.Job, step *job.Step) string {
-	if j == nil {
-		return ""
-	}
-	if step != nil {
-		if target := strings.TrimSpace(step.Target); target != "" {
-			return target
-		}
-	}
-	return strings.TrimSpace(j.Target)
 }

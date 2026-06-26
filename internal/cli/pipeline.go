@@ -48,6 +48,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineUnblockCmd())
 	cmd.AddCommand(newPipelineSkipCmd())
 	cmd.AddCommand(newPipelineCancelCmd())
+	cmd.AddCommand(newPipelineAdoptCmd())
 	cmd.AddCommand(newPipelineCleanupCmd())
 	cmd.AddCommand(newPipelineResumePlanCmd())
 	cmd.AddCommand(newPipelineSendCmd())

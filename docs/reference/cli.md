@@ -179,6 +179,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline reject <pipeline>` | Reject blocked manual gates |
 | `agent-team pipeline skip <pipeline> --step <id>` | Mark matching non-running steps intentionally skipped |
 | `agent-team pipeline cancel <pipeline>` | Cancel non-terminal pipeline jobs without stopping instances |
+| `agent-team pipeline adopt <pipeline> <job-id>` | Adopt a live external process for a job after verifying pipeline ownership |
 | `agent-team pipeline resume-plan <pipeline>` | Pipeline-scoped runtime recovery commands; filter by `--step`, `--action`, `--runtime-stale`, or `--unhealthy`, or summarize with `--summary` |
 | `agent-team pipeline send <pipeline>` | Send a mailbox message to pipeline-owned daemon-known instances |
 | `agent-team pipeline logs <pipeline>` | Read daemon-captured logs for pipeline-owned instances |
