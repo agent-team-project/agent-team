@@ -4844,6 +4844,7 @@ Flags:
       --exec                       Run a minimal runtime-native execution probe. Currently supports Codex one-shot execution.
       --exec-prompt string         Prompt sent to the runtime when --exec is set. (default "Reply exactly with: agent-team runtime probe ok")
       --exec-prompt-file string    Read --exec probe prompt from a file, or '-' for stdin.
+      --exec-socket-check          Run a Codex exec probe that verifies daemon Unix-socket access from inside the runtime sandbox. Implies --exec and --require-daemon.
       --format string              Render the probe result with a Go template, e.g. '{{.OK}} {{len .Issues}}'.
       --json                       Emit machine-readable JSON.
       --output string              Write the full probe result as pretty JSON to this file.

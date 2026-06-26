@@ -24,25 +24,29 @@ var runtimeProbeRunCommand = defaultRuntimeProbeRunCommand
 var runtimeProbeRunExecCommand = defaultRuntimeProbeRunExecCommand
 var runtimeProbeStartDaemon = daemonStartDetachedOperation
 
-const defaultRuntimeProbeExecPrompt = "Reply exactly with: agent-team runtime probe ok"
+const (
+	defaultRuntimeProbeExecPrompt       = "Reply exactly with: agent-team runtime probe ok"
+	runtimeProbeSocketCheckSuccessReply = "agent-team daemon socket ok"
+)
 
 func newRuntimeProbeCmd() *cobra.Command {
 	var (
-		target         string
-		jsonOut        bool
-		runtimeKind    string
-		runtimeBinary  string
-		timeout        time.Duration
-		daemonInterval time.Duration
-		skipDoctor     bool
-		execProbe      bool
-		execPrompt     string
-		execPromptFile string
-		output         string
-		requireDaemon  bool
-		waitDaemon     bool
-		startDaemon    bool
-		format         string
+		target          string
+		jsonOut         bool
+		runtimeKind     string
+		runtimeBinary   string
+		timeout         time.Duration
+		daemonInterval  time.Duration
+		skipDoctor      bool
+		execProbe       bool
+		execSocketCheck bool
+		execPrompt      string
+		execPromptFile  string
+		output          string
+		requireDaemon   bool
+		waitDaemon      bool
+		startDaemon     bool
+		format          string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -67,6 +71,14 @@ func newRuntimeProbeCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime probe: --daemon-interval must be > 0.")
 				return exitErr(2)
 			}
+			if execSocketCheck && (cmd.Flags().Changed("exec-prompt") || strings.TrimSpace(execPromptFile) != "") {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime probe: --exec-socket-check cannot be combined with --exec-prompt or --exec-prompt-file.")
+				return exitErr(2)
+			}
+			if execSocketCheck {
+				execProbe = true
+				requireDaemon = true
+			}
 			resolvedExecPrompt, err := runtimeProbeExecPromptText(cmd, execPrompt, execPromptFile)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime probe: %v\n", err)
@@ -78,17 +90,18 @@ func newRuntimeProbeCmd() *cobra.Command {
 				return exitErr(2)
 			}
 			result, err := collectRuntimeProbe(cmd, runtimeProbeOptions{
-				Target:         target,
-				RuntimeKind:    runtimeKind,
-				RuntimeBinary:  runtimeBinary,
-				Timeout:        timeout,
-				DaemonInterval: daemonInterval,
-				SkipDoctor:     skipDoctor,
-				Exec:           execProbe,
-				ExecPrompt:     resolvedExecPrompt,
-				RequireDaemon:  requireDaemon,
-				WaitDaemon:     waitDaemon,
-				StartDaemon:    startDaemon,
+				Target:          target,
+				RuntimeKind:     runtimeKind,
+				RuntimeBinary:   runtimeBinary,
+				Timeout:         timeout,
+				DaemonInterval:  daemonInterval,
+				SkipDoctor:      skipDoctor,
+				Exec:            execProbe,
+				ExecSocketCheck: execSocketCheck,
+				ExecPrompt:      resolvedExecPrompt,
+				RequireDaemon:   requireDaemon,
+				WaitDaemon:      waitDaemon,
+				StartDaemon:     startDaemon,
 			})
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime probe: %v\n", err)
@@ -128,6 +141,7 @@ func newRuntimeProbeCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&daemonInterval, "daemon-interval", 200*time.Millisecond, "Polling interval for --wait-daemon.")
 	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "Skip runtime-native diagnostics such as codex doctor --json.")
 	cmd.Flags().BoolVar(&execProbe, "exec", false, "Run a minimal runtime-native execution probe. Currently supports Codex one-shot execution.")
+	cmd.Flags().BoolVar(&execSocketCheck, "exec-socket-check", false, "Run a Codex exec probe that verifies daemon Unix-socket access from inside the runtime sandbox. Implies --exec and --require-daemon.")
 	cmd.Flags().StringVar(&execPrompt, "exec-prompt", defaultRuntimeProbeExecPrompt, "Prompt sent to the runtime when --exec is set.")
 	cmd.Flags().StringVar(&execPromptFile, "exec-prompt-file", "", "Read --exec probe prompt from a file, or '-' for stdin.")
 	cmd.Flags().StringVar(&output, "output", "", "Write the full probe result as pretty JSON to this file.")
@@ -159,17 +173,18 @@ func runtimeProbeExecPromptText(cmd *cobra.Command, prompt, promptFile string) (
 }
 
 type runtimeProbeOptions struct {
-	Target         string
-	RuntimeKind    string
-	RuntimeBinary  string
-	Timeout        time.Duration
-	DaemonInterval time.Duration
-	SkipDoctor     bool
-	Exec           bool
-	ExecPrompt     string
-	RequireDaemon  bool
-	WaitDaemon     bool
-	StartDaemon    bool
+	Target          string
+	RuntimeKind     string
+	RuntimeBinary   string
+	Timeout         time.Duration
+	DaemonInterval  time.Duration
+	SkipDoctor      bool
+	Exec            bool
+	ExecSocketCheck bool
+	ExecPrompt      string
+	RequireDaemon   bool
+	WaitDaemon      bool
+	StartDaemon     bool
 }
 
 type runtimeProbeResult struct {
@@ -215,18 +230,21 @@ type codexDoctorCheckSummary struct {
 }
 
 type runtimeExecProbe struct {
-	Ran                bool     `json:"ran"`
-	Runtime            string   `json:"runtime"`
-	Command            []string `json:"command,omitempty"`
-	Workdir            string   `json:"workdir,omitempty"`
-	DurationMillis     int64    `json:"duration_ms,omitempty"`
-	ExitCode           int      `json:"exit_code,omitempty"`
-	TimedOut           bool     `json:"timed_out,omitempty"`
-	LastMessagePresent bool     `json:"last_message_present"`
-	LastMessage        string   `json:"last_message,omitempty"`
-	Stdout             string   `json:"stdout,omitempty"`
-	Stderr             string   `json:"stderr,omitempty"`
-	Error              string   `json:"error,omitempty"`
+	Ran                 bool     `json:"ran"`
+	Runtime             string   `json:"runtime"`
+	SocketCheck         bool     `json:"socket_check,omitempty"`
+	DaemonSocket        string   `json:"daemon_socket,omitempty"`
+	ExpectedLastMessage string   `json:"expected_last_message,omitempty"`
+	Command             []string `json:"command,omitempty"`
+	Workdir             string   `json:"workdir,omitempty"`
+	DurationMillis      int64    `json:"duration_ms,omitempty"`
+	ExitCode            int      `json:"exit_code,omitempty"`
+	TimedOut            bool     `json:"timed_out,omitempty"`
+	LastMessagePresent  bool     `json:"last_message_present"`
+	LastMessage         string   `json:"last_message,omitempty"`
+	Stdout              string   `json:"stdout,omitempty"`
+	Stderr              string   `json:"stderr,omitempty"`
+	Error               string   `json:"error,omitempty"`
 }
 
 type codexDoctorReport struct {
@@ -338,7 +356,7 @@ func collectRuntimeProbe(cmd *cobra.Command, opts runtimeProbeOptions) (*runtime
 			result.addIssue("fail", "codex_doctor", "doctor_failed", probe.Error, "Run `codex doctor --json` directly for the full diagnostic output.")
 		}
 	}
-	if opts.Exec {
+	if opts.Exec || opts.ExecSocketCheck {
 		switch {
 		case info.Runtime != string(runtimebin.KindCodex):
 			result.addIssue("fail", "exec_probe", "unsupported_runtime", "runtime exec probe currently supports Codex only", "Run `agent-team runtime probe --runtime codex --exec`.")
@@ -346,8 +364,10 @@ func collectRuntimeProbe(cmd *cobra.Command, opts runtimeProbeOptions) (*runtime
 			// binary_missing already records the actionable failure.
 		case !teamResolved:
 			// team_missing already records the actionable failure.
+		case opts.ExecSocketCheck && (result.Daemon == nil || !result.Daemon.Ready):
+			result.addIssue("fail", "exec_probe", "daemon_not_ready", "daemon socket exec check requires a running, ready agent-teamd", "Run `agent-team runtime probe --runtime codex --start-daemon --require-daemon --exec-socket-check`.")
 		default:
-			probe := runCodexExecProbe(cmd.Context(), repo, teamDir, result.Daemon, info.Binary, opts.Timeout, opts.ExecPrompt)
+			probe := runCodexExecProbe(cmd.Context(), repo, teamDir, result.Daemon, info.Binary, opts.Timeout, opts.ExecPrompt, opts.ExecSocketCheck)
 			result.ExecProbe = probe
 			if probe.Error != "" {
 				issueID := runtimeExecProbeIssueID(probe)
@@ -466,7 +486,7 @@ func defaultRuntimeProbeRunExecCommand(ctx context.Context, binary string, args 
 	}
 }
 
-func runCodexExecProbe(parent context.Context, repo, teamDir string, status *daemonStatusJSON, binary string, timeout time.Duration, prompt string) *runtimeExecProbe {
+func runCodexExecProbe(parent context.Context, repo, teamDir string, status *daemonStatusJSON, binary string, timeout time.Duration, prompt string, socketCheck bool) *runtimeExecProbe {
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
@@ -474,13 +494,17 @@ func runCodexExecProbe(parent context.Context, repo, teamDir string, status *dae
 	if prompt == "" {
 		prompt = defaultRuntimeProbeExecPrompt
 	}
+	if socketCheck {
+		prompt = runtimeProbeSocketCheckPrompt()
+	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	start := time.Now()
 	probe := &runtimeExecProbe{
-		Ran:     true,
-		Runtime: string(runtimebin.KindCodex),
-		Workdir: filepath.ToSlash(repo),
+		Ran:         true,
+		Runtime:     string(runtimebin.KindCodex),
+		SocketCheck: socketCheck,
+		Workdir:     filepath.ToSlash(repo),
 	}
 	stateDir, err := os.MkdirTemp("", "agent-team-runtime-probe-")
 	if err != nil {
@@ -492,6 +516,10 @@ func runCodexExecProbe(parent context.Context, repo, teamDir string, status *dae
 	socket := ""
 	if status != nil {
 		socket = status.Socket
+	}
+	if socketCheck {
+		probe.DaemonSocket = socket
+		probe.ExpectedLastMessage = runtimeProbeSocketCheckSuccessReply
 	}
 	teamEnv := []string{
 		"AGENT_TEAM_ROOT=" + teamDir,
@@ -528,8 +556,59 @@ func runCodexExecProbe(parent context.Context, repo, teamDir string, status *dae
 	probe.LastMessage = runtimeProbeExcerpt(bytes.TrimSpace(lastMessage))
 	if strings.TrimSpace(probe.LastMessage) == "" {
 		probe.Error = "Codex exec wrote an empty last-message sidecar"
+	} else if socketCheck && !runtimeProbeSocketCheckPassed(probe.LastMessage) {
+		probe.Error = fmt.Sprintf("Codex exec socket check did not confirm daemon socket access; expected final message %q", runtimeProbeSocketCheckSuccessReply)
 	}
 	return probe
+}
+
+func runtimeProbeSocketCheckPrompt() string {
+	return fmt.Sprintf(`Validate that commands run by Codex can reach agent-teamd over the Unix socket exported in AGENT_TEAM_DAEMON_SOCKET.
+
+Run this Python script from the shell:
+
+python3 - <<'PY'
+import http.client
+import json
+import os
+import socket
+import sys
+
+socket_path = os.environ.get("AGENT_TEAM_DAEMON_SOCKET", "")
+if not socket_path:
+    print("AGENT_TEAM_DAEMON_SOCKET is not set", file=sys.stderr)
+    sys.exit(2)
+
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    sock.connect(socket_path)
+    conn = http.client.HTTPConnection("daemon")
+    conn.sock = sock
+    conn.request("GET", "/v1/instances")
+    resp = conn.getresponse()
+    body = resp.read().decode("utf-8", "replace")
+    if resp.status != 200:
+        print(f"daemon returned HTTP {resp.status}: {body}", file=sys.stderr)
+        sys.exit(1)
+    json.loads(body)
+except Exception as exc:
+    print(f"daemon socket check failed: {exc}", file=sys.stderr)
+    sys.exit(1)
+finally:
+    try:
+        sock.close()
+    except Exception:
+        pass
+PY
+
+If the script exits 0, reply exactly:
+%s
+
+If the script fails, reply with a concise failure summary including stderr.`, runtimeProbeSocketCheckSuccessReply)
+}
+
+func runtimeProbeSocketCheckPassed(lastMessage string) bool {
+	return strings.TrimSpace(lastMessage) == runtimeProbeSocketCheckSuccessReply
 }
 
 func runtimeExecProbeIssueID(probe *runtimeExecProbe) string {
@@ -539,7 +618,10 @@ func runtimeExecProbeIssueID(probe *runtimeExecProbe) string {
 	if probe.TimedOut {
 		return "exec_timeout"
 	}
-	execText := strings.ToLower(strings.Join([]string{probe.Error, probe.Stderr, probe.Stdout}, "\n"))
+	if probe.SocketCheck && probe.LastMessagePresent && strings.TrimSpace(probe.LastMessage) != "" && !runtimeProbeSocketCheckPassed(probe.LastMessage) {
+		return "socket_check_failed"
+	}
+	execText := runtimeExecProbeClassifiableText(probe)
 	switch {
 	case strings.Contains(execText, "could not resolve host"),
 		strings.Contains(execText, "failed to lookup"),
@@ -560,7 +642,9 @@ func runtimeExecProbeIssueID(probe *runtimeExecProbe) string {
 		return "auth_failed"
 	case strings.Contains(execText, "operation not permitted"),
 		strings.Contains(execText, "permission denied"),
-		strings.Contains(execText, "sandbox"):
+		strings.Contains(execText, "sandbox denied"),
+		strings.Contains(execText, "sandbox blocked"),
+		strings.Contains(execText, "blocked by sandbox"):
 		return "sandbox_blocked"
 	}
 	if probe.LastMessagePresent && strings.TrimSpace(probe.LastMessage) == "" {
@@ -570,6 +654,25 @@ func runtimeExecProbeIssueID(probe *runtimeExecProbe) string {
 		return "last_message_missing"
 	}
 	return "exec_failed"
+}
+
+func runtimeExecProbeClassifiableText(probe *runtimeExecProbe) string {
+	if probe == nil {
+		return ""
+	}
+	raw := strings.Join([]string{probe.Error, probe.Stderr, probe.Stdout}, "\n")
+	var lines []string
+	for _, line := range strings.Split(raw, "\n") {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "failed to warm featured plugin ids cache") && strings.Contains(lower, "401 unauthorized") {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(lower), "sandbox:") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return strings.ToLower(strings.Join(lines, "\n"))
 }
 
 func runtimeExecProbeIssueSummary(probe *runtimeExecProbe, issueID string) string {
@@ -584,6 +687,8 @@ func runtimeExecProbeIssueSummary(probe *runtimeExecProbe, issueID string) strin
 		return appendRuntimeProbeError(base, "stderr indicates runtime authentication failure")
 	case "sandbox_blocked":
 		return appendRuntimeProbeError(base, "stderr indicates sandbox or filesystem/socket permission failure")
+	case "socket_check_failed":
+		return appendRuntimeProbeError(base, "Codex exec did not return the socket-check success marker")
 	case "exec_timeout":
 		if base != "" {
 			return base
@@ -609,6 +714,8 @@ func runtimeExecProbeRemediation(issueID string) string {
 		return "Run `codex login` or refresh the selected runtime credentials, then rerun the exec probe."
 	case "sandbox_blocked":
 		return "Inspect Codex sandbox and filesystem/socket policy for this repo, then retry with the same `agent-team runtime probe --runtime codex --exec` command."
+	case "socket_check_failed":
+		return "Inspect the exec probe stdout/stderr and rerun `agent-team runtime probe --runtime codex --start-daemon --require-daemon --exec-socket-check --timeout 2m`."
 	case "exec_timeout":
 		return "Increase `--timeout` only after checking provider reachability with `codex doctor --json`."
 	case "last_message_empty", "last_message_missing":
@@ -725,6 +832,9 @@ func runtimeProbeActions(result *runtimeProbeResult) []string {
 		if result.ExecProbe == nil {
 			add("agent-team runtime probe --runtime codex --exec --timeout 2m")
 		}
+		if result.Daemon != nil && result.Daemon.Ready && (result.ExecProbe == nil || !result.ExecProbe.SocketCheck) {
+			add("agent-team runtime probe --runtime codex --exec-socket-check --timeout 2m")
+		}
 		add("agent-team run manager --runtime codex --prompt \"probe\" --last-message")
 	}
 	actions := make([]string, 0, len(added))
@@ -812,13 +922,17 @@ func renderRuntimeProbe(w io.Writer, result *runtimeProbeResult) {
 		} else if result.ExecProbe.Error != "" {
 			state = "failed"
 		}
-		fmt.Fprintf(w, "exec_probe: status=%s runtime=%s exit=%d last_message=%s duration=%dms\n",
+		fmt.Fprintf(w, "exec_probe: status=%s runtime=%s socket_check=%s exit=%d last_message=%s duration=%dms\n",
 			state,
 			result.ExecProbe.Runtime,
+			yesNo(result.ExecProbe.SocketCheck),
 			result.ExecProbe.ExitCode,
 			yesNo(result.ExecProbe.LastMessagePresent),
 			result.ExecProbe.DurationMillis,
 		)
+		if result.ExecProbe.SocketCheck {
+			fmt.Fprintf(w, "exec_probe_socket: %s\n", emptyDash(result.ExecProbe.DaemonSocket))
+		}
 		if result.ExecProbe.Error != "" {
 			fmt.Fprintf(w, "exec_probe_error: %s\n", result.ExecProbe.Error)
 		}

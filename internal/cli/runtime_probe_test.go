@@ -417,6 +417,7 @@ func TestRuntimeProbeRejectsInvalidWaitFlags(t *testing.T) {
 		{name: "negative timeout", args: []string{"runtime", "probe", "--timeout", "-1s"}, want: "--timeout must be >= 0"},
 		{name: "zero daemon interval", args: []string{"runtime", "probe", "--daemon-interval", "0s"}, want: "--daemon-interval must be > 0"},
 		{name: "exec prompt conflict", args: []string{"runtime", "probe", "--exec-prompt", "hello", "--exec-prompt-file", "prompt.txt"}, want: "provide exec prompt using only one of --exec-prompt or --exec-prompt-file"},
+		{name: "socket check prompt conflict", args: []string{"runtime", "probe", "--exec-socket-check", "--exec-prompt", "hello"}, want: "--exec-socket-check cannot be combined"},
 		{name: "missing exec prompt file", args: []string{"runtime", "probe", "--exec-prompt-file", filepath.Join(t.TempDir(), "missing.txt")}, want: "--exec-prompt-file:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -569,6 +570,155 @@ func TestRuntimeProbeCodexExecProbeSuccess(t *testing.T) {
 	}
 }
 
+func TestRuntimeProbeCodexExecSocketCheckSuccess(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	appendRuntimeConfigForRuntimeTest(t, tmp, "codex", "codex-dev")
+	socketPath := filepath.Join(tmp, ".agent_team", "daemon.sock")
+	resolvedTmp, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatalf("eval symlinks: %v", err)
+	}
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "codex-dev" {
+			t.Fatalf("look path bin = %q, want codex-dev", bin)
+		}
+		return "/usr/local/bin/codex-dev", nil
+	})
+	withRuntimeProbeRunCommand(t, func(ctx context.Context, binary string, args ...string) runtimeProbeCommandResult {
+		t.Fatalf("codex doctor should be skipped")
+		return runtimeProbeCommandResult{}
+	})
+	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration) (daemonLifecycleJSON, error) {
+		return daemonLifecycleJSON{
+			Action:  "start",
+			Changed: true,
+			PID:     1234,
+			Status: daemonStatusJSON{
+				Running: true,
+				Ready:   true,
+				PID:     1234,
+				TeamDir: filepath.ToSlash(teamDir),
+				Socket:  socketPath,
+			},
+		}, nil
+	})
+	withRuntimeProbeRunExecCommand(t, func(ctx context.Context, binary string, args []string, env []string, cwd, stdin string) runtimeProbeExecCommandResult {
+		if binary != "codex-dev" {
+			t.Fatalf("exec binary = %q, want codex-dev", binary)
+		}
+		if cwd != resolvedTmp {
+			t.Fatalf("exec cwd = %q, want %q", cwd, resolvedTmp)
+		}
+		for _, want := range []string{"AGENT_TEAM_DAEMON_SOCKET", "/v1/instances", runtimeProbeSocketCheckSuccessReply} {
+			if !strings.Contains(stdin, want) {
+				t.Fatalf("socket-check stdin missing %q:\n%s", want, stdin)
+			}
+		}
+		if !containsString(env, "AGENT_TEAM_DAEMON_SOCKET="+socketPath) {
+			t.Fatalf("exec env = %#v, want daemon socket", env)
+		}
+		lastMessage := ""
+		for i := range args {
+			if args[i] == "--output-last-message" && i+1 < len(args) {
+				lastMessage = args[i+1]
+				break
+			}
+		}
+		if lastMessage == "" {
+			t.Fatalf("exec args = %#v, missing last-message path", args)
+		}
+		if err := os.WriteFile(lastMessage, []byte(runtimeProbeSocketCheckSuccessReply+"\n"), 0o644); err != nil {
+			t.Fatalf("write last-message: %v", err)
+		}
+		return runtimeProbeExecCommandResult{}
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"runtime", "probe", "--target", tmp, "--skip-doctor", "--start-daemon", "--exec-socket-check", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime probe exec socket check failed: %v\nstderr=%s", err, stderr.String())
+	}
+	var result runtimeProbeResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode result: %v\nbody=%s", err, out.String())
+	}
+	if !result.OK || result.ExecProbe == nil || !result.ExecProbe.SocketCheck || result.ExecProbe.DaemonSocket != socketPath {
+		t.Fatalf("result = %+v, want successful socket exec probe", result)
+	}
+	if got := result.ExecProbe.LastMessage; got != runtimeProbeSocketCheckSuccessReply {
+		t.Fatalf("last message = %q", got)
+	}
+}
+
+func TestRuntimeProbeCodexExecSocketCheckFailure(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "codex")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	socketPath := filepath.Join(tmp, ".agent_team", "daemon.sock")
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "codex" {
+			t.Fatalf("look path bin = %q, want codex", bin)
+		}
+		return "/opt/homebrew/bin/codex", nil
+	})
+	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration) (daemonLifecycleJSON, error) {
+		return daemonLifecycleJSON{
+			Action: "start",
+			PID:    1234,
+			Status: daemonStatusJSON{
+				Running: true,
+				Ready:   true,
+				PID:     1234,
+				TeamDir: filepath.ToSlash(teamDir),
+				Socket:  socketPath,
+			},
+		}, nil
+	})
+	withRuntimeProbeRunExecCommand(t, func(ctx context.Context, binary string, args []string, env []string, cwd, stdin string) runtimeProbeExecCommandResult {
+		lastMessage := ""
+		for i := range args {
+			if args[i] == "--output-last-message" && i+1 < len(args) {
+				lastMessage = args[i+1]
+				break
+			}
+		}
+		if lastMessage == "" {
+			t.Fatalf("exec args = %#v, missing last-message path", args)
+		}
+		if err := os.WriteFile(lastMessage, []byte("daemon returned HTTP 503\n"), 0o644); err != nil {
+			t.Fatalf("write last-message: %v", err)
+		}
+		return runtimeProbeExecCommandResult{Stdout: []byte("raw output")}
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"runtime", "probe", "--target", tmp, "--skip-doctor", "--start-daemon", "--exec-socket-check", "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("runtime probe socket check succeeded unexpectedly")
+	}
+	var result runtimeProbeResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode result: %v\nbody=%s", err, out.String())
+	}
+	if result.OK || result.ExecProbe == nil || !result.ExecProbe.SocketCheck {
+		t.Fatalf("result = %+v, want failed socket check", result)
+	}
+	if !containsRuntimeProbeIssue(result.Issues, "fail", "exec_probe", "socket_check_failed") {
+		t.Fatalf("issues = %+v, want socket_check_failed", result.Issues)
+	}
+}
+
 func TestRuntimeProbeCodexExecProbeFailure(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "codex")
 	t.Setenv(runtimebin.EnvBinary, "")
@@ -622,9 +772,24 @@ func TestRuntimeExecProbeClassifiesFailures(t *testing.T) {
 			want:  "auth_failed",
 		},
 		{
+			name:  "nonfatal plugin warm auth warning",
+			probe: &runtimeExecProbe{Error: "exit status 1", ExitCode: 1, Stderr: `WARN codex_core_plugins::manager: failed to warm featured plugin ids cache error=remote featured plugin request failed with status 401 Unauthorized: {"detail":"Unauthorized"}`},
+			want:  "exec_failed",
+		},
+		{
 			name:  "sandbox",
 			probe: &runtimeExecProbe{Error: "exit status 1", Stderr: "operation not permitted while opening daemon socket"},
 			want:  "sandbox_blocked",
+		},
+		{
+			name:  "codex banner sandbox line",
+			probe: &runtimeExecProbe{Error: "exit status 1", ExitCode: 1, Stderr: "OpenAI Codex v0.142.2\nsandbox: read-only\nuser\nprobe"},
+			want:  "exec_failed",
+		},
+		{
+			name:  "prompt mentions sandbox",
+			probe: &runtimeExecProbe{Error: "exit status 1", ExitCode: 1, Stderr: "user\nverify the Codex sandbox can reach a daemon socket"},
+			want:  "exec_failed",
 		},
 		{
 			name:  "timeout",
