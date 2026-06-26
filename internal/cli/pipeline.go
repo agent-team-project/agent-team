@@ -2122,24 +2122,25 @@ func newPipelineSendCmd() *cobra.Command {
 
 func newPipelineLogsCmd() *cobra.Command {
 	var (
-		repo      string
-		follow    bool
-		latest    bool
-		last      int
-		list      bool
-		jsonOut   bool
-		noPrefix  bool
-		statuses  []string
-		runtimes  []string
-		phases    []string
-		staleOnly bool
-		unhealthy bool
-		lastMsg   bool
-		clean     bool
-		tail      string
-		since     string
-		grep      string
-		format    string
+		repo             string
+		follow           bool
+		latest           bool
+		last             int
+		list             bool
+		jsonOut          bool
+		noPrefix         bool
+		statuses         []string
+		runtimes         []string
+		phases           []string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthy        bool
+		lastMsg          bool
+		clean            bool
+		tail             string
+		since            string
+		grep             string
+		format           string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -2246,25 +2247,27 @@ func newPipelineLogsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline logs: %v\n", err)
 				return exitErr(2)
 			}
+			listOpts.runtimeStale = runtimeStaleOnly
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
 			}
 			opts := logsOptions{
-				Follow:      follow,
-				Latest:      latest,
-				Limit:       last,
-				List:        list,
-				JSON:        jsonOut,
-				NoPrefix:    noPrefix,
-				Tail:        tailLines,
-				TailSet:     cmd.Flags().Changed("tail"),
-				Since:       sinceCutoff,
-				Grep:        grepPattern,
-				Format:      formatTemplate,
-				Unhealthy:   unhealthy,
-				LastMessage: lastMsg,
-				Clean:       clean,
+				Follow:       follow,
+				Latest:       latest,
+				Limit:        last,
+				List:         list,
+				JSON:         jsonOut,
+				NoPrefix:     noPrefix,
+				Tail:         tailLines,
+				TailSet:      cmd.Flags().Changed("tail"),
+				Since:        sinceCutoff,
+				Grep:         grepPattern,
+				Format:       formatTemplate,
+				RuntimeStale: runtimeStaleOnly,
+				Unhealthy:    unhealthy,
+				LastMessage:  lastMsg,
+				Clean:        clean,
 			}
 			return runPipelineLogs(cmd, teamDir, args[0], opts, listOpts)
 		},
@@ -2280,6 +2283,7 @@ func newPipelineLogsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Only show logs for pipeline-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phases, "phase", nil, "Only show logs for work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show logs for pipeline instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show logs for pipeline instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthy, "unhealthy", false, "Only show logs for crashed, status-stale, or runtime-stale pipeline instances.")
 	cmd.Flags().BoolVar(&lastMsg, "last-message", false, "Show clean final Codex response sidecars instead of raw runtime logs.")
 	cmd.Flags().BoolVar(&clean, "clean", false, "Hide known Codex runtime diagnostic noise when printing raw pipeline logs.")

@@ -808,6 +808,33 @@ func TestStatsFiltersByUnhealthyIncludesRuntimeStale(t *testing.T) {
 	}
 }
 
+func TestStatsFiltersByRuntimeStaleOnly(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	lister := &fakeInstanceLister{snapshots: [][]*daemon.Metadata{{
+		{Instance: "crashed", Agent: "worker", Runtime: "codex", Status: daemon.StatusCrashed, PID: 99999998, StartedAt: now.Add(-12 * time.Minute)},
+		{Instance: "status-stale", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-11 * time.Minute)},
+		{Instance: "runtime-stale", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, StartedAt: now.Add(-10 * time.Minute)},
+		{Instance: "fresh", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now.Add(-3 * time.Minute)},
+	}}}
+	opts := statsOptions{
+		RuntimeStale:    true,
+		staleByInstance: map[string]bool{"status-stale": true},
+	}
+
+	rows, err := collectStatsRows(lister, nil, opts, now, func(pid int) (processStats, error) {
+		if pid == os.Getpid() {
+			return processStats{CPUPercent: 1, MemoryPercent: 0.1, RSSKiB: 1024}, nil
+		}
+		return processStats{}, os.ErrProcessDone
+	})
+	if err != nil {
+		t.Fatalf("collectStatsRows: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Instance != "runtime-stale" || !rows[0].RuntimeStale || !statsRowUnhealthy(rows[0]) || rows[0].Stale {
+		t.Fatalf("rows = %+v, want one runtime-stale row only", rows)
+	}
+}
+
 func TestStatsCommandRuntimeFilterUsesLocalMetadataWhenDaemonStopped(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -1213,7 +1240,7 @@ func TestStatsFiltersRejectExplicitNames(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%v: expected validation error", args)
 		}
-		if !strings.Contains(stderr.String(), "--status, --runtime, --agent, --phase, --instance, --stale, and --unhealthy cannot be combined") {
+		if !strings.Contains(stderr.String(), "--status, --runtime, --agent, --phase, --instance, --stale, --runtime-stale, and --unhealthy cannot be combined") {
 			t.Fatalf("%v: stderr = %q, want filter/name validation", args, stderr.String())
 		}
 	}

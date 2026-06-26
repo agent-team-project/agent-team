@@ -22,23 +22,24 @@ import (
 
 func newEventsCmd() *cobra.Command {
 	var (
-		target          string
-		follow          bool
-		tail            int
-		latest          bool
-		last            int
-		jsonOut         bool
-		summary         bool
-		format          string
-		actionFilters   []string
-		instanceFilters []string
-		agentFilters    []string
-		statusFilters   []string
-		runtimeFilters  []string
-		phaseFilters    []string
-		staleOnly       bool
-		unhealthyOnly   bool
-		sinceRaw        string
+		target           string
+		follow           bool
+		tail             int
+		latest           bool
+		last             int
+		jsonOut          bool
+		summary          bool
+		format           string
+		actionFilters    []string
+		instanceFilters  []string
+		agentFilters     []string
+		statusFilters    []string
+		runtimeFilters   []string
+		phaseFilters     []string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
+		sinceRaw         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -102,8 +103,8 @@ func newEventsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team events: %v\n", err)
 				return exitErr(2)
 			}
-			if len(phases) > 0 || staleOnly || unhealthyOnly {
-				filters, err = applyCurrentEventInstanceFilter(teamDir, filters, phases, staleOnly, unhealthyOnly, time.Now())
+			if len(phases) > 0 || staleOnly || runtimeStaleOnly || unhealthyOnly {
+				filters, err = applyCurrentEventInstanceFilter(teamDir, filters, phases, staleOnly, runtimeStaleOnly, unhealthyOnly, time.Now())
 				if err != nil {
 					return err
 				}
@@ -135,6 +136,7 @@ func newEventsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show events for instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show events for instances whose status.toml is currently stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show events for instances whose recorded runtime PID is currently no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show events for instances that are currently crashed, status-stale, or runtime-stale.")
 	cmd.Flags().StringVar(&sinceRaw, "since", "", "Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	return cmd
@@ -294,15 +296,15 @@ func (f eventFilters) empty() bool {
 	return len(f.actions) == 0 && len(f.instances) == 0 && len(f.instancePrefixes) == 0 && len(f.agents) == 0 && len(f.statuses) == 0 && f.since == nil
 }
 
-func applyCurrentEventInstanceFilter(teamDir string, filters eventFilters, phases map[string]bool, staleOnly, unhealthyOnly bool, now time.Time) (eventFilters, error) {
-	if len(phases) == 0 && !staleOnly && !unhealthyOnly {
+func applyCurrentEventInstanceFilter(teamDir string, filters eventFilters, phases map[string]bool, staleOnly, runtimeStaleOnly, unhealthyOnly bool, now time.Time) (eventFilters, error) {
+	if len(phases) == 0 && !staleOnly && !runtimeStaleOnly && !unhealthyOnly {
 		return filters, nil
 	}
 	rows, err := collectPsRows(teamDir, now)
 	if err != nil {
 		return filters, err
 	}
-	rows = filterPsRows(rows, psOptions{phases: phases, stale: staleOnly, unhealthy: unhealthyOnly})
+	rows = filterPsRows(rows, psOptions{phases: phases, stale: staleOnly, runtimeStale: runtimeStaleOnly, unhealthy: unhealthyOnly})
 	instances := make(map[string]bool, len(rows))
 	for _, row := range rows {
 		if len(filters.instances) > 0 && !filters.instances[row.Instance] {

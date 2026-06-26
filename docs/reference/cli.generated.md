@@ -836,6 +836,7 @@ Flags:
       --latest             Show events for the most recently started daemon-known instance after other filters.
       --phase strings      Only show events for instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --runtime strings    Only show events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale      Only show events for instances whose recorded runtime PID is currently no longer live.
       --since string       Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --stale              Only show events for instances whose status.toml is currently stale.
       --status strings     Only show events with this lifecycle status. Can repeat or comma-separate.
@@ -876,6 +877,7 @@ Flags:
       --phase strings       Only check instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
   -q, --quiet               Suppress output and use only the exit code.
       --runtime strings     Only check daemon-known instances for this runtime: claude or codex. Daemon health remains global. Can repeat or comma-separate.
+      --runtime-stale       Only check running instances whose recorded runtime PID is no longer live. Daemon health remains global.
       --stale               Only check instances whose status.toml is stale.
       --status strings      Only check instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --strict-topology     Treat running daemon-known instances not declared in instances.toml as unhealthy.
@@ -961,6 +963,7 @@ Flags:
       --latest             Inspect the most recently started visible instance after other filters.
       --phase strings      Only inspect instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --runtime strings    Only inspect instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale      Only inspect running instances whose recorded runtime PID is no longer live.
       --stale              Only inspect instances whose status.toml is stale.
       --status strings     Only inspect instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --target string      Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
@@ -2809,6 +2812,7 @@ Flags:
       --no-prefix         Do not prefix lines when streaming multiple instance logs.
       --phase strings     Only show logs for instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --runtime strings   Only show logs for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale     Only show logs for running instances whose recorded runtime PID is no longer live.
       --since string      Only include log streams modified since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --stale             Only show logs for instances whose status.toml is stale.
       --status strings    Only show logs for lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
@@ -2853,6 +2857,7 @@ Flags:
       --plan                   Include desired-state actions from instances.toml and daemon metadata.
       --resources              With --summary, include aggregate CPU, memory, and RSS totals.
       --runtime strings        Only show instances and stats for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale          Only show running instances whose recorded runtime PID is no longer live.
       --schedules              Include due and upcoming declared schedule state.
       --since string           With --events, only show lifecycle events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --sort string            Sort instance rows by name, status, agent, phase, stale, unhealthy, started, stopped, or exited. (default "name")
@@ -3246,6 +3251,7 @@ Flags:
       --phase strings     Only show logs for work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only show logs for pipeline-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale     Only show logs for pipeline instances whose recorded runtime PID is no longer live.
       --since string      Only include log streams modified since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --stale             Only show logs for pipeline instances whose status.toml is stale.
       --status strings    Only show logs for lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
@@ -3949,6 +3955,7 @@ Flags:
       --phase strings       Only show work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
   -q, --quiet               Only print matching instance names.
       --runtime strings     Only show instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale       Only show running instances whose recorded runtime PID is no longer live.
       --sort string         Sort rows by name, status, agent, phase, stale, unhealthy, started, stopped, or exited. (default "name")
       --stale               Only show instances whose status.toml is stale.
       --status strings      Only show lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
@@ -5067,6 +5074,7 @@ Flags:
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --phase strings       Only show instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --runtime strings     Only show instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale       Only show running instances whose recorded runtime PID is no longer live.
       --sort string         Sort rows by name, cpu, mem, rss, status, agent, phase, stale, or unhealthy. (default "name")
       --stale               Only show instances whose status.toml is stale.
       --status strings      Only show lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
@@ -5108,6 +5116,7 @@ Flags:
       --plan                   With --summary, include desired-state action counts from instances.toml and daemon metadata.
       --resources              With --summary, include aggregate CPU, memory, and RSS totals.
       --runtime strings        Only show instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale          Only show running instances whose recorded runtime PID is no longer live.
       --since string           With --events, only include lifecycle events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --stale                  Only show instances whose status.toml is stale.
       --status strings         Only show lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
@@ -5525,6 +5534,7 @@ Flags:
   -q, --quiet             Suppress output and use only the exit code.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only check team-owned daemon-known instances for this runtime: claude or codex. Daemon, queue, and job health remain team-scoped. Can repeat or comma-separate.
+      --runtime-stale     Only check team-owned running instances whose recorded runtime PID is no longer live. Daemon, queue, and job health remain team-scoped.
 ```
 
 ## `agent-team team hold`
@@ -5603,6 +5613,7 @@ Flags:
       --phase strings     Only show logs for work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only show logs for team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale     Only show logs for team instances whose recorded runtime PID is no longer live.
       --since string      Only include log streams modified since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --stale             Only show logs for team instances whose status.toml is stale.
       --status strings    Only show logs for lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
@@ -5655,6 +5666,7 @@ Flags:
       --plan                   Include team-scoped desired-state actions from instances.toml and daemon metadata.
       --repo string            Repo root containing .agent_team. (default "<repo>")
       --runtime strings        Only show team-owned instances for this runtime in instance, stats, and plan sections: claude or codex. Can repeat or comma-separate.
+      --runtime-stale          Only show team-owned running instances whose recorded runtime PID is no longer live.
       --schedules              Include due and upcoming team schedules.
       --since string           With --events, only show lifecycle events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --sort string            Sort instance rows by name, status, agent, phase, stale, unhealthy, started, stopped, or exited. (default "name")
@@ -5800,6 +5812,7 @@ Flags:
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --runtime strings     Only show team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale       Only show team-owned running instances whose recorded runtime PID is no longer live.
   -w, --watch               Refresh team instances until interrupted.
 ```
 
@@ -6387,6 +6400,7 @@ Flags:
       --phase strings       Only show team-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --runtime strings     Only show team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale       Only show team-owned running instances whose recorded runtime PID is no longer live.
       --sort string         Sort rows by name, cpu, mem, rss, status, agent, phase, stale, or unhealthy. (default "name")
       --stale               Only show team-owned instances whose status.toml is stale.
       --status strings      Only show team-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
@@ -6412,6 +6426,7 @@ Flags:
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --runtime strings     Only summarize team-owned instances for this runtime: claude or codex. Jobs, queue, pipelines, and schedules remain team-scoped. Can repeat or comma-separate.
+      --runtime-stale       Only summarize team-owned running instances whose recorded runtime PID is no longer live. Jobs, queue, pipelines, and schedules remain team-scoped.
   -w, --watch               Refresh team status until interrupted.
 ```
 
@@ -6981,6 +6996,7 @@ Flags:
       --plan                   Include desired-state actions from instances.toml and daemon metadata.
       --resources              With --summary, include aggregate CPU, memory, and RSS totals.
       --runtime strings        Only show instances and stats for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale          Only show running instances whose recorded runtime PID is no longer live.
       --schedules              Include due and upcoming declared schedule state.
       --since string           With --events, only show lifecycle events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --sort string            Sort instance rows by name, status, agent, phase, stale, unhealthy, started, stopped, or exited. (default "name")

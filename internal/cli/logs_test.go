@@ -1109,6 +1109,45 @@ func TestLogsListJSONUnhealthyIncludesRuntimeStale(t *testing.T) {
 	}
 }
 
+func TestLogsListJSONRuntimeStaleFiltersOnlyRuntimeStale(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	old := now.Add(-staleAfter - time.Minute)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "crashed", Agent: "worker", Runtime: "codex", Status: daemon.StatusCrashed, PID: 99999998, StartedAt: now.Add(-2 * time.Minute)},
+		{Instance: "runtime-stale", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, StartedAt: now.Add(-time.Minute)},
+		{Instance: "fresh", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+		writeChildLogForTest(t, root, meta.Instance, meta.Instance+"\n")
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "status-stale"), `[status]
+phase = "implementing"
+description = "stale status only"
+`, old)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"logs", "--list", "--runtime-stale", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("logs --list --runtime-stale --json: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []logListRow
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode logs list runtime-stale: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "runtime-stale" || !rows[0].RuntimeStale || !rows[0].Unhealthy || rows[0].Stale {
+		t.Fatalf("rows = %+v, want one runtime-stale row only", rows)
+	}
+}
+
 func TestLogsListTableIncludesPhaseAndStale(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -1992,7 +2031,7 @@ func TestLogsNoPrefixRequiresMultiInstanceSelection(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected validation error")
 	}
-	if !strings.Contains(stderr.String(), "--no-prefix requires --all, --latest, --last, --status, --runtime, --agent, --phase, --stale, or --unhealthy") {
+	if !strings.Contains(stderr.String(), "--no-prefix requires --all, --latest, --last, --status, --runtime, --agent, --phase, --stale, --runtime-stale, or --unhealthy") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

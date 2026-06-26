@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -858,6 +859,50 @@ func TestEventsUnhealthyFilterIncludesRuntimeStaleWhenDaemonStopped(t *testing.T
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("events --unhealthy runtime-stale fallback: %v\nstderr=%s", err, stderr.String())
+	}
+	if got, want := stdout.String(), "runtime-stale\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestEventsRuntimeStaleFilterIncludesOnlyCurrentRuntimeStaleWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "crashed", Agent: "worker", Runtime: "codex", Status: daemon.StatusCrashed, PID: 99999998, StartedAt: now.Add(-2 * time.Minute)},
+		{Instance: "runtime-stale", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, StartedAt: now.Add(-time.Minute)},
+		{Instance: "fresh", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+		if err := daemon.AppendLifecycleEvent(root, &daemon.LifecycleEvent{
+			TS:       now,
+			Action:   "dispatch",
+			Instance: meta.Instance,
+			Agent:    meta.Agent,
+			Status:   meta.Status,
+			Message:  meta.Instance,
+		}); err != nil {
+			t.Fatalf("append event %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{
+		"events",
+		"--runtime-stale",
+		"--format", "{{.Instance}}",
+		"--target", tmp,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("events --runtime-stale fallback: %v\nstderr=%s", err, stderr.String())
 	}
 	if got, want := stdout.String(), "runtime-stale\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)

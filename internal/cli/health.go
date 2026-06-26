@@ -20,26 +20,27 @@ import (
 
 func newHealthCmd() *cobra.Command {
 	var (
-		target          string
-		jsonOut         bool
-		quiet           bool
-		watch           bool
-		wait            bool
-		noClear         bool
-		format          string
-		latest          bool
-		last            int
-		statusFilters   []string
-		runtimeFilters  []string
-		agentFilters    []string
-		phaseFilters    []string
-		instanceFilters []string
-		staleOnly       bool
-		unhealthyOnly   bool
-		strictTopology  bool
-		includeJobs     bool
-		interval        time.Duration
-		timeout         time.Duration
+		target           string
+		jsonOut          bool
+		quiet            bool
+		watch            bool
+		wait             bool
+		noClear          bool
+		format           string
+		latest           bool
+		last             int
+		statusFilters    []string
+		runtimeFilters   []string
+		agentFilters     []string
+		phaseFilters     []string
+		instanceFilters  []string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
+		strictTopology   bool
+		includeJobs      bool
+		interval         time.Duration
+		timeout          time.Duration
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -90,6 +91,7 @@ func newHealthCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team health: %v\n", err)
 				return exitErr(2)
 			}
+			opts.filters.runtimeStale = runtimeStaleOnly
 			opts.filters.Limit = last
 			if latest {
 				opts.filters.Limit = 1
@@ -163,6 +165,7 @@ func newHealthCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only check instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only check instances with this name. Daemon health remains global. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only check instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only check running instances whose recorded runtime PID is no longer live. Daemon health remains global.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only check crashed, status-stale, or runtime-stale instances. Daemon health remains global.")
 	cmd.Flags().BoolVar(&strictTopology, "strict-topology", false, "Treat running daemon-known instances not declared in instances.toml as unhealthy.")
 	cmd.Flags().BoolVar(&includeJobs, "jobs", false, "Include durable job triage and status-file previews; treat jobs needing attention as unhealthy.")
@@ -1025,6 +1028,9 @@ func healthDeclaredMatchesFilters(inst *topology.Instance, row instanceRow, hasR
 func healthRowMatchesFilters(row instanceRow, opts healthOptions) bool {
 	filters := opts.filters
 	if filters.stale && !row.Stale {
+		return false
+	}
+	if filters.runtimeStale && !row.RuntimeStale {
 		return false
 	}
 	if filters.unhealthy && !psRowUnhealthy(row) {

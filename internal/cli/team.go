@@ -767,13 +767,14 @@ func selectTeamRunPipeline(team *topology.Team, override string) (string, error)
 
 func newTeamPsCmd() *cobra.Command {
 	var (
-		repo           string
-		watch          bool
-		noClear        bool
-		interval       time.Duration
-		runtimeFilters []string
-		jsonOut        bool
-		format         string
+		repo             string
+		watch            bool
+		noClear          bool
+		interval         time.Duration
+		runtimeFilters   []string
+		runtimeStaleOnly bool
+		jsonOut          bool
+		format           string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -800,6 +801,7 @@ func newTeamPsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team ps: %v\n", err)
 				return exitErr(2)
 			}
+			opts.runtimeStale = runtimeStaleOnly
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -823,6 +825,7 @@ func newTeamPsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show team-owned running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team instances as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each team instance with a Go template, e.g. '{{.Instance}} {{.Status}}'.")
 	return cmd
@@ -2496,24 +2499,25 @@ func newTeamQueuePruneCmd() *cobra.Command {
 
 func newTeamLogsCmd() *cobra.Command {
 	var (
-		repo      string
-		follow    bool
-		latest    bool
-		last      int
-		list      bool
-		jsonOut   bool
-		noPrefix  bool
-		statuses  []string
-		runtimes  []string
-		phases    []string
-		staleOnly bool
-		unhealthy bool
-		lastMsg   bool
-		clean     bool
-		tail      string
-		since     string
-		grep      string
-		format    string
+		repo             string
+		follow           bool
+		latest           bool
+		last             int
+		list             bool
+		jsonOut          bool
+		noPrefix         bool
+		statuses         []string
+		runtimes         []string
+		phases           []string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthy        bool
+		lastMsg          bool
+		clean            bool
+		tail             string
+		since            string
+		grep             string
+		format           string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -2620,25 +2624,27 @@ func newTeamLogsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team logs: %v\n", err)
 				return exitErr(2)
 			}
+			listOpts.runtimeStale = runtimeStaleOnly
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
 			}
 			opts := logsOptions{
-				Follow:      follow,
-				Latest:      latest,
-				Limit:       last,
-				List:        list,
-				JSON:        jsonOut,
-				NoPrefix:    noPrefix,
-				Tail:        tailLines,
-				TailSet:     cmd.Flags().Changed("tail"),
-				Since:       sinceCutoff,
-				Grep:        grepPattern,
-				Format:      formatTemplate,
-				Unhealthy:   unhealthy,
-				LastMessage: lastMsg,
-				Clean:       clean,
+				Follow:       follow,
+				Latest:       latest,
+				Limit:        last,
+				List:         list,
+				JSON:         jsonOut,
+				NoPrefix:     noPrefix,
+				Tail:         tailLines,
+				TailSet:      cmd.Flags().Changed("tail"),
+				Since:        sinceCutoff,
+				Grep:         grepPattern,
+				Format:       formatTemplate,
+				RuntimeStale: runtimeStaleOnly,
+				Unhealthy:    unhealthy,
+				LastMessage:  lastMsg,
+				Clean:        clean,
 			}
 			return runTeamLogs(cmd, teamDir, args[0], opts, listOpts)
 		},
@@ -2654,6 +2660,7 @@ func newTeamLogsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Only show logs for team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phases, "phase", nil, "Only show logs for work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show logs for team instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show logs for team instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthy, "unhealthy", false, "Only show logs for crashed, status-stale, or runtime-stale team instances.")
 	cmd.Flags().BoolVar(&lastMsg, "last-message", false, "Show clean final Codex response sidecars instead of raw runtime logs.")
 	cmd.Flags().BoolVar(&clean, "clean", false, "Hide known Codex runtime diagnostic noise when printing raw team logs.")
@@ -3196,22 +3203,23 @@ func newTeamPruneCmd() *cobra.Command {
 
 func newTeamStatsCmd() *cobra.Command {
 	var (
-		repo           string
-		all            bool
-		latest         bool
-		last           int
-		watch          bool
-		jsonOut        bool
-		summary        bool
-		noClear        bool
-		format         string
-		sortBy         string
-		interval       time.Duration
-		statusFilters  []string
-		runtimeFilters []string
-		phaseFilters   []string
-		staleOnly      bool
-		unhealthyOnly  bool
+		repo             string
+		all              bool
+		latest           bool
+		last             int
+		watch            bool
+		jsonOut          bool
+		summary          bool
+		noClear          bool
+		format           string
+		sortBy           string
+		interval         time.Duration
+		statusFilters    []string
+		runtimeFilters   []string
+		phaseFilters     []string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -3242,8 +3250,8 @@ func newTeamStatsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --last cannot be combined with instance names.")
 				return exitErr(2)
 			}
-			if len(names) > 0 && (len(statusFilters) > 0 || len(runtimeFilters) > 0 || len(phaseFilters) > 0 || staleOnly || unhealthyOnly) {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --status, --runtime, --phase, --stale, and --unhealthy cannot be combined with instance names.")
+			if len(names) > 0 && (len(statusFilters) > 0 || len(runtimeFilters) > 0 || len(phaseFilters) > 0 || staleOnly || runtimeStaleOnly || unhealthyOnly) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team stats: --status, --runtime, --phase, --stale, --runtime-stale, and --unhealthy cannot be combined with instance names.")
 				return exitErr(2)
 			}
 			if interval < 0 {
@@ -3274,6 +3282,7 @@ func newTeamStatsCmd() *cobra.Command {
 			opts.Latest = latest
 			opts.Limit = last
 			opts.Stale = staleOnly
+			opts.RuntimeStale = runtimeStaleOnly
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -3355,6 +3364,7 @@ func newTeamStatsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show team-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show team-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show team-owned running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed, status-stale, or runtime-stale team-owned instances.")
 	return cmd
 }
@@ -4453,12 +4463,13 @@ func newTeamPlanCmd() *cobra.Command {
 
 func newTeamHealthCmd() *cobra.Command {
 	var (
-		repo           string
-		includeJobs    bool
-		quiet          bool
-		jsonOut        bool
-		format         string
-		runtimeFilters []string
+		repo             string
+		includeJobs      bool
+		quiet            bool
+		jsonOut          bool
+		format           string
+		runtimeFilters   []string
+		runtimeStaleOnly bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -4484,6 +4495,7 @@ func newTeamHealthCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team health: %v\n", err)
 				return exitErr(2)
 			}
+			healthOpts.filters.runtimeStale = runtimeStaleOnly
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -4509,19 +4521,21 @@ func newTeamHealthCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team health as JSON.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only check team-owned daemon-known instances for this runtime: claude or codex. Daemon, queue, and job health remain team-scoped. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only check team-owned running instances whose recorded runtime PID is no longer live. Daemon, queue, and job health remain team-scoped.")
 	cmd.Flags().StringVar(&format, "format", "", "Render team health with a Go template, e.g. '{{.Team.Name}} {{.Health.Healthy}}'.")
 	return cmd
 }
 
 func newTeamStatusCmd() *cobra.Command {
 	var (
-		repo           string
-		watch          bool
-		noClear        bool
-		interval       time.Duration
-		jsonOut        bool
-		format         string
-		runtimeFilters []string
+		repo             string
+		watch            bool
+		noClear          bool
+		interval         time.Duration
+		jsonOut          bool
+		format           string
+		runtimeFilters   []string
+		runtimeStaleOnly bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -4547,6 +4561,7 @@ func newTeamStatusCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team status: %v\n", err)
 				return exitErr(2)
 			}
+			opts.runtimeStale = runtimeStaleOnly
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -4571,38 +4586,40 @@ func newTeamStatusCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team status as JSON.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only summarize team-owned instances for this runtime: claude or codex. Jobs, queue, pipelines, and schedules remain team-scoped. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only summarize team-owned running instances whose recorded runtime PID is no longer live. Jobs, queue, pipelines, and schedules remain team-scoped.")
 	cmd.Flags().StringVar(&format, "format", "", "Render team status with a Go template, e.g. '{{.Team.Name}} {{.InstanceSummary.Total}}'.")
 	return cmd
 }
 
 func newTeamMonitorCmd() *cobra.Command {
 	var (
-		repo            string
-		all             bool
-		watch           bool
-		plan            bool
-		jobs            bool
-		schedules       bool
-		stopExtras      bool
-		jsonOut         bool
-		noClear         bool
-		latest          bool
-		last            int
-		format          string
-		sortBy          string
-		statsSortBy     string
-		staleOnly       bool
-		unhealthyOnly   bool
-		eventTail       int
-		eventSince      string
-		interval        time.Duration
-		statusFilters   []string
-		runtimeFilters  []string
-		agentFilters    []string
-		phaseFilters    []string
-		instanceFilters []string
-		actionFilters   []string
-		eventActions    []string
+		repo             string
+		all              bool
+		watch            bool
+		plan             bool
+		jobs             bool
+		schedules        bool
+		stopExtras       bool
+		jsonOut          bool
+		noClear          bool
+		latest           bool
+		last             int
+		format           string
+		sortBy           string
+		statsSortBy      string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
+		eventTail        int
+		eventSince       string
+		interval         time.Duration
+		statusFilters    []string
+		runtimeFilters   []string
+		agentFilters     []string
+		phaseFilters     []string
+		instanceFilters  []string
+		actionFilters    []string
+		eventActions     []string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -4658,6 +4675,8 @@ func newTeamMonitorCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team monitor: %v\n", err)
 				return exitErr(2)
 			}
+			opts.PS.runtimeStale = runtimeStaleOnly
+			opts.Stats.RuntimeStale = runtimeStaleOnly
 			sortMode, err := parsePsSort(sortBy)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team monitor: %v\n", err)
@@ -4737,6 +4756,7 @@ func newTeamMonitorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort instance rows by name, status, agent, phase, stale, unhealthy, started, stopped, or exited.")
 	cmd.Flags().StringVar(&statsSortBy, "stats-sort", "name", "Sort stats rows by name, cpu, mem, rss, status, agent, phase, stale, or unhealthy.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show team-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show team-owned running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed, status-stale, or runtime-stale team-owned instances.")
 	cmd.Flags().IntVar(&eventTail, "events", 0, "Include the last N matching team lifecycle events in the full monitor (0 = omit).")
 	cmd.Flags().StringSliceVar(&eventActions, "event-action", nil, "With --events, only show lifecycle events with this action. Can repeat or comma-separate.")
@@ -8369,7 +8389,7 @@ func teamStatusActionsWithOptions(top *topology.Topology, team *topology.Team, s
 }
 
 func psOptionsHasSelectionFilters(opts psOptions) bool {
-	return len(opts.statuses) > 0 || len(opts.runtimes) > 0 || len(opts.agents) > 0 || len(opts.phases) > 0 || len(opts.instances) > 0 || opts.stale || opts.unhealthy
+	return len(opts.statuses) > 0 || len(opts.runtimes) > 0 || len(opts.agents) > 0 || len(opts.phases) > 0 || len(opts.instances) > 0 || opts.stale || opts.runtimeStale || opts.unhealthy
 }
 
 func stringSliceSet(items []string) map[string]bool {

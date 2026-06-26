@@ -618,30 +618,31 @@ func newRestartCmd() *cobra.Command {
 
 func newStatusCmd() *cobra.Command {
 	var (
-		target          string
-		jsonOut         bool
-		watch           bool
-		summary         bool
-		resources       bool
-		plan            bool
-		stopExtras      bool
-		noClear         bool
-		latest          bool
-		last            int
-		eventTail       int
-		eventSince      string
-		interval        time.Duration
-		statusFilters   []string
-		runtimeFilters  []string
-		agentFilters    []string
-		phaseFilters    []string
-		instanceFilters []string
-		eventActions    []string
-		actionFilters   []string
-		staleOnly       bool
-		unhealthyOnly   bool
-		strictTopology  bool
-		format          string
+		target           string
+		jsonOut          bool
+		watch            bool
+		summary          bool
+		resources        bool
+		plan             bool
+		stopExtras       bool
+		noClear          bool
+		latest           bool
+		last             int
+		eventTail        int
+		eventSince       string
+		interval         time.Duration
+		statusFilters    []string
+		runtimeFilters   []string
+		agentFilters     []string
+		phaseFilters     []string
+		instanceFilters  []string
+		eventActions     []string
+		actionFilters    []string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
+		strictTopology   bool
+		format           string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -710,6 +711,7 @@ func newStatusCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team status: %v\n", err)
 				return exitErr(2)
 			}
+			opts.runtimeStale = runtimeStaleOnly
 			opts.Limit = last
 			if latest {
 				opts.Limit = 1
@@ -796,6 +798,7 @@ func newStatusCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only show instances with this name. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed, status-stale, or runtime-stale instances.")
 	cmd.Flags().BoolVar(&strictTopology, "strict-topology", false, "With --summary, treat running daemon-known instances not declared in instances.toml as unhealthy.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each instance row with a Go template, e.g. '{{.Instance}} {{.Status}}'.")
@@ -1094,19 +1097,20 @@ func runStatusWatchWithClear(ctx context.Context, w fmtWriter, teamDir string, i
 
 func newInspectCmd() *cobra.Command {
 	var (
-		target          string
-		jsonOut         bool
-		all             bool
-		latest          bool
-		last            int
-		statusFilters   []string
-		runtimeFilters  []string
-		agentFilters    []string
-		phaseFilters    []string
-		instanceFilters []string
-		staleOnly       bool
-		unhealthyOnly   bool
-		format          string
+		target           string
+		jsonOut          bool
+		all              bool
+		latest           bool
+		last             int
+		statusFilters    []string
+		runtimeFilters   []string
+		agentFilters     []string
+		phaseFilters     []string
+		instanceFilters  []string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
+		format           string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1132,12 +1136,13 @@ func newInspectCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team inspect: choose one of --latest or --last.")
 				return exitErr(2)
 			}
-			filtersActive := len(statusFilters) > 0 || len(runtimeFilters) > 0 || len(agentFilters) > 0 || len(phaseFilters) > 0 || len(instanceFilters) > 0 || staleOnly || unhealthyOnly
+			filtersActive := len(statusFilters) > 0 || len(runtimeFilters) > 0 || len(agentFilters) > 0 || len(phaseFilters) > 0 || len(instanceFilters) > 0 || staleOnly || runtimeStaleOnly || unhealthyOnly
 			filterOpts, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(statusFilters, runtimeFilters, agentFilters, phaseFilters, instanceFilters, staleOnly, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team inspect: %v\n", err)
 				return exitErr(2)
 			}
+			filterOpts.runtimeStale = runtimeStaleOnly
 			if latest {
 				filterOpts.Limit = 1
 			} else if last > 0 {
@@ -1165,6 +1170,7 @@ func newInspectCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only inspect instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only inspect instances with this name. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only inspect instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only inspect running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only inspect crashed, status-stale, or runtime-stale instances.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each instance with a Go template, e.g. '{{.Instance}} {{if .Runtime}}{{.Runtime.Lifecycle}}{{end}}'.")
 	return cmd

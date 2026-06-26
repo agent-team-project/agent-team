@@ -23,24 +23,25 @@ import (
 
 func newStatsCmd() *cobra.Command {
 	var (
-		target          string
-		all             bool
-		latest          bool
-		last            int
-		watch           bool
-		jsonOut         bool
-		summary         bool
-		noClear         bool
-		format          string
-		sortBy          string
-		interval        time.Duration
-		statusFilters   []string
-		runtimeFilters  []string
-		agentFilters    []string
-		phaseFilters    []string
-		instanceFilters []string
-		staleOnly       bool
-		unhealthyOnly   bool
+		target           string
+		all              bool
+		latest           bool
+		last             int
+		watch            bool
+		jsonOut          bool
+		summary          bool
+		noClear          bool
+		format           string
+		sortBy           string
+		interval         time.Duration
+		statusFilters    []string
+		runtimeFilters   []string
+		agentFilters     []string
+		phaseFilters     []string
+		instanceFilters  []string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -71,8 +72,8 @@ func newStatsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team stats: --last cannot be combined with instance names.")
 				return exitErr(2)
 			}
-			if len(args) > 0 && (len(statusFilters) > 0 || len(runtimeFilters) > 0 || len(agentFilters) > 0 || len(phaseFilters) > 0 || len(instanceFilters) > 0 || staleOnly || unhealthyOnly) {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team stats: --status, --runtime, --agent, --phase, --instance, --stale, and --unhealthy cannot be combined with instance names.")
+			if len(args) > 0 && (len(statusFilters) > 0 || len(runtimeFilters) > 0 || len(agentFilters) > 0 || len(phaseFilters) > 0 || len(instanceFilters) > 0 || staleOnly || runtimeStaleOnly || unhealthyOnly) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team stats: --status, --runtime, --agent, --phase, --instance, --stale, --runtime-stale, and --unhealthy cannot be combined with instance names.")
 				return exitErr(2)
 			}
 			if interval < 0 {
@@ -103,6 +104,7 @@ func newStatsCmd() *cobra.Command {
 			opts.Latest = latest
 			opts.Limit = last
 			opts.Stale = staleOnly
+			opts.RuntimeStale = runtimeStaleOnly
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -162,23 +164,25 @@ func newStatsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only show instances with this name. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed, status-stale, or runtime-stale instances.")
 	return cmd
 }
 
 type statsOptions struct {
-	All       bool
-	Latest    bool
-	Limit     int
-	Stale     bool
-	Unhealthy bool
-	Sort      statsSortMode
-	SortSet   bool
-	statuses  map[string]bool
-	runtimes  map[string]bool
-	agents    map[string]bool
-	phases    map[string]bool
-	instances map[string]bool
+	All          bool
+	Latest       bool
+	Limit        int
+	Stale        bool
+	RuntimeStale bool
+	Unhealthy    bool
+	Sort         statsSortMode
+	SortSet      bool
+	statuses     map[string]bool
+	runtimes     map[string]bool
+	agents       map[string]bool
+	phases       map[string]bool
+	instances    map[string]bool
 
 	phaseByInstance map[string]string
 	staleByInstance map[string]bool
@@ -765,6 +769,9 @@ func statsOptionsMatchesMeta(opts statsOptions, meta *daemon.Metadata) bool {
 	if opts.Stale && !statsMetaStale(opts, meta.Instance) {
 		return false
 	}
+	if opts.RuntimeStale && !runtimeResumeMetadataIsStale(meta) {
+		return false
+	}
 	if opts.Unhealthy && !statsMetaUnhealthy(opts, meta) {
 		return false
 	}
@@ -772,7 +779,7 @@ func statsOptionsMatchesMeta(opts statsOptions, meta *daemon.Metadata) bool {
 }
 
 func statsOptionsHasFilters(opts statsOptions) bool {
-	return len(opts.statuses) > 0 || len(opts.runtimes) > 0 || len(opts.agents) > 0 || len(opts.phases) > 0 || len(opts.instances) > 0 || opts.Stale || opts.Unhealthy
+	return len(opts.statuses) > 0 || len(opts.runtimes) > 0 || len(opts.agents) > 0 || len(opts.phases) > 0 || len(opts.instances) > 0 || opts.Stale || opts.RuntimeStale || opts.Unhealthy
 }
 
 func statsMetaRuntimeKey(meta *daemon.Metadata) string {

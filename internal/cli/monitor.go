@@ -21,35 +21,36 @@ import (
 
 func newMonitorCmd() *cobra.Command {
 	var (
-		target          string
-		all             bool
-		watch           bool
-		plan            bool
-		jobs            bool
-		schedules       bool
-		stopExtras      bool
-		summary         bool
-		resources       bool
-		jsonOut         bool
-		noClear         bool
-		latest          bool
-		last            int
-		format          string
-		sortBy          string
-		statsSortBy     string
-		staleOnly       bool
-		unhealthyOnly   bool
-		eventTail       int
-		eventSince      string
-		interval        time.Duration
-		statusFilters   []string
-		runtimeFilters  []string
-		agentFilters    []string
-		phaseFilters    []string
-		instanceFilters []string
-		actionFilters   []string
-		eventActions    []string
-		strictTopology  bool
+		target           string
+		all              bool
+		watch            bool
+		plan             bool
+		jobs             bool
+		schedules        bool
+		stopExtras       bool
+		summary          bool
+		resources        bool
+		jsonOut          bool
+		noClear          bool
+		latest           bool
+		last             int
+		format           string
+		sortBy           string
+		statsSortBy      string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
+		eventTail        int
+		eventSince       string
+		interval         time.Duration
+		statusFilters    []string
+		runtimeFilters   []string
+		agentFilters     []string
+		phaseFilters     []string
+		instanceFilters  []string
+		actionFilters    []string
+		eventActions     []string
+		strictTopology   bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -108,6 +109,8 @@ func newMonitorCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team monitor: %v\n", err)
 				return exitErr(2)
 			}
+			opts.PS.runtimeStale = runtimeStaleOnly
+			opts.Stats.RuntimeStale = runtimeStaleOnly
 			sortMode, err := parsePsSort(sortBy)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team monitor: %v\n", err)
@@ -196,6 +199,7 @@ func newMonitorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort instance rows by name, status, agent, phase, stale, unhealthy, started, stopped, or exited.")
 	cmd.Flags().StringVar(&statsSortBy, "stats-sort", "name", "Sort stats rows by name, cpu, mem, rss, status, agent, phase, stale, or unhealthy.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed, status-stale, or runtime-stale instances.")
 	cmd.Flags().IntVar(&eventTail, "events", 0, "Include the last N matching daemon lifecycle events in the full monitor (0 = omit).")
 	cmd.Flags().StringSliceVar(&eventActions, "event-action", nil, "With --events, only show lifecycle events with this action. Can repeat or comma-separate.")
@@ -793,7 +797,7 @@ func collectMonitorSnapshot(teamDir string, now time.Time, probe processStatsPro
 	if opts.Stats.All {
 		snapshot.statsEmpty = "(no daemon-managed instances)"
 	}
-	if statsOptionsHasFilters(opts.Stats) || opts.PS.stale || opts.PS.unhealthy {
+	if statsOptionsHasFilters(opts.Stats) || opts.PS.stale || opts.PS.runtimeStale || opts.PS.unhealthy {
 		snapshot.statsEmpty = "(no matching instances)"
 	}
 	if opts.IncludePlan {
@@ -848,7 +852,7 @@ func collectMonitorSnapshot(teamDir string, now time.Time, probe processStatsPro
 		if err != nil {
 			snapshot.StatsError = err.Error()
 		} else {
-			if opts.PS.stale || opts.PS.unhealthy {
+			if opts.PS.stale || opts.PS.runtimeStale || opts.PS.unhealthy {
 				statsRows = filterStatsRowsToInstanceOrder(statsRows, displayRows)
 			}
 			snapshot.statsRows = statsRows
@@ -868,7 +872,7 @@ func collectMonitorSnapshot(teamDir string, now time.Time, probe processStatsPro
 		if err != nil {
 			snapshot.StatsError = err.Error()
 		} else {
-			if opts.PS.stale || opts.PS.unhealthy {
+			if opts.PS.stale || opts.PS.runtimeStale || opts.PS.unhealthy {
 				statsRows = filterStatsRowsToInstanceOrder(statsRows, displayRows)
 			}
 			snapshot.statsRows = statsRows
@@ -932,7 +936,7 @@ func collectTeamMonitorSnapshot(teamDir, name string, now time.Time, probe proce
 	if opts.Stats.All {
 		snapshot.statsEmpty = "(no daemon-managed team-owned instances)"
 	}
-	if statsOptionsHasFilters(opts.Stats) || opts.PS.stale || opts.PS.unhealthy {
+	if statsOptionsHasFilters(opts.Stats) || opts.PS.stale || opts.PS.runtimeStale || opts.PS.unhealthy {
 		snapshot.statsEmpty = "(no matching team-owned instances)"
 	}
 	if opts.IncludePlan {
@@ -985,7 +989,7 @@ func collectTeamMonitorSnapshot(teamDir, name string, now time.Time, probe proce
 	if err != nil {
 		snapshot.StatsError = err.Error()
 	} else {
-		if opts.PS.stale || opts.PS.unhealthy {
+		if opts.PS.stale || opts.PS.runtimeStale || opts.PS.unhealthy {
 			statsRows = filterStatsRowsToInstanceOrder(statsRows, displayRows)
 		}
 		snapshot.statsRows = statsRows
@@ -1053,7 +1057,7 @@ func teamMonitorEventFilters(teamDir, name string, opts monitorOptions, selected
 }
 
 func monitorSelectedInstanceSet(rows []instanceRow, opts psOptions) map[string]bool {
-	if opts.Limit <= 0 && len(opts.runtimes) == 0 && len(opts.phases) == 0 && !opts.stale && !opts.unhealthy {
+	if opts.Limit <= 0 && len(opts.runtimes) == 0 && len(opts.phases) == 0 && !opts.stale && !opts.runtimeStale && !opts.unhealthy {
 		return nil
 	}
 	out := make(map[string]bool, len(rows))

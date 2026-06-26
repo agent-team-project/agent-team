@@ -31,25 +31,26 @@ import (
 // walk plus persisted daemon metadata from `.agent_team/daemon/<instance>/`.
 func newPsCmd() *cobra.Command {
 	var (
-		target          string
-		watch           bool
-		jsonOut         bool
-		quiet           bool
-		summary         bool
-		all             bool
-		staleOnly       bool
-		unhealthyOnly   bool
-		latest          bool
-		last            int
-		noClear         bool
-		format          string
-		sortBy          string
-		interval        time.Duration
-		statusFilters   []string
-		runtimeFilters  []string
-		agentFilters    []string
-		phaseFilters    []string
-		instanceFilters []string
+		target           string
+		watch            bool
+		jsonOut          bool
+		quiet            bool
+		summary          bool
+		all              bool
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
+		latest           bool
+		last             int
+		noClear          bool
+		format           string
+		sortBy           string
+		interval         time.Duration
+		statusFilters    []string
+		runtimeFilters   []string
+		agentFilters     []string
+		phaseFilters     []string
+		instanceFilters  []string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -81,6 +82,7 @@ func newPsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team ps: %v\n", err)
 				return exitErr(2)
 			}
+			opts.runtimeStale = runtimeStaleOnly
 			sortMode, err := parsePsSort(sortBy)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team ps: %v\n", err)
@@ -157,6 +159,7 @@ func newPsCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&latest, "latest", "l", false, "Show only the most recently started instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show only the N most recently started instances after other filters (0 = all).")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed, status-stale, or runtime-stale instances.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.Instance}} {{.Status}}'.")
 	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort rows by name, status, agent, phase, stale, unhealthy, started, stopped, or exited.")
@@ -440,16 +443,17 @@ func lifecyclePhaseSummaryOrder() []string {
 }
 
 type psOptions struct {
-	Sort      psSortMode
-	SortSet   bool
-	Limit     int
-	statuses  map[string]bool
-	runtimes  map[string]bool
-	agents    map[string]bool
-	phases    map[string]bool
-	instances map[string]bool
-	stale     bool
-	unhealthy bool
+	Sort         psSortMode
+	SortSet      bool
+	Limit        int
+	statuses     map[string]bool
+	runtimes     map[string]bool
+	agents       map[string]bool
+	phases       map[string]bool
+	instances    map[string]bool
+	stale        bool
+	runtimeStale bool
+	unhealthy    bool
 }
 
 type psSortMode string
@@ -611,12 +615,15 @@ func splitFilterValues(raw []string) []string {
 }
 
 func filterPsRows(rows []instanceRow, opts psOptions) []instanceRow {
-	if len(opts.statuses) == 0 && len(opts.runtimes) == 0 && len(opts.agents) == 0 && len(opts.phases) == 0 && len(opts.instances) == 0 && !opts.stale && !opts.unhealthy {
+	if len(opts.statuses) == 0 && len(opts.runtimes) == 0 && len(opts.agents) == 0 && len(opts.phases) == 0 && len(opts.instances) == 0 && !opts.stale && !opts.runtimeStale && !opts.unhealthy {
 		return rows
 	}
 	out := make([]instanceRow, 0, len(rows))
 	for _, r := range rows {
 		if opts.stale && !r.Stale {
+			continue
+		}
+		if opts.runtimeStale && !r.RuntimeStale {
 			continue
 		}
 		if opts.unhealthy && !psRowUnhealthy(r) {

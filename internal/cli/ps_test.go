@@ -556,6 +556,44 @@ func TestPsUnhealthyJSONIncludesRuntimeStaleRows(t *testing.T) {
 	}
 }
 
+func TestPsRuntimeStaleJSONFiltersOnlyRuntimeStaleRows(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	old := now.Add(-staleAfter - time.Minute)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "crashed", Agent: "worker", Runtime: "codex", Status: daemon.StatusCrashed, PID: 99999998, StartedAt: now.Add(-2 * time.Minute)},
+		{Instance: "runtime-stale", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, StartedAt: now.Add(-time.Minute)},
+		{Instance: "fresh", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "status-stale"), `[status]
+phase = "implementing"
+description = "stale status only"
+`, old)
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"ps", "--runtime-stale", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("ps --runtime-stale --json: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []psJSONRow
+	if err := json.Unmarshal(stdout.Bytes(), &rows); err != nil {
+		t.Fatalf("decode ps runtime-stale json: %v\nbody=%s", err, stdout.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "runtime-stale" || !rows[0].RuntimeStale || !rows[0].Unhealthy || rows[0].Stale {
+		t.Fatalf("rows = %+v, want one runtime-stale row only", rows)
+	}
+}
+
 func TestPsFiltersRowsByInstanceAndCommaSeparatedValues(t *testing.T) {
 	opts, err := newPsOptionsWithInstances([]string{"running, unknown"}, nil, nil, []string{"manager,worker-c"}, false)
 	if err != nil {

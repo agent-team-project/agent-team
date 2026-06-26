@@ -26,7 +26,7 @@ agent-team restart manager --attach --tail 100
 agent-team kill worker-squ-42 --wait
 ```
 
-With no instance arguments, commands generally operate on declared persistent instances. `--all`, `--agent`, `--status`, `--phase`, `--stale`, `--unhealthy`, `--latest`, and `--last N` narrow or expand the selection.
+With no instance arguments, commands generally operate on declared persistent instances. `--all`, `--agent`, `--status`, `--phase`, `--stale`, `--runtime-stale`, `--unhealthy`, `--latest`, and `--last N` narrow or expand the selection.
 
 ## Inspect and Monitor
 
@@ -120,6 +120,7 @@ Most instance commands share selection flags:
 | `--status <status>` | Filter lifecycle status |
 | `--phase <phase>` | Filter status-file work phase |
 | `--stale` | Filter stale non-idle work |
+| `--runtime-stale` | Filter running instances whose recorded runtime PID is no longer live |
 | `--unhealthy` | Filter crashed, status-stale, or runtime-stale rows |
 | `--latest` | Select latest matching row |
 | `--last N` | Select N latest matching rows |

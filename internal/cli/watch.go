@@ -12,34 +12,35 @@ import (
 
 func newWatchCmd() *cobra.Command {
 	var (
-		target          string
-		all             bool
-		plan            bool
-		jobs            bool
-		schedules       bool
-		stopExtras      bool
-		summary         bool
-		resources       bool
-		jsonOut         bool
-		noClear         bool
-		latest          bool
-		last            int
-		format          string
-		sortBy          string
-		statsSortBy     string
-		staleOnly       bool
-		unhealthyOnly   bool
-		eventTail       int
-		eventSince      string
-		interval        time.Duration
-		statusFilters   []string
-		runtimeFilters  []string
-		agentFilters    []string
-		phaseFilters    []string
-		instanceFilters []string
-		actionFilters   []string
-		eventActions    []string
-		strictTopology  bool
+		target           string
+		all              bool
+		plan             bool
+		jobs             bool
+		schedules        bool
+		stopExtras       bool
+		summary          bool
+		resources        bool
+		jsonOut          bool
+		noClear          bool
+		latest           bool
+		last             int
+		format           string
+		sortBy           string
+		statsSortBy      string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
+		eventTail        int
+		eventSince       string
+		interval         time.Duration
+		statusFilters    []string
+		runtimeFilters   []string
+		agentFilters     []string
+		phaseFilters     []string
+		instanceFilters  []string
+		actionFilters    []string
+		eventActions     []string
+		strictTopology   bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -98,6 +99,8 @@ func newWatchCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team watch: %v\n", err)
 				return exitErr(2)
 			}
+			opts.PS.runtimeStale = runtimeStaleOnly
+			opts.Stats.RuntimeStale = runtimeStaleOnly
 			sortMode, err := parsePsSort(sortBy)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team watch: %v\n", err)
@@ -169,6 +172,7 @@ func newWatchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort instance rows by name, status, agent, phase, stale, unhealthy, started, stopped, or exited.")
 	cmd.Flags().StringVar(&statsSortBy, "stats-sort", "name", "Sort stats rows by name, cpu, mem, rss, status, agent, phase, stale, or unhealthy.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed, status-stale, or runtime-stale instances.")
 	cmd.Flags().IntVar(&eventTail, "events", 0, "Include the last N matching daemon lifecycle events in the full monitor (0 = omit).")
 	cmd.Flags().StringSliceVar(&eventActions, "event-action", nil, "With --events, only show lifecycle events with this action. Can repeat or comma-separate.")

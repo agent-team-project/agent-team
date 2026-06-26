@@ -1457,6 +1457,46 @@ func TestHealthCommandUnhealthyIncludesRuntimeStaleIssue(t *testing.T) {
 	t.Fatalf("issues = %+v, missing runtime_stale issue", body.Issues)
 }
 
+func TestHealthCommandRuntimeStaleFilterOnlyIncludesRuntimeStaleInstances(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "crashed", Agent: "worker", Runtime: "codex", Status: daemon.StatusCrashed, PID: 99999998, StartedAt: now.Add(-2 * time.Minute)},
+		{Instance: "runtime-stale", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, StartedAt: now.Add(-time.Minute)},
+		{Instance: "fresh", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"health", "--runtime-stale", "--json", "--target", tmp})
+	err := cmd.Execute()
+	var code ExitCode
+	if !errors.As(err, &code) || code != 1 {
+		t.Fatalf("err = %v, want exit 1 from runtime-stale health\nstderr=%s", err, stderr.String())
+	}
+	var body healthResult
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode health json: %v\nbody=%s", err, stdout.String())
+	}
+	if len(body.Instances) != 1 || body.Instances[0].Instance != "runtime-stale" || !body.Instances[0].RuntimeStale || !body.Instances[0].Unhealthy {
+		t.Fatalf("instances = %+v, want one runtime-stale row only", body.Instances)
+	}
+	for _, issue := range body.Issues {
+		if issue.Instance == "crashed" || issue.Instance == "fresh" {
+			t.Fatalf("issues = %+v, want non-runtime-stale instances filtered out", body.Issues)
+		}
+	}
+}
+
 func healthInstanceNames(rows []healthInstance) []string {
 	out := make([]string, 0, len(rows))
 	for _, row := range rows {

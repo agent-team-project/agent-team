@@ -54,6 +54,8 @@ include crashed rows, status-stale rows, and runtime-stale rows, so
 `agent-team ps --unhealthy --json`, `agent-team health --unhealthy --json`,
 `agent-team stats --unhealthy`, `agent-team logs --list --unhealthy`, and
 `agent-team events --unhealthy` all surface missing recorded PIDs consistently.
+Use `--runtime-stale` on those views when you only want stale recorded runtime
+PIDs and do not want crashed or status-stale rows mixed in.
 
 Team scoped:
 
@@ -222,6 +224,7 @@ Add `--runtime codex` or `--runtime-bin <path>` when repair retry or final tick 
 | Need exact next commands | `agent-team next` |
 | CI wants pass/fail | `agent-team health --jobs` |
 | Need only unhealthy instance rows | `agent-team ps --unhealthy --json` |
+| Need only stale recorded runtime PIDs | `agent-team ps --runtime-stale --json` |
 | Need handoff artifact | `agent-team snapshot --output diagnostics.json` |
 | Need one workflow handoff artifact | `agent-team pipeline snapshot ticket_to_pr --output ticket-to-pr-diagnostics.json` |
 | Need before/after artifact comparison | `agent-team snapshot diff before.json after.json` |
