@@ -864,10 +864,11 @@ target = "manager"
 		t.Fatalf("ticket actions = %+v", ticket.Actions)
 	}
 	nightly := byName["nightly"]
-	if !nightly.Declared || nightly.Steps != 1 || nightly.Jobs != 1 || nightly.Queued != 1 || nightly.QueuedSteps != 1 {
+	if !nightly.Declared || nightly.Steps != 1 || nightly.Jobs != 1 || nightly.Queued != 1 || nightly.ReadySteps != 1 || nightly.QueuedSteps != 1 {
 		t.Fatalf("nightly status = %+v", nightly)
 	}
-	if !containsString(nightly.Actions, "agent-team tick") {
+	if !containsString(nightly.Actions, "agent-team pipeline advance nightly --dry-run --preview-routes") ||
+		!containsString(nightly.Actions, "agent-team tick") {
 		t.Fatalf("nightly actions = %+v", nightly.Actions)
 	}
 	adHoc := byName["ad_hoc"]

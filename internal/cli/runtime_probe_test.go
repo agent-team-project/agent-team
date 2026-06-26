@@ -515,7 +515,7 @@ func TestRuntimeProbeCodexExecProbeSuccess(t *testing.T) {
 		if len(args) == 0 || args[0] != "exec" || args[len(args)-1] != "-" {
 			t.Fatalf("exec args = %#v, want codex exec ... -", args)
 		}
-		if !containsString(args, "-C") || !containsString(args, "--output-last-message") {
+		if !containsString(args, "-C") || !containsString(args, "--skip-git-repo-check") || !containsString(args, "--output-last-message") {
 			t.Fatalf("exec args = %#v, want repo and last-message flags", args)
 		}
 		if !containsString(env, "AGENT_TEAM_INSTANCE=runtime-probe") {

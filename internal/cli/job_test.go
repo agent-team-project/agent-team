@@ -2105,6 +2105,15 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		t.Fatalf("write ready job: %v", err)
 	}
 
+	queuedReady := mustNewJob(t, "SQU-208", "worker")
+	queuedReady.Pipeline = "ticket_to_pr"
+	queuedReady.Steps = []job.Step{
+		{ID: "implement", Target: "worker", Status: job.StatusQueued},
+	}
+	if err := job.Write(teamDir, queuedReady); err != nil {
+		t.Fatalf("write queued ready job: %v", err)
+	}
+
 	cleanupReady := mustNewJob(t, "SQU-206", "worker")
 	cleanupReady.Status = job.StatusDone
 	cleanupReady.Branch = "worktree-worker-squ-206"
@@ -2144,7 +2153,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		t.Fatalf("job triage: %v\nstderr=%s", err, stderr.String())
 	}
 	for _, want := range []string{
-		"jobs: total=7",
+		"jobs: total=8",
 		"queue: total=1 pending=0 dead=1",
 		"quarantined=1 restorable=1 unrestorable=0",
 		"Attention:",
@@ -2167,6 +2176,8 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		"squ-205",
 		"implement",
 		"agent-team job advance squ-205",
+		"squ-208",
+		"agent-team job advance squ-208",
 		"squ-206",
 		"cleanup_ready",
 		"agent-team job cleanup squ-206 --dry-run",
@@ -2192,7 +2203,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	if err := json.Unmarshal(jsonOut.Bytes(), &snapshot); err != nil {
 		t.Fatalf("decode triage json: %v\nbody=%s", err, jsonOut.String())
 	}
-	if snapshot.Summary.Total != 7 || snapshot.Queue.Dead != 1 || snapshot.Queue.Quarantined != 1 || snapshot.Queue.QuarantineRestorable != 1 || len(snapshot.Attention) != 6 || len(snapshot.ReadySteps) != 1 {
+	if snapshot.Summary.Total != 8 || snapshot.Queue.Dead != 1 || snapshot.Queue.Quarantined != 1 || snapshot.Queue.QuarantineRestorable != 1 || len(snapshot.Attention) != 6 || len(snapshot.ReadySteps) != 2 {
 		t.Fatalf("triage snapshot = %+v", snapshot)
 	}
 	reasons := map[string][]string{}
@@ -2228,10 +2239,15 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	if !containsString(actions["squ-207"], "agent-team job queue quarantine squ-207") || !containsString(actions["squ-207"], fmt.Sprintf("agent-team job queue quarantine restore squ-207 %s --dry-run", quarantinePath)) {
 		t.Fatalf("squ-207 actions = %v", actions["squ-207"])
 	}
-	if snapshot.ReadySteps[0].JobID != "squ-205" || snapshot.ReadySteps[0].StepID != "implement" {
+	readyByID := map[string]jobReadyRow{}
+	for _, row := range snapshot.ReadySteps {
+		readyByID[row.JobID] = row
+	}
+	if readyByID["squ-205"].StepID != "implement" || readyByID["squ-208"].StepID != "implement" {
 		t.Fatalf("ready steps = %+v", snapshot.ReadySteps)
 	}
-	if !containsString(snapshot.ReadySteps[0].Actions, "agent-team job advance squ-205") {
+	if !containsString(readyByID["squ-205"].Actions, "agent-team job advance squ-205") ||
+		!containsString(readyByID["squ-208"].Actions, "agent-team job advance squ-208") {
 		t.Fatalf("ready step actions = %+v", snapshot.ReadySteps[0].Actions)
 	}
 
@@ -2243,7 +2259,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	if err := formatCmd.Execute(); err != nil {
 		t.Fatalf("job triage format: %v\nstderr=%s", err, formatErr.String())
 	}
-	if got, want := formatOut.String(), "7 1 6 1\n"; got != want {
+	if got, want := formatOut.String(), "8 1 6 2\n"; got != want {
 		t.Fatalf("job triage format = %q, want %q", got, want)
 	}
 

@@ -3903,6 +3903,9 @@ func applyPipelineStatusJob(row *pipelineStatusRow, j *job.Job, now time.Time, s
 	case "ready":
 		row.ReadySteps++
 	case "queued":
+		if jobNextResultIsAdvanceable(next) {
+			row.ReadySteps++
+		}
 		row.QueuedSteps++
 	case "running":
 		row.RunningSteps++

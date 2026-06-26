@@ -91,6 +91,7 @@ go build -o bin/agent-team ./cmd/agent-team
 go build -o bin/agent-teamd ./cmd/agent-teamd
 python3 scripts/demo/local_orchestration.py bin/agent-team
 python3 scripts/demo/local_orchestration.py bin/agent-team --runtime codex
+python3 scripts/demo/local_orchestration.py bin/agent-team --runtime codex --real-codex-probe
 ```
 
 Build the local container image used by generated Compose intake deployments:

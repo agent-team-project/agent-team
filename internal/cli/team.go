@@ -6010,7 +6010,7 @@ func collectTeamReadyRows(teamDir, name string, states map[string]bool) ([]jobRe
 }
 
 func teamReadyRowActions(teamName string, row jobReadyRow) []string {
-	if row.State == "ready" || (row.State == "queued" && len(row.WaitingFor) == 0 && strings.TrimSpace(row.Instance) == "") {
+	if jobReadyRowIsAdvanceable(row) {
 		actions := []string{fmt.Sprintf("agent-team team advance %s --dry-run --preview-routes", teamName)}
 		if row.ParallelReadySteps > 1 {
 			actions = append(actions, fmt.Sprintf("agent-team team advance %s --all-ready-steps --dry-run --preview-routes", teamName))

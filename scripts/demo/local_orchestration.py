@@ -3,11 +3,15 @@
 
 Usage:
     python3 scripts/demo/local_orchestration.py [bin/agent-team] [--runtime claude|codex] [--keep]
+    python3 scripts/demo/local_orchestration.py bin/agent-team --runtime codex --real-codex-probe
 
 The demo creates a temporary repo, initializes the bundled team, configures a
-small fake runtime, creates and advances a pipeline job, then captures operator
-views. Claude mode also starts persistent instances; Codex mode exercises the
-daemon-managed one-shot worker path. It never calls a real LLM service.
+small fake runtime, creates a pipeline job, verifies the operator drain hint,
+uses the team drain loop to dispatch the worker, then captures operator views.
+Claude mode also starts persistent instances; Codex mode exercises the
+daemon-managed one-shot worker path. By default it never calls a real LLM
+service. Pass --real-codex-probe to run a real Codex `exec -` runtime probe
+before the fake runtime is installed.
 """
 
 from __future__ import annotations
@@ -28,6 +32,15 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", nargs="?", default="bin/agent-team", help="Path to the agent-team binary.")
     parser.add_argument("--runtime", choices=("claude", "codex"), default="claude", help="Runtime profile to simulate.")
+    parser.add_argument(
+        "--real-codex-probe",
+        action="store_true",
+        help="Before installing the fake runtime, run `agent-team runtime probe --runtime codex --exec` with the real codex binary.",
+    )
+    parser.add_argument(
+        "--real-codex-probe-output",
+        help="Optional JSON artifact path for --real-codex-probe. Defaults inside the temporary demo root.",
+    )
     parser.add_argument("--keep", action="store_true", help="Keep the temporary demo repo for inspection.")
     args = parser.parse_args(argv[1:])
 
@@ -41,6 +54,12 @@ def main(argv: list[str]) -> int:
         print(f"agent-teamd sibling binary not found: {daemon}", file=sys.stderr)
         print("Build it first: go build -o bin/agent-teamd ./cmd/agent-teamd", file=sys.stderr)
         return 2
+    real_codex = ""
+    if args.real_codex_probe:
+        real_codex = shutil.which("codex", path=os.environ.get("PATH", ""))
+        if not real_codex:
+            print("real Codex probe requested, but no `codex` binary was found on PATH.", file=sys.stderr)
+            return 2
 
     root = Path(tempfile.mkdtemp(prefix="agent-team-demo-", dir="/tmp"))
     fake_runtime = root / "fake-bin" / args.runtime
@@ -54,6 +73,29 @@ def main(argv: list[str]) -> int:
 
         step("init bundled team")
         run(binary, "init", "--target", repo, "--set", "linear.team_id=demo-team", "--set", "linear.ticket_prefix=DEMO")
+        if args.real_codex_probe:
+            probe_output = Path(args.real_codex_probe_output).resolve() if args.real_codex_probe_output else root / "runtime-probe-codex.json"
+            step("probe real Codex runtime")
+            probe = run(
+                binary,
+                "runtime",
+                "probe",
+                "--target",
+                repo,
+                "--runtime",
+                "codex",
+                "--runtime-bin",
+                real_codex,
+                "--exec",
+                "--timeout",
+                "2m",
+                "--output",
+                probe_output,
+                "--json",
+                env=os.environ.copy(),
+                parse_json=True,
+            )
+            print(f"real Codex probe: ok={probe.get('ok')} output={probe_output}")
         configure_fake_runtime(repo, args.runtime, fake_runtime)
 
         step("validate topology and runtime")
@@ -106,24 +148,34 @@ def main(argv: list[str]) -> int:
         first = preview[0]
         print(f"preview: job={first['job_id']} step={first.get('step_id')} action={first['action']}")
 
-        step("advance the pipeline through daemon dispatch")
-        advanced = run(
+        step("verify operator drain hint")
+        before_drain = run(binary, "team", "overview", "delivery", "--repo", repo, "--json", parse_json=True)
+        require_action(before_drain, "agent-team team drain delivery")
+        print("team overview recommends: agent-team team drain delivery")
+
+        step("drain ready work through daemon dispatch")
+        drained = run(
             binary,
-            "pipeline",
-            "advance",
-            "ticket_to_pr",
+            "team",
+            "drain",
+            "delivery",
             "--repo",
             repo,
             "--workspace",
             "repo",
+            "--skip-schedules",
+            "--max-cycles",
+            "1",
+            "--interval",
+            "0s",
             "--json",
             env=env,
             parse_json=True,
         )
-        if not advanced:
-            raise DemoError("pipeline advance returned no work")
-        worker = advanced[0].get("instance") or "worker-demo-1-implement"
-        print(f"worker dispatched: {worker} status={advanced[0].get('step_status')}")
+        worker = worker_from_team_drain(drained)
+        if not worker:
+            raise DemoError(f"team drain did not dispatch the implement worker: {json.dumps(drained, indent=2)}")
+        print(f"worker dispatched by drain: {worker} cycles={drained.get('cycles_run')} idle={drained.get('idle')}")
 
         step("wait for fake worker exit and reconcile")
         run(binary, "wait", worker, "--target", repo, "--until", "terminal", "--timeout", "10s", "--json", parse_json=True)
@@ -183,6 +235,21 @@ def field(data: dict, *names: str) -> object:
     for name in names:
         if name in data:
             return data[name]
+    return ""
+
+
+def require_action(data: dict, command: str) -> None:
+    actions = data.get("actions") or data.get("Actions") or []
+    if command not in actions:
+        raise DemoError(f"expected action hint {command!r}; got {actions!r}")
+
+
+def worker_from_team_drain(data: dict) -> str:
+    for cycle in data.get("cycles") or []:
+        tick = cycle.get("tick") or {}
+        for row in tick.get("advance") or []:
+            if row.get("step_id") == "implement" and row.get("action") == "advanced":
+                return row.get("instance") or "worker-demo-1-implement"
     return ""
 
 

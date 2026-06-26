@@ -474,7 +474,7 @@ func runCodexExecProbe(parent context.Context, repo, teamDir string, status *dae
 	lastMessagePath := filepath.Join(stateDir, runtimebin.CodexLastMessageFile)
 	args := []string{"exec"}
 	args = append(args, runtimebin.CodexAgentTeamEnvConfigArgs(teamEnv)...)
-	args = append(args, "-C", repo, "--output-last-message", lastMessagePath, "-")
+	args = append(args, "-C", repo, "--skip-git-repo-check", "--output-last-message", lastMessagePath, "-")
 	probe.Command = append([]string{binary}, args...)
 
 	res := runtimeProbeRunExecCommand(ctx, binary, args, teamEnv, repo, prompt)

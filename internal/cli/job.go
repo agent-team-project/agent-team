@@ -5192,10 +5192,11 @@ func collectJobTriage(teamDir string, now time.Time, staleAfter time.Duration) (
 	}
 	attention = addStatusPreviewsToJobTriage(attention, jobs, statusPreviews, now)
 	sortJobTriageItems(attention)
-	readySteps, err := collectJobReadyRows(teamDir, "", map[string]bool{"ready": true})
+	readySteps, err := collectJobReadyRows(teamDir, "", map[string]bool{"ready": true, "queued": true})
 	if err != nil {
 		return jobTriageSnapshot{}, err
 	}
+	readySteps = filterJobReadyRowsByAdvanceable(readySteps)
 	queueSummary := summarizeQueueItems(queueItems, now)
 	applyQueueQuarantineSummary(&queueSummary, quarantineItems)
 	return jobTriageSnapshot{
@@ -6094,7 +6095,7 @@ func actionsForJobReadyRow(row jobReadyRow) []string {
 	case "ready":
 		return appendParallelReadyAction([]string{fmt.Sprintf("agent-team job advance %s", row.JobID)}, row)
 	case "queued":
-		if len(row.WaitingFor) == 0 && strings.TrimSpace(row.Instance) == "" {
+		if jobReadyRowIsAdvanceable(row) {
 			return appendParallelReadyAction([]string{fmt.Sprintf("agent-team job advance %s", row.JobID)}, row)
 		}
 		return []string{"agent-team tick"}
@@ -6116,6 +6117,34 @@ func actionsForJobReadyRow(row jobReadyRow) []string {
 	default:
 		return nil
 	}
+}
+
+func filterJobReadyRowsByAdvanceable(rows []jobReadyRow) []jobReadyRow {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]jobReadyRow, 0, len(rows))
+	for _, row := range rows {
+		if jobReadyRowIsAdvanceable(row) {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+func jobReadyRowIsAdvanceable(row jobReadyRow) bool {
+	return row.State == "ready" ||
+		(row.State == "queued" && len(row.WaitingFor) == 0 && strings.TrimSpace(row.Instance) == "")
+}
+
+func jobNextResultIsAdvanceable(next jobNextResult) bool {
+	if next.State == "ready" {
+		return true
+	}
+	if next.State != "queued" || len(next.WaitingFor) > 0 || next.Step == nil {
+		return false
+	}
+	return strings.TrimSpace(next.Step.Instance) == ""
 }
 
 func appendParallelReadyAction(actions []string, row jobReadyRow) []string {
