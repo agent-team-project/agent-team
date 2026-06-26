@@ -79,7 +79,7 @@ Subcommands:
 - `agent-team topology` - Show declared instances and triggers (reads .agent_team/instances.toml).
 - `agent-team upgrade` - Check or apply a template upgrade using the repo&#39;s template lock.
 - `agent-team wait` - Wait for daemon-managed instances to reach a lifecycle condition.
-- `agent-team watch` - Watch the combined health, instance, and resource monitor.
+- `agent-team watch` - Watch the combined health, inbox, instance, and resource monitor.
 
 ## `agent-team adopt`
 
@@ -7405,9 +7405,9 @@ Inherited Flags:
 
 ## `agent-team watch`
 
-Watch the combined health, instance, and resource monitor.
+Watch the combined health, inbox, instance, and resource monitor.
 
-Watch the Docker-style operator monitor, refreshing fleet health, instance state, and daemon-managed process stats until interrupted.
+Watch the Docker-style operator monitor, refreshing fleet health, inbox state, instance state, and daemon-managed process stats until interrupted.
 
 ```text
 agent-team watch [flags]

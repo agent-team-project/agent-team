@@ -48,6 +48,48 @@ func TestWatchCommandJSONEmitsMonitorSnapshots(t *testing.T) {
 	}
 }
 
+func TestWatchJSONIncludesFilteredInboxSummary(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	for _, instance := range []string{"manager", "worker"} {
+		if err := daemon.AppendMessage(daemon.DaemonRoot(teamDir), instance, &daemon.Message{
+			ID:   "msg-watch-" + instance,
+			From: "operator",
+			Body: "watch inbox " + instance,
+		}); err != nil {
+			t.Fatalf("append message %s: %v", instance, err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetContext(ctx)
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"watch", "--json", "--instance", "manager", "--interval", "1ms", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("watch --json inbox: %v\nstderr: %s", err, stderr.String())
+	}
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		t.Fatalf("watch inbox output empty")
+	}
+
+	var snapshot monitorSnapshot
+	if err := json.Unmarshal([]byte(lines[0]), &snapshot); err != nil {
+		t.Fatalf("decode first watch inbox snapshot: %v\nbody=%s", err, lines[0])
+	}
+	if snapshot.Inbox.Total != 1 || snapshot.Inbox.Unread != 1 || snapshot.Inbox.UnreadInstances != 1 || !stringSliceContains(snapshot.Inbox.UnreadNames, "manager") || stringSliceContains(snapshot.Inbox.UnreadNames, "worker") {
+		t.Fatalf("watch inbox summary = %+v", snapshot.Inbox)
+	}
+	if strings.Contains(lines[0], "watch inbox manager") || strings.Contains(lines[0], "watch inbox worker") {
+		t.Fatalf("watch json should not include inbox bodies:\n%s", lines[0])
+	}
+}
+
 func TestWatchSummaryJSONEmitsHealthSnapshots(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
