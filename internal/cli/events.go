@@ -306,8 +306,9 @@ func applyCurrentEventInstanceFilter(teamDir string, filters eventFilters, phase
 	}
 	rows = filterPsRows(rows, psOptions{phases: phases, stale: staleOnly, runtimeStale: runtimeStaleOnly, unhealthy: unhealthyOnly})
 	instances := make(map[string]bool, len(rows))
+	hasScope := eventFiltersHaveInstanceScope(filters)
 	for _, row := range rows {
-		if len(filters.instances) > 0 && !filters.instances[row.Instance] {
+		if hasScope && !eventFilterMatchesInstance(filters, row.Instance) {
 			continue
 		}
 		instances[row.Instance] = true
@@ -316,6 +317,7 @@ func applyCurrentEventInstanceFilter(teamDir string, filters eventFilters, phase
 		instances[""] = false
 	}
 	filters.instances = instances
+	filters.instancePrefixes = nil
 	return filters, nil
 }
 

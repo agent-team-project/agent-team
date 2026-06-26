@@ -3123,12 +3123,16 @@ Flags:
   -f, --follow            Keep streaming new lifecycle events.
       --format string     Render each event with a Go template, e.g. '{{.Action}} {{.Instance}} {{.Status}}'.
       --json              Emit raw JSONL events.
+      --phase strings     Only show pipeline events for instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only show pipeline events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale     Only show pipeline events for instances whose recorded runtime PID is currently no longer live.
       --since string      Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
+      --stale             Only show pipeline events for instances whose status.toml is currently stale or missing.
       --status strings    Only show events with this lifecycle status. Can repeat or comma-separate.
       --summary           Summarize matching pipeline events by action, status, agent, and instance.
       --tail int          Show only the last N matching pipeline events before returning or following (0 = all).
+      --unhealthy         Only show pipeline events for instances that are currently crashed, status-stale, or runtime-stale.
 ```
 
 ## `agent-team pipeline explain`
@@ -5467,12 +5471,16 @@ Flags:
   -f, --follow            Keep streaming new lifecycle events.
       --format string     Render each event with a Go template, e.g. '{{.Action}} {{.Instance}} {{.Status}}'.
       --json              Emit raw JSONL events.
+      --phase strings     Only show team events for instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only show team events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale     Only show team events for instances whose recorded runtime PID is currently no longer live.
       --since string      Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
+      --stale             Only show team events for instances whose status.toml is currently stale or missing.
       --status strings    Only show events with this lifecycle status. Can repeat or comma-separate.
       --summary           Summarize matching team events by action, status, agent, and instance.
       --tail int          Show only the last N matching team events before returning or following (0 = all).
+      --unhealthy         Only show team events for instances that are currently crashed, status-stale, or runtime-stale.
 ```
 
 ## `agent-team team explain`

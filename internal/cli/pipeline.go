@@ -2296,16 +2296,20 @@ func newPipelineLogsCmd() *cobra.Command {
 
 func newPipelineEventsCmd() *cobra.Command {
 	var (
-		repo           string
-		follow         bool
-		tail           int
-		jsonOut        bool
-		summary        bool
-		format         string
-		actionFilters  []string
-		statusFilters  []string
-		runtimeFilters []string
-		sinceRaw       string
+		repo             string
+		follow           bool
+		tail             int
+		jsonOut          bool
+		summary          bool
+		format           string
+		actionFilters    []string
+		statusFilters    []string
+		runtimeFilters   []string
+		phaseFilters     []string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
+		sinceRaw         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -2345,6 +2349,18 @@ func newPipelineEventsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline events: %v\n", err)
 				return exitErr(2)
 			}
+			phases, err := lifecyclePhaseFilterSet(phaseFilters)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline events: %v\n", err)
+				return exitErr(2)
+			}
+			if len(phases) > 0 || staleOnly || runtimeStaleOnly || unhealthyOnly {
+				filters, err = applyCurrentEventInstanceFilter(teamDir, filters, phases, staleOnly, runtimeStaleOnly, unhealthyOnly, time.Now())
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline events: %v\n", err)
+					return exitErr(1)
+				}
+			}
 			var client eventsClient
 			if dc, err := newDaemonClient(teamDir); err == nil {
 				client = dc
@@ -2367,6 +2383,10 @@ func newPipelineEventsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only show events with this action. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show events with this lifecycle status. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show pipeline events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show pipeline events for instances currently in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show pipeline events for instances whose status.toml is currently stale or missing.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show pipeline events for instances whose recorded runtime PID is currently no longer live.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show pipeline events for instances that are currently crashed, status-stale, or runtime-stale.")
 	cmd.Flags().StringVar(&sinceRaw, "since", "", "Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	return cmd
 }

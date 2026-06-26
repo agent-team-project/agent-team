@@ -4730,6 +4730,96 @@ instances = ["other", "build-worker"]
 	}
 }
 
+func TestTeamEventsCurrentStateFiltersScopeEphemeralChildren(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.build-worker]
+agent = "worker"
+ephemeral = true
+
+[instances.other]
+agent = "other"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+
+[teams.platform]
+instances = ["other", "build-worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-4 * time.Minute)},
+		{Instance: "worker-squ-777", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: 99999999, Workspace: root, StartedAt: now.Add(-3 * time.Minute)},
+		{Instance: "worker-squ-778", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-2 * time.Minute)},
+		{Instance: "build-worker-1", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: 99999999, Workspace: root, StartedAt: now.Add(-time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(daemonRoot, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+		if err := daemon.AppendLifecycleEvent(daemonRoot, &daemon.LifecycleEvent{
+			TS:       meta.StartedAt,
+			Action:   "dispatch",
+			Instance: meta.Instance,
+			Agent:    meta.Agent,
+			Status:   meta.Status,
+			Message:  meta.Instance,
+		}); err != nil {
+			t.Fatalf("append event %s: %v", meta.Instance, err)
+		}
+	}
+	writeStatus(t, filepath.Join(teamDir, "state", "manager"), `
+[status]
+phase = "idle"
+description = "manager idle"
+`, now)
+	writeStatus(t, filepath.Join(teamDir, "state", "worker-squ-777"), `
+[status]
+phase = "blocked"
+description = "blocked worker"
+`, now)
+	writeStatus(t, filepath.Join(teamDir, "state", "worker-squ-778"), `
+[status]
+phase = "idle"
+description = "idle worker"
+`, now)
+	writeStatus(t, filepath.Join(teamDir, "state", "build-worker-1"), `
+[status]
+phase = "blocked"
+description = "other team worker"
+`, now)
+
+	phase := NewRootCmd()
+	phaseOut, phaseErr := &bytes.Buffer{}, &bytes.Buffer{}
+	phase.SetOut(phaseOut)
+	phase.SetErr(phaseErr)
+	phase.SetArgs([]string{"team", "events", "delivery", "--repo", root, "--phase", "blocked", "--format", "{{.Instance}}"})
+	if err := phase.Execute(); err != nil {
+		t.Fatalf("team events phase filter: %v\nstderr=%s", err, phaseErr.String())
+	}
+	if got, want := phaseOut.String(), "worker-squ-777\n"; got != want {
+		t.Fatalf("team events phase output = %q, want %q", got, want)
+	}
+
+	runtimeStale := NewRootCmd()
+	runtimeStaleOut, runtimeStaleErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeStale.SetOut(runtimeStaleOut)
+	runtimeStale.SetErr(runtimeStaleErr)
+	runtimeStale.SetArgs([]string{"team", "events", "delivery", "--repo", root, "--runtime-stale", "--format", "{{.Instance}}"})
+	if err := runtimeStale.Execute(); err != nil {
+		t.Fatalf("team events runtime-stale filter: %v\nstderr=%s", err, runtimeStaleErr.String())
+	}
+	if got, want := runtimeStaleOut.String(), "worker-squ-777\n"; got != want {
+		t.Fatalf("team events runtime-stale output = %q, want %q", got, want)
+	}
+}
+
 func TestTeamLogsScopesRowsAndStreams(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
