@@ -197,7 +197,7 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team team doctor --all` | Validate team-owned workflow wiring; add `--strict-runtime` to fail on unavailable step runtime defaults |
 | `agent-team team overview <team>` | Scoped operator overview |
 | `agent-team team health <team>` | Scoped health |
-| `agent-team team runtime resume-plan <team>` | Team-scoped runtime recovery commands; filter by `--action`/`--runtime-stale`/`--unhealthy` or summarize with `--summary` |
+| `agent-team team resume-plan <team>` | Team-scoped runtime recovery commands; filter by `--action`/`--runtime-stale`/`--unhealthy` or summarize with `--summary`; `team runtime resume-plan` remains available |
 | `agent-team team status <team>` | Scoped status |
 | `agent-team team monitor <team>` | Scoped dashboard |
 | `agent-team team run <team> <ticket>` | Create a team-owned job; `--dispatch` accepts workspace and runtime overrides |

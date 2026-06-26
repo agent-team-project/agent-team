@@ -4342,6 +4342,18 @@ func TestTeamRuntimeResumePlanScopesMetadata(t *testing.T) {
 		t.Fatalf("formatted team runtime resume-plan = %q, want %q", got, want)
 	}
 
+	shortcut := NewRootCmd()
+	shortcutOut, shortcutErr := &bytes.Buffer{}, &bytes.Buffer{}
+	shortcut.SetOut(shortcutOut)
+	shortcut.SetErr(shortcutErr)
+	shortcut.SetArgs([]string{"team", "resume-plan", "delivery", "--repo", root, "--status", "crashed", "--runtime", "codex", "--action", "logs", "--format", "{{.Instance}} {{.Runtime}} {{.RecommendedAction}}"})
+	if err := shortcut.Execute(); err != nil {
+		t.Fatalf("team resume-plan shortcut format: %v\nstderr=%s", err, shortcutErr.String())
+	}
+	if got, want := strings.TrimSpace(shortcutOut.String()), "worker-squ-900 codex logs"; got != want {
+		t.Fatalf("formatted team resume-plan shortcut = %q, want %q", got, want)
+	}
+
 	summary := NewRootCmd()
 	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	summary.SetOut(summaryOut)
@@ -8598,7 +8610,7 @@ func TestScopeTeamHealthIssueActions(t *testing.T) {
 	if got := result.Issues[1].Actions; !containsString(got, "agent-team queue retry --all --sort attempts --limit 10 --dry-run") {
 		t.Fatalf("queue actions changed unexpectedly: %+v", got)
 	}
-	if got := result.Issues[2].Actions; !containsString(got, "agent-team team runtime resume-plan delivery --status crashed") || containsString(got, "agent-team runtime resume-plan worker-squ-1 --status crashed") {
+	if got := result.Issues[2].Actions; !containsString(got, "agent-team team resume-plan delivery --status crashed") || containsString(got, "agent-team runtime resume-plan worker-squ-1 --status crashed") {
 		t.Fatalf("runtime actions = %+v", got)
 	}
 	if got := result.Issues[3].Actions; !containsString(got, "agent-team job resume-plan squ-1 --status crashed") {

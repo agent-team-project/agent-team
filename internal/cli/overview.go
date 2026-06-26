@@ -914,14 +914,14 @@ func overviewQueueQuarantineAction(health *healthResult, teamName string) string
 
 func overviewRuntimeResumePlanAction(_ overviewRuntimeSummary, teamName string) string {
 	if teamName != "" {
-		return fmt.Sprintf("agent-team team runtime resume-plan %s --status crashed", teamName)
+		return fmt.Sprintf("agent-team team resume-plan %s --status crashed", teamName)
 	}
 	return "agent-team runtime resume-plan --status crashed"
 }
 
 func overviewRuntimeStaleResumePlanAction(teamName string) string {
 	if teamName != "" {
-		return fmt.Sprintf("agent-team team runtime resume-plan %s --runtime-stale", teamName)
+		return fmt.Sprintf("agent-team team resume-plan %s --runtime-stale", teamName)
 	}
 	return "agent-team runtime resume-plan --runtime-stale"
 }

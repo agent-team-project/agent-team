@@ -5342,6 +5342,7 @@ Subcommands:
 - `agent-team team release` - Release held pipeline jobs owned by one team.
 - `agent-team team repair` - Recover unhealthy orchestration state for one team.
 - `agent-team team restart` - Restart or resume a team&#39;s declared persistent instances.
+- `agent-team team resume-plan` - Show runtime resume and fallback commands for one team.
 - `agent-team team retry` - Reset failed pipeline steps owned by one team.
 - `agent-team team run` - Create a durable job through a team&#39;s pipeline.
 - `agent-team team runtime` - Inspect team-owned runtime metadata.
@@ -6278,6 +6279,31 @@ Flags:
       --timeout duration         Maximum time to wait for each running instance to stop before resuming (0 = daemon default).
       --wait                     Wait for selected instances to become healthy after restarting.
       --wait-timeout duration    Maximum time to wait for health with --wait (0 = no timeout).
+```
+
+## `agent-team team resume-plan`
+
+Show runtime resume and fallback commands for one team.
+
+Show runtime resume and fallback commands for daemon metadata owned by one declared team. This is a shorter alias for `agent-team team runtime resume-plan`.
+
+```text
+agent-team team resume-plan <team> [flags]
+```
+
+Flags:
+
+```text
+      --action strings    Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.
+      --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
+      --json              Emit machine-readable JSON.
+      --repo string       Repo root containing .agent_team. (default "<repo>")
+      --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
+      --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
+      --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
+      --summary           Summarize matching team resume plans by recommended action, runtime, and status.
+      --unhealthy         Only include crashed or stale running metadata.
 ```
 
 ## `agent-team team retry`

@@ -230,7 +230,7 @@ func TestOverviewReportsRuntimeResumePlanActions(t *testing.T) {
 	if teamOverview.Runtime.Total != 3 || teamOverview.Runtime.Crashed != 2 || teamOverview.Runtime.Exited != 1 {
 		t.Fatalf("team runtime summary = %+v", teamOverview.Runtime)
 	}
-	if !stringSliceContains(teamOverview.Actions, "agent-team team runtime resume-plan delivery --status crashed") {
+	if !stringSliceContains(teamOverview.Actions, "agent-team team resume-plan delivery --status crashed") {
 		t.Fatalf("team actions missing scoped runtime resume plan: %+v", teamOverview.Actions)
 	}
 }
@@ -301,10 +301,10 @@ func TestOverviewReportsStaleRuntimeResumePlanActions(t *testing.T) {
 	if err := json.Unmarshal(teamOut.Bytes(), &teamOverview); err != nil {
 		t.Fatalf("decode team overview stale runtime: %v\nbody=%s", err, teamOut.String())
 	}
-	if teamOverview.Runtime.StaleRunning != 1 || !stringSliceContains(teamOverview.Actions, "agent-team team runtime resume-plan delivery --runtime-stale") {
+	if teamOverview.Runtime.StaleRunning != 1 || !stringSliceContains(teamOverview.Actions, "agent-team team resume-plan delivery --runtime-stale") {
 		t.Fatalf("team stale runtime summary = %+v actions=%+v", teamOverview.Runtime, teamOverview.Actions)
 	}
-	if detail, ok := findOperatorActionHint(teamOverview.ActionDetails, "agent-team team runtime resume-plan delivery --runtime-stale"); !ok || detail.Team != "delivery" || detail.Source != "runtime" || detail.Reason != "stale=1" {
+	if detail, ok := findOperatorActionHint(teamOverview.ActionDetails, "agent-team team resume-plan delivery --runtime-stale"); !ok || detail.Team != "delivery" || detail.Source != "runtime" || detail.Reason != "stale=1" {
 		t.Fatalf("team stale runtime action detail = %+v ok=%v", detail, ok)
 	}
 }

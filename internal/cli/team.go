@@ -35,6 +35,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamOverviewCmd())
 	cmd.AddCommand(newTeamNextCmd())
 	cmd.AddCommand(newTeamRuntimeCmd())
+	cmd.AddCommand(newTeamResumePlanCmd())
 	cmd.AddCommand(newTeamRunCmd())
 	cmd.AddCommand(newTeamUpCmd())
 	cmd.AddCommand(newTeamDownCmd())
@@ -250,7 +251,34 @@ func newTeamRuntimeCmd() *cobra.Command {
 	return cmd
 }
 
+func newTeamResumePlanCmd() *cobra.Command {
+	return newTeamRuntimeResumePlanCommand(teamRuntimeResumePlanCommandConfig{
+		Use:       "resume-plan <team>",
+		ErrorName: "agent-team team resume-plan",
+		Long: "Show runtime resume and fallback commands for daemon metadata owned by one declared team. " +
+			"This is a shorter alias for `agent-team team runtime resume-plan`.",
+		SummaryHelp: "Summarize matching team resume plans by recommended action, runtime, and status.",
+	})
+}
+
 func newTeamRuntimeResumePlanCmd() *cobra.Command {
+	return newTeamRuntimeResumePlanCommand(teamRuntimeResumePlanCommandConfig{
+		Use:       "resume-plan <team>",
+		ErrorName: "agent-team team runtime resume-plan",
+		Long: "Show runtime resume and fallback commands for daemon metadata owned by one declared team. " +
+			"This is the team-scoped form of `agent-team runtime resume-plan`.",
+		SummaryHelp: "Summarize matching team resume plans by recommended action, runtime, and status.",
+	})
+}
+
+type teamRuntimeResumePlanCommandConfig struct {
+	Use         string
+	ErrorName   string
+	Long        string
+	SummaryHelp string
+}
+
+func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *cobra.Command {
 	var (
 		repo          string
 		statusFilters []string
@@ -265,23 +293,22 @@ func newTeamRuntimeResumePlanCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "resume-plan <team>",
+		Use:   cfg.Use,
 		Short: "Show runtime resume and fallback commands for one team.",
-		Long: "Show runtime resume and fallback commands for daemon metadata owned by one declared team. " +
-			"This is the team-scoped form of `agent-team runtime resume-plan`.",
-		Args: cobra.ExactArgs(1),
+		Long:  cfg.Long,
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team runtime resume-plan: --format cannot be combined with --json.")
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --format cannot be combined with --json.\n", cfg.ErrorName)
 				return exitErr(2)
 			}
 			if summary && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team runtime resume-plan: --summary cannot be combined with --format.")
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --summary cannot be combined with --format.\n", cfg.ErrorName)
 				return exitErr(2)
 			}
 			tmpl, err := parseRuntimeResumePlanFormat(format)
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team runtime resume-plan: %v\n", err)
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", cfg.ErrorName, err)
 				return exitErr(2)
 			}
 			teamDir, err := resolveTeamDir(cmd, repo)
@@ -290,7 +317,7 @@ func newTeamRuntimeResumePlanCmd() *cobra.Command {
 			}
 			plans, err := collectTeamRuntimeResumePlans(teamDir, args[0], statusFilters, runtimeFilter, actionFilters, staleOnly || runtimeStale, unhealthyOnly)
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team runtime resume-plan: %v\n", err)
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", cfg.ErrorName, err)
 				return exitErr(1)
 			}
 			if summary {
@@ -318,7 +345,7 @@ func newTeamRuntimeResumePlanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.")
 	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Only include running metadata whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only include crashed or stale running metadata.")
-	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching team resume plans by recommended action, runtime, and status.")
+	cmd.Flags().BoolVar(&summary, "summary", false, cfg.SummaryHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.")
 	return cmd
@@ -5667,7 +5694,7 @@ func scopeTeamHealthIssueActions(result *healthResult, teamName string) {
 	}
 	teamName = strings.TrimSpace(teamName)
 	scopedSync := fmt.Sprintf("agent-team team sync %s --dry-run", teamName)
-	scopedRuntimeResume := fmt.Sprintf("agent-team team runtime resume-plan %s --status crashed", teamName)
+	scopedRuntimeResume := fmt.Sprintf("agent-team team resume-plan %s --status crashed", teamName)
 	for i := range result.Issues {
 		for j, action := range result.Issues[i].Actions {
 			action = strings.TrimSpace(action)
