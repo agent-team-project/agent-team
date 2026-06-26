@@ -42,6 +42,7 @@ Subcommands:
 - `agent-team events` - Show daemon lifecycle events.
 - `agent-team health` - Check daemon and instance fleet health.
 - `agent-team help` - Help about any command
+- `agent-team inbox` - Inspect and acknowledge daemon mailbox messages.
 - `agent-team init` - Vendor a starter team template into the current repo (creates .agent_team/).
 - `agent-team inspect` - Show an instance&#39;s runtime, state, and topology.
 - `agent-team instance` - Manage agent instance state (.agent_team/state/&lt;instance&gt;/).
@@ -1003,6 +1004,101 @@ Simply type agent-team help [path to command] for full details.
 
 ```text
 agent-team help [command]
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team inbox`
+
+Inspect and acknowledge daemon mailbox messages.
+
+Inspect daemon mailbox messages stored under .agent_team/daemon. The inbox commands read local files directly, so they work even when agent-teamd is not running.
+
+```text
+agent-team inbox
+```
+
+Aliases: `mailbox`
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+Subcommands:
+
+- `agent-team inbox ack` - Advance an instance inbox cursor.
+- `agent-team inbox ls` - List inbox summaries by instance.
+- `agent-team inbox show` - Show messages for one instance inbox.
+
+## `agent-team inbox ack`
+
+Advance an instance inbox cursor.
+
+```text
+agent-team inbox ack <instance> <message-id>|--all [flags]
+```
+
+Flags:
+
+```text
+      --all             Acknowledge every current message in the inbox.
+      --dry-run         Preview the cursor update without writing it.
+      --format string   Render the ack result with a Go template, e.g. '{{.Instance}} {{.Acked}}'.
+      --json            Emit machine-readable JSON.
+      --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team inbox ls`
+
+List inbox summaries by instance.
+
+```text
+agent-team inbox ls [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render each inbox summary with a Go template, e.g. '{{.Instance}} {{.Unread}}'.
+      --json            Emit machine-readable JSON.
+      --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --unread          Show only inboxes with unread messages.
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team inbox show`
+
+Show messages for one instance inbox.
+
+```text
+agent-team inbox show <instance> [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render each message with a Go template, e.g. '{{.ID}} {{.Unread}} {{.Body}}'.
+      --json            Emit machine-readable JSON.
+      --tail int        Show only the N most recent matching messages (0 = all).
+      --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --unread          Show only messages after the inbox cursor.
 ```
 
 Inherited Flags:

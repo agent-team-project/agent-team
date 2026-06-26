@@ -57,11 +57,20 @@ CLI:
 agent-team send manager "Please summarize current jobs"
 agent-team job send squ-42 "Please continue with the new constraint"
 agent-team team send delivery --all "Pause after current step"
+agent-team inbox ls --unread
+agent-team inbox show manager --unread
+agent-team inbox ack manager --all
 ```
 
 Agent-side skills can read messages from the instance inbox.
 
 Messages are stored locally so they can be inspected or delivered even when a runtime process restarts.
+
+`agent-team inbox` is the human-facing read side of the mailbox:
+
+- `inbox ls` summarizes total and unread messages per instance, including mailboxes created for future instances with `send --allow-missing`.
+- `inbox show <instance>` lists message IDs, senders, unread state, and bodies.
+- `inbox ack <instance> <message-id>` advances the cursor through one message; `--all` marks every current message read. Use `--dry-run` before changing the cursor.
 
 ## Channels
 
