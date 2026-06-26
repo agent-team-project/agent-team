@@ -3119,6 +3119,7 @@ Subcommands:
 - `agent-team pipeline snapshot` - Capture a read-only diagnostic snapshot for one pipeline.
 - `agent-team pipeline status` - Summarize pipeline jobs and next steps.
 - `agent-team pipeline timeout` - Mark stale running pipeline steps failed.
+- `agent-team pipeline unblock` - Answer blocked pipeline workers.
 - `agent-team pipeline wait` - Wait for pipeline jobs to reach a lifecycle status or event.
 
 ## `agent-team pipeline advance`
@@ -3999,6 +4000,33 @@ Flags:
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --step string           Mark only stale running steps with this id.
       --target-agent string   Mark only stale running steps targeting this agent.
+```
+
+## `agent-team pipeline unblock`
+
+Answer blocked pipeline workers.
+
+Send the same operator answer to blocked pipeline step owners for jobs in one pipeline, or all pipelines with --all. By default a job is selected when it has a single blocked step owner; pass --step to target one stage explicitly.
+
+```text
+agent-team pipeline unblock <pipeline>|--all [message...] [flags]
+```
+
+Flags:
+
+```text
+      --all                   Unblock matching jobs across all pipelines.
+      --allow-missing         Allow queueing messages for owning instances the daemon does not know yet.
+      --dry-run               Preview matching unblocks without writing job state or mailbox messages.
+      --format string         Render each unblock result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}} {{.Instance}}'.
+      --from string           Sender label recorded with each unblock message. (default "(cli)")
+      --json                  Emit unblock results as JSON.
+      --limit int             Maximum blocked jobs to unblock or report (0 = no limit).
+      --message string        Message text to send.
+      --message-file string   Read message text from a file, or '-' for stdin.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --status string         Status after unblocking: running or queued. (default "running")
+      --step string           Unblock only blocked jobs whose selected step has this id.
 ```
 
 ## `agent-team pipeline wait`
@@ -5498,6 +5526,7 @@ Subcommands:
 - `agent-team team tick` - Run one team&#39;s orchestration maintenance work.
 - `agent-team team timeout` - Mark stale running work owned by one team failed.
 - `agent-team team triage` - Show team-owned jobs that need operator attention.
+- `agent-team team unblock` - Answer blocked pipeline workers owned by one team.
 - `agent-team team up` - Start or resume a team&#39;s declared persistent instances.
 - `agent-team team wait` - Wait for team-owned instances to reach a lifecycle condition.
 
@@ -6816,6 +6845,32 @@ Flags:
       --repo string            Repo root containing .agent_team. (default "<repo>")
       --stale-after duration   Flag queued or running jobs with no update after this duration (default: [health].job_stale_after or 24h; 0 disables stale checks). (default 24h0m0s)
   -w, --watch                  Refresh the team triage view until interrupted.
+```
+
+## `agent-team team unblock`
+
+Answer blocked pipeline workers owned by one team.
+
+Send the same operator answer to blocked pipeline step owners for jobs in one team&#39;s declared pipelines. By default a job is selected when it has a single blocked step owner; pass --step to target one stage explicitly.
+
+```text
+agent-team team unblock <team> [message...] [flags]
+```
+
+Flags:
+
+```text
+      --allow-missing         Allow queueing messages for owning instances the daemon does not know yet.
+      --dry-run               Preview team unblocks without writing job state or mailbox messages.
+      --format string         Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}} {{.Instance}}'.
+      --from string           Sender label recorded with each unblock message. (default "(cli)")
+      --json                  Emit unblock results as JSON.
+      --limit int             Unblock at most this many blocked team jobs; 0 means no limit.
+      --message string        Message text to send.
+      --message-file string   Read message text from a file, or '-' for stdin.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --status string         Status after unblocking: running or queued. (default "running")
+      --step string           Unblock only blocked jobs whose selected step has this id.
 ```
 
 ## `agent-team team up`

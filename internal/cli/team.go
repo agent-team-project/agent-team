@@ -52,6 +52,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamAdvanceCmd())
 	cmd.AddCommand(newTeamApproveCmd())
 	cmd.AddCommand(newTeamRejectCmd())
+	cmd.AddCommand(newTeamUnblockCmd())
 	cmd.AddCommand(newTeamSkipCmd())
 	cmd.AddCommand(newTeamCancelCmd())
 	cmd.AddCommand(newTeamRetryCmd())
@@ -1625,6 +1626,86 @@ func newTeamRejectCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview manual gate rejections without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit rejection results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
+	return cmd
+}
+
+func newTeamUnblockCmd() *cobra.Command {
+	var (
+		repo         string
+		limit        int
+		step         string
+		status       string
+		from         string
+		message      string
+		messageFile  string
+		allowMissing bool
+		dryRun       bool
+		jsonOut      bool
+		format       string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "unblock <team> [message...]",
+		Short: "Answer blocked pipeline workers owned by one team.",
+		Long: "Send the same operator answer to blocked pipeline step owners for jobs in one team's declared pipelines. " +
+			"By default a job is selected when it has a single blocked step owner; pass --step to target one stage explicitly.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team unblock: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team unblock: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			next, err := parseJobUnblockStatus(status)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team unblock: %v\n", err)
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineUnblockFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team unblock: %v\n", err)
+				return exitErr(2)
+			}
+			body, err := sendMessageBody(message, messageFile, args[1:])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team unblock: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			_, team, err := loadTopologyTeam(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team unblock: %v\n", err)
+				return exitErr(1)
+			}
+			client, err := sendClientForTeamDir(teamDir)
+			if err != nil {
+				return err
+			}
+			results, err := unblockTeamPipelineJobs(teamDir, team, client, step, body, normalizedJobUnblockSender(from), next, limit, allowMissing, dryRun)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team unblock: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineUnblockResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().IntVar(&limit, "limit", 0, "Unblock at most this many blocked team jobs; 0 means no limit.")
+	cmd.Flags().StringVar(&step, "step", "", "Unblock only blocked jobs whose selected step has this id.")
+	cmd.Flags().StringVar(&status, "status", string(job.StatusRunning), "Status after unblocking: running or queued.")
+	cmd.Flags().StringVar(&from, "from", "(cli)", "Sender label recorded with each unblock message.")
+	cmd.Flags().StringVar(&message, "message", "", "Message text to send.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read message text from a file, or '-' for stdin.")
+	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing messages for owning instances the daemon does not know yet.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview team unblocks without writing job state or mailbox messages.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit unblock results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}} {{.Instance}}'.")
 	return cmd
 }
 
@@ -6150,7 +6231,7 @@ func addTeamJobHealth(result *healthResult, teamDir string, top *topology.Topolo
 			message += ": " + strings.TrimSpace(preview.Message)
 		}
 		result.addIssueWithSeverityAndActions("job_status_blocked", "error", preview.Instance, preview.JobID, string(preview.After), preview.Phase, message, []string{
-			fmt.Sprintf("agent-team job unblock %s <answer...>", preview.JobID),
+			jobUnblockAction(preview.JobID, ""),
 		})
 	}
 	pipelineStatus, err := collectTeamPipelineStatus(teamDir, team.Name)
@@ -7639,6 +7720,32 @@ func rejectTeamPipelineManualGates(teamDir string, team *topology.Team, stepFilt
 	return results, nil
 }
 
+func unblockTeamPipelineJobs(teamDir string, team *topology.Team, client sendClient, stepFilter string, message string, from string, next job.Status, limit int, allowMissing bool, dryRun bool) ([]pipelineUnblockResult, error) {
+	if team == nil || len(team.Pipelines) == 0 {
+		return []pipelineUnblockResult{}, nil
+	}
+	results := []pipelineUnblockResult{}
+	remaining := limit
+	for _, pipeline := range team.Pipelines {
+		if limit > 0 && remaining <= 0 {
+			break
+		}
+		batchLimit := 0
+		if limit > 0 {
+			batchLimit = remaining
+		}
+		unblocked, err := unblockPipelineJobs(teamDir, pipeline, client, stepFilter, message, from, next, batchLimit, allowMissing, dryRun)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, unblocked...)
+		if limit > 0 {
+			remaining -= len(unblocked)
+		}
+	}
+	return results, nil
+}
+
 func skipTeamPipelineSteps(teamDir string, team *topology.Team, stepID string, message string, limit int, dryRun bool) ([]pipelineSkipResult, error) {
 	if team == nil || len(team.Pipelines) == 0 {
 		return []pipelineSkipResult{}, nil
@@ -8559,6 +8666,9 @@ func teamPipelineActions(teamName string, row pipelineStatusRow) []string {
 		actions = append(actions, fmt.Sprintf("agent-team team approve %s --dry-run --dispatch --preview-routes", teamName))
 	}
 	if row.BlockedSteps > 0 {
+		if row.BlockedSteps > row.ManualGates {
+			actions = append(actions, fmt.Sprintf("agent-team team unblock %s <answer...> --dry-run", teamName))
+		}
 		actions = append(actions, fmt.Sprintf("agent-team team explain %s --state blocked", teamName))
 		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state blocked", teamName))
 	}

@@ -2471,6 +2471,146 @@ pipelines = ["ticket_to_pr"]
 	}
 }
 
+func TestTeamUnblockScopesToTeam(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[pipelines.ops_review]
+trigger.event = "ops.created"
+
+[[pipelines.ops_review.steps]]
+id = "implement"
+target = "worker"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-938",
+			Ticket:    "SQU-938",
+			Target:    "worker",
+			Kickoff:   "delivery blocked worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusBlocked, Instance: "worker-squ-938-implement", StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+			},
+		},
+		{
+			ID:        "squ-939",
+			Ticket:    "SQU-939",
+			Target:    "worker",
+			Kickoff:   "ops blocked worker",
+			Pipeline:  "ops_review",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusBlocked, Instance: "worker-squ-939-implement", StartedAt: now.Add(-time.Hour)},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "worker-squ-938-implement", Agent: "worker", Status: daemon.StatusRunning, Runtime: string(runtimebin.KindCodex), PID: os.Getpid(), StartedAt: now.Add(-time.Hour), Job: "squ-938", Ticket: "SQU-938", Workspace: root},
+		{Instance: "worker-squ-939-implement", Agent: "worker", Status: daemon.StatusRunning, Runtime: string(runtimebin.KindCodex), PID: os.Getpid(), StartedAt: now.Add(-time.Hour), Job: "squ-939", Ticket: "SQU-939", Workspace: root},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	dryRun := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryRun.SetOut(dryOut)
+	dryRun.SetErr(dryErr)
+	dryRun.SetArgs([]string{"team", "unblock", "delivery", "--repo", root, "--step", "implement", "--dry-run", "--json", "credentials", "configured"})
+	if err := dryRun.Execute(); err != nil {
+		t.Fatalf("team unblock dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview []pipelineUnblockResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode team unblock dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(preview) != 1 || preview[0].JobID != "squ-938" || preview[0].Action != "would_unblock" || preview[0].StepID != "implement" || preview[0].Instance != "worker-squ-938-implement" {
+		t.Fatalf("team unblock preview = %+v", preview)
+	}
+	if strings.Contains(dryOut.String(), "squ-939") {
+		t.Fatalf("team unblock leaked foreign job:\n%s", dryOut.String())
+	}
+	unchanged, err := job.Read(teamDir, "squ-938")
+	if err != nil {
+		t.Fatalf("read unchanged job: %v", err)
+	}
+	if unchanged.Steps[0].Status != job.StatusBlocked {
+		t.Fatalf("dry-run mutated delivery job = %+v", unchanged)
+	}
+
+	run := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	run.SetOut(out)
+	run.SetErr(stderr)
+	run.SetArgs([]string{"team", "unblock", "delivery", "--repo", root, "--from", "operator", "--message", "credentials configured", "--json"})
+	if err := run.Execute(); err != nil {
+		t.Fatalf("team unblock: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []pipelineUnblockResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode team unblock: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].JobID != "squ-938" || rows[0].Action != "unblocked" || rows[0].StepStatus != job.StatusRunning || rows[0].Message != "credentials configured" {
+		t.Fatalf("team unblock rows = %+v", rows)
+	}
+	delivery, err := job.Read(teamDir, "squ-938")
+	if err != nil {
+		t.Fatalf("read delivery job: %v", err)
+	}
+	if delivery.Status != job.StatusRunning || delivery.Steps[0].Status != job.StatusRunning || delivery.LastEvent != "unblocked" || delivery.LastStatus != "credentials configured" || !delivery.Steps[0].FinishedAt.IsZero() {
+		t.Fatalf("delivery job = %+v", delivery)
+	}
+	messages, err := daemon.ReadMessages(daemon.DaemonRoot(teamDir), "worker-squ-938-implement")
+	if err != nil {
+		t.Fatalf("read delivery messages: %v", err)
+	}
+	if len(messages) != 1 || messages[0].From != "operator" || messages[0].Body != "credentials configured" {
+		t.Fatalf("delivery messages = %+v", messages)
+	}
+	foreignMessages, err := daemon.ReadMessages(daemon.DaemonRoot(teamDir), "worker-squ-939-implement")
+	if err != nil {
+		t.Fatalf("read foreign messages: %v", err)
+	}
+	if len(foreignMessages) != 0 {
+		t.Fatalf("foreign messages = %+v", foreignMessages)
+	}
+	foreign, err := job.Read(teamDir, "squ-939")
+	if err != nil {
+		t.Fatalf("read foreign job: %v", err)
+	}
+	if foreign.Steps[0].Status != job.StatusBlocked || foreign.LastEvent == "unblocked" {
+		t.Fatalf("foreign job changed = %+v", foreign)
+	}
+}
+
 func TestTeamSkipStepScopesToTeam(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

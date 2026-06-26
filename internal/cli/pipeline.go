@@ -45,6 +45,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineAdvanceCmd())
 	cmd.AddCommand(newPipelineApproveCmd())
 	cmd.AddCommand(newPipelineRejectCmd())
+	cmd.AddCommand(newPipelineUnblockCmd())
 	cmd.AddCommand(newPipelineSkipCmd())
 	cmd.AddCommand(newPipelineCancelCmd())
 	cmd.AddCommand(newPipelineCleanupCmd())
@@ -1805,6 +1806,97 @@ func newPipelineRejectCmd() *cobra.Command {
 	return cmd
 }
 
+func newPipelineUnblockCmd() *cobra.Command {
+	var (
+		repo         string
+		all          bool
+		limit        int
+		step         string
+		status       string
+		from         string
+		message      string
+		messageFile  string
+		allowMissing bool
+		dryRun       bool
+		jsonOut      bool
+		format       string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "unblock <pipeline>|--all [message...]",
+		Short: "Answer blocked pipeline workers.",
+		Long: "Send the same operator answer to blocked pipeline step owners for jobs in one pipeline, or all pipelines with --all. " +
+			"By default a job is selected when it has a single blocked step owner; pass --step to target one stage explicitly.",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if len(args) == 0 && !all {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: pass a pipeline name or --all.")
+				return exitErr(2)
+			}
+			if len(args) > 0 && !all && strings.TrimSpace(args[0]) == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: pipeline name is required.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			next, err := parseJobUnblockStatus(status)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline unblock: %v\n", err)
+				return exitErr(2)
+			}
+			tmpl, err := parsePipelineUnblockFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline unblock: %v\n", err)
+				return exitErr(2)
+			}
+			pipelineName := ""
+			messageArgs := args
+			if !all {
+				pipelineName = strings.TrimSpace(args[0])
+				messageArgs = args[1:]
+			}
+			body, err := sendMessageBody(message, messageFile, messageArgs)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline unblock: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			client, err := sendClientForTeamDir(teamDir)
+			if err != nil {
+				return err
+			}
+			results, err := unblockPipelineJobs(teamDir, pipelineName, client, step, body, normalizedJobUnblockSender(from), next, limit, allowMissing, dryRun)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline unblock: %v\n", err)
+				return exitErr(1)
+			}
+			return renderPipelineUnblockResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&all, "all", false, "Unblock matching jobs across all pipelines.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum blocked jobs to unblock or report (0 = no limit).")
+	cmd.Flags().StringVar(&step, "step", "", "Unblock only blocked jobs whose selected step has this id.")
+	cmd.Flags().StringVar(&status, "status", string(job.StatusRunning), "Status after unblocking: running or queued.")
+	cmd.Flags().StringVar(&from, "from", "(cli)", "Sender label recorded with each unblock message.")
+	cmd.Flags().StringVar(&message, "message", "", "Message text to send.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read message text from a file, or '-' for stdin.")
+	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing messages for owning instances the daemon does not know yet.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching unblocks without writing job state or mailbox messages.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit unblock results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each unblock result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}} {{.Instance}}'.")
+	return cmd
+}
+
 func newPipelineSkipCmd() *cobra.Command {
 	var (
 		repo        string
@@ -3344,6 +3436,26 @@ type pipelineApproveResult struct {
 	WaitingFor []string           `json:"waiting_for,omitempty"`
 }
 
+type pipelineUnblockResult struct {
+	JobID        string     `json:"job_id"`
+	Ticket       string     `json:"ticket"`
+	Pipeline     string     `json:"pipeline"`
+	StepID       string     `json:"step_id,omitempty"`
+	Target       string     `json:"target,omitempty"`
+	StatusBefore job.Status `json:"status_before"`
+	StatusAfter  job.Status `json:"status_after"`
+	StepStatus   job.Status `json:"step_status,omitempty"`
+	Instance     string     `json:"instance,omitempty"`
+	Action       string     `json:"action"`
+	DryRun       bool       `json:"dry_run,omitempty"`
+	Message      string     `json:"message,omitempty"`
+	From         string     `json:"from,omitempty"`
+	MessageID    string     `json:"message_id,omitempty"`
+	Delivered    bool       `json:"delivered,omitempty"`
+	Job          *job.Job   `json:"job,omitempty"`
+	Step         *job.Step  `json:"step,omitempty"`
+}
+
 type pipelineSkipResult struct {
 	JobID      string     `json:"job_id"`
 	Ticket     string     `json:"ticket"`
@@ -4239,6 +4351,9 @@ func finalizePipelineStatusRow(row *pipelineStatusRow) {
 		actions = append(actions, fmt.Sprintf("agent-team pipeline approve %s --dry-run --dispatch --preview-routes", row.Pipeline))
 	}
 	if row.BlockedSteps > 0 {
+		if row.BlockedSteps > row.ManualGates {
+			actions = append(actions, fmt.Sprintf("agent-team pipeline unblock %s <answer...> --dry-run", row.Pipeline))
+		}
 		actions = append(actions, fmt.Sprintf("agent-team pipeline explain %s --state blocked", row.Pipeline))
 		actions = append(actions, fmt.Sprintf("agent-team pipeline ready %s --state blocked", row.Pipeline))
 	}
@@ -5589,6 +5704,215 @@ func rejectPipelineManualGates(teamDir, pipeline, stepFilter, message string, li
 	return results, nil
 }
 
+func unblockPipelineJobs(teamDir, pipeline string, client sendClient, stepFilter, message, from string, next job.Status, limit int, allowMissing bool, dryRun bool) ([]pipelineUnblockResult, error) {
+	jobs, err := selectedPipelineJobs(teamDir, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	known := map[string]bool(nil)
+	if !allowMissing {
+		known, err = knownSendInstanceSet(client)
+		if err != nil {
+			return nil, err
+		}
+	}
+	results := []pipelineUnblockResult{}
+	for _, j := range jobs {
+		if limit > 0 && len(results) >= limit {
+			break
+		}
+		result, selected, err := previewPipelineJobUnblock(j, stepFilter, message, from, next, known, allowMissing, dryRun)
+		if err != nil {
+			return nil, err
+		}
+		if !selected {
+			continue
+		}
+		if result.Action == "skipped" || dryRun {
+			results = append(results, result)
+			continue
+		}
+		response, err := client.SendMessage(result.Instance, from, message)
+		if err != nil {
+			return nil, err
+		}
+		if response != nil {
+			result.MessageID = response.ID
+			result.Delivered = response.Delivered
+		}
+		if err := writeJobWithAudit(teamDir, result.Job, "unblocked", from, message, pipelineUnblockEventData(result)); err != nil {
+			return nil, err
+		}
+		result.Action = "unblocked"
+		result.DryRun = false
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func previewPipelineJobUnblock(j *job.Job, stepFilter, message, from string, next job.Status, known map[string]bool, allowMissing bool, dryRun bool) (pipelineUnblockResult, bool, error) {
+	if j == nil {
+		return pipelineUnblockResult{}, false, nil
+	}
+	selection, selected, skippedMessage, err := selectPipelineUnblockTarget(j, stepFilter)
+	if err != nil {
+		return pipelineUnblockResult{}, false, err
+	}
+	if !selected {
+		return pipelineUnblockResult{}, false, nil
+	}
+	result := pipelineUnblockResult{
+		JobID:        j.ID,
+		Ticket:       j.Ticket,
+		Pipeline:     j.Pipeline,
+		StepID:       selection.StepID,
+		StatusBefore: j.Status,
+		StatusAfter:  next,
+		Instance:     strings.TrimSpace(selection.Instance),
+		Action:       "would_unblock",
+		DryRun:       dryRun,
+		Message:      message,
+		From:         from,
+	}
+	if idx := jobStepIndex(j, selection.StepID); idx >= 0 {
+		step := &j.Steps[idx]
+		result.Target = step.Target
+		result.StepStatus = step.Status
+		result.Step = cloneJobStep(step)
+	}
+	if skippedMessage != "" {
+		result.Action = "skipped"
+		result.Message = skippedMessage
+		return result, true, nil
+	}
+	if strings.TrimSpace(result.Instance) == "" {
+		result.Action = "skipped"
+		result.Message = "selected blocked work has no owning instance; dispatch or adopt it first"
+		return result, true, nil
+	}
+	if !allowMissing && !known[result.Instance] {
+		result.Action = "skipped"
+		result.Message = "owning instance is not known to the daemon; pass --allow-missing to queue anyway"
+		return result, true, nil
+	}
+	updated := clonePipelineUnblockJob(j)
+	now := time.Now().UTC()
+	updated.Status = next
+	if strings.TrimSpace(selection.StepID) != "" {
+		applySelectedJobStepStatus(updated, selection.StepID, next, now)
+	}
+	updated.LastEvent = "unblocked"
+	updated.LastStatus = message
+	updated.UpdatedAt = now
+	result.Job = updated
+	result.StepStatus = next
+	if idx := jobStepIndex(updated, selection.StepID); idx >= 0 {
+		result.Step = cloneJobStep(&updated.Steps[idx])
+		result.Target = updated.Steps[idx].Target
+		result.StepStatus = updated.Steps[idx].Status
+		result.Instance = strings.TrimSpace(updated.Steps[idx].Instance)
+	}
+	return result, true, nil
+}
+
+func selectPipelineUnblockTarget(j *job.Job, stepFilter string) (jobInstanceSelection, bool, string, error) {
+	stepFilter = strings.TrimSpace(stepFilter)
+	if stepFilter != "" {
+		idx := jobStepIndex(j, stepFilter)
+		if idx < 0 {
+			return jobInstanceSelection{}, false, "", nil
+		}
+		step := &j.Steps[idx]
+		if j.Status != job.StatusBlocked && step.Status != job.StatusBlocked {
+			return jobInstanceSelection{}, false, "", nil
+		}
+		if step.Gate == job.StepGateManual {
+			return jobInstanceSelection{Instance: strings.TrimSpace(step.Instance), StepID: step.ID}, true, "blocked step is a manual gate; use pipeline approve", nil
+		}
+		if step.Gate == job.StepGatePR {
+			return jobInstanceSelection{Instance: strings.TrimSpace(step.Instance), StepID: step.ID}, true, "blocked step is waiting for PR metadata", nil
+		}
+		selection, err := selectJobOwningInstance(j, stepFilter)
+		return selection, true, "", err
+	}
+	if step := uniqueJobStepWithStatusAndInstance(j, job.StatusBlocked); step != nil {
+		if step.Gate == job.StepGateManual {
+			return jobInstanceSelection{Instance: strings.TrimSpace(step.Instance), StepID: step.ID}, true, "blocked step is a manual gate; use pipeline approve", nil
+		}
+		if step.Gate == job.StepGatePR {
+			return jobInstanceSelection{Instance: strings.TrimSpace(step.Instance), StepID: step.ID}, true, "blocked step is waiting for PR metadata", nil
+		}
+		return jobInstanceSelection{Instance: strings.TrimSpace(step.Instance), StepID: step.ID}, true, "", nil
+	}
+	blockedSteps := blockedJobSteps(j)
+	if len(blockedSteps) > 1 {
+		return jobInstanceSelection{}, true, "multiple blocked steps; pass --step to choose one", nil
+	}
+	if len(blockedSteps) == 1 {
+		step := blockedSteps[0]
+		if step.Gate == job.StepGateManual {
+			return jobInstanceSelection{Instance: strings.TrimSpace(step.Instance), StepID: step.ID}, true, "blocked step is a manual gate; use pipeline approve", nil
+		}
+		if step.Gate == job.StepGatePR {
+			return jobInstanceSelection{Instance: strings.TrimSpace(step.Instance), StepID: step.ID}, true, "blocked step is waiting for PR metadata", nil
+		}
+		return jobInstanceSelection{Instance: strings.TrimSpace(step.Instance), StepID: step.ID}, true, "", nil
+	}
+	if j.Status != job.StatusBlocked {
+		return jobInstanceSelection{}, false, "", nil
+	}
+	return jobInstanceSelection{Instance: strings.TrimSpace(j.Instance)}, true, "", nil
+}
+
+func blockedJobSteps(j *job.Job) []job.Step {
+	if j == nil {
+		return nil
+	}
+	steps := []job.Step{}
+	for _, step := range j.Steps {
+		if step.Status == job.StatusBlocked {
+			steps = append(steps, step)
+		}
+	}
+	return steps
+}
+
+func clonePipelineUnblockJob(j *job.Job) *job.Job {
+	if j == nil {
+		return nil
+	}
+	clone := *j
+	clone.Steps = append([]job.Step(nil), j.Steps...)
+	return &clone
+}
+
+func knownSendInstanceSet(client sendClient) (map[string]bool, error) {
+	metas, err := client.Instances()
+	if err != nil {
+		return nil, err
+	}
+	known := map[string]bool{}
+	for _, meta := range metas {
+		if meta == nil || strings.TrimSpace(meta.Instance) == "" {
+			continue
+		}
+		known[strings.TrimSpace(meta.Instance)] = true
+	}
+	return known, nil
+}
+
+func pipelineUnblockEventData(result pipelineUnblockResult) map[string]string {
+	data := map[string]string{
+		"from":     strings.TrimSpace(result.From),
+		"instance": strings.TrimSpace(result.Instance),
+		"status":   string(result.StatusAfter),
+	}
+	if strings.TrimSpace(result.StepID) != "" {
+		data["step"] = strings.TrimSpace(result.StepID)
+	}
+	return data
+}
+
 func skipPipelineSteps(teamDir, pipeline, stepID, message string, limit int, dryRun bool) ([]pipelineSkipResult, error) {
 	stepID = strings.TrimSpace(stepID)
 	if stepID == "" {
@@ -6692,6 +7016,17 @@ func parsePipelineApproveFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
+func parsePipelineUnblockFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("pipeline-unblock-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
 func parsePipelineSkipFormat(format string) (*template.Template, error) {
 	if strings.TrimSpace(format) == "" {
 		return nil, nil
@@ -7344,6 +7679,48 @@ func renderPipelineApproveRoutePreviews(w io.Writer, results []pipelineApproveRe
 		}
 	}
 	return nil
+}
+
+func renderPipelineUnblockResults(w io.Writer, results []pipelineUnblockResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := tmpl.Execute(w, result); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	renderPipelineUnblockTable(w, results)
+	return nil
+}
+
+func renderPipelineUnblockTable(w io.Writer, results []pipelineUnblockResult) {
+	if len(results) == 0 {
+		fmt.Fprintln(w, "(no blocked pipeline workers)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "JOB\tPIPELINE\tSTEP\tTARGET\tACTION\tBEFORE\tAFTER\tINSTANCE\tMESSAGE")
+	for _, result := range results {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			result.JobID,
+			emptyDash(result.Pipeline),
+			emptyDash(result.StepID),
+			emptyDash(result.Target),
+			result.Action,
+			emptyDash(string(result.StatusBefore)),
+			emptyDash(string(result.StatusAfter)),
+			emptyDash(result.Instance),
+			emptyDash(result.Message),
+		)
+	}
+	_ = tw.Flush()
 }
 
 func renderPipelineSkipResults(w io.Writer, results []pipelineSkipResult, jsonOut bool, tmpl *template.Template) error {
