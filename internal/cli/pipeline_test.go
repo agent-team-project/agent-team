@@ -4644,6 +4644,115 @@ target = "worker"
 	}
 }
 
+func TestPipelineQueuePruneFiltersByEventAndJob(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-930",
+			Ticket:    "SQU-930",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "squ-931",
+			Ticket:    "SQU-931",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	queueRoot := daemon.DaemonRoot(teamDir)
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:             "q-pipeline-target",
+			State:          daemon.QueueStateDead,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     "worker-squ-930",
+			Payload:        map[string]any{"job_id": "squ-930", "ticket": "SQU-930"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "worker unavailable",
+			QueuedAt:       now.Add(-3 * time.Hour),
+			UpdatedAt:      now.Add(-2 * time.Hour),
+			DeadLetteredAt: now.Add(-2 * time.Hour),
+		},
+		{
+			ID:             "q-pipeline-wrong-event",
+			State:          daemon.QueueStateDead,
+			EventType:      "schedule.fire",
+			Instance:       "worker",
+			InstanceID:     "worker-squ-930-schedule",
+			Payload:        map[string]any{"job_id": "squ-930", "ticket": "SQU-930"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "worker unavailable",
+			QueuedAt:       now.Add(-3 * time.Hour),
+			UpdatedAt:      now.Add(-2 * time.Hour),
+			DeadLetteredAt: now.Add(-2 * time.Hour),
+		},
+		{
+			ID:             "q-pipeline-wrong-job",
+			State:          daemon.QueueStateDead,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     "worker-squ-931",
+			Payload:        map[string]any{"job_id": "squ-931", "ticket": "SQU-931"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "worker unavailable",
+			QueuedAt:       now.Add(-3 * time.Hour),
+			UpdatedAt:      now.Add(-2 * time.Hour),
+			DeadLetteredAt: now.Add(-2 * time.Hour),
+		},
+	} {
+		if err := daemon.WriteQueueItem(queueRoot, item); err != nil {
+			t.Fatalf("write queue item %s: %v", item.ID, err)
+		}
+	}
+
+	prune := NewRootCmd()
+	pruneOut, pruneErr := &bytes.Buffer{}, &bytes.Buffer{}
+	prune.SetOut(pruneOut)
+	prune.SetErr(pruneErr)
+	prune.SetArgs([]string{"pipeline", "queue", "prune", "ticket_to_pr", "--repo", root, "--job", "SQU-930", "--event-type", "agent.dispatch", "--format", "{{.ID}} {{.Dropped}}"})
+	if err := prune.Execute(); err != nil {
+		t.Fatalf("pipeline queue prune filtered: %v\nstderr=%s", err, pruneErr.String())
+	}
+	if got, want := strings.TrimSpace(pruneOut.String()), "q-pipeline-target true"; got != want {
+		t.Fatalf("pipeline filtered prune output = %q, want %q", got, want)
+	}
+	if _, err := daemon.ReadQueueItem(queueRoot, "q-pipeline-target"); !os.IsNotExist(err) {
+		t.Fatalf("target item err=%v, want not exist", err)
+	}
+	for _, id := range []string{"q-pipeline-wrong-event", "q-pipeline-wrong-job"} {
+		if _, err := daemon.ReadQueueItem(queueRoot, id); err != nil {
+			t.Fatalf("queue item %s should remain: %v", id, err)
+		}
+	}
+}
+
 func TestPipelineQueuePruneRejectsNegativeLimit(t *testing.T) {
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}

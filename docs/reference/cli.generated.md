@@ -2111,6 +2111,7 @@ Flags:
 
 ```text
       --dry-run               Preview job-owned queue items that would be pruned without dropping them.
+      --event-type strings    Filter by event type before pruning; repeat or comma-separate values.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json                  Emit prune results as JSON.
       --limit int             Prune at most this many matching job-owned queue items; 0 means no limit.
@@ -3396,7 +3397,9 @@ Flags:
 
 ```text
       --dry-run               Preview pipeline-owned queue items that would be pruned without dropping them.
+      --event-type strings    Filter by event type before pruning; repeat or comma-separate values.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --job strings           Filter by job id or ticket before pruning; repeat or comma-separate values.
       --json                  Emit prune results as JSON.
       --limit int             Prune at most this many matching pipeline-owned queue items; 0 means no limit.
       --older-than duration   Only prune pipeline-owned items older than this duration based on retry/dead-letter/update time.
@@ -4163,7 +4166,10 @@ Flags:
 
 ```text
       --dry-run               Preview queue items that would be pruned without dropping them.
+      --event-type strings    Filter by event type before pruning; repeat or comma-separate values.
       --format string         Render each result with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --instance strings      Filter by target instance name before pruning; repeat or comma-separate values.
+      --job strings           Filter by job id or ticket before pruning; repeat or comma-separate values.
       --json                  Emit prune results as JSON.
       --limit int             Prune at most this many matching queue items; 0 means no limit.
       --older-than duration   Only prune items older than this duration based on retry/dead-letter/update time.
@@ -5946,7 +5952,9 @@ Flags:
 
 ```text
       --dry-run               Preview team-owned queue items that would be pruned without dropping them.
+      --event-type strings    Filter by event type before pruning; repeat or comma-separate values.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --job strings           Filter by job id or ticket before pruning; repeat or comma-separate values.
       --json                  Emit prune results as JSON.
       --limit int             Prune at most this many matching team-owned queue items; 0 means no limit.
       --older-than duration   Only prune team-owned items older than this duration based on retry/dead-letter/update time.

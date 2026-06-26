@@ -1899,6 +1899,80 @@ func TestJobQueuePruneRuntimeFiltersItems(t *testing.T) {
 	}
 }
 
+func TestJobQueuePruneEventTypeFiltersItems(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	j, err := job.New("SQU-125", "worker", "event scoped cleanup", time.Now())
+	if err != nil {
+		t.Fatalf("job.New: %v", err)
+	}
+	j.Instance = "worker-squ-125"
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("job.Write: %v", err)
+	}
+	now := time.Now().UTC()
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:         "q-job-dispatch",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-125",
+			Payload: map[string]any{
+				"job_id": "squ-125",
+				"ticket": "SQU-125",
+				"target": "worker",
+			},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-48 * time.Hour),
+			UpdatedAt:      now.Add(-47 * time.Hour),
+			DeadLetteredAt: now.Add(-47 * time.Hour),
+		},
+		{
+			ID:         "q-job-schedule",
+			State:      daemon.QueueStateDead,
+			EventType:  "schedule.fire",
+			Instance:   "worker",
+			InstanceID: "worker-squ-125-schedule",
+			Payload: map[string]any{
+				"job_id": "squ-125",
+				"ticket": "SQU-125",
+				"target": "worker",
+			},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "spawn failed",
+			QueuedAt:       now.Add(-48 * time.Hour),
+			UpdatedAt:      now.Add(-47 * time.Hour),
+			DeadLetteredAt: now.Add(-47 * time.Hour),
+		},
+	} {
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+			t.Fatalf("WriteQueueItem %s: %v", item.ID, err)
+		}
+	}
+
+	prune := NewRootCmd()
+	pruneOut, pruneErr := &bytes.Buffer{}, &bytes.Buffer{}
+	prune.SetOut(pruneOut)
+	prune.SetErr(pruneErr)
+	prune.SetArgs([]string{"job", "queue", "prune", "SQU-125", "--repo", tmp, "--event-type", "agent.dispatch", "--format", "{{.ID}} {{.Dropped}}"})
+	if err := prune.Execute(); err != nil {
+		t.Fatalf("job queue prune event filter: %v\nstderr=%s", err, pruneErr.String())
+	}
+	if got, want := strings.TrimSpace(pruneOut.String()), "q-job-dispatch true"; got != want {
+		t.Fatalf("event filtered prune output = %q, want %q", got, want)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-job-dispatch"); !os.IsNotExist(err) {
+		t.Fatalf("dispatch item err=%v, want not exist", err)
+	}
+	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-job-schedule"); err != nil {
+		t.Fatalf("schedule item should remain: %v", err)
+	}
+}
+
 func TestJobQueueRejectsFormatCombinations(t *testing.T) {
 	for _, tc := range []struct {
 		name string

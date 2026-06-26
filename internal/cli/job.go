@@ -654,14 +654,15 @@ func newJobQueueDropCmd() *cobra.Command {
 
 func newJobQueuePruneCmd() *cobra.Command {
 	var (
-		repo      string
-		stateFlag string
-		olderThan time.Duration
-		dryRun    bool
-		jsonOut   bool
-		format    string
-		runtimes  []string
-		limit     int
+		repo       string
+		stateFlag  string
+		olderThan  time.Duration
+		dryRun     bool
+		jsonOut    bool
+		format     string
+		eventTypes []string
+		runtimes   []string
+		limit      int
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -692,7 +693,7 @@ func newJobQueuePruneCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job queue prune: %v\n", err)
 				return exitErr(2)
 			}
-			filters, err := parseQueueListFiltersWithRuntime("", nil, nil, nil, runtimes, false, time.Now().UTC())
+			filters, err := parseQueueListFiltersWithRuntime("", nil, eventTypes, nil, runtimes, false, time.Now().UTC())
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job queue prune: %v\n", err)
 				return exitErr(2)
@@ -707,6 +708,7 @@ func newJobQueuePruneCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&stateFlag, "state", daemon.QueueStateDead, "Queue state to prune: dead, pending, or all.")
 	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "Only prune job-owned items older than this duration based on retry/dead-letter/update time.")
+	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "Filter by event type before pruning; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Filter by queued dispatch runtime before pruning: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Prune at most this many matching job-owned queue items; 0 means no limit.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview job-owned queue items that would be pruned without dropping them.")
