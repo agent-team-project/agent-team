@@ -2636,6 +2636,7 @@ func TestRestartReportsUnsupportedCodexResumeWithoutStoppingInstance(t *testing.
 	}
 	for _, want := range []string{
 		`runtime "codex" does not support managed resume`,
+		`agent-team resume-plan manager`,
 		`agent-team logs manager --follow`,
 		`agent-team logs manager --last-message`,
 	} {
@@ -2988,6 +2989,7 @@ func TestDryRunStartAndRestartResults(t *testing.T) {
 		t.Fatalf("unsupported detail = %q, want Codex resume limitation", unsupported.Detail)
 	}
 	for _, want := range []string{
+		`agent-team resume-plan manager`,
 		`agent-team logs manager --follow`,
 		`agent-team logs manager --last-message`,
 		`codex resume sid-manager`,
@@ -3012,8 +3014,21 @@ func TestDryRunStartAndRestartResults(t *testing.T) {
 	if !strings.Contains(staleUnsupported.Detail, "recorded running pid is not live") {
 		t.Fatalf("stale unsupported detail = %q, want stale pid context", staleUnsupported.Detail)
 	}
-	if !strings.Contains(staleUnsupported.Detail, `agent-team logs manager --last-message`) || !strings.Contains(staleUnsupported.Detail, `codex resume sid-running`) {
+	if !strings.Contains(staleUnsupported.Detail, `agent-team resume-plan manager`) || !strings.Contains(staleUnsupported.Detail, `agent-team logs manager --last-message`) || !strings.Contains(staleUnsupported.Detail, `codex resume sid-running`) {
 		t.Fatalf("stale unsupported detail = %q, want Codex fallback hints", staleUnsupported.Detail)
+	}
+
+	jobUnsupported := dryRunStartResult(lifecycleTarget{
+		name:  "worker-squ-42",
+		agent: "worker",
+		meta: &daemon.Metadata{
+			Status:  daemon.StatusStopped,
+			Runtime: string(runtimebin.KindCodex),
+			Job:     "squ-42",
+		},
+	})
+	if !strings.Contains(jobUnsupported.Detail, `agent-team job resume-plan squ-42`) || strings.Contains(jobUnsupported.Detail, `agent-team resume-plan worker-squ-42`) {
+		t.Fatalf("job unsupported detail = %q, want job-scoped resume-plan hint", jobUnsupported.Detail)
 	}
 
 	skip := dryRunStartResult(lifecycleTarget{

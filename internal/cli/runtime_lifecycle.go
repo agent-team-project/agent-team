@@ -48,6 +48,11 @@ func lifecycleUnsupportedResumeActionHints(meta *daemon.Metadata, instance strin
 	}
 	hints := []string{}
 	if instance != "" {
+		if meta != nil && strings.TrimSpace(meta.Job) != "" {
+			hints = append(hints, fmt.Sprintf("plan: agent-team job resume-plan %s", strings.TrimSpace(meta.Job)))
+		} else {
+			hints = append(hints, fmt.Sprintf("plan: agent-team resume-plan %s", instance))
+		}
 		hints = append(hints,
 			fmt.Sprintf("logs: agent-team logs %s --follow", instance),
 			fmt.Sprintf("last message: agent-team logs %s --last-message", instance),
