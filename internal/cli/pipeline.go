@@ -4836,9 +4836,6 @@ func pipelineReadyRowActions(pipeline string, row jobReadyRow) []string {
 		}
 		return actions
 	}
-	if row.State == "queued" {
-		return []string{fmt.Sprintf("agent-team pipeline advance %s --dry-run --preview-routes", pipeline)}
-	}
 	return row.Actions
 }
 

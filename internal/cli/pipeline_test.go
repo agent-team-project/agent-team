@@ -2819,6 +2819,31 @@ target = "worker"
 	}
 }
 
+func TestPipelineReadyRowActionsPreservesNonAdvanceableQueuedHint(t *testing.T) {
+	blocked := jobReadyRow{
+		JobID:      "squ-835",
+		State:      "queued",
+		WaitingFor: []string{"triage"},
+		Actions:    []string{"agent-team tick"},
+	}
+	blockedActions := pipelineReadyRowActions("ticket_to_pr", blocked)
+	if !containsString(blockedActions, "agent-team tick") ||
+		containsString(blockedActions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") {
+		t.Fatalf("blocked queued actions = %+v", blockedActions)
+	}
+
+	advanceable := jobReadyRow{
+		JobID:   "squ-836",
+		State:   "queued",
+		Actions: []string{"agent-team job advance squ-836"},
+	}
+	advanceActions := pipelineReadyRowActions("ticket_to_pr", advanceable)
+	if !containsString(advanceActions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") ||
+		containsString(advanceActions, "agent-team job advance squ-836") {
+		t.Fatalf("advanceable queued actions = %+v", advanceActions)
+	}
+}
+
 func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
