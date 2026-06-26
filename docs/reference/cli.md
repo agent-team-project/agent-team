@@ -162,7 +162,7 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team pipeline show <pipeline>` | Show one declaration |
 | `agent-team pipeline graph <pipeline>` | Render text, Mermaid, DOT, or JSON step graphs |
 | `agent-team pipeline doctor --all` | Validate workflows |
-| `agent-team pipeline run <pipeline> <ticket>` | Create pipeline job; `--dispatch` accepts runtime overrides |
+| `agent-team pipeline run <pipeline> <ticket>` | Create pipeline job; `--dispatch` accepts workspace and runtime overrides |
 | `agent-team pipeline status` | Summarize or watch pipeline jobs plus owned queue/quarantine counts; sort rows and cap output with `--limit` |
 | `agent-team pipeline explain <pipeline>` | Expand or watch pipeline jobs as per-step readiness, blockers, gates, and actions; add `--step` to focus one stage |
 | `agent-team pipeline snapshot <pipeline>` | Capture one pipeline's status, explained jobs, queue ownership, and dry-run advance previews |
@@ -172,7 +172,7 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team pipeline ready` | List or watch ready steps; filter by `--step`, sort by `--sort`, and cap rows with `--limit` |
 | `agent-team pipeline hold <pipeline>` | Hold matching pipeline jobs without changing lifecycle status; add `--for` or `--until` for a deadline |
 | `agent-team pipeline release <pipeline>` | Release held jobs in a pipeline; add `--expired` to release only elapsed deadlines |
-| `agent-team pipeline advance <pipeline>` | Advance ready work; use `--runtime` for dispatched steps |
+| `agent-team pipeline advance <pipeline>` | Advance ready work; use `--workspace` and `--runtime` for dispatched steps |
 | `agent-team pipeline approve <pipeline>` | Approve blocked manual gates |
 | `agent-team pipeline reject <pipeline>` | Reject blocked manual gates |
 | `agent-team pipeline skip <pipeline> --step <id>` | Mark matching non-running steps intentionally skipped |
@@ -199,10 +199,10 @@ Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queu
 | `agent-team team runtime resume-plan <team>` | Team-scoped runtime recovery commands; filter by `--action`/`--runtime-stale`/`--unhealthy` or summarize with `--summary` |
 | `agent-team team status <team>` | Scoped status |
 | `agent-team team monitor <team>` | Scoped dashboard |
-| `agent-team team run <team> <ticket>` | Create a team-owned job; `--dispatch` accepts runtime overrides |
+| `agent-team team run <team> <ticket>` | Create a team-owned job; `--dispatch` accepts workspace and runtime overrides |
 | `agent-team team jobs <team>` | Scoped job list, summary, or watch view; filter held state, mixed-runtime ownership, and cap output with `--limit` |
-| `agent-team team tick <team>` | Scoped maintenance cycle; use `--runtime` for advanced steps |
-| `agent-team team repair <team>` | Scoped repair loop, including stale-work timeout with `--timeout-jobs`; failed-step retry accepts pipeline/step filters, `--retry-force`, and runtime overrides |
+| `agent-team team tick <team>` | Scoped maintenance cycle; use `--workspace` and `--runtime` for advanced steps |
+| `agent-team team repair <team>` | Scoped repair loop, including stale-work timeout with `--timeout-jobs`; failed-step retry accepts pipeline/step filters, `--retry-force`, and workspace/runtime overrides |
 | `agent-team team queue <team>` | Scoped queue list; filter queued dispatches with `--runtime`, sort rows with `--sort`, and cap output with `--limit` |
 | `agent-team team queue show <team> <id>` | Inspect one active queue item owned by a team |
 | `agent-team team queue retry <team> --all` | Retry matching team-owned entries; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
