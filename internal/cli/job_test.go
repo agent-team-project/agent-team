@@ -5261,6 +5261,59 @@ func TestJobDispatchAndSend(t *testing.T) {
 	if len(messages) != 1 || messages[0].Body != "please post a status update" {
 		t.Fatalf("messages = %+v", messages)
 	}
+	beforeDryRun, err := job.Read(filepath.Join(target, ".agent_team"), "squ-43")
+	if err != nil {
+		t.Fatalf("read job before dry-run send: %v", err)
+	}
+
+	dryRun := NewRootCmd()
+	dryRunOut, dryRunErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryRun.SetOut(dryRunOut)
+	dryRun.SetErr(dryRunErr)
+	dryRun.SetArgs([]string{"job", "send", "SQU-43", "preview status ping", "--repo", target, "--dry-run", "--json"})
+	if err := dryRun.Execute(); err != nil {
+		t.Fatalf("job send dry-run: %v\nstderr=%s", err, dryRunErr.String())
+	}
+	var preview struct {
+		ID       string  `json:"id"`
+		Job      job.Job `json:"job"`
+		DryRun   bool    `json:"dry_run"`
+		Instance string  `json:"instance"`
+		From     string  `json:"from"`
+		Message  string  `json:"message"`
+	}
+	if err := json.Unmarshal(dryRunOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode job send dry-run: %v\nbody=%s", err, dryRunOut.String())
+	}
+	if !preview.DryRun || preview.ID != "squ-43" || preview.Job.ID != "squ-43" || preview.Instance != "worker-squ-43" || preview.From != "(cli)" || preview.Message != "preview status ping" {
+		t.Fatalf("dry-run preview = %+v", preview)
+	}
+	messages, err = daemon.ReadMessages(daemon.DaemonRoot(filepath.Join(target, ".agent_team")), "worker-squ-43")
+	if err != nil {
+		t.Fatalf("read messages after dry-run: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("dry-run appended messages = %+v", messages)
+	}
+	afterDryRun, err := job.Read(filepath.Join(target, ".agent_team"), "squ-43")
+	if err != nil {
+		t.Fatalf("read job after dry-run send: %v", err)
+	}
+	if afterDryRun.LastEvent != beforeDryRun.LastEvent || afterDryRun.LastStatus != beforeDryRun.LastStatus || !afterDryRun.UpdatedAt.Equal(beforeDryRun.UpdatedAt) {
+		t.Fatalf("dry-run mutated job before=%+v after=%+v", beforeDryRun, afterDryRun)
+	}
+
+	dryRunFormat := NewRootCmd()
+	dryRunFormatOut, dryRunFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryRunFormat.SetOut(dryRunFormatOut)
+	dryRunFormat.SetErr(dryRunFormatErr)
+	dryRunFormat.SetArgs([]string{"job", "send", "SQU-43", "--message", "formatted preview", "--repo", target, "--dry-run", "--format", "{{.ID}} {{.DryRun}} {{.Instance}}"})
+	if err := dryRunFormat.Execute(); err != nil {
+		t.Fatalf("job send dry-run format: %v\nstderr=%s", err, dryRunFormatErr.String())
+	}
+	if got, want := dryRunFormatOut.String(), "squ-43 true worker-squ-43\n"; got != want {
+		t.Fatalf("dry-run format output = %q, want %q", got, want)
+	}
 
 	messageFile := filepath.Join(target, "handoff.txt")
 	if err := os.WriteFile(messageFile, []byte("first line\nsecond line\n"), 0o644); err != nil {

@@ -1409,6 +1409,7 @@ func newJobSendCmd() *cobra.Command {
 		message      string
 		messageFile  string
 		allowMissing bool
+		dryRun       bool
 		jsonOut      bool
 		format       string
 	)
@@ -1444,6 +1445,16 @@ func newJobSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if dryRun {
+				if err := runSendWithClient(io.Discard, cmd.ErrOrStderr(), client, j.Instance, body, sendOptions{
+					From:         from,
+					AllowMissing: allowMissing,
+					DryRun:       true,
+				}); err != nil {
+					return err
+				}
+				return renderJobSendPreview(cmd.OutOrStdout(), j, j.Instance, from, body, jsonOut, tmpl)
+			}
 			if err := runSendWithClient(io.Discard, cmd.ErrOrStderr(), client, j.Instance, body, sendOptions{
 				From:         from,
 				AllowMissing: allowMissing,
@@ -1471,8 +1482,9 @@ func newJobSendCmd() *cobra.Command {
 	cmd.Flags().StringVar(&message, "message", "", "Message text to send.")
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read message text from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing a message for an instance the daemon does not know yet.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the send without appending a mailbox message or updating the job.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job or batch rows as JSON.")
-	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.LastEvent}}'.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or dry-run preview with a Go template, e.g. '{{.ID}} {{.LastEvent}}'.")
 	return cmd
 }
 
@@ -9355,6 +9367,42 @@ func renderJobDispatchPreview(w io.Writer, j *job.Job, dispatch *dispatchRoutePr
 		return nil
 	}
 	return renderEventPublishRoutePreview(w, dispatch.Preview)
+}
+
+type jobSendPreview struct {
+	ID       string   `json:"id"`
+	Job      *job.Job `json:"job"`
+	DryRun   bool     `json:"dry_run"`
+	Instance string   `json:"instance"`
+	From     string   `json:"from"`
+	Message  string   `json:"message"`
+}
+
+func renderJobSendPreview(w io.Writer, j *job.Job, instance, from, message string, jsonOut bool, tmpl *template.Template) error {
+	from = strings.TrimSpace(from)
+	if from == "" {
+		from = "(cli)"
+	}
+	result := jobSendPreview{
+		ID:       j.ID,
+		Job:      j,
+		DryRun:   true,
+		Instance: strings.TrimSpace(instance),
+		From:     from,
+		Message:  strings.TrimSpace(message),
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(result)
+	}
+	if tmpl != nil {
+		if err := tmpl.Execute(w, result); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(w)
+		return err
+	}
+	fmt.Fprintf(w, "  would-send   %-20s job=%s\n", result.Instance, j.ID)
+	return nil
 }
 
 type jobAdvancePreview struct {

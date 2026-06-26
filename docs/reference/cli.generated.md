@@ -2503,7 +2503,8 @@ Flags:
 
 ```text
       --allow-missing         Allow queueing a message for an instance the daemon does not know yet.
-      --format string         Render the updated job with a Go template, e.g. '{{.ID}} {{.LastEvent}}'.
+      --dry-run               Preview the send without appending a mailbox message or updating the job.
+      --format string         Render the updated job or dry-run preview with a Go template, e.g. '{{.ID}} {{.LastEvent}}'.
       --from string           Sender label recorded with the message. (default "(cli)")
       --json                  Emit the updated job or batch rows as JSON.
       --message string        Message text to send.
