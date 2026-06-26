@@ -270,10 +270,10 @@ func TestOverviewReportsStaleRuntimeResumePlanActions(t *testing.T) {
 	if overview.Runtime.StaleRunning != 2 || !stringSliceContains(overview.Runtime.StaleInstances, "support-stale") || !stringSliceContains(overview.Runtime.StaleInstances, "worker-squ-902") {
 		t.Fatalf("runtime stale summary = %+v", overview.Runtime)
 	}
-	if !stringSliceContains(overview.Actions, "agent-team runtime resume-plan --stale") {
+	if !stringSliceContains(overview.Actions, "agent-team runtime resume-plan --runtime-stale") {
 		t.Fatalf("actions missing stale runtime resume plan: %+v", overview.Actions)
 	}
-	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team runtime resume-plan --stale"); !ok || detail.Source != "runtime" || detail.Reason != "stale=2" {
+	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team runtime resume-plan --runtime-stale"); !ok || detail.Source != "runtime" || detail.Reason != "stale=2" {
 		t.Fatalf("stale runtime action detail = %+v ok=%v", detail, ok)
 	}
 
@@ -301,10 +301,10 @@ func TestOverviewReportsStaleRuntimeResumePlanActions(t *testing.T) {
 	if err := json.Unmarshal(teamOut.Bytes(), &teamOverview); err != nil {
 		t.Fatalf("decode team overview stale runtime: %v\nbody=%s", err, teamOut.String())
 	}
-	if teamOverview.Runtime.StaleRunning != 1 || !stringSliceContains(teamOverview.Actions, "agent-team team runtime resume-plan delivery --stale") {
+	if teamOverview.Runtime.StaleRunning != 1 || !stringSliceContains(teamOverview.Actions, "agent-team team runtime resume-plan delivery --runtime-stale") {
 		t.Fatalf("team stale runtime summary = %+v actions=%+v", teamOverview.Runtime, teamOverview.Actions)
 	}
-	if detail, ok := findOperatorActionHint(teamOverview.ActionDetails, "agent-team team runtime resume-plan delivery --stale"); !ok || detail.Team != "delivery" || detail.Source != "runtime" || detail.Reason != "stale=1" {
+	if detail, ok := findOperatorActionHint(teamOverview.ActionDetails, "agent-team team runtime resume-plan delivery --runtime-stale"); !ok || detail.Team != "delivery" || detail.Source != "runtime" || detail.Reason != "stale=1" {
 		t.Fatalf("team stale runtime action detail = %+v ok=%v", detail, ok)
 	}
 }

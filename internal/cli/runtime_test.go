@@ -766,9 +766,9 @@ func TestRuntimeResumePlanMarksStaleRunningMetadata(t *testing.T) {
 	staleSummaryOut, staleSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	staleSummary.SetOut(staleSummaryOut)
 	staleSummary.SetErr(staleSummaryErr)
-	staleSummary.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--stale", "--summary", "--json"})
+	staleSummary.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--runtime-stale", "--summary", "--json"})
 	if err := staleSummary.Execute(); err != nil {
-		t.Fatalf("runtime resume-plan stale summary: %v\nstderr=%s", err, staleSummaryErr.String())
+		t.Fatalf("runtime resume-plan runtime-stale summary: %v\nstderr=%s", err, staleSummaryErr.String())
 	}
 	var staleCounts runtimeResumeSummary
 	if err := json.Unmarshal(staleSummaryOut.Bytes(), &staleCounts); err != nil {
@@ -782,9 +782,9 @@ func TestRuntimeResumePlanMarksStaleRunningMetadata(t *testing.T) {
 	jobFilteredOut, jobFilteredErr := &bytes.Buffer{}, &bytes.Buffer{}
 	jobFiltered.SetOut(jobFilteredOut)
 	jobFiltered.SetErr(jobFilteredErr)
-	jobFiltered.SetArgs([]string{"job", "resume-plan", "SQU-55", "--repo", tmp, "--stale", "--format", "{{.Job}} {{.Instance}} {{.Stale}} {{.RecommendedCommand}}"})
+	jobFiltered.SetArgs([]string{"job", "resume-plan", "SQU-55", "--repo", tmp, "--runtime-stale", "--format", "{{.Job}} {{.Instance}} {{.Stale}} {{.RecommendedCommand}}"})
 	if err := jobFiltered.Execute(); err != nil {
-		t.Fatalf("job resume-plan stale filter: %v\nstderr=%s", err, jobFilteredErr.String())
+		t.Fatalf("job resume-plan runtime-stale filter: %v\nstderr=%s", err, jobFilteredErr.String())
 	}
 	if got := strings.TrimSpace(jobFilteredOut.String()); got != "squ-55 stale-manager true agent-team start stale-manager" {
 		t.Fatalf("job stale plan = %q", got)

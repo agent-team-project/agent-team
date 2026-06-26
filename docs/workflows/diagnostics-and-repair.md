@@ -38,7 +38,7 @@ where applicable.
 
 When daemon metadata contains crashed instances or stale recorded running PIDs,
 overview includes runtime counts and suggests `agent-team runtime resume-plan
---status crashed`, `agent-team runtime resume-plan --stale`, or the matching
+--status crashed`, `agent-team runtime resume-plan --runtime-stale`, or the matching
 team-scoped `agent-team team runtime resume-plan <team> ...` command. Add
 `--unhealthy` when one report should include both crashed and stale-running
 metadata, `--action start|attach|resume|logs` when you only want one recovery

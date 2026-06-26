@@ -914,9 +914,9 @@ func overviewRuntimeResumePlanAction(_ overviewRuntimeSummary, teamName string) 
 
 func overviewRuntimeStaleResumePlanAction(teamName string) string {
 	if teamName != "" {
-		return fmt.Sprintf("agent-team team runtime resume-plan %s --stale", teamName)
+		return fmt.Sprintf("agent-team team runtime resume-plan %s --runtime-stale", teamName)
 	}
-	return "agent-team runtime resume-plan --stale"
+	return "agent-team runtime resume-plan --runtime-stale"
 }
 
 func overviewHasQueueSectionError(out *overviewResult) bool {

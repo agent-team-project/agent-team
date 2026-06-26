@@ -4154,9 +4154,9 @@ func TestTeamRuntimeResumePlanScopesMetadata(t *testing.T) {
 	staleOut, staleErr := &bytes.Buffer{}, &bytes.Buffer{}
 	stale.SetOut(staleOut)
 	stale.SetErr(staleErr)
-	stale.SetArgs([]string{"team", "runtime", "resume-plan", "delivery", "--repo", root, "--stale", "--format", "{{.Instance}} {{.Stale}} {{.RecommendedAction}}"})
+	stale.SetArgs([]string{"team", "runtime", "resume-plan", "delivery", "--repo", root, "--runtime-stale", "--format", "{{.Instance}} {{.Stale}} {{.RecommendedAction}}"})
 	if err := stale.Execute(); err != nil {
-		t.Fatalf("team runtime resume-plan stale filter: %v\nstderr=%s", err, staleErr.String())
+		t.Fatalf("team runtime resume-plan runtime-stale filter: %v\nstderr=%s", err, staleErr.String())
 	}
 	if got, want := strings.TrimSpace(staleOut.String()), "worker-squ-902 true start"; got != want {
 		t.Fatalf("team stale resume-plan = %q, want %q", got, want)

@@ -61,6 +61,7 @@ func newRuntimeResumePlanCmd() *cobra.Command {
 		runtimeFilter []string
 		actionFilters []string
 		staleOnly     bool
+		runtimeStale  bool
 		unhealthyOnly bool
 		summary       bool
 		jsonOut       bool
@@ -95,7 +96,7 @@ func newRuntimeResumePlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			plans, err := collectRuntimeResumePlans(teamDir, args, jobID, statusFilters, runtimeFilter, actionFilters, staleOnly, unhealthyOnly)
+			plans, err := collectRuntimeResumePlans(teamDir, args, jobID, statusFilters, runtimeFilter, actionFilters, staleOnly || runtimeStale, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime resume-plan: %v\n", err)
 				return exitErr(1)
@@ -123,7 +124,8 @@ func newRuntimeResumePlanCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
-	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only include running metadata whose recorded PID is no longer live.")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.")
+	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Only include running metadata whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only include crashed or stale running metadata.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching resume plans by recommended action, runtime, and status.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
@@ -138,6 +140,7 @@ func newJobResumePlanCmd() *cobra.Command {
 		runtimeFilter []string
 		actionFilters []string
 		staleOnly     bool
+		runtimeStale  bool
 		unhealthyOnly bool
 		summary       bool
 		jsonOut       bool
@@ -168,7 +171,7 @@ func newJobResumePlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			plans, err := collectRuntimeResumePlans(teamDir, nil, args[0], statusFilters, runtimeFilter, actionFilters, staleOnly, unhealthyOnly)
+			plans, err := collectRuntimeResumePlans(teamDir, nil, args[0], statusFilters, runtimeFilter, actionFilters, staleOnly || runtimeStale, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job resume-plan: %v\n", err)
 				return exitErr(1)
@@ -195,7 +198,8 @@ func newJobResumePlanCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
-	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only include running metadata whose recorded PID is no longer live.")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.")
+	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Only include running metadata whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only include crashed or stale running metadata.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching resume plans by recommended action, runtime, and status.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")

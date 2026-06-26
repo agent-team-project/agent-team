@@ -2459,7 +2459,8 @@ Flags:
       --json              Emit machine-readable JSON.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
-      --stale             Only include running metadata whose recorded PID is no longer live.
+      --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
+      --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --summary           Summarize matching resume plans by recommended action, runtime, and status.
       --unhealthy         Only include crashed or stale running metadata.
@@ -3648,7 +3649,8 @@ Flags:
       --json              Emit machine-readable JSON.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
-      --stale             Only include running metadata whose recorded PID is no longer live.
+      --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
+      --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --summary           Summarize matching pipeline resume plans by recommended action, runtime, and status.
       --unhealthy         Only include crashed or stale running metadata.
@@ -4716,7 +4718,8 @@ Flags:
       --job string        Select the instance recorded on or associated with this job id.
       --json              Emit machine-readable JSON.
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
-      --stale             Only include running metadata whose recorded PID is no longer live.
+      --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
+      --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --summary           Summarize matching resume plans by recommended action, runtime, and status.
       --target string     Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
@@ -6276,7 +6279,8 @@ Flags:
       --json              Emit machine-readable JSON.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
-      --stale             Only include running metadata whose recorded PID is no longer live.
+      --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
+      --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --summary           Summarize matching team resume plans by recommended action, runtime, and status.
       --unhealthy         Only include crashed or stale running metadata.

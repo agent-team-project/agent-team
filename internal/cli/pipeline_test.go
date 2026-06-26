@@ -3278,9 +3278,9 @@ target = "worker"
 	staleOut, staleErr := &bytes.Buffer{}, &bytes.Buffer{}
 	stale.SetOut(staleOut)
 	stale.SetErr(staleErr)
-	stale.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--stale", "--format", "{{.Job}} {{.Instance}} {{.Stale}} {{.RecommendedAction}}"})
+	stale.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--runtime-stale", "--format", "{{.Job}} {{.Instance}} {{.Stale}} {{.RecommendedAction}}"})
 	if err := stale.Execute(); err != nil {
-		t.Fatalf("pipeline resume-plan stale filter: %v\nstderr=%s", err, staleErr.String())
+		t.Fatalf("pipeline resume-plan runtime-stale filter: %v\nstderr=%s", err, staleErr.String())
 	}
 	if got, want := strings.TrimSpace(staleOut.String()), "squ-942 worker-squ-942 true start"; got != want {
 		t.Fatalf("pipeline stale resume-plan = %q, want %q", got, want)

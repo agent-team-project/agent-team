@@ -1066,12 +1066,12 @@ func crashedInstanceHealthActions(row instanceRow) []string {
 
 func runtimeStaleHealthActions(row instanceRow) []string {
 	if id := job.NormalizeID(row.Job); id != "" {
-		return []string{fmt.Sprintf("agent-team job resume-plan %s --stale", id)}
+		return []string{fmt.Sprintf("agent-team job resume-plan %s --runtime-stale", id)}
 	}
 	if instance := strings.TrimSpace(row.Instance); instance != "" {
-		return []string{fmt.Sprintf("agent-team runtime resume-plan %s --stale", instance)}
+		return []string{fmt.Sprintf("agent-team runtime resume-plan %s --runtime-stale", instance)}
 	}
-	return []string{"agent-team runtime resume-plan --stale"}
+	return []string{"agent-team runtime resume-plan --runtime-stale"}
 }
 
 func (r *healthResult) addIssue(code, instance, status, phase, message string) {

@@ -1448,7 +1448,7 @@ func TestHealthCommandUnhealthyIncludesRuntimeStaleIssue(t *testing.T) {
 	}
 	for _, issue := range body.Issues {
 		if issue.Code == "runtime_stale" && issue.Instance == "runtime-stale" {
-			if !containsString(issue.Actions, "agent-team job resume-plan squ-88 --stale") {
+			if !containsString(issue.Actions, "agent-team job resume-plan squ-88 --runtime-stale") {
 				t.Fatalf("runtime stale actions = %+v, want job resume-plan action", issue.Actions)
 			}
 			return

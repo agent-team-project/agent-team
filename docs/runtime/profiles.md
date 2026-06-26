@@ -224,11 +224,11 @@ agent-team job resume-plan squ-42
 agent-team runtime resume-plan --runtime codex --status exited
 agent-team runtime resume-plan --action resume --format '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'
 agent-team runtime resume-plan --status crashed --summary --json
-agent-team runtime resume-plan --stale --summary
+agent-team runtime resume-plan --runtime-stale --summary
 agent-team runtime resume-plan --unhealthy --summary
 agent-team runtime resume-plan --json
 agent-team team runtime resume-plan delivery --status crashed
-agent-team team runtime resume-plan delivery --stale --summary
+agent-team team runtime resume-plan delivery --runtime-stale --summary
 ```
 
 `agent-team overview` also summarizes runtime metadata and links crashed or
