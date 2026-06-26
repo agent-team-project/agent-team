@@ -130,6 +130,42 @@ func TestTeamNextCommandReportsScopedActions(t *testing.T) {
 	}
 }
 
+func TestNextCommandDetailsTextIncludesSourceAndReason(t *testing.T) {
+	root := writeOverviewAttentionFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"next", "--target", root, "--source", "queue", "--reason", "queue_dead_letter", "--details"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("next details text: %v\nstderr=%s", err, stderr.String())
+	}
+	for _, want := range []string{
+		"[queue/queue_dead_letter] agent-team job queue retry squ-700 --all --dry-run",
+		"[queue/queue_dead_letter] agent-team repair --skip-tick --dry-run",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("next details output missing %q:\n%s", want, out.String())
+		}
+	}
+
+	team := NewRootCmd()
+	teamOut, teamErr := &bytes.Buffer{}, &bytes.Buffer{}
+	team.SetOut(teamOut)
+	team.SetErr(teamErr)
+	team.SetArgs([]string{"team", "next", "delivery", "--repo", root, "--source", "queue", "--details"})
+	if err := team.Execute(); err != nil {
+		t.Fatalf("team next details text: %v\nstderr=%s", err, teamErr.String())
+	}
+	if !strings.Contains(teamOut.String(), "team: delivery") {
+		t.Fatalf("team next details output missing team header:\n%s", teamOut.String())
+	}
+	if !strings.Contains(teamOut.String(), "[queue/queue_dead_letter] agent-team team queue retry delivery --all --job squ-700 --dry-run") {
+		t.Fatalf("team next details output missing queue retry detail:\n%s", teamOut.String())
+	}
+}
+
 func TestNextCommandFormat(t *testing.T) {
 	root := writeOverviewAttentionFixture(t)
 
@@ -547,7 +583,7 @@ func TestNextActionResultHandlesNoActions(t *testing.T) {
 	}
 
 	out := &bytes.Buffer{}
-	if err := renderNextActionResult(out, result, false, nil); err != nil {
+	if err := renderNextActionResult(out, result, false, nil, false); err != nil {
 		t.Fatalf("render next: %v", err)
 	}
 	if !strings.Contains(out.String(), "actions: none") {
@@ -579,7 +615,7 @@ func TestNextWatchRendersUntilContextDone(t *testing.T) {
 			CapturedAt: now.UTC().Format(time.RFC3339),
 			Actions:    []string{"agent-team queue drain --dry-run"},
 		}, nil
-	}, 0, nextActionFilters{}, false, nil, time.Millisecond, false)
+	}, 0, nextActionFilters{}, false, nil, false, time.Millisecond, false)
 	if err != nil {
 		t.Fatalf("runNextWatch: %v", err)
 	}

@@ -22,6 +22,7 @@ func newNextCmd() *cobra.Command {
 		scheduleLimit int
 		sources       []string
 		reasons       []string
+		details       bool
 		watch         bool
 		noClear       bool
 		interval      time.Duration
@@ -75,7 +76,7 @@ func newNextCmd() *cobra.Command {
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
-				if err := runNextWatch(ctx, cmd.OutOrStdout(), collect, limit, filters, jsonOut, tmpl, interval, !noClear && !jsonOut); err != nil {
+				if err := runNextWatch(ctx, cmd.OutOrStdout(), collect, limit, filters, jsonOut, tmpl, details, interval, !noClear && !jsonOut); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team next: %v\n", err)
 					return exitErr(1)
 				}
@@ -86,7 +87,7 @@ func newNextCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team next: %v\n", err)
 				return exitErr(1)
 			}
-			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverviewFiltered(overview, limit, filters), jsonOut, tmpl)
+			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverviewFiltered(overview, limit, filters), jsonOut, tmpl, details)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
@@ -95,6 +96,7 @@ func newNextCmd() *cobra.Command {
 	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 5, "Upcoming schedules to inspect while building recommendations; 0 means all.")
 	cmd.Flags().StringSliceVar(&sources, "source", nil, "Only show actions from this source: health, topology, runtime, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&details, "details", false, "Include source and reason metadata in text output.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
@@ -110,6 +112,7 @@ func newTeamNextCmd() *cobra.Command {
 		scheduleLimit int
 		sources       []string
 		reasons       []string
+		details       bool
 		watch         bool
 		noClear       bool
 		interval      time.Duration
@@ -160,7 +163,7 @@ func newTeamNextCmd() *cobra.Command {
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
-				if err := runNextWatch(ctx, cmd.OutOrStdout(), collect, limit, filters, jsonOut, tmpl, interval, !noClear && !jsonOut); err != nil {
+				if err := runNextWatch(ctx, cmd.OutOrStdout(), collect, limit, filters, jsonOut, tmpl, details, interval, !noClear && !jsonOut); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team next: %v\n", err)
 					return exitErr(1)
 				}
@@ -171,7 +174,7 @@ func newTeamNextCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team next: %v\n", err)
 				return exitErr(1)
 			}
-			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverviewFiltered(overview, limit, filters), jsonOut, tmpl)
+			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverviewFiltered(overview, limit, filters), jsonOut, tmpl, details)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -179,6 +182,7 @@ func newTeamNextCmd() *cobra.Command {
 	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 5, "Upcoming schedules to inspect while building recommendations; 0 means all.")
 	cmd.Flags().StringSliceVar(&sources, "source", nil, "Only show actions from this source: health, topology, runtime, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&details, "details", false, "Include source and reason metadata in text output.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
@@ -348,7 +352,7 @@ func nextActionMatchesFilters(detail operatorActionHint, filters nextActionFilte
 	return true
 }
 
-func renderNextActionResult(w io.Writer, result nextActionResult, jsonOut bool, tmpl *template.Template) error {
+func renderNextActionResult(w io.Writer, result nextActionResult, jsonOut bool, tmpl *template.Template, showDetails bool) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(result)
 	}
@@ -364,13 +368,33 @@ func renderNextActionResult(w io.Writer, result nextActionResult, jsonOut bool, 
 		return nil
 	}
 	fmt.Fprintln(w, "actions:")
-	for _, action := range result.Actions {
+	for i, action := range result.Actions {
+		if showDetails {
+			fmt.Fprintf(w, "  [%s] %s\n", nextActionDetailLabel(result.ActionDetails, i), action)
+			continue
+		}
 		fmt.Fprintf(w, "  %s\n", action)
 	}
 	if result.HiddenActions > 0 {
 		fmt.Fprintf(w, "  ... %d more\n", result.HiddenActions)
 	}
 	return nil
+}
+
+func nextActionDetailLabel(details []operatorActionHint, index int) string {
+	if index < 0 || index >= len(details) {
+		return "overview"
+	}
+	detail := details[index]
+	source := strings.TrimSpace(detail.Source)
+	if source == "" {
+		source = "overview"
+	}
+	reason := strings.TrimSpace(detail.Reason)
+	if reason == "" {
+		return source
+	}
+	return source + "/" + reason
 }
 
 func parseNextFormat(format string) (*template.Template, error) {
@@ -392,7 +416,7 @@ func renderNextActionFormat(w io.Writer, result nextActionResult, tmpl *template
 	return err
 }
 
-func runNextWatch(ctx context.Context, w io.Writer, collect func(time.Time) (*overviewResult, error), limit int, filters nextActionFilters, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+func runNextWatch(ctx context.Context, w io.Writer, collect func(time.Time) (*overviewResult, error), limit int, filters nextActionFilters, jsonOut bool, tmpl *template.Template, showDetails bool, interval time.Duration, clear bool) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
@@ -408,7 +432,7 @@ func runNextWatch(ctx context.Context, w io.Writer, collect func(time.Time) (*ov
 		if err != nil {
 			return err
 		}
-		if err := renderNextActionResult(w, nextActionResultFromOverviewFiltered(overview, limit, filters), jsonOut, tmpl); err != nil {
+		if err := renderNextActionResult(w, nextActionResultFromOverviewFiltered(overview, limit, filters), jsonOut, tmpl, showDetails); err != nil {
 			return err
 		}
 		select {
