@@ -2767,16 +2767,17 @@ func newPipelineRepairCmd() *cobra.Command {
 
 func newPipelineHoldCmd() *cobra.Command {
 	var (
-		repo     string
-		all      bool
-		limit    int
-		states   []string
-		message  string
-		holdFor  time.Duration
-		untilRaw string
-		dryRun   bool
-		jsonOut  bool
-		format   string
+		repo        string
+		all         bool
+		limit       int
+		states      []string
+		message     string
+		messageFile string
+		holdFor     time.Duration
+		untilRaw    string
+		dryRun      bool
+		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -2834,7 +2835,11 @@ func newPipelineHoldCmd() *cobra.Command {
 				pipelineName = args[0]
 				reasonArgs = args[1:]
 			}
-			reason := jobActionMessage(message, reasonArgs, "held")
+			reason, err := jobActionMessageWithFile(message, messageFile, reasonArgs, "held")
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline hold: %v\n", err)
+				return exitErr(2)
+			}
 			results, err := holdPipelineJobs(teamDir, pipelineName, reason, holdUntil, stateFilter, stateDefault, limit, dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline hold: %v\n", err)
@@ -2848,6 +2853,7 @@ func newPipelineHoldCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Hold at most this many matching jobs; 0 means no limit.")
 	cmd.Flags().StringSliceVar(&states, "state", nil, "Next-step state to hold: ready, queued, running, blocked, failed, held, done, none, or all. Defaults to active non-held, non-done jobs.")
 	cmd.Flags().StringVar(&message, "message", "", "Hold reason recorded on each job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read hold reason from a file, or '-' for stdin.")
 	cmd.Flags().DurationVar(&holdFor, "for", 0, "Hold for this duration, for example 30m or 2h.")
 	cmd.Flags().StringVar(&untilRaw, "until", "", "Hold until this RFC3339 timestamp.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview holds without writing job state.")
@@ -2862,6 +2868,7 @@ func newPipelineReleaseCmd() *cobra.Command {
 		all         bool
 		limit       int
 		message     string
+		messageFile string
 		expiredOnly bool
 		dryRun      bool
 		jsonOut     bool
@@ -2908,7 +2915,11 @@ func newPipelineReleaseCmd() *cobra.Command {
 				pipelineName = args[0]
 				messageArgs = args[1:]
 			}
-			statusMessage := jobActionMessage(message, messageArgs, "released")
+			statusMessage, err := jobActionMessageWithFile(message, messageFile, messageArgs, "released")
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline release: %v\n", err)
+				return exitErr(2)
+			}
 			results, err := releasePipelineJobs(teamDir, pipelineName, statusMessage, limit, expiredOnly, dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline release: %v\n", err)
@@ -2921,6 +2932,7 @@ func newPipelineReleaseCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&all, "all", false, "Release held jobs across all pipelines.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Release at most this many held jobs; 0 means no limit.")
 	cmd.Flags().StringVar(&message, "message", "", "Release message recorded on each job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read release message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&expiredOnly, "expired", false, "Only release held jobs whose hold_until has passed.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview releases without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit release results as JSON.")

@@ -1470,7 +1470,11 @@ pipelines = ["ticket_to_pr", "nightly"]
 	holdFailedOut, holdFailedErr := &bytes.Buffer{}, &bytes.Buffer{}
 	holdFailed.SetOut(holdFailedOut)
 	holdFailed.SetErr(holdFailedErr)
-	holdFailed.SetArgs([]string{"pipeline", "hold", "ticket_to_pr", "--repo", root, "--state", "failed", "--message", "freeze failed work", "--json"})
+	holdMessageFile := filepath.Join(root, "pipeline-hold-message.txt")
+	if err := os.WriteFile(holdMessageFile, []byte("freeze failed work from file\n"), 0o644); err != nil {
+		t.Fatalf("write pipeline hold message: %v", err)
+	}
+	holdFailed.SetArgs([]string{"pipeline", "hold", "ticket_to_pr", "--repo", root, "--state", "failed", "--message-file", holdMessageFile, "--json"})
 	if err := holdFailed.Execute(); err != nil {
 		t.Fatalf("pipeline hold failed: %v\nstderr=%s", err, holdFailedErr.String())
 	}
@@ -1478,8 +1482,15 @@ pipelines = ["ticket_to_pr", "nightly"]
 	if err := json.Unmarshal(holdFailedOut.Bytes(), &heldFailed); err != nil {
 		t.Fatalf("decode failed hold json: %v\nbody=%s", err, holdFailedOut.String())
 	}
-	if len(heldFailed) != 1 || heldFailed[0].JobID != "squ-703" || heldFailed[0].Action != "held" || !heldFailed[0].HeldAfter {
+	if len(heldFailed) != 1 || heldFailed[0].JobID != "squ-703" || heldFailed[0].Action != "held" || !heldFailed[0].HeldAfter || heldFailed[0].Message != "freeze failed work from file" {
 		t.Fatalf("held failed rows = %+v", heldFailed)
+	}
+	heldFailedJob, err := job.Read(teamDir, "squ-703")
+	if err != nil {
+		t.Fatalf("read held failed job: %v", err)
+	}
+	if heldFailedJob.HoldReason != "freeze failed work from file" {
+		t.Fatalf("held failed job = %+v", heldFailedJob)
 	}
 
 	jobList := NewRootCmd()
@@ -1567,7 +1578,11 @@ pipelines = ["ticket_to_pr", "nightly"]
 	releaseOut, releaseErr := &bytes.Buffer{}, &bytes.Buffer{}
 	release.SetOut(releaseOut)
 	release.SetErr(releaseErr)
-	release.SetArgs([]string{"pipeline", "release", "ticket_to_pr", "--repo", root, "--message", "resume failed work", "--json"})
+	releaseMessageFile := filepath.Join(root, "pipeline-release-message.txt")
+	if err := os.WriteFile(releaseMessageFile, []byte("resume failed work from file\n"), 0o644); err != nil {
+		t.Fatalf("write pipeline release message: %v", err)
+	}
+	release.SetArgs([]string{"pipeline", "release", "ticket_to_pr", "--repo", root, "--message-file", releaseMessageFile, "--json"})
 	if err := release.Execute(); err != nil {
 		t.Fatalf("pipeline release: %v\nstderr=%s", err, releaseErr.String())
 	}
@@ -1575,8 +1590,15 @@ pipelines = ["ticket_to_pr", "nightly"]
 	if err := json.Unmarshal(releaseOut.Bytes(), &released); err != nil {
 		t.Fatalf("decode release json: %v\nbody=%s", err, releaseOut.String())
 	}
-	if len(released) != 1 || released[0].JobID != "squ-703" || released[0].Action != "released" || released[0].HeldAfter {
+	if len(released) != 1 || released[0].JobID != "squ-703" || released[0].Action != "released" || released[0].HeldAfter || released[0].Message != "resume failed work from file" {
 		t.Fatalf("released rows = %+v", released)
+	}
+	releasedJob, err := job.Read(teamDir, "squ-703")
+	if err != nil {
+		t.Fatalf("read released failed job: %v", err)
+	}
+	if releasedJob.LastStatus != "resume failed work from file" {
+		t.Fatalf("released failed job = %+v", releasedJob)
 	}
 
 	retryReleased := NewRootCmd()
@@ -1599,7 +1621,11 @@ pipelines = ["ticket_to_pr", "nightly"]
 	teamHoldOut, teamHoldErr := &bytes.Buffer{}, &bytes.Buffer{}
 	teamHold.SetOut(teamHoldOut)
 	teamHold.SetErr(teamHoldErr)
-	teamHold.SetArgs([]string{"team", "hold", "delivery", "--repo", root, "--state", "ready", "--limit", "1", "--json"})
+	teamHoldMessageFile := filepath.Join(root, "team-hold-message.txt")
+	if err := os.WriteFile(teamHoldMessageFile, []byte("team hold from file\n"), 0o644); err != nil {
+		t.Fatalf("write team hold message: %v", err)
+	}
+	teamHold.SetArgs([]string{"team", "hold", "delivery", "--repo", root, "--state", "ready", "--limit", "1", "--message-file", teamHoldMessageFile, "--json"})
 	if err := teamHold.Execute(); err != nil {
 		t.Fatalf("team hold: %v\nstderr=%s", err, teamHoldErr.String())
 	}
@@ -1607,7 +1633,7 @@ pipelines = ["ticket_to_pr", "nightly"]
 	if err := json.Unmarshal(teamHoldOut.Bytes(), &teamHeld); err != nil {
 		t.Fatalf("decode team hold json: %v\nbody=%s", err, teamHoldOut.String())
 	}
-	if len(teamHeld) != 1 || teamHeld[0].Action != "held" || !teamHeld[0].HeldAfter {
+	if len(teamHeld) != 1 || teamHeld[0].Action != "held" || !teamHeld[0].HeldAfter || teamHeld[0].Message != "team hold from file" {
 		t.Fatalf("team held rows = %+v", teamHeld)
 	}
 
@@ -1615,7 +1641,11 @@ pipelines = ["ticket_to_pr", "nightly"]
 	teamReleaseOut, teamReleaseErr := &bytes.Buffer{}, &bytes.Buffer{}
 	teamRelease.SetOut(teamReleaseOut)
 	teamRelease.SetErr(teamReleaseErr)
-	teamRelease.SetArgs([]string{"team", "release", "delivery", "--repo", root, "--json"})
+	teamReleaseMessageFile := filepath.Join(root, "team-release-message.txt")
+	if err := os.WriteFile(teamReleaseMessageFile, []byte("team release from file\n"), 0o644); err != nil {
+		t.Fatalf("write team release message: %v", err)
+	}
+	teamRelease.SetArgs([]string{"team", "release", "delivery", "--repo", root, "--message-file", teamReleaseMessageFile, "--json"})
 	if err := teamRelease.Execute(); err != nil {
 		t.Fatalf("team release: %v\nstderr=%s", err, teamReleaseErr.String())
 	}
@@ -1623,7 +1653,7 @@ pipelines = ["ticket_to_pr", "nightly"]
 	if err := json.Unmarshal(teamReleaseOut.Bytes(), &teamReleased); err != nil {
 		t.Fatalf("decode team release json: %v\nbody=%s", err, teamReleaseOut.String())
 	}
-	if len(teamReleased) != 1 || teamReleased[0].Action != "released" || teamReleased[0].HeldAfter {
+	if len(teamReleased) != 1 || teamReleased[0].Action != "released" || teamReleased[0].HeldAfter || teamReleased[0].Message != "team release from file" {
 		t.Fatalf("team release rows = %+v", teamReleased)
 	}
 }

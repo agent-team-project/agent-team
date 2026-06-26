@@ -2789,16 +2789,17 @@ func newJobUpdateCmd() *cobra.Command {
 
 func newJobHoldCmd() *cobra.Command {
 	var (
-		repo     string
-		all      bool
-		limit    int
-		states   []string
-		message  string
-		holdFor  time.Duration
-		untilRaw string
-		dryRun   bool
-		jsonOut  bool
-		format   string
+		repo        string
+		all         bool
+		limit       int
+		states      []string
+		message     string
+		messageFile string
+		holdFor     time.Duration
+		untilRaw    string
+		dryRun      bool
+		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -2849,7 +2850,11 @@ func newJobHoldCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				reason := jobActionMessage(message, args, "held")
+				reason, err := jobActionMessageWithFile(message, messageFile, args, "held")
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job hold: %v\n", err)
+					return exitErr(2)
+				}
 				results, err := holdJobs(teamDir, reason, holdUntil, stateFilter, stateDefault, limit, dryRun)
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job hold: %v\n", err)
@@ -2870,7 +2875,11 @@ func newJobHoldCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			reason := jobActionMessage(message, args[1:], "held")
+			reason, err := jobActionMessageWithFile(message, messageFile, args[1:], "held")
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job hold: %v\n", err)
+				return exitErr(2)
+			}
 			holdJobState(j, reason, holdUntil, time.Now().UTC())
 			if dryRun {
 				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
@@ -2890,6 +2899,7 @@ func newJobHoldCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, hold at most this many matching jobs; 0 means no limit.")
 	cmd.Flags().StringSliceVar(&states, "state", nil, "With --all, next-step state to hold: ready, queued, running, blocked, failed, held, done, none, or all. Defaults to active non-held, non-done jobs.")
 	cmd.Flags().StringVar(&message, "message", "", "Hold reason recorded on the job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read hold reason from a file, or '-' for stdin.")
 	cmd.Flags().DurationVar(&holdFor, "for", 0, "Hold for this duration, for example 30m or 2h.")
 	cmd.Flags().StringVar(&untilRaw, "until", "", "Hold until this RFC3339 timestamp.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the hold without writing job state.")
@@ -2993,6 +3003,7 @@ func newJobReleaseCmd() *cobra.Command {
 		expiredOnly bool
 		limit       int
 		message     string
+		messageFile string
 		dryRun      bool
 		jsonOut     bool
 		format      string
@@ -3031,7 +3042,11 @@ func newJobReleaseCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				statusMessage := jobActionMessage(message, args, "released")
+				statusMessage, err := jobActionMessageWithFile(message, messageFile, args, "released")
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job release: %v\n", err)
+					return exitErr(2)
+				}
 				results, err := releaseJobs(teamDir, statusMessage, limit, expiredOnly, dryRun)
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job release: %v\n", err)
@@ -3052,7 +3067,11 @@ func newJobReleaseCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			statusMessage := jobActionMessage(message, args[1:], "released")
+			statusMessage, err := jobActionMessageWithFile(message, messageFile, args[1:], "released")
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job release: %v\n", err)
+				return exitErr(2)
+			}
 			releaseJobState(j, statusMessage, time.Now().UTC())
 			if dryRun {
 				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
@@ -3068,6 +3087,7 @@ func newJobReleaseCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&expiredOnly, "expired", false, "With --all, only release held jobs whose hold_until has passed.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, release at most this many held jobs; 0 means no limit.")
 	cmd.Flags().StringVar(&message, "message", "", "Release message recorded on the job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read release message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the release without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or batch row with a Go template, e.g. '{{.ID}} {{.Held}} {{.LastStatus}}' or '{{.JobID}} {{.Action}}'.")
@@ -9512,6 +9532,17 @@ func jobActionMessage(flag string, args []string, fallback string) string {
 		return msg
 	}
 	return fallback
+}
+
+func jobActionMessageWithFile(flag string, file string, args []string, fallback string) (string, error) {
+	msg, err := optionalSendMessageBody(flag, file, args)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(msg) == "" {
+		return fallback, nil
+	}
+	return msg, nil
 }
 
 type jobActionPreview struct {

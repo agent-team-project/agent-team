@@ -7107,7 +7107,11 @@ func TestJobHoldReleaseStopsReadiness(t *testing.T) {
 	holdOut, holdErr := &bytes.Buffer{}, &bytes.Buffer{}
 	hold.SetOut(holdOut)
 	hold.SetErr(holdErr)
-	hold.SetArgs([]string{"job", "hold", "squ-240", "--repo", tmp, "--message", "waiting for user", "--until", holdUntil.Format(time.RFC3339), "--json"})
+	holdMessageFile := filepath.Join(tmp, "hold-message.txt")
+	if err := os.WriteFile(holdMessageFile, []byte("waiting for user from file\n"), 0o644); err != nil {
+		t.Fatalf("write hold message: %v", err)
+	}
+	hold.SetArgs([]string{"job", "hold", "squ-240", "--repo", tmp, "--message-file", holdMessageFile, "--until", holdUntil.Format(time.RFC3339), "--json"})
 	if err := hold.Execute(); err != nil {
 		t.Fatalf("job hold: %v\nstderr=%s", err, holdErr.String())
 	}
@@ -7115,7 +7119,7 @@ func TestJobHoldReleaseStopsReadiness(t *testing.T) {
 	if err := json.Unmarshal(holdOut.Bytes(), &held); err != nil {
 		t.Fatalf("decode hold json: %v\nbody=%s", err, holdOut.String())
 	}
-	if !held.Held || held.HoldReason != "waiting for user" || !held.HoldUntil.Equal(holdUntil) || held.LastEvent != "held" || held.Status != job.StatusRunning {
+	if !held.Held || held.HoldReason != "waiting for user from file" || !held.HoldUntil.Equal(holdUntil) || held.LastEvent != "held" || held.Status != job.StatusRunning {
 		t.Fatalf("held job = %+v", held)
 	}
 
@@ -7131,7 +7135,7 @@ func TestJobHoldReleaseStopsReadiness(t *testing.T) {
 	if err := json.Unmarshal(nextOut.Bytes(), &next); err != nil {
 		t.Fatalf("decode next json: %v\nbody=%s", err, nextOut.String())
 	}
-	if next.State != "held" || next.Step != nil || !strings.Contains(next.Message, "waiting for user") || !containsString(next.Actions, "agent-team job release squ-240") {
+	if next.State != "held" || next.Step != nil || !strings.Contains(next.Message, "waiting for user from file") || !containsString(next.Actions, "agent-team job release squ-240") {
 		t.Fatalf("held next = %+v", next)
 	}
 
@@ -7181,7 +7185,7 @@ func TestJobHoldReleaseStopsReadiness(t *testing.T) {
 	if err := json.Unmarshal(advanceOut.Bytes(), &advancePreview); err != nil {
 		t.Fatalf("decode advance preview: %v\nbody=%s", err, advanceOut.String())
 	}
-	if !strings.Contains(advancePreview.Message, "waiting for user") || advancePreview.Step != nil || advancePreview.Dispatch != nil {
+	if !strings.Contains(advancePreview.Message, "waiting for user from file") || advancePreview.Step != nil || advancePreview.Dispatch != nil {
 		t.Fatalf("advance preview = %+v", advancePreview)
 	}
 
@@ -7228,7 +7232,7 @@ func TestJobHoldReleaseStopsReadiness(t *testing.T) {
 		t.Fatalf("job show held: %v\nstderr=%s", err, showErr.String())
 	}
 	if !strings.Contains(showOut.String(), "Held:        yes") ||
-		!strings.Contains(showOut.String(), "Hold Reason: waiting for user") ||
+		!strings.Contains(showOut.String(), "Hold Reason: waiting for user from file") ||
 		!strings.Contains(showOut.String(), "Hold Until:  "+holdUntil.Format(time.RFC3339)) ||
 		!strings.Contains(showOut.String(), "agent-team job release squ-240") ||
 		strings.Contains(showOut.String(), "agent-team job advance squ-240") {
@@ -7348,7 +7352,11 @@ func TestJobHoldReleaseStopsReadiness(t *testing.T) {
 	releaseOut, releaseErr := &bytes.Buffer{}, &bytes.Buffer{}
 	release.SetOut(releaseOut)
 	release.SetErr(releaseErr)
-	release.SetArgs([]string{"job", "release", "squ-240", "--repo", tmp, "--message", "resume", "--json"})
+	releaseMessageFile := filepath.Join(tmp, "release-message.txt")
+	if err := os.WriteFile(releaseMessageFile, []byte("resume from file\n"), 0o644); err != nil {
+		t.Fatalf("write release message: %v", err)
+	}
+	release.SetArgs([]string{"job", "release", "squ-240", "--repo", tmp, "--message-file", releaseMessageFile, "--json"})
 	if err := release.Execute(); err != nil {
 		t.Fatalf("job release: %v\nstderr=%s", err, releaseErr.String())
 	}
@@ -7356,7 +7364,7 @@ func TestJobHoldReleaseStopsReadiness(t *testing.T) {
 	if err := json.Unmarshal(releaseOut.Bytes(), &released); err != nil {
 		t.Fatalf("decode release json: %v\nbody=%s", err, releaseOut.String())
 	}
-	if released.Held || released.HoldReason != "" || !released.HoldUntil.IsZero() || released.LastEvent != "released" || released.LastStatus != "resume" {
+	if released.Held || released.HoldReason != "" || !released.HoldUntil.IsZero() || released.LastEvent != "released" || released.LastStatus != "resume from file" {
 		t.Fatalf("released job = %+v", released)
 	}
 
