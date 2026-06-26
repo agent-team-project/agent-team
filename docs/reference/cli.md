@@ -55,7 +55,7 @@ as the output directory instead.
 | `agent-team inspect [instances...]` | Show runtime and state detail |
 | `agent-team logs [instance]` | Read/follow instance logs, use `--last-message` for clean Codex final responses, or `--clean` to hide known Codex diagnostics |
 | `agent-team stats` | Show CPU/RSS data |
-| `agent-team attach <instance>` | Interactive runtime resume handoff |
+| `agent-team attach <instance>` | Interactive runtime resume handoff; `exec` is a Docker-like alias |
 | `agent-team wait [instances...]` | Wait for lifecycle or phase conditions |
 | `agent-team rm [instances...]` | Remove state and metadata |
 | `agent-team prune` | Remove finished old metadata/state |
@@ -68,6 +68,7 @@ Shortcuts:
 | `agent-team down` | `agent-team stop` |
 | `agent-team ls` | `agent-team ps` |
 | `agent-team top` | `agent-team stats` |
+| `agent-team exec` | `agent-team attach` |
 
 Collection groups also accept natural plural aliases: `jobs`, `pipelines`, `queues`, `schedules`, and `teams`.
 

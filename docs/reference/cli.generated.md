@@ -13,6 +13,7 @@ Docker-like shortcuts:
   agent-team down  = agent-team stop
   agent-team ls    = agent-team ps
   agent-team top   = agent-team stats
+  agent-team exec  = agent-team attach
 
 ```text
 agent-team [flags]
@@ -90,6 +91,8 @@ Compatibility: log-oriented invocations such as --no-follow, --tail, --latest, -
 ```text
 agent-team attach <instance> [flags]
 ```
+
+Aliases: `exec`
 
 Flags:
 

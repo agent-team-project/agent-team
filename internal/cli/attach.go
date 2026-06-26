@@ -53,8 +53,9 @@ func newAttachCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "attach <instance>",
-		Short: "Open an interactive runtime session against a daemon-managed persistent instance.",
+		Use:     "attach <instance>",
+		Aliases: []string{"exec"},
+		Short:   "Open an interactive runtime session against a daemon-managed persistent instance.",
 		Long: "Stop the daemon-managed child for <instance>, then exec " +
 			"`<runtime> --resume <session-id>` in your terminal so the conversation " +
 			"continues interactively. On exit, the daemon resumes supervision " +

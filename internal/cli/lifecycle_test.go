@@ -27,7 +27,7 @@ func TestLifecycleHelpShowsTopLevelStartStop(t *testing.T) {
 	}
 	for _, want := range []string{
 		"start", "stop", "kill", "restart", "reload", "plan", "sync", "status", "health", "monitor", "watch", "inspect", "rm", "prune", "wait", "stats", "send", "dispatch", "job", "pipeline", "team", "schedule", "queue", "intake", "events", "ps", "logs", "attach",
-		"Docker-like shortcuts:", "agent-team up", "agent-team down", "agent-team ls", "agent-team top",
+		"Docker-like shortcuts:", "agent-team up", "agent-team down", "agent-team ls", "agent-team top", "agent-team exec",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("root help missing %q: %s", want, out.String())
@@ -42,6 +42,7 @@ func TestLifecycleAliasesResolve(t *testing.T) {
 		"down": "stop",
 		"ls":   "ps",
 		"top":  "stats",
+		"exec": "attach",
 	}
 	for alias, canonical := range cases {
 		found, _, err := cmd.Find([]string{alias})

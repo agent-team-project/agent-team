@@ -487,6 +487,33 @@ func TestAttachNoFollowUsesLocalLogWhenDaemonStopped(t *testing.T) {
 	}
 }
 
+func TestExecAliasNoFollowUsesAttachLogMode(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	if err := daemon.WriteMetadata(root, &daemon.Metadata{
+		Instance: "manager",
+		Agent:    "manager",
+		Status:   daemon.StatusStopped,
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	writeChildLogForTest(t, root, "manager", "exec first\nexec last\n")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"exec", "manager", "--no-follow", "--tail", "all", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("exec alias local: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := out.String(); got != "exec first\nexec last\n" {
+		t.Fatalf("exec alias output = %q, want full log", got)
+	}
+}
+
 func TestAttachLatestNoFollowUsesLocalNewestLogWhenDaemonStopped(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

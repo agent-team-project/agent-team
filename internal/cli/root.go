@@ -36,7 +36,8 @@ func NewRootCmd() *cobra.Command {
 			"  agent-team up    = agent-team start\n" +
 			"  agent-team down  = agent-team stop\n" +
 			"  agent-team ls    = agent-team ps\n" +
-			"  agent-team top   = agent-team stats",
+			"  agent-team top   = agent-team stats\n" +
+			"  agent-team exec  = agent-team attach",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       Version,
