@@ -24,6 +24,7 @@ func newStartCmd() *cobra.Command {
 	var (
 		target         string
 		prompt         string
+		promptFile     string
 		all            bool
 		latest         bool
 		last           int
@@ -172,12 +173,17 @@ func newStartCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 				return exitErr(2)
 			}
+			resolvedPrompt, err := promptTextWithFile(prompt, promptFile)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
+				return exitErr(2)
+			}
 			if !dryRun {
 				if err := ensureDaemonReadyWithTimeout(cmd, target, jsonOut || quiet || summary || formatTemplate != nil, readyTimeout); err != nil {
 					return err
 				}
 			}
-			return runInstanceUpWithOptions(cmd, target, prompt, args, instanceUpOptions{
+			return runInstanceUpWithOptions(cmd, target, resolvedPrompt, args, instanceUpOptions{
 				All:            all,
 				Latest:         latest,
 				Limit:          last,
@@ -203,6 +209,7 @@ func newStartCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Override the default kickoff prompt.")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Read kickoff prompt from a file, or '-' for stdin.")
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "Start or resume every declared persistent and daemon-known instance.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Start or resume the most recently started instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Start or resume the N most recently started instances after other filters (0 = all).")
@@ -424,6 +431,7 @@ func newRestartCmd() *cobra.Command {
 	var (
 		target         string
 		prompt         string
+		promptFile     string
 		all            bool
 		latest         bool
 		last           int
@@ -578,12 +586,17 @@ func newRestartCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 				return exitErr(2)
 			}
+			resolvedPrompt, err := promptTextWithFile(prompt, promptFile)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
+				return exitErr(2)
+			}
 			if !dryRun {
 				if err := ensureDaemonReadyWithTimeout(cmd, target, jsonOut || quiet || summary || formatTemplate != nil, readyTimeout); err != nil {
 					return err
 				}
 			}
-			return runInstanceRestart(cmd, target, prompt, args, instanceRestartOptions{
+			return runInstanceRestart(cmd, target, resolvedPrompt, args, instanceRestartOptions{
 				All:            all,
 				Latest:         latest,
 				Limit:          last,
@@ -611,6 +624,7 @@ func newRestartCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Override the default kickoff prompt for instances started fresh.")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Read kickoff prompt from a file, or '-' for stdin.")
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "Restart or resume every declared persistent and daemon-known instance.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Restart or resume the most recently started instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Restart or resume the N most recently started instances after other filters (0 = all).")

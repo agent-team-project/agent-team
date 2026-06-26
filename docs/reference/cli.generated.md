@@ -1149,25 +1149,26 @@ agent-team instance up [<name>...] [flags]
 Flags:
 
 ```text
-      --agent strings      Start or resume every declared persistent and daemon-known instance for this agent. Can repeat or comma-separate.
-  -a, --all                Start or resume every declared persistent and daemon-known instance.
-      --attach             Follow the selected instance log after starting or resuming. Requires exactly one selected instance.
-      --dry-run            Preview planned start/resume actions without changing daemon state.
-      --format string      Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.
-      --json               Emit machine-readable JSON.
-  -n, --last int           Start or resume the N most recently started instances after other filters (0 = all).
-      --latest             Start or resume the most recently started instance after other filters.
-      --phase strings      Only start or resume instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
-      --prompt string      Override the default kickoff prompt.
-      --runtime-stale      Only start or resume running instances whose recorded runtime PID is no longer live.
-      --stale              Only start or resume instances whose status.toml is stale.
-      --status strings     Only start or resume instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
-      --summary            Show aggregate action counts instead of per-instance rows.
-      --tail string        With --attach, show only the last N lines before following (0 or all = all). (default "50")
-      --target string      Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
-      --timeout duration   Maximum time to wait with --wait (0 = no timeout).
-      --unhealthy          Only start or resume instances that are crashed, status-stale, or runtime-stale.
-      --wait               Wait for selected instances to become healthy after starting. With no scoped selection, waits for the fleet.
+      --agent strings        Start or resume every declared persistent and daemon-known instance for this agent. Can repeat or comma-separate.
+  -a, --all                  Start or resume every declared persistent and daemon-known instance.
+      --attach               Follow the selected instance log after starting or resuming. Requires exactly one selected instance.
+      --dry-run              Preview planned start/resume actions without changing daemon state.
+      --format string        Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.
+      --json                 Emit machine-readable JSON.
+  -n, --last int             Start or resume the N most recently started instances after other filters (0 = all).
+      --latest               Start or resume the most recently started instance after other filters.
+      --phase strings        Only start or resume instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
+      --prompt string        Override the default kickoff prompt.
+      --prompt-file string   Read kickoff prompt from a file, or '-' for stdin.
+      --runtime-stale        Only start or resume running instances whose recorded runtime PID is no longer live.
+      --stale                Only start or resume instances whose status.toml is stale.
+      --status strings       Only start or resume instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
+      --summary              Show aggregate action counts instead of per-instance rows.
+      --tail string          With --attach, show only the last N lines before following (0 or all = all). (default "50")
+      --target string        Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --timeout duration     Maximum time to wait with --wait (0 = no timeout).
+      --unhealthy            Only start or resume instances that are crashed, status-stale, or runtime-stale.
+      --wait                 Wait for selected instances to become healthy after starting. With no scoped selection, waits for the fleet.
 ```
 
 Inherited Flags:
@@ -4466,6 +4467,7 @@ Flags:
       --latest                   Restart or resume the most recently started instance after other filters.
       --phase strings            Only restart or resume instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --prompt string            Override the default kickoff prompt for instances started fresh.
+      --prompt-file string       Read kickoff prompt from a file, or '-' for stdin.
   -q, --quiet                    Suppress non-error output and use only the exit code.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
       --runtime strings          Only restart or resume daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
@@ -5066,6 +5068,7 @@ Flags:
       --latest                   Start or resume the most recently started instance after other filters.
       --phase strings            Only start or resume instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --prompt string            Override the default kickoff prompt.
+      --prompt-file string       Read kickoff prompt from a file, or '-' for stdin.
   -q, --quiet                    Suppress non-error output and use only the exit code.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
       --runtime strings          Only start or resume daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
@@ -6214,6 +6217,7 @@ Flags:
       --format string            Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.
       --json                     Emit machine-readable JSON.
       --prompt string            Override the default kickoff prompt for instances started fresh.
+      --prompt-file string       Read kickoff prompt from a file, or '-' for stdin.
   -q, --quiet                    Suppress non-error output and use only the exit code.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
       --repo string              Repo root containing .agent_team. (default "<repo>")
@@ -6612,6 +6616,7 @@ Flags:
       --format string            Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.
       --json                     Emit machine-readable JSON.
       --prompt string            Override the default kickoff prompt.
+      --prompt-file string       Read kickoff prompt from a file, or '-' for stdin.
   -q, --quiet                    Suppress non-error output and use only the exit code.
       --ready-timeout duration   Maximum time to wait for implicit daemon readiness (0 = no timeout). (default 3s)
       --repo string              Repo root containing .agent_team. (default "<repo>")

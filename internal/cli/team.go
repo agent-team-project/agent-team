@@ -4145,6 +4145,7 @@ func newTeamUpCmd() *cobra.Command {
 	var (
 		repo           string
 		prompt         string
+		promptFile     string
 		wait           bool
 		timeout        time.Duration
 		readyTimeout   time.Duration
@@ -4184,6 +4185,10 @@ func newTeamUpCmd() *cobra.Command {
 			if err != nil {
 				return teamLifecycleUsageError(cmd, "agent-team team up", err.Error())
 			}
+			resolvedPrompt, err := promptTextWithFile(prompt, promptFile)
+			if err != nil {
+				return teamLifecycleUsageError(cmd, "agent-team team up", err.Error())
+			}
 			teamDir, names, err := loadTeamPersistentLifecycleInstances(cmd, repo, args[0])
 			if err != nil {
 				return reportTeamLifecycleLoadError(cmd, "agent-team team up", err)
@@ -4200,7 +4205,7 @@ func newTeamUpCmd() *cobra.Command {
 					return err
 				}
 			}
-			return runInstanceUpWithOptions(cmd, repo, prompt, names, instanceUpOptions{
+			return runInstanceUpWithOptions(cmd, repo, resolvedPrompt, names, instanceUpOptions{
 				Wait:          wait,
 				Timeout:       timeout,
 				DryRun:        dryRun,
@@ -4217,6 +4222,7 @@ func newTeamUpCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Override the default kickoff prompt.")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Read kickoff prompt from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for selected instances to become healthy after starting.")
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for implicit daemon readiness (0 = no timeout).")
@@ -4315,6 +4321,7 @@ func newTeamRestartCmd() *cobra.Command {
 	var (
 		repo           string
 		prompt         string
+		promptFile     string
 		timeout        time.Duration
 		readyTimeout   time.Duration
 		wait           bool
@@ -4356,6 +4363,10 @@ func newTeamRestartCmd() *cobra.Command {
 			if err != nil {
 				return teamLifecycleUsageError(cmd, "agent-team team restart", err.Error())
 			}
+			resolvedPrompt, err := promptTextWithFile(prompt, promptFile)
+			if err != nil {
+				return teamLifecycleUsageError(cmd, "agent-team team restart", err.Error())
+			}
 			teamDir, names, err := loadTeamPersistentLifecycleInstances(cmd, repo, args[0])
 			if err != nil {
 				return reportTeamLifecycleLoadError(cmd, "agent-team team restart", err)
@@ -4372,7 +4383,7 @@ func newTeamRestartCmd() *cobra.Command {
 					return err
 				}
 			}
-			return runInstanceRestart(cmd, repo, prompt, names, instanceRestartOptions{
+			return runInstanceRestart(cmd, repo, resolvedPrompt, names, instanceRestartOptions{
 				Timeout:       timeout,
 				Wait:          wait,
 				WaitTimeout:   waitTimeout,
@@ -4390,6 +4401,7 @@ func newTeamRestartCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Override the default kickoff prompt for instances started fresh.")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "Read kickoff prompt from a file, or '-' for stdin.")
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait for each running instance to stop before resuming (0 = daemon default).")
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for implicit daemon readiness (0 = no timeout).")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for selected instances to become healthy after restarting.")

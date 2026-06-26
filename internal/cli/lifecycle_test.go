@@ -147,6 +147,34 @@ func TestStartNegativeReadyTimeoutFailsFast(t *testing.T) {
 	}
 }
 
+func TestLifecyclePromptFileValidation(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.txt")
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"start", "--prompt", "hello", "--prompt-file", "task.txt"}, "provide prompt text using only one of --prompt or --prompt-file"},
+		{[]string{"restart", "--prompt-file", missing}, "--prompt-file:"},
+		{[]string{"instance", "up", "--prompt", "hello", "--prompt-file", "task.txt"}, "provide prompt text using only one of --prompt or --prompt-file"},
+		{[]string{"team", "up", "delivery", "--prompt", "hello", "--prompt-file", "task.txt"}, "provide prompt text using only one of --prompt or --prompt-file"},
+		{[]string{"team", "restart", "delivery", "--prompt-file", missing}, "--prompt-file:"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		stderr := &bytes.Buffer{}
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+	}
+}
+
 func TestStartRejectsInvalidLatestLastBeforeStartingDaemon(t *testing.T) {
 	for _, tc := range []struct {
 		name string
