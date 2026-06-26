@@ -104,6 +104,14 @@ description = "complete"
 	}); err != nil {
 		t.Fatalf("write queue: %v", err)
 	}
+	if err := daemon.AppendMessage(root, j.Instance, &daemon.Message{
+		ID:   "msg-160",
+		From: "manager",
+		Body: "please confirm the final state",
+		TS:   now.Add(-5 * time.Minute),
+	}); err != nil {
+		t.Fatalf("append inbox message: %v", err)
+	}
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -138,8 +146,15 @@ description = "complete"
 	if len(snapshot.Queue) != 1 || snapshot.Queue[0].Payload["api_key"] != snapshotRedactedValue {
 		t.Fatalf("queue not redacted: %+v", snapshot.Queue)
 	}
+	if snapshot.InboxSummary == nil || snapshot.InboxSummary.Total != 1 || snapshot.InboxSummary.Unread != 1 || snapshot.InboxSummary.UnreadInstances != 1 {
+		t.Fatalf("inbox summary = %+v", snapshot.InboxSummary)
+	}
+	if len(snapshot.Inbox) != 1 || snapshot.Inbox[0].Instance != j.Instance || snapshot.Inbox[0].LatestID != "msg-160" || snapshot.Inbox[0].LatestBody != snapshotRedactedValue {
+		t.Fatalf("inbox rows = %+v", snapshot.Inbox)
+	}
 	for _, want := range []string{
 		"agent-team inspect worker-squ-160",
+		"agent-team inbox show worker-squ-160 --unread",
 		"agent-team job logs squ-160 --tail 100",
 		"agent-team job logs squ-160 --last-message",
 		"agent-team job queue squ-160 --summary",
@@ -203,5 +218,92 @@ func TestJobSnapshotHumanSummaryAndOutputFile(t *testing.T) {
 	}
 	if snapshot.Job == nil || snapshot.Job.ID != "squ-161" {
 		t.Fatalf("output snapshot = %+v", snapshot)
+	}
+}
+
+func TestJobSnapshotIncludesPipelineStepInbox(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Date(2026, 6, 24, 9, 0, 0, 0, time.UTC)
+	j := &job.Job{
+		ID:        "squ-162",
+		Ticket:    "SQU-162",
+		Target:    "worker",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{{
+			ID:       "implement",
+			Target:   "worker",
+			Instance: "worker-squ-162-implement",
+			Status:   job.StatusBlocked,
+		}},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	root := daemon.DaemonRoot(teamDir)
+	if err := daemon.AppendMessage(root, "worker-squ-162-implement", &daemon.Message{
+		ID:   "msg-step-162",
+		From: "manager",
+		Body: "operator answer for blocked worker",
+		TS:   now,
+	}); err != nil {
+		t.Fatalf("append step inbox message: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "snapshot", "squ-162", "--repo", tmp, "--events", "0", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job snapshot step inbox: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot jobSnapshotResult
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode snapshot: %v\nbody=%s", err, out.String())
+	}
+	if snapshot.InboxSummary == nil || snapshot.InboxSummary.Instances != 1 || snapshot.InboxSummary.Total != 1 || snapshot.InboxSummary.Unread != 1 {
+		t.Fatalf("inbox summary = %+v", snapshot.InboxSummary)
+	}
+	if len(snapshot.Inbox) != 1 || snapshot.Inbox[0].Instance != "worker-squ-162-implement" || snapshot.Inbox[0].LatestBody != snapshotRedactedValue {
+		t.Fatalf("inbox rows = %+v", snapshot.Inbox)
+	}
+	if !containsString(snapshot.Actions, "agent-team inbox show worker-squ-162-implement --unread") {
+		t.Fatalf("actions missing step inbox hint: %+v", snapshot.Actions)
+	}
+
+	raw := NewRootCmd()
+	rawOut, rawErr := &bytes.Buffer{}, &bytes.Buffer{}
+	raw.SetOut(rawOut)
+	raw.SetErr(rawErr)
+	raw.SetArgs([]string{"job", "snapshot", "squ-162", "--repo", tmp, "--events", "0", "--no-redact", "--json"})
+	if err := raw.Execute(); err != nil {
+		t.Fatalf("job snapshot step inbox no-redact: %v\nstderr=%s", err, rawErr.String())
+	}
+	var rawSnapshot jobSnapshotResult
+	if err := json.Unmarshal(rawOut.Bytes(), &rawSnapshot); err != nil {
+		t.Fatalf("decode raw snapshot: %v\nbody=%s", err, rawOut.String())
+	}
+	if len(rawSnapshot.Inbox) != 1 || rawSnapshot.Inbox[0].LatestBody != "operator answer for blocked worker" {
+		t.Fatalf("raw inbox rows = %+v", rawSnapshot.Inbox)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"job", "snapshot", "squ-162", "--repo", tmp, "--events", "0"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("job snapshot step inbox text: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "inbox: instances=1 total=1 unread=1 unread_instances=1") {
+		t.Fatalf("text summary missing inbox:\n%s", textOut.String())
+	}
+	if strings.Contains(textOut.String(), "operator answer for blocked worker") {
+		t.Fatalf("text summary leaked inbox body:\n%s", textOut.String())
 	}
 }

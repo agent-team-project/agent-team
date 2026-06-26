@@ -96,7 +96,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job show <job-id>` | Show job detail, runtime metadata, queue, quarantine, status previews, and actions |
 | `agent-team job wait <job-id>` | Wait for lifecycle status or last event with `--event` |
 | `agent-team job resume-plan <job-id>` | Show runtime resume, attach, and log fallback commands for one job; add `--step` for one pipeline stage |
-| `agent-team job snapshot <job-id>` | Capture one job's post-mortem metadata, events, queue ownership, state files, and optional log tails |
+| `agent-team job snapshot <job-id>` | Capture one job's post-mortem metadata, events, inboxes, queue ownership, state files, and optional log tails |
 | `agent-team job explain <job-id>` | Explain or watch every pipeline step's readiness, blockers, gates, and next actions |
 | `agent-team job approve <job-id>` | Approve a blocked manual pipeline gate, optionally advancing it |
 | `agent-team job reject <job-id>` | Reject a blocked manual pipeline gate and mark it failed |

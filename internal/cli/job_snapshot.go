@@ -31,7 +31,7 @@ func newJobSnapshotCmd() *cobra.Command {
 		Use:   "snapshot <job-id>",
 		Short: "Capture a job-scoped diagnostic snapshot.",
 		Long: "Capture a read-only diagnostic snapshot for one durable job, including job state, audit events, " +
-			"daemon lifecycle rows, queue ownership, runtime metadata, state files, and optional log tail content.",
+			"daemon lifecycle rows, queue ownership, inbox summaries, runtime metadata, state files, and optional log tail content.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if eventLimit < -1 {
@@ -79,7 +79,7 @@ func newJobSnapshotCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write the full JSON snapshot to this file. Use '-' for stdout.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the full job snapshot JSON to stdout.")
-	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "Include raw queue payload values instead of redacting sensitive keys.")
+	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "Include raw queue payload values and latest inbox bodies instead of redacting them.")
 	cmd.Flags().IntVar(&eventLimit, "events", 20, "Recent job and lifecycle events to include. Use -1 for all events or 0 to skip events.")
 	cmd.Flags().IntVar(&logTail, "tail", 0, "Include the last N log lines in JSON output. Use -1 for the full log or 0 to omit log content.")
 	return cmd
@@ -112,6 +112,8 @@ type jobSnapshotResult struct {
 	Queue           []*daemon.QueueItem     `json:"queue,omitempty"`
 	QueueSummary    *queueSummary           `json:"queue_summary,omitempty"`
 	QueueQuarantine []queueQuarantineItem   `json:"queue_quarantine,omitempty"`
+	Inbox           []inboxSummaryRow       `json:"inbox,omitempty"`
+	InboxSummary    *overviewInboxSummary   `json:"inbox_summary,omitempty"`
 	Actions         []string                `json:"actions,omitempty"`
 	SectionErrors   map[string]string       `json:"section_errors,omitempty"`
 }
@@ -192,6 +194,15 @@ func collectJobSnapshot(teamDir, repoRoot string, j *job.Job, opts jobSnapshotOp
 	} else {
 		out.QueueQuarantine = quarantine
 		applyQueueQuarantineSummary(ensureJobSnapshotQueueSummary(out, now), quarantine)
+	}
+	if inbox, summary, err := collectJobSnapshotInbox(teamDir, j, meta); err != nil {
+		out.addError("inbox", err)
+	} else if len(inbox) > 0 {
+		if opts.Redact {
+			inbox = redactJobSnapshotInbox(inbox)
+		}
+		out.Inbox = inbox
+		out.InboxSummary = &summary
 	}
 	out.Actions = jobSnapshotActions(j, out, instance)
 	return out
@@ -380,6 +391,63 @@ func redactJobSnapshotQueue(items []*daemon.QueueItem) []*daemon.QueueItem {
 	return out
 }
 
+func collectJobSnapshotInbox(teamDir string, j *job.Job, primaryMeta *daemon.Metadata) ([]inboxSummaryRow, overviewInboxSummary, error) {
+	if j == nil {
+		return nil, overviewInboxSummary{}, nil
+	}
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	instances := map[string]bool{}
+	metaByInstance := map[string]*daemon.Metadata{}
+	addInstance := func(instance string) {
+		instance = strings.TrimSpace(instance)
+		if instance != "" {
+			instances[instance] = true
+		}
+	}
+	addInstance(j.Instance)
+	for _, step := range j.Steps {
+		addInstance(step.Instance)
+	}
+	if primaryMeta != nil {
+		addInstance(primaryMeta.Instance)
+		if strings.TrimSpace(primaryMeta.Instance) != "" {
+			metaByInstance[primaryMeta.Instance] = primaryMeta
+		}
+	}
+	metas, err := daemon.ListMetadata(daemonRoot)
+	if err != nil {
+		return nil, overviewInboxSummary{}, err
+	}
+	for _, meta := range metas {
+		if meta == nil || strings.TrimSpace(meta.Instance) == "" {
+			continue
+		}
+		metaByInstance[meta.Instance] = meta
+		if jobSnapshotMetadataMatches(meta, j) {
+			addInstance(meta.Instance)
+		}
+	}
+	names := sortedInboxInstances(instances)
+	if len(names) == 0 {
+		return nil, overviewInboxSummary{}, nil
+	}
+	rows, err := collectInboxSummaryRows(daemonRoot, names, metaByInstance, false)
+	if err != nil {
+		return nil, overviewInboxSummary{}, err
+	}
+	return rows, overviewInboxFromRows(rows), nil
+}
+
+func redactJobSnapshotInbox(rows []inboxSummaryRow) []inboxSummaryRow {
+	out := append([]inboxSummaryRow(nil), rows...)
+	for i := range out {
+		if out[i].LatestBody != "" {
+			out[i].LatestBody = snapshotRedactedValue
+		}
+	}
+	return out
+}
+
 func ensureJobSnapshotQueueSummary(snapshot *jobSnapshotResult, now time.Time) *queueSummary {
 	if snapshot.QueueSummary == nil {
 		summary := summarizeQueueItems(snapshot.Queue, now)
@@ -415,6 +483,11 @@ func jobSnapshotActions(j *job.Job, snapshot *jobSnapshotResult, instance string
 		}
 		if len(snapshot.QueueQuarantine) > 0 {
 			add(fmt.Sprintf("agent-team job queue quarantine %s", j.ID))
+		}
+		for _, row := range snapshot.Inbox {
+			if row.Unread > 0 {
+				add(fmt.Sprintf("agent-team inbox show %s --unread", row.Instance))
+			}
 		}
 	}
 	actions := make([]string, 0, len(added))
@@ -503,6 +576,13 @@ func renderJobSnapshotSummary(w io.Writer, snapshot *jobSnapshotResult) {
 	fmt.Fprintf(w, "events: job=%d lifecycle=%d\n", len(snapshot.JobEvents), len(snapshot.LifecycleEvents))
 	if snapshot.QueueSummary != nil {
 		fmt.Fprintln(w, queueSummaryLine(*snapshot.QueueSummary))
+	}
+	if snapshot.InboxSummary != nil {
+		fmt.Fprintf(w, "inbox: instances=%d total=%d unread=%d unread_instances=%d\n",
+			snapshot.InboxSummary.Instances,
+			snapshot.InboxSummary.Total,
+			snapshot.InboxSummary.Unread,
+			snapshot.InboxSummary.UnreadInstances)
 	}
 	if len(snapshot.Actions) > 0 {
 		fmt.Fprintln(w, "actions:")

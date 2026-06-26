@@ -118,13 +118,16 @@ Use `job snapshot` when one job needs a shareable post-mortem artifact:
 agent-team job snapshot squ-42
 agent-team job snapshot squ-42 --json
 agent-team job snapshot squ-42 --output snapshots/squ-42.json
+agent-team job snapshot squ-42 --no-redact --json
 ```
 
 Snapshots include the durable job file, job audit events, daemon lifecycle rows,
-queue ownership, quarantined queue files, runtime metadata, state-file status,
-and paths for raw logs and Codex last-message sidecars. Log content is omitted
-by default; add `--tail 100` to include the last 100 log lines in JSON output,
-or `--tail -1` to include the full log.
+inbox summaries for the job or step owner instances, queue ownership,
+quarantined queue files, runtime metadata, state-file status, and paths for raw
+logs and Codex last-message sidecars. Log content is omitted by default; add
+`--tail 100` to include the last 100 log lines in JSON output, or `--tail -1`
+to include the full log. Queue payload secrets and latest inbox bodies are
+redacted by default; use `--no-redact` only for local debugging.
 
 ## Dispatching Jobs
 
