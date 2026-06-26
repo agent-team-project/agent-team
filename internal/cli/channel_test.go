@@ -241,6 +241,63 @@ func TestChannelCommandsUseLocalStoreWhenDaemonStopped(t *testing.T) {
 	}
 }
 
+func TestChannelPublishCommandMessageFile(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	messageFile := filepath.Join(tmp, "broadcast.txt")
+	if err := os.WriteFile(messageFile, []byte("file broadcast\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	publishFile := NewRootCmd()
+	fileOut, fileErr := &bytes.Buffer{}, &bytes.Buffer{}
+	publishFile.SetOut(fileOut)
+	publishFile.SetErr(fileErr)
+	publishFile.SetArgs([]string{"channel", "publish", "#ops", "--target", tmp, "--sender", "tester", "--message-file", messageFile})
+	if err := publishFile.Execute(); err != nil {
+		t.Fatalf("channel publish --message-file: %v\nstderr=%s", err, fileErr.String())
+	}
+	if !strings.Contains(fileOut.String(), "published seq=1") {
+		t.Fatalf("publish file output = %q, want seq=1", fileOut.String())
+	}
+
+	oldInput := sendMessageInput
+	sendMessageInput = strings.NewReader("stdin broadcast\n")
+	defer func() { sendMessageInput = oldInput }()
+	publishStdin := NewRootCmd()
+	stdinOut, stdinErr := &bytes.Buffer{}, &bytes.Buffer{}
+	publishStdin.SetOut(stdinOut)
+	publishStdin.SetErr(stdinErr)
+	publishStdin.SetArgs([]string{"channel", "publish", "#ops", "--target", tmp, "--message-file", "-"})
+	if err := publishStdin.Execute(); err != nil {
+		t.Fatalf("channel publish stdin: %v\nstderr=%s", err, stdinErr.String())
+	}
+	if !strings.Contains(stdinOut.String(), "published seq=2") {
+		t.Fatalf("publish stdin output = %q, want seq=2", stdinOut.String())
+	}
+
+	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
+	if err := runChannelShow(showOut, showErr, teamDir, "#ops"); err != nil {
+		t.Fatalf("show channel after publishes: %v\nstderr=%s", err, showErr.String())
+	}
+	if !strings.Contains(showOut.String(), "file broadcast") || !strings.Contains(showOut.String(), "stdin broadcast") {
+		t.Fatalf("show output = %q, want both published bodies", showOut.String())
+	}
+
+	conflict := NewRootCmd()
+	conflictOut, conflictErr := &bytes.Buffer{}, &bytes.Buffer{}
+	conflict.SetOut(conflictOut)
+	conflict.SetErr(conflictErr)
+	conflict.SetArgs([]string{"channel", "publish", "#ops", "body", "--target", tmp, "--message", "flag"})
+	if err := conflict.Execute(); err == nil {
+		t.Fatal("channel publish conflicting message sources succeeded")
+	}
+	if !strings.Contains(conflictErr.String(), "only one of positional args, --message, or --message-file") {
+		t.Fatalf("conflict stderr = %q", conflictErr.String())
+	}
+}
+
 func TestChannelCommandsRoundTripHashNameThroughDaemon(t *testing.T) {
 	tmp, err := os.MkdirTemp("/tmp", "agt-channel-")
 	if err != nil {

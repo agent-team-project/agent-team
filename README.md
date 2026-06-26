@@ -309,7 +309,7 @@ agent-team intake service systemd|launchd|compose|kubernetes [--bin /usr/local/b
                                                 # print a systemd unit, launchd plist, compose service, or Kubernetes manifests for running intake serve against the current repo
 agent-team channels                             # list pub/sub channels; reads local channel state if the daemon is down
 agent-team channel show <name>                  # show a channel summary and recent messages
-agent-team channel publish <name> <body...> [--sender user]
+agent-team channel publish <name> [body...] [--message "..."] [--message-file <path|->] [--sender user]
                                                 # publish to a channel; appends locally if the daemon is down
 agent-team event publish <type> [--payload <json> | --payload-file <path|->] [--dry-run] [--format '{{len .Matched}} {{len .Dispatched}}'] [--json]
                                                 # manually publish a topology event through the daemon

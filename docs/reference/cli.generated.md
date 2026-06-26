@@ -164,14 +164,16 @@ Inherited Flags:
 Publish a message to a channel from the CLI (creates the channel if missing).
 
 ```text
-agent-team channel publish <name> <body...> [flags]
+agent-team channel publish <name> [body...] [flags]
 ```
 
 Flags:
 
 ```text
-      --sender string   Sender label recorded with the message. (default "(cli)")
-      --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --message string        Message text to publish.
+      --message-file string   Read message text from a file, or '-' for stdin.
+      --sender string         Sender label recorded with the message. (default "(cli)")
+      --target string         Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 
 Inherited Flags:

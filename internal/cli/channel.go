@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -87,25 +86,33 @@ func newChannelShowCmd() *cobra.Command {
 
 func newChannelPublishCmd() *cobra.Command {
 	var (
-		target string
-		sender string
+		target      string
+		sender      string
+		message     string
+		messageFile string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "publish <name> <body...>",
+		Use:   "publish <name> [body...]",
 		Short: "Publish a message to a channel from the CLI (creates the channel if missing).",
-		Args:  cobra.MinimumNArgs(2),
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
 			}
-			body := strings.Join(args[1:], " ")
+			body, err := messageBodyWithFlagNames(message, messageFile, args[1:], "--message", "--message-file")
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team channel publish: %v\n", err)
+				return exitErr(2)
+			}
 			return runChannelPublish(cmd.OutOrStdout(), cmd.ErrOrStderr(), teamDir, args[0], sender, body)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().StringVar(&sender, "sender", "(cli)", "Sender label recorded with the message.")
+	cmd.Flags().StringVar(&message, "message", "", "Message text to publish.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read message text from a file, or '-' for stdin.")
 	return cmd
 }
 
