@@ -1593,7 +1593,11 @@ pipelines = ["ticket_to_pr"]
 	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	apply.SetOut(applyOut)
 	apply.SetErr(applyErr)
-	apply.SetArgs([]string{"team", "timeout", "delivery", "--repo", root, "--message", "team timed out stale step", "--json"})
+	timeoutFile := filepath.Join(root, "team-timeout-message.txt")
+	if err := os.WriteFile(timeoutFile, []byte("team timed out stale step from file\n"), 0o644); err != nil {
+		t.Fatalf("write timeout message: %v", err)
+	}
+	apply.SetArgs([]string{"team", "timeout", "delivery", "--repo", root, "--message-file", timeoutFile, "--json"})
 	if err := apply.Execute(); err != nil {
 		t.Fatalf("team timeout apply: %v\nstderr=%s", err, applyErr.String())
 	}
@@ -1608,7 +1612,7 @@ pipelines = ["ticket_to_pr"]
 	if err != nil {
 		t.Fatalf("read owned job: %v", err)
 	}
-	if owned.Status != job.StatusFailed || owned.Steps[0].Status != job.StatusFailed || owned.Steps[0].Instance != "" || owned.LastStatus != "team timed out stale step" {
+	if owned.Status != job.StatusFailed || owned.Steps[0].Status != job.StatusFailed || owned.Steps[0].Instance != "" || owned.LastStatus != "team timed out stale step from file" {
 		t.Fatalf("owned job = %+v", owned)
 	}
 	unowned, err := job.Read(teamDir, "oth-800")
@@ -1745,7 +1749,11 @@ pipelines = ["ticket_to_pr"]
 	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	apply.SetOut(applyOut)
 	apply.SetErr(applyErr)
-	apply.SetArgs([]string{"team", "timeout", "delivery", "--repo", root, "--jobs", "--message", "team timeout sweep", "--json"})
+	timeoutFile := filepath.Join(root, "team-timeout-sweep.txt")
+	if err := os.WriteFile(timeoutFile, []byte("team timeout sweep from file\n"), 0o644); err != nil {
+		t.Fatalf("write timeout sweep message: %v", err)
+	}
+	apply.SetArgs([]string{"team", "timeout", "delivery", "--repo", root, "--jobs", "--message-file", timeoutFile, "--json"})
 	if err := apply.Execute(); err != nil {
 		t.Fatalf("team timeout --jobs apply: %v\nstderr=%s", err, applyErr.String())
 	}
@@ -1760,14 +1768,14 @@ pipelines = ["ticket_to_pr"]
 	if err != nil {
 		t.Fatalf("read owned pipeline job: %v", err)
 	}
-	if ownedPipeline.Status != job.StatusFailed || ownedPipeline.Steps[0].Instance != "" || ownedPipeline.LastStatus != "team timeout sweep" {
+	if ownedPipeline.Status != job.StatusFailed || ownedPipeline.Steps[0].Instance != "" || ownedPipeline.LastStatus != "team timeout sweep from file" {
 		t.Fatalf("owned pipeline job = %+v", ownedPipeline)
 	}
 	ownedStandalone, err := job.Read(teamDir, "squ-802")
 	if err != nil {
 		t.Fatalf("read owned standalone job: %v", err)
 	}
-	if ownedStandalone.Status != job.StatusFailed || ownedStandalone.Instance != "worker-squ-802" || ownedStandalone.LastEvent != "job_timeout" || ownedStandalone.LastStatus != "team timeout sweep" {
+	if ownedStandalone.Status != job.StatusFailed || ownedStandalone.Instance != "worker-squ-802" || ownedStandalone.LastEvent != "job_timeout" || ownedStandalone.LastStatus != "team timeout sweep from file" {
 		t.Fatalf("owned standalone job = %+v", ownedStandalone)
 	}
 	unownedPipeline, err := job.Read(teamDir, "oth-801")

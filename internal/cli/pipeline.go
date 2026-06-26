@@ -2520,15 +2520,16 @@ func newPipelineRetryCmd() *cobra.Command {
 
 func newPipelineTimeoutCmd() *cobra.Command {
 	var (
-		repo    string
-		all     bool
-		limit   int
-		step    string
-		target  string
-		message string
-		dryRun  bool
-		jsonOut bool
-		format  string
+		repo        string
+		all         bool
+		limit       int
+		step        string
+		target      string
+		message     string
+		messageFile string
+		dryRun      bool
+		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -2567,11 +2568,16 @@ func newPipelineTimeoutCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: pipeline name is required.")
 				return exitErr(2)
 			}
+			timeoutMessage, err := optionalSendMessageBody(message, messageFile, nil)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline timeout: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
 			}
-			results, err := timeoutPipelineJobs(teamDir, pipelineName, step, target, message, limit, dryRun)
+			results, err := timeoutPipelineJobs(teamDir, pipelineName, step, target, timeoutMessage, limit, dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline timeout: %v\n", err)
 				return exitErr(1)
@@ -2585,6 +2591,7 @@ func newPipelineTimeoutCmd() *cobra.Command {
 	cmd.Flags().StringVar(&step, "step", "", "Mark only stale running steps with this id.")
 	cmd.Flags().StringVar(&target, "target-agent", "", "Mark only stale running steps targeting this agent.")
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each timed-out job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read timeout message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview stale-step failures without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit timeout results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each timeout result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")

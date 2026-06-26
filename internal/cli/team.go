@@ -1749,6 +1749,7 @@ func newTeamTimeoutCmd() *cobra.Command {
 		step        string
 		targetAgent string
 		message     string
+		messageFile string
 		includeJobs bool
 		dryRun      bool
 		jsonOut     bool
@@ -1776,6 +1777,11 @@ func newTeamTimeoutCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeout: %v\n", err)
 				return exitErr(2)
 			}
+			timeoutMessage, err := optionalSendMessageBody(message, messageFile, nil)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeout: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -1785,7 +1791,7 @@ func newTeamTimeoutCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeout: %v\n", err)
 				return exitErr(1)
 			}
-			results, err := timeoutTeamWork(teamDir, team, step, targetAgent, message, limit, includeJobs, dryRun)
+			results, err := timeoutTeamWork(teamDir, team, step, targetAgent, timeoutMessage, limit, includeJobs, dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeout: %v\n", err)
 				return exitErr(1)
@@ -1798,6 +1804,7 @@ func newTeamTimeoutCmd() *cobra.Command {
 	cmd.Flags().StringVar(&step, "step", "", "Mark only stale running team steps with this id.")
 	cmd.Flags().StringVar(&targetAgent, "target-agent", "", "Mark only stale running team work targeting this agent.")
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each timed-out team job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read timeout message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&includeJobs, "jobs", false, "Include stale step-less jobs whose target instance belongs to the team.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview stale-work failures without writing job state.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit timeout results as JSON.")

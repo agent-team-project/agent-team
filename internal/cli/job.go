@@ -2391,6 +2391,7 @@ func newJobTimeoutCmd() *cobra.Command {
 		repo        string
 		step        string
 		message     string
+		messageFile string
 		pipeline    string
 		targetAgent string
 		all         bool
@@ -2433,7 +2434,12 @@ func newJobTimeoutCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeout: %v\n", err)
 				return exitErr(2)
 			}
-			results, err := runJobTimeoutCommand(cmd, repo, args, all, step, message, pipeline, targetAgent, limit, dryRun)
+			timeoutMessage, err := optionalSendMessageBody(message, messageFile, nil)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeout: %v\n", err)
+				return exitErr(2)
+			}
+			results, err := runJobTimeoutCommand(cmd, repo, args, all, step, timeoutMessage, pipeline, targetAgent, limit, dryRun)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeout: %v\n", err)
 				return exitErr(1)
@@ -2444,6 +2450,7 @@ func newJobTimeoutCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&step, "step", "", "Mark only a stale running step with this id failed.")
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on the timed-out job.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read timeout message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&all, "all", false, "Mark stale running work across all jobs.")
 	cmd.Flags().StringVar(&pipeline, "pipeline", "", "With --all, mark only stale work owned by this pipeline.")
 	cmd.Flags().StringVar(&targetAgent, "target-agent", "", "With --all, mark only stale work targeting this agent.")

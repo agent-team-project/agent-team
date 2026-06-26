@@ -2386,7 +2386,11 @@ func TestJobTimeoutMarksStaleRunningStepsAndJobs(t *testing.T) {
 	applyStepOut, applyStepErr := &bytes.Buffer{}, &bytes.Buffer{}
 	applyStep.SetOut(applyStepOut)
 	applyStep.SetErr(applyStepErr)
-	applyStep.SetArgs([]string{"job", "timeout", "squ-840", "--repo", root, "--message", "job step timed out", "--json"})
+	stepTimeoutFile := filepath.Join(root, "job-timeout-message.txt")
+	if err := os.WriteFile(stepTimeoutFile, []byte("job step timed out from file\n"), 0o644); err != nil {
+		t.Fatalf("write timeout message: %v", err)
+	}
+	applyStep.SetArgs([]string{"job", "timeout", "squ-840", "--repo", root, "--message-file", stepTimeoutFile, "--json"})
 	if err := applyStep.Execute(); err != nil {
 		t.Fatalf("job timeout step apply: %v\nstderr=%s", err, applyStepErr.String())
 	}
@@ -2401,7 +2405,7 @@ func TestJobTimeoutMarksStaleRunningStepsAndJobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read timed out step job: %v", err)
 	}
-	if timedOutStep.Status != job.StatusFailed || timedOutStep.Steps[0].Status != job.StatusFailed || timedOutStep.Steps[0].Instance != "" || timedOutStep.LastStatus != "job step timed out" {
+	if timedOutStep.Status != job.StatusFailed || timedOutStep.Steps[0].Status != job.StatusFailed || timedOutStep.Steps[0].Instance != "" || timedOutStep.LastStatus != "job step timed out from file" {
 		t.Fatalf("timed out step job = %+v", timedOutStep)
 	}
 
@@ -2500,7 +2504,11 @@ func TestJobTimeoutAllMarksStaleRunningWork(t *testing.T) {
 	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	apply.SetOut(applyOut)
 	apply.SetErr(applyErr)
-	apply.SetArgs([]string{"job", "timeout", "--all", "--repo", root, "--message", "batch timeout", "--json"})
+	timeoutFile := filepath.Join(root, "batch-timeout-message.txt")
+	if err := os.WriteFile(timeoutFile, []byte("batch timeout from file\n"), 0o644); err != nil {
+		t.Fatalf("write batch timeout message: %v", err)
+	}
+	apply.SetArgs([]string{"job", "timeout", "--all", "--repo", root, "--message-file", timeoutFile, "--json"})
 	if err := apply.Execute(); err != nil {
 		t.Fatalf("job timeout --all apply: %v\nstderr=%s", err, applyErr.String())
 	}
@@ -2515,14 +2523,14 @@ func TestJobTimeoutAllMarksStaleRunningWork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read step job: %v", err)
 	}
-	if stepJob.Status != job.StatusFailed || stepJob.Steps[0].Status != job.StatusFailed || stepJob.Steps[0].Instance != "" || stepJob.LastStatus != "batch timeout" {
+	if stepJob.Status != job.StatusFailed || stepJob.Steps[0].Status != job.StatusFailed || stepJob.Steps[0].Instance != "" || stepJob.LastStatus != "batch timeout from file" {
 		t.Fatalf("step job = %+v", stepJob)
 	}
 	lifecycleJob, err := job.Read(teamDir, "squ-843")
 	if err != nil {
 		t.Fatalf("read lifecycle job: %v", err)
 	}
-	if lifecycleJob.Status != job.StatusFailed || lifecycleJob.Instance != "worker-squ-843" || lifecycleJob.LastEvent != "job_timeout" || lifecycleJob.LastStatus != "batch timeout" {
+	if lifecycleJob.Status != job.StatusFailed || lifecycleJob.Instance != "worker-squ-843" || lifecycleJob.LastEvent != "job_timeout" || lifecycleJob.LastStatus != "batch timeout from file" {
 		t.Fatalf("lifecycle job = %+v", lifecycleJob)
 	}
 	fresh, err := job.Read(teamDir, "squ-844")

@@ -2641,6 +2641,7 @@ Flags:
       --json                  Emit timeout results as JSON.
       --limit int             With --all, mark at most this many stale running jobs or steps failed; 0 means no limit.
       --message string        Status message recorded on the timed-out job.
+      --message-file string   Read timeout message from a file, or '-' for stdin.
       --pipeline string       With --all, mark only stale work owned by this pipeline.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --step string           Mark only a stale running step with this id failed.
@@ -3851,6 +3852,7 @@ Flags:
       --json                  Emit timeout results as JSON.
       --limit int             Maximum stale running steps to mark failed (0 = no limit).
       --message string        Status message recorded on each timed-out job.
+      --message-file string   Read timeout message from a file, or '-' for stdin.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --step string           Mark only stale running steps with this id.
       --target-agent string   Mark only stale running steps targeting this agent.
@@ -6547,6 +6549,7 @@ Flags:
       --json                  Emit timeout results as JSON.
       --limit int             Mark at most this many stale running team jobs or steps failed; 0 means no limit.
       --message string        Status message recorded on each timed-out team job.
+      --message-file string   Read timeout message from a file, or '-' for stdin.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --step string           Mark only stale running team steps with this id.
       --target-agent string   Mark only stale running team work targeting this agent.

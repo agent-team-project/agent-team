@@ -1234,7 +1234,11 @@ timeout = "1h"
 	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	apply.SetOut(applyOut)
 	apply.SetErr(applyErr)
-	apply.SetArgs([]string{"pipeline", "timeout", "ticket_to_pr", "--repo", root, "--message", "operator timed out stale step", "--json"})
+	timeoutFile := filepath.Join(root, "pipeline-timeout-message.txt")
+	if err := os.WriteFile(timeoutFile, []byte("operator timed out stale step from file\n"), 0o644); err != nil {
+		t.Fatalf("write timeout message: %v", err)
+	}
+	apply.SetArgs([]string{"pipeline", "timeout", "ticket_to_pr", "--repo", root, "--message-file", timeoutFile, "--json"})
 	if err := apply.Execute(); err != nil {
 		t.Fatalf("pipeline timeout apply: %v\nstderr=%s", err, applyErr.String())
 	}
@@ -1249,7 +1253,7 @@ timeout = "1h"
 	if err != nil {
 		t.Fatalf("read timed out job: %v", err)
 	}
-	if timedOut.Status != job.StatusFailed || timedOut.Steps[0].Status != job.StatusFailed || timedOut.Steps[0].Instance != "" || timedOut.LastStatus != "operator timed out stale step" {
+	if timedOut.Status != job.StatusFailed || timedOut.Steps[0].Status != job.StatusFailed || timedOut.Steps[0].Instance != "" || timedOut.LastStatus != "operator timed out stale step from file" {
 		t.Fatalf("timed out job = %+v", timedOut)
 	}
 	stillRunning, err := job.Read(teamDir, "squ-701")
