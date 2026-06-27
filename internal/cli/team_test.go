@@ -554,6 +554,22 @@ since = "2026-06-18T12:00:00Z"
 		}
 	}
 
+	pipelinesCommands := NewRootCmd()
+	pipelinesCommandsOut, pipelinesCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipelinesCommands.SetOut(pipelinesCommandsOut)
+	pipelinesCommands.SetErr(pipelinesCommandsErr)
+	pipelinesCommands.SetArgs([]string{"team", "pipelines", "delivery", "--repo", root, "--commands"})
+	if err := pipelinesCommands.Execute(); err != nil {
+		t.Fatalf("team pipelines --commands: %v\nstderr=%s", err, pipelinesCommandsErr.String())
+	}
+	var wantPipelineCommands bytes.Buffer
+	if err := renderActionCommands(&wantPipelineCommands, commandActionsOnly(pipelineRows[0].Actions)); err != nil {
+		t.Fatalf("render expected team pipeline commands: %v", err)
+	}
+	if got, want := pipelinesCommandsOut.String(), wantPipelineCommands.String(); got != want {
+		t.Fatalf("team pipelines --commands = %q, want %q", got, want)
+	}
+
 	pipelinesFormat := NewRootCmd()
 	pipelinesFormatOut, pipelinesFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	pipelinesFormat.SetOut(pipelinesFormatOut)
@@ -627,6 +643,40 @@ since = "2026-06-18T12:00:00Z"
 	}
 	if !strings.Contains(pipelinesSortErr.String(), "--sort must be declared") {
 		t.Fatalf("team pipelines invalid sort stderr = %q", pipelinesSortErr.String())
+	}
+
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "json",
+			args: []string{"team", "pipelines", "delivery", "--repo", root, "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "format",
+			args: []string{"team", "pipelines", "delivery", "--repo", root, "--commands", "--format", "{{.Pipeline}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "watch",
+			args: []string{"team", "pipelines", "delivery", "--repo", root, "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
+		},
+	} {
+		cmd := NewRootCmd()
+		invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(invalidOut)
+		cmd.SetErr(invalidErr)
+		cmd.SetArgs(tt.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("team pipelines --commands with %s succeeded", tt.name)
+		}
+		if !strings.Contains(invalidErr.String(), tt.want) {
+			t.Fatalf("team pipelines --commands with %s stderr = %q", tt.name, invalidErr.String())
+		}
 	}
 
 	explain := NewRootCmd()

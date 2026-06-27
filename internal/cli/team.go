@@ -4240,6 +4240,7 @@ func newTeamPipelinesCmd() *cobra.Command {
 		interval time.Duration
 		limit    int
 		jsonOut  bool
+		commands bool
 		format   string
 		sortBy   string
 	)
@@ -4251,6 +4252,18 @@ func newTeamPipelinesCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team pipelines: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team pipelines: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team pipelines: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team pipelines: --commands cannot be combined with --watch.")
 				return exitErr(2)
 			}
 			if interval < 0 {
@@ -4280,7 +4293,7 @@ func newTeamPipelinesCmd() *cobra.Command {
 				defer stop()
 				return runTeamPipelinesWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], sortMode, limit, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
-			if err := runTeamPipelines(cmd.OutOrStdout(), teamDir, args[0], sortMode, limit, jsonOut, tmpl); err != nil {
+			if err := runTeamPipelines(cmd.OutOrStdout(), teamDir, args[0], sortMode, limit, jsonOut, commands, tmpl); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team pipelines: %v\n", err)
 				return exitErr(1)
 			}
@@ -4293,6 +4306,7 @@ func newTeamPipelinesCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after sorting; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team pipeline status as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended actions, one per line.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each pipeline with a Go template, e.g. '{{.Pipeline}} {{.ReadySteps}}'.")
 	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, queue-quarantined, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined.")
 	return cmd
@@ -7978,12 +7992,15 @@ func collectTeamPipelineStatus(teamDir, name string) ([]pipelineStatusRow, error
 	return teamPipelineStatus(team, rows), nil
 }
 
-func runTeamPipelines(w io.Writer, teamDir, name, sortMode string, limit int, jsonOut bool, tmpl *template.Template) error {
+func runTeamPipelines(w io.Writer, teamDir, name, sortMode string, limit int, jsonOut, commands bool, tmpl *template.Template) error {
 	rows, err := collectTeamPipelineStatus(teamDir, name)
 	if err != nil {
 		return err
 	}
 	rows = applyPipelineStatusRowOptions(rows, sortMode, limit)
+	if commands {
+		return renderPipelineStatusCommands(w, rows)
+	}
 	return renderPipelineStatusRows(w, rows, jsonOut, tmpl)
 }
 
@@ -7999,7 +8016,7 @@ func runTeamPipelinesWatch(ctx context.Context, w io.Writer, teamDir, name, sort
 				return err
 			}
 		}
-		if err := runTeamPipelines(w, teamDir, name, sortMode, limit, jsonOut, tmpl); err != nil {
+		if err := runTeamPipelines(w, teamDir, name, sortMode, limit, jsonOut, false, tmpl); err != nil {
 			return err
 		}
 		if !waitForWatchTick(ctx, ticker.C) {

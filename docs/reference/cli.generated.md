@@ -5434,6 +5434,7 @@ Flags:
 
 ```text
       --all                 Summarize all pipelines. This is the default when no pipeline is passed.
+      --commands            Print recommended actions, one per line.
       --format string       Render each row with a Go template, e.g. '{{.Pipeline}} {{.Jobs}} {{.ReadySteps}}'.
       --interval duration   Refresh interval for --watch. (default 2s)
       --json                Emit pipeline status rows as JSON.
@@ -7884,6 +7885,7 @@ agent-team team pipelines <team> [flags]
 Flags:
 
 ```text
+      --commands            Print recommended actions, one per line.
       --format string       Render each pipeline with a Go template, e.g. '{{.Pipeline}} {{.ReadySteps}}'.
       --interval duration   Refresh interval for --watch. (default 2s)
       --json                Emit team pipeline status as JSON.

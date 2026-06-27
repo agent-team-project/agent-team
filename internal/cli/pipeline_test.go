@@ -1205,6 +1205,26 @@ target = "manager"
 		t.Fatalf("ad_hoc status = %+v", adHoc)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"pipeline", "status", "--repo", root, "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("pipeline status --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	var wantCommands bytes.Buffer
+	var expectedActions []string
+	for _, row := range rows {
+		expectedActions = append(expectedActions, row.Actions...)
+	}
+	if err := renderActionCommands(&wantCommands, commandActionsOnly(expectedActions)); err != nil {
+		t.Fatalf("render expected commands: %v", err)
+	}
+	if got, want := commandsOut.String(), wantCommands.String(); got != want {
+		t.Fatalf("pipeline status --commands = %q, want %q", got, want)
+	}
+
 	sorted := NewRootCmd()
 	sortedOut, sortedErr := &bytes.Buffer{}, &bytes.Buffer{}
 	sorted.SetOut(sortedOut)
@@ -1476,6 +1496,40 @@ target = "manager"
 	}
 	if !strings.Contains(explainInvalidSortErr.String(), "--sort must be job") {
 		t.Fatalf("invalid sort stderr = %q", explainInvalidSortErr.String())
+	}
+
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "json",
+			args: []string{"pipeline", "status", "--repo", root, "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "format",
+			args: []string{"pipeline", "status", "--repo", root, "--commands", "--format", "{{.Pipeline}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "watch",
+			args: []string{"pipeline", "status", "--repo", root, "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
+		},
+	} {
+		cmd := NewRootCmd()
+		invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(invalidOut)
+		cmd.SetErr(invalidErr)
+		cmd.SetArgs(tt.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("pipeline status --commands with %s succeeded", tt.name)
+		}
+		if !strings.Contains(invalidErr.String(), tt.want) {
+			t.Fatalf("pipeline status --commands with %s stderr = %q", tt.name, invalidErr.String())
+		}
 	}
 
 	invalid := NewRootCmd()
