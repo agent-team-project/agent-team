@@ -3908,8 +3908,9 @@ func newTeamStatsCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "stats <team> [<instance>...]",
-		Short: "Show CPU and memory usage for team-owned instances.",
+		Use:     "stats <team> [<instance>...]",
+		Aliases: []string{"top"},
+		Short:   "Show CPU and memory usage for team-owned instances.",
 		Long: "Show a one-shot or watchable resource snapshot for instances owned by one declared team. " +
 			"With no names, only running team-owned instances are shown. Use --all to include stopped, exited, crashed, and missing persistent team members.",
 		Args: cobra.MinimumNArgs(1),

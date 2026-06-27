@@ -2686,8 +2686,9 @@ func newJobStatsCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "stats <job-id>",
-		Short: "Show CPU and memory usage for a job's instances.",
+		Use:     "stats <job-id>",
+		Aliases: []string{"top"},
+		Short:   "Show CPU and memory usage for a job's instances.",
 		Long: "Show a one-shot or watchable resource snapshot for daemon-known instances owned by one durable job. " +
 			"Pipeline jobs can own several stage instances; pass --step to focus one stage. With no filters, only running job-owned instances are shown.",
 		Args: cobra.ExactArgs(1),

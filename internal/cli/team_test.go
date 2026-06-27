@@ -5844,6 +5844,18 @@ instances = ["other", "build-worker"]
 		t.Fatalf("team stats runtime row = %+v", rows[0])
 	}
 
+	top := NewRootCmd()
+	topOut, topErr := &bytes.Buffer{}, &bytes.Buffer{}
+	top.SetOut(topOut)
+	top.SetErr(topErr)
+	top.SetArgs([]string{"team", "top", "delivery", "--repo", root, "--runtime", "codex", "--format", "{{.Instance}}"})
+	if err := top.Execute(); err != nil {
+		t.Fatalf("team top alias: %v\nstderr=%s", err, topErr.String())
+	}
+	if got, want := strings.TrimSpace(topOut.String()), "worker-squ-101"; got != want {
+		t.Fatalf("team top alias output = %q, want %q", got, want)
+	}
+
 	badRuntime := NewRootCmd()
 	badRuntime.SetOut(&bytes.Buffer{})
 	badRuntimeErr := &bytes.Buffer{}

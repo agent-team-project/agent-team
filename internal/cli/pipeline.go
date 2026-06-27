@@ -2898,8 +2898,9 @@ func newPipelineStatsCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "stats [<pipeline>|--all]",
-		Short: "Show CPU and memory usage for pipeline-owned instances.",
+		Use:     "stats [<pipeline>|--all]",
+		Aliases: []string{"top"},
+		Short:   "Show CPU and memory usage for pipeline-owned instances.",
 		Long: "Show a one-shot or watchable resource snapshot for daemon-known instances owned by durable jobs in one declared pipeline. " +
 			"Omit the pipeline or pass --all to inspect every pipeline-owned job. With no filters, only running pipeline-owned instances are shown; use --status or --unhealthy to include inactive rows.",
 		Args: cobra.ArbitraryArgs,

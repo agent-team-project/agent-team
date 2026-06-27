@@ -5608,6 +5608,18 @@ target = "worker"
 		t.Fatalf("pipeline stats --all runtime format = %q, want %q", got, want)
 	}
 
+	top := NewRootCmd()
+	topOut, topErr := &bytes.Buffer{}, &bytes.Buffer{}
+	top.SetOut(topOut)
+	top.SetErr(topErr)
+	top.SetArgs([]string{"pipeline", "top", "--all", "--repo", root, "--runtime", "codex", "--format", "{{.Instance}}"})
+	if err := top.Execute(); err != nil {
+		t.Fatalf("pipeline top alias: %v\nstderr=%s", err, topErr.String())
+	}
+	if got, want := strings.TrimSpace(topOut.String()), "worker-squ-990\nworker-squ-992"; got != want {
+		t.Fatalf("pipeline top alias output = %q, want %q", got, want)
+	}
+
 	stopped := NewRootCmd()
 	stoppedOut, stoppedErr := &bytes.Buffer{}, &bytes.Buffer{}
 	stopped.SetOut(stoppedOut)

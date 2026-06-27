@@ -3152,6 +3152,8 @@ Show a one-shot or watchable resource snapshot for daemon-known instances owned 
 agent-team job stats <job-id> [flags]
 ```
 
+Aliases: `top`
+
 Flags:
 
 ```text
@@ -5248,6 +5250,8 @@ Show a one-shot or watchable resource snapshot for daemon-known instances owned 
 ```text
 agent-team pipeline stats [<pipeline>|--all] [flags]
 ```
+
+Aliases: `top`
 
 Flags:
 
@@ -8447,6 +8451,8 @@ Show a one-shot or watchable resource snapshot for instances owned by one declar
 ```text
 agent-team team stats <team> [<instance>...] [flags]
 ```
+
+Aliases: `top`
 
 Flags:
 

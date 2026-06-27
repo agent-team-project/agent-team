@@ -6100,6 +6100,18 @@ func TestJobStatsScopesRowsAndSteps(t *testing.T) {
 		t.Fatalf("job stats runtime format = %q, want %q", got, want)
 	}
 
+	top := NewRootCmd()
+	topOut, topErr := &bytes.Buffer{}, &bytes.Buffer{}
+	top.SetOut(topOut)
+	top.SetErr(topErr)
+	top.SetArgs([]string{"job", "top", "SQU-120", "--repo", tmp, "--runtime", "codex", "--format", "{{.Instance}}"})
+	if err := top.Execute(); err != nil {
+		t.Fatalf("job top alias: %v\nstderr=%s", err, topErr.String())
+	}
+	if got, want := strings.TrimSpace(topOut.String()), "sidecar-squ-120\nworker-squ-120-implement"; got != want {
+		t.Fatalf("job top alias output = %q, want %q", got, want)
+	}
+
 	step := NewRootCmd()
 	stepOut, stepErr := &bytes.Buffer{}, &bytes.Buffer{}
 	step.SetOut(stepOut)
