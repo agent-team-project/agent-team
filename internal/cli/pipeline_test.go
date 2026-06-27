@@ -8676,6 +8676,19 @@ target = "worker"
 		t.Fatalf("show format = %q, want %q", got, want)
 	}
 
+	showCommands := NewRootCmd()
+	showCommandsOut, showCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showCommands.SetOut(showCommandsOut)
+	showCommands.SetErr(showCommandsErr)
+	showCommands.SetArgs([]string{"pipeline", "queue", "quarantine", "show", "ticket_to_pr", restorePath, "--repo", root, "--commands"})
+	if err := showCommands.Execute(); err != nil {
+		t.Fatalf("pipeline queue quarantine show --commands: %v\nstderr=%s", err, showCommandsErr.String())
+	}
+	wantCommands := "agent-team pipeline queue quarantine restore ticket_to_pr " + restorePath + "\nagent-team pipeline queue quarantine drop ticket_to_pr " + restorePath + "\n"
+	if got := showCommandsOut.String(); got != wantCommands {
+		t.Fatalf("pipeline queue quarantine show --commands = %q, want %q", got, wantCommands)
+	}
+
 	showForeign := NewRootCmd()
 	showForeignOut, showForeignErr := &bytes.Buffer{}, &bytes.Buffer{}
 	showForeign.SetOut(showForeignOut)

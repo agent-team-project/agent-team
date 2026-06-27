@@ -541,6 +541,14 @@ func TestOutboxDoctorFormatValidation(t *testing.T) {
 		{[]string{"pipeline", "outbox", "show", "ticket_to_pr", "outbox-b", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
 		{[]string{"team", "outbox", "show", "delivery", "outbox-b", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"team", "outbox", "show", "delivery", "outbox-b", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"outbox", "quarantine", "show", "quarantine/pending/outbox.json", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"outbox", "quarantine", "show", "quarantine/pending/outbox.json", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"job", "outbox", "quarantine", "show", "squ-1", "quarantine/pending/outbox.json", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"job", "outbox", "quarantine", "show", "squ-1", "quarantine/pending/outbox.json", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"pipeline", "outbox", "quarantine", "show", "ticket_to_pr", "quarantine/pending/outbox.json", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"pipeline", "outbox", "quarantine", "show", "ticket_to_pr", "quarantine/pending/outbox.json", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"team", "outbox", "quarantine", "show", "delivery", "quarantine/pending/outbox.json", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"team", "outbox", "quarantine", "show", "delivery", "quarantine/pending/outbox.json", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
 	}
 	for _, tc := range cases {
 		out, stderr, err := runRootForOutboxTestErr(t, tc.args...)
@@ -642,6 +650,11 @@ func TestOutboxQuarantineListShowRestoreDrop(t *testing.T) {
 		if !strings.Contains(showText.String(), want) {
 			t.Fatalf("outbox quarantine show text missing %q:\n%s", want, showText.String())
 		}
+	}
+
+	showCommands := runRootForOutboxTest(t, "outbox", "quarantine", "show", "--target", target, restorablePath, "--commands")
+	if got, want := showCommands.String(), "agent-team outbox quarantine restore "+restorablePath+"\nagent-team outbox quarantine drop "+restorablePath+"\n"; got != want {
+		t.Fatalf("outbox quarantine show --commands = %q, want %q", got, want)
 	}
 
 	restoreAllDry := runRootForOutboxTest(t, "outbox", "quarantine", "restore", "--target", target, "--all", "--job", "SQU-710", "--dry-run", "--json")
@@ -1225,6 +1238,11 @@ pipelines = ["ops_review"]
 		t.Fatalf("shown team outbox quarantine item = %+v", shown)
 	}
 
+	showCommands := runRootForOutboxTest(t, "team", "outbox", "quarantine", "show", "delivery", restorePath, "--repo", root, "--commands")
+	if got, want := showCommands.String(), "agent-team team outbox quarantine restore delivery "+restorePath+"\nagent-team team outbox quarantine drop delivery "+restorePath+"\n"; got != want {
+		t.Fatalf("team outbox quarantine show --commands = %q, want %q", got, want)
+	}
+
 	restoreAllDry := runRootForOutboxTest(t, "team", "outbox", "quarantine", "restore", "delivery", "--repo", root, "--all", "--state", daemon.OutboxStatePending, "--job", "SQU-909", "--dry-run", "--json")
 	var restoreAllRows []outboxQuarantineRestoreResult
 	if err := json.Unmarshal(restoreAllDry.Bytes(), &restoreAllRows); err != nil {
@@ -1584,6 +1602,11 @@ target = "worker"
 	}
 	if shown.ID != "outbox-pipeline-quarantine-restore" || shown.OutboxItem == nil || shown.OutboxItem.Payload["ticket"] != "SQU-907" {
 		t.Fatalf("shown pipeline outbox quarantine item = %+v", shown)
+	}
+
+	showCommands := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "show", "ticket_to_pr", restorePath, "--repo", root, "--commands")
+	if got, want := showCommands.String(), "agent-team pipeline outbox quarantine restore ticket_to_pr "+restorePath+"\nagent-team pipeline outbox quarantine drop ticket_to_pr "+restorePath+"\n"; got != want {
+		t.Fatalf("pipeline outbox quarantine show --commands = %q, want %q", got, want)
 	}
 
 	restoreAllDry := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "restore", "ticket_to_pr", "--repo", root, "--all", "--state", daemon.OutboxStatePending, "--dry-run", "--json")
@@ -1997,6 +2020,11 @@ func TestJobOutboxQuarantineScopesRestoreAndDrop(t *testing.T) {
 	}
 	if shown.ID != "outbox-job-quarantine-restore" || shown.OutboxItem == nil || shown.OutboxItem.Payload["ticket"] != "SQU-905" {
 		t.Fatalf("shown job outbox quarantine item = %+v", shown)
+	}
+
+	showCommands := runRootForOutboxTest(t, "job", "outbox", "quarantine", "show", "squ-905", restorePath, "--repo", root, "--commands")
+	if got, want := showCommands.String(), "agent-team job outbox quarantine restore squ-905 "+restorePath+"\nagent-team job outbox quarantine drop squ-905 "+restorePath+"\n"; got != want {
+		t.Fatalf("job outbox quarantine show --commands = %q, want %q", got, want)
 	}
 
 	restoreAllDry := runRootForOutboxTest(t, "job", "outbox", "quarantine", "restore", "squ-905", "--repo", root, "--all", "--state", daemon.OutboxStatePending, "--dry-run", "--json")

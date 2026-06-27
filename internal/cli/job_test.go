@@ -2406,6 +2406,19 @@ func TestJobQueueQuarantineScopesOwnedFiles(t *testing.T) {
 		}
 	}
 
+	showCommands := NewRootCmd()
+	showCommandsOut, showCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showCommands.SetOut(showCommandsOut)
+	showCommands.SetErr(showCommandsErr)
+	showCommands.SetArgs([]string{"job", "queue", "quarantine", "show", "SQU-123", restorePath, "--repo", tmp, "--commands"})
+	if err := showCommands.Execute(); err != nil {
+		t.Fatalf("job queue quarantine show --commands: %v\nstderr=%s", err, showCommandsErr.String())
+	}
+	wantCommands := "agent-team job queue quarantine restore squ-123 " + restorePath + "\nagent-team job queue quarantine drop squ-123 " + restorePath + "\n"
+	if got := showCommandsOut.String(); got != wantCommands {
+		t.Fatalf("job queue quarantine show --commands = %q, want %q", got, wantCommands)
+	}
+
 	restoreAllDry := NewRootCmd()
 	restoreAllDryOut, restoreAllDryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restoreAllDry.SetOut(restoreAllDryOut)
@@ -2915,6 +2928,16 @@ func TestJobQueueRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "show commands with format",
 			args: []string{"job", "queue", "show", "SQU-120", "q-job-dead", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "quarantine show commands with json",
+			args: []string{"job", "queue", "quarantine", "show", "SQU-120", "quarantine/pending/q.json", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "quarantine show commands with format",
+			args: []string{"job", "queue", "quarantine", "show", "SQU-120", "quarantine/pending/q.json", "--commands", "--format", "{{.ID}}"},
 			want: "--commands cannot be combined with --format",
 		},
 		{

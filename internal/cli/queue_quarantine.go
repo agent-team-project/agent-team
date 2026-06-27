@@ -214,9 +214,10 @@ func newQueueQuarantineLsCmd() *cobra.Command {
 
 func newQueueQuarantineShowCmd() *cobra.Command {
 	var (
-		target  string
-		jsonOut bool
-		format  string
+		target   string
+		jsonOut  bool
+		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -224,6 +225,14 @@ func newQueueQuarantineShowCmd() *cobra.Command {
 		Short: "Show one quarantined queue file.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine show: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine show: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team queue quarantine show", format, jsonOut)
 			if err != nil {
 				return err
@@ -237,11 +246,15 @@ func newQueueQuarantineShowCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue quarantine show: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				return renderQueueQuarantineCommands(cmd.OutOrStdout(), result)
+			}
 			return renderQueueQuarantineShow(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the quarantined queue file as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the quarantined queue file with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
@@ -1067,6 +1080,10 @@ func renderQueueQuarantineShow(w io.Writer, result queueQuarantineShowResult, js
 		fmt.Fprintf(w, "Payload:\n%s\n", string(body))
 	}
 	return nil
+}
+
+func renderQueueQuarantineCommands(w io.Writer, result queueQuarantineShowResult) error {
+	return renderActionCommands(w, commandActionsOnly(queueQuarantineShowActions(result)))
 }
 
 func queueQuarantineShowActions(result queueQuarantineShowResult) []string {

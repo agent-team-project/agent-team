@@ -108,6 +108,9 @@ type outboxQuarantineDropResult struct {
 
 type outboxQuarantineShowResult struct {
 	outboxQuarantineItem
+	Team       string             `json:"team,omitempty"`
+	Pipeline   string             `json:"pipeline,omitempty"`
+	ScopeJob   string             `json:"scope_job,omitempty"`
 	OutboxItem *daemon.OutboxItem `json:"outbox_item,omitempty"`
 }
 
@@ -210,9 +213,10 @@ func newOutboxQuarantineLsCmd() *cobra.Command {
 
 func newOutboxQuarantineShowCmd() *cobra.Command {
 	var (
-		target  string
-		jsonOut bool
-		format  string
+		target   string
+		jsonOut  bool
+		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -220,6 +224,14 @@ func newOutboxQuarantineShowCmd() *cobra.Command {
 		Short: "Show one quarantined outbox file.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox quarantine show: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox quarantine show: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			formatTemplate, err := parseOutboxQuarantineCommandFormat(cmd, "agent-team outbox quarantine show", format, jsonOut)
 			if err != nil {
 				return err
@@ -233,11 +245,15 @@ func newOutboxQuarantineShowCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team outbox quarantine show: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				return renderOutboxQuarantineCommands(cmd.OutOrStdout(), result)
+			}
 			return renderOutboxQuarantineShow(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the quarantined outbox file as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the quarantined outbox file with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
@@ -1049,11 +1065,24 @@ func renderOutboxQuarantineShow(w io.Writer, result outboxQuarantineShowResult, 
 	return nil
 }
 
+func renderOutboxQuarantineCommands(w io.Writer, result outboxQuarantineShowResult) error {
+	return renderActionCommands(w, commandActionsOnly(outboxQuarantineShowActions(result)))
+}
+
 func outboxQuarantineShowActions(result outboxQuarantineShowResult) []string {
 	if result.Path == "" {
 		return nil
 	}
-	prefix := fmt.Sprintf("agent-team outbox quarantine %%s %s", result.Path)
+	var prefix string
+	if result.ScopeJob != "" {
+		prefix = fmt.Sprintf("agent-team job outbox quarantine %%s %s %s", result.ScopeJob, result.Path)
+	} else if result.Pipeline != "" {
+		prefix = fmt.Sprintf("agent-team pipeline outbox quarantine %%s %s %s", result.Pipeline, result.Path)
+	} else if result.Team != "" {
+		prefix = fmt.Sprintf("agent-team team outbox quarantine %%s %s %s", result.Team, result.Path)
+	} else {
+		prefix = fmt.Sprintf("agent-team outbox quarantine %%s %s", result.Path)
+	}
 	actions := []string{}
 	if result.Restorable {
 		actions = append(actions, fmt.Sprintf(prefix, "restore"))

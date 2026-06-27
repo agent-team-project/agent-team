@@ -2638,9 +2638,10 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 
 func newTeamQueueQuarantineShowCmd() *cobra.Command {
 	var (
-		repo    string
-		jsonOut bool
-		format  string
+		repo     string
+		jsonOut  bool
+		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -2648,6 +2649,14 @@ func newTeamQueueQuarantineShowCmd() *cobra.Command {
 		Short: "Show one team-owned quarantined queue file.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine show: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine show: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team team queue quarantine show", format, jsonOut)
 			if err != nil {
 				return err
@@ -2667,11 +2676,15 @@ func newTeamQueueQuarantineShowCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			result.Team = args[0]
+			if commands {
+				return renderQueueQuarantineCommands(cmd.OutOrStdout(), result)
+			}
 			return renderQueueQuarantineShow(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the team-owned quarantined queue file as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the team-owned quarantined queue file with a Go template, e.g. '{{.Team}} {{.ID}}'.")
 	return cmd
 }

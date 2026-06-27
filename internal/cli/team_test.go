@@ -7121,6 +7121,19 @@ instances = ["other"]
 		t.Fatalf("team queue quarantine show text =\n%s", showQuarantineTextOut.String())
 	}
 
+	showQuarantineCommands := NewRootCmd()
+	showQuarantineCommandsOut, showQuarantineCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showQuarantineCommands.SetOut(showQuarantineCommandsOut)
+	showQuarantineCommands.SetErr(showQuarantineCommandsErr)
+	showQuarantineCommands.SetArgs([]string{"team", "queue", "quarantine", "show", "delivery", teamQuarantinePath, "--repo", root, "--commands"})
+	if err := showQuarantineCommands.Execute(); err != nil {
+		t.Fatalf("team queue quarantine show --commands: %v\nstderr=%s", err, showQuarantineCommandsErr.String())
+	}
+	wantCommands := "agent-team team queue quarantine restore delivery " + teamQuarantinePath + "\nagent-team team queue quarantine drop delivery " + teamQuarantinePath + "\n"
+	if got := showQuarantineCommandsOut.String(); got != wantCommands {
+		t.Fatalf("team queue quarantine show --commands = %q, want %q", got, wantCommands)
+	}
+
 	restoreAllDry := NewRootCmd()
 	restoreAllDryOut, restoreAllDryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restoreAllDry.SetOut(restoreAllDryOut)
@@ -7894,6 +7907,16 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 			name: "quarantine show format with json",
 			args: []string{"team", "queue", "quarantine", "show", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--format", "{{.ID}}", "--json"},
 			want: "--format cannot be combined",
+		},
+		{
+			name: "quarantine show commands with json",
+			args: []string{"team", "queue", "quarantine", "show", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "quarantine show commands with format",
+			args: []string{"team", "queue", "quarantine", "show", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
 		},
 		{
 			name: "quarantine restore invalid format",

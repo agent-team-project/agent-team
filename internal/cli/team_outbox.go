@@ -510,9 +510,10 @@ func newTeamOutboxQuarantineCmd() *cobra.Command {
 
 func newTeamOutboxQuarantineShowCmd() *cobra.Command {
 	var (
-		repo    string
-		jsonOut bool
-		format  string
+		repo     string
+		jsonOut  bool
+		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -520,6 +521,14 @@ func newTeamOutboxQuarantineShowCmd() *cobra.Command {
 		Short: "Show one team-owned quarantined outbox file.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team outbox quarantine show: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team outbox quarantine show: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			formatTemplate, err := parseOutboxQuarantineCommandFormat(cmd, "agent-team team outbox quarantine show", format, jsonOut)
 			if err != nil {
 				return err
@@ -538,11 +547,16 @@ func newTeamOutboxQuarantineShowCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team outbox quarantine show: %v\n", err)
 				return exitErr(1)
 			}
+			result.Team = args[0]
+			if commands {
+				return renderOutboxQuarantineCommands(cmd.OutOrStdout(), result)
+			}
 			return renderOutboxQuarantineShow(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the team-owned quarantined outbox file as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the team-owned quarantined outbox file with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }

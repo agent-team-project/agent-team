@@ -438,6 +438,8 @@ func TestQueueDoctorFormatValidation(t *testing.T) {
 		{[]string{"queue", "doctor", "--format", "{{"}, "invalid --format template"},
 		{[]string{"queue", "show", "q-local", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"queue", "show", "q-local", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"queue", "quarantine", "show", "quarantine/pending/q.json", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"queue", "quarantine", "show", "quarantine/pending/q.json", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
 		{[]string{"queue", "drop", "--format", "{{.ID}}", "--json"}, "--format cannot be combined"},
 		{[]string{"queue", "drop", "--format", "{{"}, "invalid --format template"},
 		{[]string{"queue", "retry", "--format", "{{.ID}}", "--json"}, "--format cannot be combined"},
@@ -850,6 +852,19 @@ func TestQueueQuarantineListAndRestore(t *testing.T) {
 		if !strings.Contains(showTextOut.String(), want) {
 			t.Fatalf("queue quarantine show text missing %q:\n%s", want, showTextOut.String())
 		}
+	}
+
+	showCommands := NewRootCmd()
+	showCommandsOut, showCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showCommands.SetOut(showCommandsOut)
+	showCommands.SetErr(showCommandsErr)
+	showCommands.SetArgs([]string{"queue", "quarantine", "show", "--target", tmp, restorable.Path, "--commands"})
+	if err := showCommands.Execute(); err != nil {
+		t.Fatalf("queue quarantine show --commands: %v\nstderr=%s", err, showCommandsErr.String())
+	}
+	wantCommands := "agent-team queue quarantine restore " + restorable.Path + "\nagent-team queue quarantine drop " + restorable.Path + "\n"
+	if got := showCommandsOut.String(); got != wantCommands {
+		t.Fatalf("queue quarantine show --commands = %q, want %q", got, wantCommands)
 	}
 
 	dry := NewRootCmd()

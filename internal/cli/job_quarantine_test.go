@@ -126,6 +126,18 @@ updated_at = 2026-06-27T12:00:00Z
 		t.Fatalf("unrestorable job quarantine show included restore action:\n%s", showOut.String())
 	}
 
+	showCommands := NewRootCmd()
+	showCommandsOut, showCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showCommands.SetOut(showCommandsOut)
+	showCommands.SetErr(showCommandsErr)
+	showCommands.SetArgs([]string{"job", "quarantine", "show", brokenRel, "--repo", tmp, "--commands"})
+	if err := showCommands.Execute(); err != nil {
+		t.Fatalf("job quarantine show --commands: %v\nstderr=%s", err, showCommandsErr.String())
+	}
+	if got, want := showCommandsOut.String(), "agent-team job quarantine drop "+brokenRel+" --dry-run\n"; got != want {
+		t.Fatalf("job quarantine show --commands = %q, want %q", got, want)
+	}
+
 	restoreDry := NewRootCmd()
 	restoreDryOut, restoreDryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restoreDry.SetOut(restoreDryOut)
@@ -207,5 +219,39 @@ updated_at = 2026-06-27T12:00:00Z
 	}
 	if got, want := doctorOut.String(), "true 1 0\n"; got != want {
 		t.Fatalf("job doctor after quarantine restore/drop = %q, want %q", got, want)
+	}
+}
+
+func TestJobQuarantineShowRejectsFormatCombinations(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "commands with json",
+			args: []string{"job", "quarantine", "show", "quarantine/20260627T120000.000000000Z/broken.toml", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "commands with format",
+			args: []string{"job", "quarantine", "show", "quarantine/20260627T120000.000000000Z/broken.toml", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err == nil {
+				t.Fatalf("expected error for %v; stdout=%s stderr=%s", tc.args, out.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
