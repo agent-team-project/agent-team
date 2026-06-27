@@ -73,6 +73,7 @@ func newOutboxDoctorCmd() *cobra.Command {
 		target     string
 		jsonOut    bool
 		format     string
+		commands   bool
 		quarantine bool
 		dryRun     bool
 	)
@@ -85,6 +86,14 @@ func newOutboxDoctorCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox doctor: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox doctor: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox doctor: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if dryRun && !quarantine {
@@ -122,7 +131,7 @@ func newOutboxDoctorCmd() *cobra.Command {
 					result = refreshed
 				}
 			}
-			if err := renderOutboxDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, tmpl); err != nil {
+			if err := renderOutboxDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, tmpl, commands); err != nil {
 				return err
 			}
 			if !result.OK && !quarantine {
@@ -137,6 +146,7 @@ func newOutboxDoctorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit outbox doctor findings as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the outbox doctor result with a Go template, e.g. '{{.OK}} {{.Summary.Invalid}}'.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line.")
 	cmd.Flags().BoolVar(&quarantine, "quarantine", false, "Move outbox files with doctor problems out of the active outbox.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "With --quarantine, preview files that would be moved.")
 	return cmd
@@ -387,11 +397,14 @@ func outboxDoctorActions(result outboxDoctorResult) []string {
 	return []string{"agent-team outbox doctor --quarantine --dry-run", "agent-team outbox doctor --json", "agent-team snapshot --json"}
 }
 
-func renderOutboxDoctor(stdout, stderr io.Writer, result outboxDoctorResult, jsonOut bool, tmpl *template.Template) error {
+func renderOutboxDoctor(stdout, stderr io.Writer, result outboxDoctorResult, jsonOut bool, tmpl *template.Template, commands bool) error {
 	sortOutboxDoctorFindings(result.Problems)
 	sortOutboxDoctorFindings(result.Warnings)
 	if jsonOut {
 		return json.NewEncoder(stdout).Encode(result)
+	}
+	if commands {
+		return renderActionCommands(stdout, result.Actions)
 	}
 	if tmpl != nil {
 		return renderOutboxDoctorFormat(stdout, result, tmpl)

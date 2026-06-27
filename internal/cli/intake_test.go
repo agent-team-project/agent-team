@@ -1408,6 +1408,8 @@ func TestIntakeDoctorFormatValidation(t *testing.T) {
 		want string
 	}{
 		{[]string{"intake", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
+		{[]string{"intake", "doctor", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"intake", "doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
 		{[]string{"intake", "doctor", "--format", "{{"}, "invalid --format template"},
 	}
 	for _, tc := range cases {
@@ -2167,6 +2169,21 @@ func TestIntakeDoctorWarnsDuplicateProviderRequestID(t *testing.T) {
 	}
 	if !strings.Contains(textErr.String(), "action: agent-team intake duplicates --provider github --request-id delivery-1") {
 		t.Fatalf("doctor text stderr = %q", textErr.String())
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"intake", "doctor", "--target", target, "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("intake doctor --commands duplicate warning: %v\nstderr=%s", err, commandsErr.String())
+	}
+	if got, want := commandsOut.String(), "agent-team intake duplicates --provider github --request-id delivery-1\n"; got != want {
+		t.Fatalf("intake doctor --commands output = %q, want %q", got, want)
+	}
+	if commandsErr.Len() != 0 {
+		t.Fatalf("intake doctor --commands stderr = %q", commandsErr.String())
 	}
 }
 

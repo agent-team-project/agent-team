@@ -65,6 +65,7 @@ func newJobDoctorCmd() *cobra.Command {
 		repo       string
 		jsonOut    bool
 		format     string
+		commands   bool
 		quarantine bool
 		dryRun     bool
 	)
@@ -77,6 +78,14 @@ func newJobDoctorCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job doctor: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job doctor: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job doctor: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if dryRun && !quarantine {
@@ -114,7 +123,7 @@ func newJobDoctorCmd() *cobra.Command {
 					result = refreshed
 				}
 			}
-			if err := renderJobDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, tmpl); err != nil {
+			if err := renderJobDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, tmpl, commands); err != nil {
 				return err
 			}
 			if !result.OK && !quarantine {
@@ -129,6 +138,7 @@ func newJobDoctorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit durable job doctor findings as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the job doctor result with a Go template, e.g. '{{.OK}} {{.Summary.Valid}}'.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line.")
 	cmd.Flags().BoolVar(&quarantine, "quarantine", false, "Move job files with doctor problems out of the active jobs directory.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "With --quarantine, preview files that would be moved.")
 	return cmd
@@ -250,11 +260,14 @@ func jobDoctorActions(result jobDoctorResult) []string {
 	return []string{"agent-team job doctor --quarantine --dry-run", "agent-team job doctor --json", "agent-team snapshot --json"}
 }
 
-func renderJobDoctor(stdout, stderr io.Writer, result jobDoctorResult, jsonOut bool, tmpl *template.Template) error {
+func renderJobDoctor(stdout, stderr io.Writer, result jobDoctorResult, jsonOut bool, tmpl *template.Template, commands bool) error {
 	sortJobDoctorFindings(result.Problems)
 	sortJobDoctorFindings(result.Warnings)
 	if jsonOut {
 		return json.NewEncoder(stdout).Encode(result)
+	}
+	if commands {
+		return renderActionCommands(stdout, result.Actions)
 	}
 	if tmpl != nil {
 		return renderJobDoctorFormat(stdout, result, tmpl)

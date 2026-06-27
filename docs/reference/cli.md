@@ -94,7 +94,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job create <ticket>` | Create a durable job; add `--dispatch --wait` for bounded create-and-run automation and `--wait --wait-next-state`/`--wait-step` for pipeline stage handoff |
 | `agent-team job ls` | List jobs; filter held state, hold deadlines, and mixed-runtime ownership; sort rows and cap output with `--limit` |
 | `agent-team job show <job-id>` | Show job detail, runtime metadata, queue, quarantine, outbox, status previews, and actions; `inspect` is an alias |
-| `agent-team job doctor` | Validate durable job TOML files, including filename/id ownership and persisted state invariants; `--quarantine --dry-run` previews isolating malformed active job files |
+| `agent-team job doctor` | Validate durable job TOML files, including filename/id ownership and persisted state invariants; `--quarantine --dry-run` previews isolating malformed active job files and `--commands` prints recovery commands |
 | `agent-team job quarantine` | Inspect, summarize, restore, or drop job TOML files preserved by `job doctor --quarantine` |
 | `agent-team job wait <job-id>` | Wait for lifecycle status, last event, or next-step state/stage with `--next-state` and `--step` |
 | `agent-team job next <job-id>` | Show the next pipeline step without dispatching it; add `--state`, `--step`, or `--commands` when scripts need a compact assertion or next-action commands |
@@ -177,7 +177,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team queue drop <id>` | Drop one entry |
 | `agent-team queue drop --all` | Drop matching entries; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
 | `agent-team queue prune` | Age-prune entries; filter and limit prune candidates with `--runtime`, `--ready`, and `--limit` |
-| `agent-team queue doctor` | Validate queue files |
+| `agent-team queue doctor` | Validate queue files; add `--commands` to print recovery commands only |
 | `agent-team queue quarantine ls` | List or summarize quarantined queue files; sort rows with `--sort` and cap output with `--limit` |
 | `agent-team queue quarantine show <path>` | Inspect quarantined queue file |
 | `agent-team queue quarantine restore <path>` | Restore one preserved file |
@@ -193,7 +193,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team outbox watch` | Continuous outbox list shortcut with the same filters and formatting as `outbox ls --watch` |
 | `agent-team outbox show <id>` | Inspect one outbox event and its payload |
 | `agent-team outbox drain` | Ask the daemon to publish pending outbox events through topology; `--dry-run` previews locally if the daemon is down |
-| `agent-team outbox doctor` | Validate persisted outbox files without relying on normal listing paths; `--quarantine --dry-run` previews isolating malformed active files |
+| `agent-team outbox doctor` | Validate persisted outbox files without relying on normal listing paths; `--quarantine --dry-run` previews isolating malformed active files and `--commands` prints recovery commands |
 | `agent-team outbox quarantine ls` | List or summarize quarantined outbox files; filter by state, type, source, job, or restorable state and sort/cap rows |
 | `agent-team outbox quarantine show <path>` | Inspect one quarantined outbox file and its payload when parseable |
 | `agent-team outbox quarantine restore <path>` | Restore one validated quarantined outbox file to the active outbox |
@@ -332,7 +332,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team intake duplicates` | List duplicate provider request IDs |
 | `agent-team intake deliveries` | Inspect delivery rows |
 | `agent-team intake replay` | Replay failed deliveries |
-| `agent-team intake doctor` | Validate delivery history |
+| `agent-team intake doctor` | Validate delivery history; add `--commands` to print warning follow-up commands only |
 | `agent-team intake prune` | Drop old delivery rows |
 
 ## Diagnostics

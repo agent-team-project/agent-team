@@ -150,6 +150,25 @@ updated_at = 2026-06-18T12:00:00Z
 		t.Fatalf("job doctor actions = %+v", result.Actions)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "doctor", "--repo", tmp, "--commands"})
+	err = commands.Execute()
+	if err == nil {
+		t.Fatal("job doctor --commands unexpectedly succeeded")
+	}
+	if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("job doctor --commands err = %v, want exit 1", err)
+	}
+	if got, want := commandsOut.String(), "agent-team job doctor --quarantine --dry-run\nagent-team job doctor --json\nagent-team snapshot --json\n"; got != want {
+		t.Fatalf("job doctor --commands output = %q, want %q", got, want)
+	}
+	if commandsErr.Len() != 0 {
+		t.Fatalf("job doctor --commands stderr = %q", commandsErr.String())
+	}
+
 	doctor := NewRootCmd()
 	doctorOut, doctorErr := &bytes.Buffer{}, &bytes.Buffer{}
 	doctor.SetOut(doctorOut)
@@ -168,6 +187,39 @@ updated_at = 2026-06-18T12:00:00Z
 	}
 	if doctorResult.OK || !containsDoctorMessage(doctorResult.Problems, "jobs:") {
 		t.Fatalf("top-level doctor result = %+v", doctorResult)
+	}
+}
+
+func TestJobDoctorRenderValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"job", "doctor", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"job", "doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
+		{[]string{"job", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
+		{[]string{"job", "doctor", "--format", "{{"}, "invalid --format template"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("%v: err = %v, want exit 2", tc.args, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v: validation wrote stdout: %q", tc.args, out.String())
+		}
 	}
 }
 

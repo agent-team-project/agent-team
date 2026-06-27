@@ -32,9 +32,10 @@ type intakeDoctorResult struct {
 
 func newIntakeDoctorCmd() *cobra.Command {
 	var (
-		target  string
-		jsonOut bool
-		format  string
+		target   string
+		jsonOut  bool
+		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -44,6 +45,14 @@ func newIntakeDoctorCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake doctor: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake doctor: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake doctor: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			tmpl, err := parseIntakeDoctorFormat(format)
@@ -60,7 +69,7 @@ func newIntakeDoctorCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake doctor: %v\n", err)
 				return exitErr(1)
 			}
-			if err := renderIntakeDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, tmpl); err != nil {
+			if err := renderIntakeDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, tmpl, commands); err != nil {
 				return err
 			}
 			if !result.OK {
@@ -72,6 +81,7 @@ func newIntakeDoctorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit ledger doctor findings as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the intake doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line.")
 	return cmd
 }
 
@@ -227,9 +237,12 @@ func validateIntakeDeliveryRecord(line int, delivery intakeDelivery, seenIDs map
 	}
 }
 
-func renderIntakeDoctor(stdout, stderr io.Writer, result intakeDoctorResult, jsonOut bool, tmpl *template.Template) error {
+func renderIntakeDoctor(stdout, stderr io.Writer, result intakeDoctorResult, jsonOut bool, tmpl *template.Template, commands bool) error {
 	if jsonOut {
 		return json.NewEncoder(stdout).Encode(result)
+	}
+	if commands {
+		return renderActionCommands(stdout, intakeDoctorActions(result))
 	}
 	if tmpl != nil {
 		return renderIntakeDoctorFormat(stdout, result, tmpl)
@@ -263,6 +276,17 @@ func renderIntakeDoctor(stdout, stderr io.Writer, result intakeDoctorResult, jso
 		}
 	}
 	return nil
+}
+
+func intakeDoctorActions(result intakeDoctorResult) []string {
+	var actions []string
+	for _, problem := range result.Problems {
+		actions = append(actions, problem.Actions...)
+	}
+	for _, warning := range result.Warnings {
+		actions = append(actions, warning.Actions...)
+	}
+	return actions
 }
 
 func intakeDoctorFindingMessage(finding intakeDoctorFinding) string {

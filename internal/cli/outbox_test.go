@@ -442,6 +442,20 @@ func TestOutboxDoctorFindsAndQuarantinesProblems(t *testing.T) {
 		t.Fatalf("outbox doctor missing unexpected file warning: %+v", result.Warnings)
 	}
 
+	commandsOut, commandsErr, err := runRootForOutboxTestErr(t, "outbox", "doctor", "--target", target, "--commands")
+	if err == nil {
+		t.Fatal("outbox doctor --commands unexpectedly succeeded")
+	}
+	if !errors.As(err, &ec) || int(ec) != 1 {
+		t.Fatalf("outbox doctor --commands err = %v, want exit 1", err)
+	}
+	if got, want := commandsOut.String(), "agent-team outbox doctor --quarantine --dry-run\nagent-team outbox doctor --json\nagent-team snapshot --json\n"; got != want {
+		t.Fatalf("outbox doctor --commands output = %q, want %q", got, want)
+	}
+	if commandsErr.Len() != 0 {
+		t.Fatalf("outbox doctor --commands stderr = %q", commandsErr.String())
+	}
+
 	dryOut, dryErrOut, err := runRootForOutboxTestErr(t, "outbox", "doctor", "--target", target, "--quarantine", "--dry-run", "--json")
 	if err != nil {
 		t.Fatalf("outbox doctor quarantine dry-run: %v\nstderr=%s", err, dryErrOut.String())
@@ -490,6 +504,34 @@ func TestOutboxDoctorFindsAndQuarantinesProblems(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].ID != "outbox-valid" {
 		t.Fatalf("outbox list after quarantine = %+v", listed)
+	}
+}
+
+func TestOutboxDoctorFormatValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"outbox", "doctor", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"outbox", "doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
+		{[]string{"outbox", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
+		{[]string{"outbox", "doctor", "--format", "{{"}, "invalid --format template"},
+	}
+	for _, tc := range cases {
+		out, stderr, err := runRootForOutboxTestErr(t, tc.args...)
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("%v: err = %v, want exit 2", tc.args, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v: validation wrote stdout: %q", tc.args, out.String())
+		}
 	}
 }
 

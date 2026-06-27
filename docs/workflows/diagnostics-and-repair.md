@@ -214,6 +214,7 @@ agent-team team doctor --all
 Doctor commands validate structure and data integrity.
 
 Use `job doctor --quarantine --dry-run`, `queue doctor --quarantine --dry-run`, or `outbox doctor --quarantine --dry-run` before moving malformed active files into their quarantine directories.
+Add `--commands` to job, queue, outbox, or intake doctor commands when automation needs only the recommended follow-up commands.
 Use `job quarantine --summary --json` when automation only needs preserved job-file counts.
 
 ## Repair

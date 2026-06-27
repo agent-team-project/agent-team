@@ -393,6 +393,26 @@ func TestQueueDoctorReportsPersistedQueueProblems(t *testing.T) {
 	if formatErr.Len() != 0 {
 		t.Fatalf("queue doctor format stderr = %q", formatErr.String())
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"queue", "doctor", "--target", tmp, "--commands"})
+	err := commands.Execute()
+	if err == nil {
+		t.Fatal("queue doctor --commands unexpectedly succeeded")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("queue doctor --commands err = %v, want exit 1", err)
+	}
+	if got, want := commandsOut.String(), "agent-team queue doctor --quarantine --dry-run\nagent-team queue doctor --json\nagent-team snapshot --json\n"; got != want {
+		t.Fatalf("queue doctor --commands output = %q, want %q", got, want)
+	}
+	if commandsErr.Len() != 0 {
+		t.Fatalf("queue doctor --commands stderr = %q", commandsErr.String())
+	}
 }
 
 func TestQueueDoctorFormatValidation(t *testing.T) {
@@ -400,6 +420,8 @@ func TestQueueDoctorFormatValidation(t *testing.T) {
 		args []string
 		want string
 	}{
+		{[]string{"queue", "doctor", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"queue", "doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
 		{[]string{"queue", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
 		{[]string{"queue", "doctor", "--format", "{{"}, "invalid --format template"},
 		{[]string{"queue", "drop", "--format", "{{.ID}}", "--json"}, "--format cannot be combined"},

@@ -450,6 +450,7 @@ Use `job doctor` when active job TOML files cannot be parsed or no longer match
 their filename/id invariants:
 
 ```sh
+agent-team job doctor --commands
 agent-team job doctor --quarantine --dry-run
 agent-team job doctor --quarantine
 agent-team job quarantine --summary --json

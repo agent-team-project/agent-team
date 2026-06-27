@@ -1454,6 +1454,7 @@ agent-team intake doctor [flags]
 Flags:
 
 ```text
+      --commands        Print recommended follow-up commands, one per line.
       --format string   Render the intake doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.
       --json            Emit ledger doctor findings as JSON.
       --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
@@ -2116,6 +2117,7 @@ agent-team job doctor [flags]
 Flags:
 
 ```text
+      --commands        Print recommended follow-up commands, one per line.
       --dry-run         With --quarantine, preview files that would be moved.
       --format string   Render the job doctor result with a Go template, e.g. '{{.OK}} {{.Summary.Valid}}'.
       --json            Emit durable job doctor findings as JSON.
@@ -3709,6 +3711,7 @@ agent-team outbox doctor [flags]
 Flags:
 
 ```text
+      --commands        Print recommended follow-up commands, one per line.
       --dry-run         With --quarantine, preview files that would be moved.
       --format string   Render the outbox doctor result with a Go template, e.g. '{{.OK}} {{.Summary.Invalid}}'.
       --json            Emit outbox doctor findings as JSON.
@@ -5718,6 +5721,7 @@ agent-team queue doctor [flags]
 Flags:
 
 ```text
+      --commands        Print recommended follow-up commands, one per line.
       --dry-run         With --quarantine, preview files that would be moved.
       --format string   Render the queue doctor result with a Go template, e.g. '{{.OK}} {{.Summary.Invalid}}'.
       --json            Emit queue doctor findings as JSON.
