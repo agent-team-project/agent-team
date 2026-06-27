@@ -8853,6 +8853,22 @@ func TestJobStepMetadataAppearsInDiagnostics(t *testing.T) {
 		t.Fatalf("explain steps = %+v", explained.Steps)
 	}
 
+	explainStep := NewRootCmd()
+	explainStepOut, explainStepErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainStep.SetOut(explainStepOut)
+	explainStep.SetErr(explainStepErr)
+	explainStep.SetArgs([]string{"job", "explain", "squ-204", "--repo", tmp, "--step", "review", "--json"})
+	if err := explainStep.Execute(); err != nil {
+		t.Fatalf("job explain step: %v\nstderr=%s", err, explainStepErr.String())
+	}
+	var explainedStep jobExplainResult
+	if err := json.Unmarshal(explainStepOut.Bytes(), &explainedStep); err != nil {
+		t.Fatalf("decode job explain step: %v\nbody=%s", err, explainStepOut.String())
+	}
+	if explainedStep.Next.StepID != "review" || len(explainedStep.Steps) != 1 || explainedStep.Steps[0].ID != "review" || explainedStep.Steps[0].Label != "Code review" {
+		t.Fatalf("explain step = %+v", explainedStep)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	explainWatch := NewRootCmd()
@@ -8860,12 +8876,24 @@ func TestJobStepMetadataAppearsInDiagnostics(t *testing.T) {
 	explainWatch.SetContext(ctx)
 	explainWatch.SetOut(explainWatchOut)
 	explainWatch.SetErr(explainWatchErr)
-	explainWatch.SetArgs([]string{"job", "explain", "squ-204", "--repo", tmp, "--watch", "--no-clear", "--interval", "1h", "--format", "{{.JobID}} {{.State}} {{len .Steps}}"})
+	explainWatch.SetArgs([]string{"job", "explain", "squ-204", "--repo", tmp, "--watch", "--no-clear", "--interval", "1h", "--step", "review", "--format", "{{.JobID}} {{.State}} {{len .Steps}} {{(index .Steps 0).ID}}"})
 	if err := explainWatch.Execute(); err != nil {
 		t.Fatalf("job explain watch: %v\nstderr=%s", err, explainWatchErr.String())
 	}
-	if got := strings.TrimSpace(explainWatchOut.String()); got != "squ-204 ready 2" || strings.Contains(explainWatchOut.String(), watchClearSequence) {
+	if got := strings.TrimSpace(explainWatchOut.String()); got != "squ-204 ready 1 review" || strings.Contains(explainWatchOut.String(), watchClearSequence) {
 		t.Fatalf("job explain watch output = %q", explainWatchOut.String())
+	}
+
+	explainMissingStep := NewRootCmd()
+	explainMissingStepOut, explainMissingStepErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainMissingStep.SetOut(explainMissingStepOut)
+	explainMissingStep.SetErr(explainMissingStepErr)
+	explainMissingStep.SetArgs([]string{"job", "explain", "squ-204", "--repo", tmp, "--step", "deploy"})
+	if err := explainMissingStep.Execute(); err == nil {
+		t.Fatalf("job explain missing step succeeded")
+	}
+	if !strings.Contains(explainMissingStepErr.String(), `step "deploy" not found in job "squ-204"`) {
+		t.Fatalf("job explain missing step stderr = %q", explainMissingStepErr.String())
 	}
 
 	explainInterval := NewRootCmd()

@@ -4713,6 +4713,7 @@ func newJobNextCmd() *cobra.Command {
 func newJobExplainCmd() *cobra.Command {
 	var (
 		repo     string
+		step     string
 		watch    bool
 		noClear  bool
 		interval time.Duration
@@ -4747,9 +4748,9 @@ func newJobExplainCmd() *cobra.Command {
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
-				return runJobExplainWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], jsonOut, tmpl, interval, !noClear && !jsonOut)
+				return runJobExplainWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], step, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
-			if err := runJobExplain(cmd.OutOrStdout(), teamDir, args[0], jsonOut, tmpl); err != nil {
+			if err := runJobExplain(cmd.OutOrStdout(), teamDir, args[0], step, jsonOut, tmpl); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job explain: %v\n", err)
 				return exitErr(1)
 			}
@@ -4757,6 +4758,7 @@ func newJobExplainCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&step, "step", "", "Only include details for this pipeline step id.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the job pipeline explanation until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
@@ -10394,15 +10396,24 @@ func renderJobExplainResult(w io.Writer, res jobExplainResult, jsonOut bool, tmp
 	return nil
 }
 
-func runJobExplain(w io.Writer, teamDir, id string, jsonOut bool, tmpl *template.Template) error {
+func runJobExplain(w io.Writer, teamDir, id string, step string, jsonOut bool, tmpl *template.Template) error {
 	j, err := job.Read(teamDir, id)
 	if err != nil {
 		return err
 	}
-	return renderJobExplainResult(w, explainJobPipeline(j), jsonOut, tmpl)
+	explained := explainJobPipeline(j)
+	stepFilter := strings.TrimSpace(step)
+	if stepFilter != "" {
+		var ok bool
+		explained, ok = filterJobExplainResultByStep(explained, stepFilter)
+		if !ok {
+			return fmt.Errorf("step %q not found in job %q", stepFilter, explained.JobID)
+		}
+	}
+	return renderJobExplainResult(w, explained, jsonOut, tmpl)
 }
 
-func runJobExplainWatch(ctx context.Context, w io.Writer, teamDir, id string, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+func runJobExplainWatch(ctx context.Context, w io.Writer, teamDir, id string, step string, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
@@ -10414,7 +10425,7 @@ func runJobExplainWatch(ctx context.Context, w io.Writer, teamDir, id string, js
 				return err
 			}
 		}
-		if err := runJobExplain(w, teamDir, id, jsonOut, tmpl); err != nil {
+		if err := runJobExplain(w, teamDir, id, step, jsonOut, tmpl); err != nil {
 			return err
 		}
 		select {
