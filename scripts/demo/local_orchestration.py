@@ -73,6 +73,7 @@ def main(argv: list[str]) -> int:
 
         step("init bundled team")
         run(binary, "init", "--target", repo, "--set", "linear.team_id=demo-team", "--set", "linear.ticket_prefix=DEMO")
+        enable_demo_schedule(repo)
         if args.real_codex_probe:
             probe_output = Path(args.real_codex_probe_output).resolve() if args.real_codex_probe_output else root / "runtime-probe-codex.json"
             step("probe real Codex runtime")
@@ -105,6 +106,15 @@ def main(argv: list[str]) -> int:
         run(binary, "pipeline", "doctor", "--all", "--repo", repo, "--json", parse_json=True)
         run(binary, "team", "graph", "delivery", "--repo", repo, "--routes", "--json", parse_json=True)
         run(binary, "team", "doctor", "--all", "--repo", repo, "--json", parse_json=True)
+
+        step("verify command-only schedule hints")
+        schedule_due_commands = run(binary, "schedule", "due", "--repo", repo, "--commands")
+        require_command(schedule_due_commands, "agent-team schedule fire --dry-run --preview-triggers")
+        schedule_next_commands = run(binary, "schedule", "next", "--repo", repo, "--commands")
+        require_command(schedule_next_commands, "agent-team schedule fire --dry-run --preview-triggers")
+        team_schedule_commands = run(binary, "team", "schedules", "delivery", "--repo", repo, "--commands")
+        require_command(team_schedule_commands, "agent-team team tick delivery --dry-run --preview-routes")
+        print("schedule commands verified: schedule fire preview, team tick")
 
         step("start daemon")
         run(binary, "daemon", "start", "--target", repo, "--ready-timeout", "5s", "--json", env=env, parse_json=True)
@@ -276,6 +286,44 @@ def configure_fake_runtime(repo: Path, runtime: str, fake_runtime: Path) -> None
         f.write("\n[runtime]\n")
         f.write(f'kind = "{runtime}"\n')
         f.write(f'binary = "{toml_string(str(fake_runtime))}"\n')
+
+
+def enable_demo_schedule(repo: Path) -> None:
+    topology = repo / ".agent_team" / "instances.toml"
+    body = topology.read_text(encoding="utf-8")
+    manager_trigger = textwrap.dedent(
+        """\
+        [[instances.manager.triggers]]
+        event        = "agent.dispatch"
+        match.target = "manager"
+        """
+    )
+    schedule_trigger = manager_trigger + textwrap.dedent(
+        """\
+
+        [[instances.manager.triggers]]
+        event      = "schedule"
+        match.name = "demo_due"
+        """
+    )
+    if manager_trigger not in body:
+        raise DemoError("bundled topology no longer has the expected manager dispatch trigger")
+    body = body.replace(manager_trigger, schedule_trigger, 1)
+    team_pipelines = 'pipelines   = ["ticket_to_pr"]'
+    if team_pipelines not in body:
+        raise DemoError("bundled topology no longer has the expected delivery pipeline list")
+    body = body.replace(team_pipelines, team_pipelines + '\nschedules   = ["demo_due"]', 1)
+    body += textwrap.dedent(
+        """\
+
+        [schedules.demo_due]
+        every = "24h"
+        run_on_start = true
+        payload.target = "manager"
+        payload.reason = "demo schedule"
+        """
+    )
+    topology.write_text(body, encoding="utf-8")
 
 
 def write_fake_runtime(path: Path) -> None:
