@@ -4457,6 +4457,185 @@ target = "worker"
 	}
 }
 
+func TestPipelinePsScopesRows(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+
+[pipelines.ops_review]
+trigger.event = "ops.created"
+
+[[pipelines.ops_review.steps]]
+id = "audit"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-994",
+			Ticket:    "SQU-994",
+			Target:    "worker",
+			Kickoff:   "pipeline ps",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-994",
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "review", Target: "manager", Status: job.StatusBlocked, Instance: "reviewer-squ-994-review", StartedAt: now.Add(2 * time.Minute)},
+			},
+		},
+		{
+			ID:        "squ-995",
+			Ticket:    "SQU-995",
+			Target:    "worker",
+			Kickoff:   "foreign pipeline",
+			Pipeline:  "ops_review",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-995",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "squ-996",
+			Ticket:    "SQU-996",
+			Target:    "worker",
+			Kickoff:   "ad hoc ps",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-996",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager-squ-994", Job: "squ-994", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(time.Minute)},
+		{Instance: "worker-squ-994", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(2 * time.Minute)},
+		{Instance: "reviewer-squ-994-review", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusStopped, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(3 * time.Minute), StoppedAt: now.Add(4 * time.Minute)},
+		{Instance: "worker-squ-995", Job: "squ-995", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(5 * time.Minute)},
+		{Instance: "worker-squ-996", Job: "squ-996", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(6 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	one := NewRootCmd()
+	oneOut, oneErr := &bytes.Buffer{}, &bytes.Buffer{}
+	one.SetOut(oneOut)
+	one.SetErr(oneErr)
+	one.SetArgs([]string{"pipeline", "ps", "ticket_to_pr", "--repo", root, "--json"})
+	if err := one.Execute(); err != nil {
+		t.Fatalf("pipeline ps json: %v\nstderr=%s", err, oneErr.String())
+	}
+	var rows []psJSONRow
+	if err := json.Unmarshal(oneOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline ps: %v\nbody=%s", err, oneOut.String())
+	}
+	if got := psJSONRowNames(rows); strings.Join(got, ",") != "manager-squ-994,reviewer-squ-994-review,worker-squ-994" {
+		t.Fatalf("pipeline ps rows = %v", got)
+	}
+
+	running := NewRootCmd()
+	runningOut, runningErr := &bytes.Buffer{}, &bytes.Buffer{}
+	running.SetOut(runningOut)
+	running.SetErr(runningErr)
+	running.SetArgs([]string{"pipeline", "ps", "ticket_to_pr", "--repo", root, "--status", "running", "--json"})
+	if err := running.Execute(); err != nil {
+		t.Fatalf("pipeline ps running: %v\nstderr=%s", err, runningErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(runningOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline ps running: %v\nbody=%s", err, runningOut.String())
+	}
+	if got := psJSONRowNames(rows); strings.Join(got, ",") != "manager-squ-994,worker-squ-994" {
+		t.Fatalf("pipeline ps running rows = %v", got)
+	}
+
+	allCodex := NewRootCmd()
+	allCodexOut, allCodexErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allCodex.SetOut(allCodexOut)
+	allCodex.SetErr(allCodexErr)
+	allCodex.SetArgs([]string{"pipeline", "ps", "--all", "--repo", root, "--runtime", "codex", "--format", "{{.Instance}}"})
+	if err := allCodex.Execute(); err != nil {
+		t.Fatalf("pipeline ps all runtime format: %v\nstderr=%s", err, allCodexErr.String())
+	}
+	if got, want := strings.TrimSpace(allCodexOut.String()), "worker-squ-994\nworker-squ-995"; got != want {
+		t.Fatalf("pipeline ps all runtime format = %q, want %q", got, want)
+	}
+
+	quiet := NewRootCmd()
+	quietOut, quietErr := &bytes.Buffer{}, &bytes.Buffer{}
+	quiet.SetOut(quietOut)
+	quiet.SetErr(quietErr)
+	quiet.SetArgs([]string{"pipeline", "ps", "ticket_to_pr", "--repo", root, "--quiet", "--runtime", "codex"})
+	if err := quiet.Execute(); err != nil {
+		t.Fatalf("pipeline ps quiet: %v\nstderr=%s", err, quietErr.String())
+	}
+	if got := strings.TrimSpace(quietOut.String()); got != "worker-squ-994" {
+		t.Fatalf("pipeline ps quiet = %q", got)
+	}
+
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"pipeline", "ps", "ticket_to_pr", "--repo", root, "--summary", "--json"})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("pipeline ps summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var counts psSummaryJSON
+	if err := json.Unmarshal(summaryOut.Bytes(), &counts); err != nil {
+		t.Fatalf("decode pipeline ps summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if counts.Total != 3 || counts.Running != 2 || counts.Stopped != 1 {
+		t.Fatalf("pipeline ps summary = %+v", counts)
+	}
+
+	invalidMany := NewRootCmd()
+	invalidManyOut, invalidManyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidMany.SetOut(invalidManyOut)
+	invalidMany.SetErr(invalidManyErr)
+	invalidMany.SetArgs([]string{"pipeline", "ps", "ticket_to_pr", "ops_review", "--repo", root})
+	if err := invalidMany.Execute(); err == nil {
+		t.Fatalf("pipeline ps accepted multiple pipeline names: stdout=%s", invalidManyOut.String())
+	}
+	if !strings.Contains(invalidManyErr.String(), "pass at most one pipeline name") {
+		t.Fatalf("multiple pipeline error = %q", invalidManyErr.String())
+	}
+
+	invalidAll := NewRootCmd()
+	invalidAllOut, invalidAllErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidAll.SetOut(invalidAllOut)
+	invalidAll.SetErr(invalidAllErr)
+	invalidAll.SetArgs([]string{"pipeline", "ps", "ticket_to_pr", "--all", "--repo", root})
+	if err := invalidAll.Execute(); err == nil {
+		t.Fatalf("pipeline ps accepted --all with pipeline: stdout=%s", invalidAllOut.String())
+	}
+	if !strings.Contains(invalidAllErr.String(), "--all cannot be combined with a pipeline argument") {
+		t.Fatalf("--all conflict error = %q", invalidAllErr.String())
+	}
+}
+
 func TestPipelineStatsScopesRowsAndSummary(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

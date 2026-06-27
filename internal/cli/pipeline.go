@@ -53,6 +53,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineCleanupCmd())
 	cmd.AddCommand(newPipelineResumePlanCmd())
 	cmd.AddCommand(newPipelineSendCmd())
+	cmd.AddCommand(newPipelinePsCmd())
 	cmd.AddCommand(newPipelineStatsCmd())
 	cmd.AddCommand(newPipelineLogsCmd())
 	cmd.AddCommand(newPipelineEventsCmd())
@@ -2551,6 +2552,158 @@ func newPipelineSendCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching recipients without appending mailbox messages.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each send result with a Go template, e.g. '{{.To}} {{.ID}}'.")
+	return cmd
+}
+
+func newPipelinePsCmd() *cobra.Command {
+	var (
+		repo             string
+		allPipelines     bool
+		watch            bool
+		jsonOut          bool
+		quiet            bool
+		summary          bool
+		latest           bool
+		last             int
+		noClear          bool
+		format           string
+		sortBy           string
+		interval         time.Duration
+		statusFilters    []string
+		runtimeFilters   []string
+		agentFilters     []string
+		phaseFilters     []string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "ps [<pipeline>|--all]",
+		Short: "List pipeline-owned instances.",
+		Long: "List daemon-aware instance rows owned by jobs in one declared pipeline. " +
+			"Omit the pipeline or pass --all to inspect every pipeline-owned job while excluding ad hoc instances.",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ps: pass at most one pipeline name.")
+				return exitErr(2)
+			}
+			if allPipelines && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ps: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ps: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if last < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ps: --last must be >= 0.")
+				return exitErr(2)
+			}
+			if latest && last > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ps: choose one of --latest or --last.")
+				return exitErr(2)
+			}
+			if quiet && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ps: choose one of --quiet or --json.")
+				return exitErr(2)
+			}
+			if quiet && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ps: --quiet cannot be combined with --watch.")
+				return exitErr(2)
+			}
+			if quiet && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ps: --quiet cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if format != "" && (quiet || jsonOut || summary) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ps: --format cannot be combined with --quiet, --json, or --summary.")
+				return exitErr(2)
+			}
+			opts, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(statusFilters, runtimeFilters, agentFilters, phaseFilters, nil, staleOnly, unhealthyOnly)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline ps: %v\n", err)
+				return exitErr(2)
+			}
+			opts.runtimeStale = runtimeStaleOnly
+			sortMode, err := parsePsSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline ps: %v\n", err)
+				return exitErr(2)
+			}
+			opts.Sort = sortMode
+			opts.SortSet = cmd.Flags().Changed("sort")
+			opts.Limit = last
+			if latest {
+				opts.Limit = 1
+			}
+			formatTemplate, err := parsePsFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline ps: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			pipelineName := ""
+			if len(args) == 1 {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if len(args) == 1 && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ps: pipeline name is required.")
+				return exitErr(2)
+			}
+			if quiet {
+				return runPipelinePsQuiet(cmd.OutOrStdout(), teamDir, pipelineName, time.Now(), opts)
+			}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				clear := !noClear && !jsonOut
+				switch {
+				case summary:
+					return runPipelinePsSummaryWatch(ctx, cmd.OutOrStdout(), teamDir, pipelineName, interval, time.Now, jsonOut, opts, clear)
+				case formatTemplate != nil:
+					return runPipelinePsFormatWatch(ctx, cmd.OutOrStdout(), teamDir, pipelineName, interval, time.Now, opts, formatTemplate)
+				default:
+					return runPipelinePsWatch(ctx, cmd.OutOrStdout(), teamDir, pipelineName, interval, time.Now, jsonOut, opts, clear)
+				}
+			}
+			switch {
+			case summary && jsonOut:
+				return runPipelinePsSummaryJSON(cmd.OutOrStdout(), teamDir, pipelineName, time.Now(), opts)
+			case summary:
+				return runPipelinePsSummary(cmd.OutOrStdout(), teamDir, pipelineName, time.Now(), opts)
+			case jsonOut:
+				return runPipelinePsJSON(cmd.OutOrStdout(), teamDir, pipelineName, time.Now(), opts)
+			case formatTemplate != nil:
+				return runPipelinePsFormat(cmd.OutOrStdout(), teamDir, pipelineName, time.Now(), opts, formatTemplate)
+			default:
+				return runPipelinePs(cmd.OutOrStdout(), teamDir, pipelineName, time.Now(), opts)
+			}
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&allPipelines, "all", false, "List instances across all pipelines. This is the default when no pipeline is passed.")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh pipeline instance rows until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON. With --watch, writes one JSON array per refresh.")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Only print matching pipeline-owned instance names.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show lifecycle counts instead of pipeline instance rows.")
+	cmd.Flags().BoolVarP(&latest, "latest", "l", false, "Show only the most recently started pipeline-owned instance after other filters.")
+	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show only the N most recently started pipeline-owned instances after other filters (0 = all).")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show pipeline-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show pipeline-owned running instances whose recorded runtime PID is no longer live.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed, status-stale, or runtime-stale pipeline-owned instances.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.Instance}} {{.Status}}'.")
+	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort rows by name, status, agent, phase, stale, runtime-stale, unhealthy, started, stopped, or exited.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
+	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show pipeline-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show pipeline-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&agentFilters, "agent", nil, "Only show pipeline-owned instances for this agent. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show pipeline-owned work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	return cmd
 }
 
@@ -5849,6 +6002,203 @@ func collectPipelineOwnedMetadata(teamDir, pipeline string, metas []*daemon.Meta
 		out = append(out, selected[name])
 	}
 	return pipelineOwnedMetadata{Metadata: out, JobForInstance: jobForInstance, JobByInstance: jobByInstance}, nil
+}
+
+func collectPipelineOwnedInstanceNames(teamDir, pipeline string) (map[string]bool, error) {
+	jobs, err := selectedPipelineJobs(teamDir, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]bool{}
+	jobIDs := map[string]bool{}
+	for _, j := range jobs {
+		if j == nil {
+			continue
+		}
+		if id := job.NormalizeID(j.ID); id != "" {
+			jobIDs[id] = true
+		}
+		if instance := strings.TrimSpace(j.Instance); instance != "" {
+			names[instance] = true
+		}
+		for _, step := range j.Steps {
+			if instance := strings.TrimSpace(step.Instance); instance != "" {
+				names[instance] = true
+			}
+		}
+	}
+	metas, err := pipelineDaemonMetadata(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, meta := range metas {
+		if meta == nil || strings.TrimSpace(meta.Instance) == "" {
+			continue
+		}
+		if jobIDs[job.NormalizeID(meta.Job)] {
+			names[meta.Instance] = true
+		}
+	}
+	return names, nil
+}
+
+func pipelineDaemonMetadata(teamDir string) ([]*daemon.Metadata, error) {
+	if dc, err := newDaemonClient(teamDir); err == nil {
+		return dc.Instances()
+	} else if !errors.Is(err, errDaemonNotRunning) {
+		return nil, err
+	}
+	return daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+}
+
+func collectPipelinePsRows(teamDir, pipeline string, now time.Time, opts psOptions) ([]instanceRow, error) {
+	names, err := collectPipelineOwnedInstanceNames(teamDir, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	if len(names) == 0 {
+		return []instanceRow{}, nil
+	}
+	rows, err := collectPsRows(teamDir, now)
+	if err != nil {
+		return nil, err
+	}
+	scoped := make([]instanceRow, 0, len(rows))
+	for _, row := range rows {
+		if names[row.Instance] {
+			scoped = append(scoped, row)
+		}
+	}
+	return filterLimitSortPsRows(scoped, opts), nil
+}
+
+func runPipelinePs(w io.Writer, teamDir, pipeline string, now time.Time, opts psOptions) error {
+	rows, err := collectPipelinePsRows(teamDir, pipeline, now, opts)
+	if err != nil {
+		return err
+	}
+	return renderPsTable(w, rows)
+}
+
+func runPipelinePsJSON(w io.Writer, teamDir, pipeline string, now time.Time, opts psOptions) error {
+	rows, err := collectPipelinePsRows(teamDir, pipeline, now, opts)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(w).Encode(psJSONRows(rows))
+}
+
+func runPipelinePsQuiet(w io.Writer, teamDir, pipeline string, now time.Time, opts psOptions) error {
+	rows, err := collectPipelinePsRows(teamDir, pipeline, now, opts)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		fmt.Fprintln(w, row.Instance)
+	}
+	return nil
+}
+
+func runPipelinePsFormat(w io.Writer, teamDir, pipeline string, now time.Time, opts psOptions, tmpl *template.Template) error {
+	rows, err := collectPipelinePsRows(teamDir, pipeline, now, opts)
+	if err != nil {
+		return err
+	}
+	return renderPsFormat(w, rows, tmpl)
+}
+
+func runPipelinePsSummary(w io.Writer, teamDir, pipeline string, now time.Time, opts psOptions) error {
+	rows, err := collectPipelinePsRows(teamDir, pipeline, now, opts)
+	if err != nil {
+		return err
+	}
+	return renderPsSummary(w, psSummaryRows(rows))
+}
+
+func runPipelinePsSummaryJSON(w io.Writer, teamDir, pipeline string, now time.Time, opts psOptions) error {
+	rows, err := collectPipelinePsRows(teamDir, pipeline, now, opts)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(w).Encode(psSummaryRows(rows))
+}
+
+func runPipelinePsWatch(ctx context.Context, w io.Writer, teamDir, pipeline string, interval time.Duration, now func() time.Time, jsonOut bool, opts psOptions, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if jsonOut {
+			if err := runPipelinePsJSON(w, teamDir, pipeline, now(), opts); err != nil {
+				return err
+			}
+		} else {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+			if err := runPipelinePs(w, teamDir, pipeline, now(), opts); err != nil {
+				return err
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
+}
+
+func runPipelinePsSummaryWatch(ctx context.Context, w io.Writer, teamDir, pipeline string, interval time.Duration, now func() time.Time, jsonOut bool, opts psOptions, clear bool) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if jsonOut {
+			if err := runPipelinePsSummaryJSON(w, teamDir, pipeline, now(), opts); err != nil {
+				return err
+			}
+		} else {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+			if err := runPipelinePsSummary(w, teamDir, pipeline, now(), opts); err != nil {
+				return err
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if !jsonOut && !clear {
+				fmt.Fprintln(w)
+			}
+		}
+	}
+}
+
+func runPipelinePsFormatWatch(ctx context.Context, w io.Writer, teamDir, pipeline string, interval time.Duration, now func() time.Time, opts psOptions, tmpl *template.Template) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if err := runPipelinePsFormat(w, teamDir, pipeline, now(), opts, tmpl); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
 }
 
 func collectPipelineRuntimeResumePlans(teamDir, pipeline string, stepFilter string, statusFilters []string, runtimeFilters []string, actionFilters []string, staleOnly bool, unhealthyOnly bool) ([]runtimeResumePlan, error) {

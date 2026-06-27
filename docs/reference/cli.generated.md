@@ -3240,6 +3240,7 @@ Subcommands:
 - `agent-team pipeline logs` - Show daemon-captured logs for pipeline-owned jobs.
 - `agent-team pipeline ls` - List declared pipelines.
 - `agent-team pipeline next` - Print recommended next actions for pipeline jobs.
+- `agent-team pipeline ps` - List pipeline-owned instances.
 - `agent-team pipeline queue` - List or control pipeline-owned queue items.
 - `agent-team pipeline ready` - List ready pipeline jobs.
 - `agent-team pipeline reject` - Reject blocked manual pipeline gates.
@@ -3617,6 +3618,40 @@ Flags:
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --team string         Only consider pipelines owned by this declared team; actions are rendered with team-scoped commands.
   -w, --watch               Refresh recommended pipeline actions until interrupted.
+```
+
+## `agent-team pipeline ps`
+
+List pipeline-owned instances.
+
+List daemon-aware instance rows owned by jobs in one declared pipeline. Omit the pipeline or pass --all to inspect every pipeline-owned job while excluding ad hoc instances.
+
+```text
+agent-team pipeline ps [<pipeline>|--all] [flags]
+```
+
+Flags:
+
+```text
+      --agent strings       Only show pipeline-owned instances for this agent. Can repeat or comma-separate.
+      --all                 List instances across all pipelines. This is the default when no pipeline is passed.
+      --format string       Render each row with a Go template, e.g. '{{.Instance}} {{.Status}}'.
+      --interval duration   Refresh interval for --watch. (default 2s)
+      --json                Emit JSON. With --watch, writes one JSON array per refresh.
+  -n, --last int            Show only the N most recently started pipeline-owned instances after other filters (0 = all).
+  -l, --latest              Show only the most recently started pipeline-owned instance after other filters.
+      --no-clear            With --watch, append snapshots instead of redrawing the terminal.
+      --phase strings       Only show pipeline-owned work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
+  -q, --quiet               Only print matching pipeline-owned instance names.
+      --repo string         Repo root containing .agent_team. (default "<repo>")
+      --runtime strings     Only show pipeline-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale       Only show pipeline-owned running instances whose recorded runtime PID is no longer live.
+      --sort string         Sort rows by name, status, agent, phase, stale, runtime-stale, unhealthy, started, stopped, or exited. (default "name")
+      --stale               Only show pipeline-owned instances whose status.toml is stale.
+      --status strings      Only show pipeline-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
+      --summary             Show lifecycle counts instead of pipeline instance rows.
+      --unhealthy           Only show crashed, status-stale, or runtime-stale pipeline-owned instances.
+  -w, --watch               Refresh pipeline instance rows until interrupted.
 ```
 
 ## `agent-team pipeline queue`
