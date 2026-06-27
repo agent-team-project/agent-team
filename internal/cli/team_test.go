@@ -6874,6 +6874,46 @@ instances = ["other"]
 	teamQuarantinePath := quarantineItems[0].Path
 	otherQuarantinePath := filepath.Join("quarantine", "20260619T010000.000000000Z", daemon.QueueStateDead, "q-other-quarantined.json")
 
+	quarantineSummary := NewRootCmd()
+	quarantineSummaryOut, quarantineSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	quarantineSummary.SetOut(quarantineSummaryOut)
+	quarantineSummary.SetErr(quarantineSummaryErr)
+	quarantineSummary.SetArgs([]string{"team", "queue", "quarantine", "delivery", "--repo", root, "--summary", "--json"})
+	if err := quarantineSummary.Execute(); err != nil {
+		t.Fatalf("team queue quarantine summary: %v\nstderr=%s", err, quarantineSummaryErr.String())
+	}
+	var quarantineSummaryBody queueQuarantineSummary
+	if err := json.Unmarshal(quarantineSummaryOut.Bytes(), &quarantineSummaryBody); err != nil {
+		t.Fatalf("decode team queue quarantine summary: %v\nbody=%s", err, quarantineSummaryOut.String())
+	}
+	if quarantineSummaryBody.Quarantined != 2 || quarantineSummaryBody.Restorable != 1 || quarantineSummaryBody.Unrestorable != 1 || quarantineSummaryBody.States[daemon.QueueStateDead] != 2 || quarantineSummaryBody.Jobs["squ-501"] != 2 {
+		t.Fatalf("team queue quarantine summary = %+v", quarantineSummaryBody)
+	}
+
+	quarantineSummaryText := NewRootCmd()
+	quarantineSummaryTextOut, quarantineSummaryTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	quarantineSummaryText.SetOut(quarantineSummaryTextOut)
+	quarantineSummaryText.SetErr(quarantineSummaryTextErr)
+	quarantineSummaryText.SetArgs([]string{"team", "queue", "quarantine", "delivery", "--repo", root, "--restorable", "--summary"})
+	if err := quarantineSummaryText.Execute(); err != nil {
+		t.Fatalf("team queue quarantine summary text: %v\nstderr=%s", err, quarantineSummaryTextErr.String())
+	}
+	if got, want := quarantineSummaryTextOut.String(), "queue quarantine: quarantined=1 restorable=1 unrestorable=0\n"; got != want {
+		t.Fatalf("team queue quarantine summary text = %q, want %q", got, want)
+	}
+
+	invalidQuarantineSummary := NewRootCmd()
+	invalidQuarantineSummaryOut, invalidQuarantineSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidQuarantineSummary.SetOut(invalidQuarantineSummaryOut)
+	invalidQuarantineSummary.SetErr(invalidQuarantineSummaryErr)
+	invalidQuarantineSummary.SetArgs([]string{"team", "queue", "quarantine", "delivery", "--repo", root, "--summary", "--limit", "1"})
+	if err := invalidQuarantineSummary.Execute(); err == nil {
+		t.Fatalf("team queue quarantine summary accepted --limit; stdout=%s stderr=%s", invalidQuarantineSummaryOut.String(), invalidQuarantineSummaryErr.String())
+	}
+	if !strings.Contains(invalidQuarantineSummaryErr.String(), "--sort and --limit cannot be combined with --summary") {
+		t.Fatalf("team queue quarantine summary invalid stderr = %q", invalidQuarantineSummaryErr.String())
+	}
+
 	quarantineFormat := NewRootCmd()
 	quarantineFormatOut, quarantineFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	quarantineFormat.SetOut(quarantineFormatOut)

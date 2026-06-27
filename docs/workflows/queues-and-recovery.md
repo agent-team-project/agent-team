@@ -262,6 +262,7 @@ agent-team pipeline outbox quarantine drop ticket_to_pr --all --unrestorable --d
 When a declared team owns the files, use team-scoped recovery:
 
 ```sh
+agent-team team outbox quarantine delivery --summary --json
 agent-team team outbox quarantine delivery
 agent-team team outbox quarantine delivery --job SQU-42 --restorable
 agent-team team outbox quarantine show delivery <path>
@@ -281,6 +282,7 @@ Diagnostic snapshots include outbox quarantine inventory next to active outbox s
 For repos with teams:
 
 ```sh
+agent-team team queue quarantine delivery --summary --json
 agent-team team queue quarantine delivery
 agent-team team queue quarantine delivery --restorable --sort attempts --limit 10
 agent-team team queue quarantine show delivery <path>

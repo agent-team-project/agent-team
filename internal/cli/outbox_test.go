@@ -1122,6 +1122,28 @@ pipelines = ["ops_review"]
 		t.Fatalf("team outbox quarantine list = %+v", listed)
 	}
 
+	summary := runRootForOutboxTest(t, "team", "outbox", "quarantine", "delivery", "--repo", root, "--summary", "--json")
+	var summaryBody outboxQuarantineSummary
+	if err := json.Unmarshal(summary.Bytes(), &summaryBody); err != nil {
+		t.Fatalf("decode team outbox quarantine summary: %v\n%s", err, summary.String())
+	}
+	if summaryBody.Quarantined != 3 || summaryBody.Restorable != 3 || summaryBody.Unrestorable != 0 || summaryBody.States[daemon.OutboxStatePending] != 2 || summaryBody.States[daemon.OutboxStateFailed] != 1 || summaryBody.Jobs["squ-909"] != 1 || summaryBody.Sources["manager"] != 3 {
+		t.Fatalf("team outbox quarantine summary = %+v", summaryBody)
+	}
+
+	summaryText := runRootForOutboxTest(t, "team", "outbox", "quarantine", "delivery", "--repo", root, "--state", daemon.OutboxStateFailed, "--summary")
+	if got, want := summaryText.String(), "outbox quarantine: quarantined=1 restorable=1 unrestorable=0\n"; got != want {
+		t.Fatalf("team outbox quarantine summary text = %q, want %q", got, want)
+	}
+
+	invalidSummaryOut, invalidSummaryErr, err := runRootForOutboxTestErr(t, "team", "outbox", "quarantine", "delivery", "--repo", root, "--summary", "--sort", "state")
+	if err == nil {
+		t.Fatalf("team outbox quarantine summary accepted --sort; stdout=%s stderr=%s", invalidSummaryOut.String(), invalidSummaryErr.String())
+	}
+	if !strings.Contains(invalidSummaryErr.String(), "--sort and --limit cannot be combined with --summary") {
+		t.Fatalf("team outbox quarantine summary invalid stderr = %q", invalidSummaryErr.String())
+	}
+
 	show := runRootForOutboxTest(t, "team", "outbox", "quarantine", "show", "delivery", restorePath, "--repo", root, "--json")
 	var shown outboxQuarantineShowResult
 	if err := json.Unmarshal(show.Bytes(), &shown); err != nil {

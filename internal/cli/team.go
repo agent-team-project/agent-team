@@ -2502,6 +2502,7 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 		unrestorable bool
 		sortBy       string
 		limit        int
+		summary      bool
 		jsonOut      bool
 		format       string
 	)
@@ -2517,6 +2518,14 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			if summary && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if summary && (cmd.Flags().Changed("sort") || limit > 0) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine: --sort and --limit cannot be combined with --summary.")
 				return exitErr(2)
 			}
 			sortMode, err := parseQueueQuarantineSort(sortBy)
@@ -2543,6 +2552,9 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			items = filterQueueQuarantineRestorable(items, restorable, unrestorable)
+			if summary {
+				return renderQueueQuarantineSummary(cmd.OutOrStdout(), summarizeQueueQuarantineItems(items), jsonOut)
+			}
 			items = prepareQueueQuarantineItems(items, sortMode, limit)
 			return renderQueueQuarantineList(cmd.OutOrStdout(), items, jsonOut, formatTemplate)
 		},
@@ -2555,6 +2567,7 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "Only show quarantined files that cannot be restored.")
 	cmd.Flags().StringVar(&sortBy, "sort", "path", queueQuarantineSortFlagHelp)
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate team-owned quarantined queue-file counts instead of rows.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team-owned quarantined queue files as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each team-owned quarantined queue file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.")
 	cmd.AddCommand(newTeamQueueQuarantineShowCmd())
