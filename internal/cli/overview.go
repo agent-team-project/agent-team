@@ -153,6 +153,7 @@ type overviewResult struct {
 	Inbox         overviewInboxSummary    `json:"inbox"`
 	Jobs          overviewJobSummary      `json:"jobs"`
 	Outbox        outboxSummary           `json:"outbox"`
+	OutboxOwner   *overviewOutboxOwner    `json:"outbox_owner,omitempty"`
 	Queue         queueSummary            `json:"queue"`
 	Pipelines     overviewPipelineSummary `json:"pipelines"`
 	Schedules     overviewScheduleSummary `json:"schedules"`
@@ -167,6 +168,11 @@ type operatorActionHint struct {
 	Source  string `json:"source,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	Team    string `json:"team,omitempty"`
+}
+
+type overviewOutboxOwner struct {
+	PendingJob string `json:"pending_job,omitempty"`
+	FailedJob  string `json:"failed_job,omitempty"`
 }
 
 type overviewHealthSummary struct {
@@ -298,10 +304,11 @@ func collectOverview(teamDir string, now time.Time, scheduleLimit int) *overview
 		}
 	}
 
-	if outbox, err := collectOverviewOutbox(teamDir); err != nil {
+	if outbox, owner, err := collectOverviewOutbox(teamDir); err != nil {
 		out.addError("outbox", err)
 	} else {
 		out.Outbox = outbox
+		out.OutboxOwner = owner
 	}
 
 	if out.Pipelines.Total == 0 {
@@ -684,12 +691,16 @@ func overviewIntakeFromDeliveries(deliveries []intakeDelivery) overviewIntakeSum
 	}
 }
 
-func collectOverviewOutbox(teamDir string) (outboxSummary, error) {
+func collectOverviewOutbox(teamDir string) (outboxSummary, *overviewOutboxOwner, error) {
 	items, err := daemon.ListOutboxItems(teamDir)
 	if err != nil {
-		return outboxSummary{}, err
+		return outboxSummary{}, nil, err
 	}
-	return summarizeOutboxItems(items), nil
+	jobs, err := jobstore.List(teamDir)
+	if err != nil {
+		return outboxSummary{}, nil, err
+	}
+	return summarizeOutboxItems(items), overviewOutboxOwnerForItems(items, jobs), nil
 }
 
 func collectOverviewOutboxForTeam(teamDir string, top *topology.Topology, team *topology.Team) (outboxSummary, error) {
@@ -799,6 +810,8 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 	if out.Outbox.Failed > 0 {
 		if teamName != "" {
 			add(fmt.Sprintf("agent-team team outbox %s --state failed", teamName), "outbox", fmt.Sprintf("failed=%d", out.Outbox.Failed))
+		} else if jobID := overviewOutboxOwnerJob(out.OutboxOwner, daemon.OutboxStateFailed); jobID != "" {
+			add(fmt.Sprintf("agent-team job outbox %s --state failed", jobID), "outbox", fmt.Sprintf("failed=%d", out.Outbox.Failed))
 		} else {
 			add("agent-team outbox ls --state failed", "outbox", fmt.Sprintf("failed=%d", out.Outbox.Failed))
 		}
@@ -806,6 +819,8 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 	if out.Outbox.Pending > 0 {
 		if teamName != "" {
 			add(fmt.Sprintf("agent-team team outbox %s --state pending", teamName), "outbox", fmt.Sprintf("pending=%d", out.Outbox.Pending))
+		} else if jobID := overviewOutboxOwnerJob(out.OutboxOwner, daemon.OutboxStatePending); jobID != "" {
+			add(fmt.Sprintf("agent-team job outbox %s --state pending", jobID), "outbox", fmt.Sprintf("pending=%d", out.Outbox.Pending))
 		} else {
 			add("agent-team outbox drain --dry-run", "outbox", fmt.Sprintf("pending=%d", out.Outbox.Pending))
 		}
@@ -975,6 +990,72 @@ func overviewActionCommands(hints []operatorActionHint) []string {
 		commands = append(commands, hint.Command)
 	}
 	return commands
+}
+
+func overviewOutboxOwnerForItems(items []*daemon.OutboxItem, jobs []*jobstore.Job) *overviewOutboxOwner {
+	owner := &overviewOutboxOwner{
+		PendingJob: overviewOutboxSingleJobForState(items, jobs, daemon.OutboxStatePending),
+		FailedJob:  overviewOutboxSingleJobForState(items, jobs, daemon.OutboxStateFailed),
+	}
+	if owner.PendingJob == "" && owner.FailedJob == "" {
+		return nil
+	}
+	return owner
+}
+
+func overviewOutboxSingleJobForState(items []*daemon.OutboxItem, jobs []*jobstore.Job, state string) string {
+	var owner string
+	for _, item := range items {
+		if item == nil || item.State != state {
+			continue
+		}
+		jobID := overviewOutboxItemJobID(item, jobs)
+		if jobID == "" {
+			return ""
+		}
+		if owner == "" {
+			owner = jobID
+			continue
+		}
+		if owner != jobID {
+			return ""
+		}
+	}
+	return owner
+}
+
+func overviewOutboxItemJobID(item *daemon.OutboxItem, jobs []*jobstore.Job) string {
+	if item == nil {
+		return ""
+	}
+	itemJobID := normalizeOutboxJob(outboxItemJob(item))
+	itemName := strings.TrimSpace(outboxPayloadString(item.Payload, "name"))
+	for _, j := range jobs {
+		if j == nil {
+			continue
+		}
+		if itemJobID != "" && itemJobID == j.ID {
+			return j.ID
+		}
+		if itemName != "" && strings.TrimSpace(j.Instance) != "" && itemName == j.Instance {
+			return j.ID
+		}
+	}
+	return ""
+}
+
+func overviewOutboxOwnerJob(owner *overviewOutboxOwner, state string) string {
+	if owner == nil {
+		return ""
+	}
+	switch state {
+	case daemon.OutboxStatePending:
+		return strings.TrimSpace(owner.PendingJob)
+	case daemon.OutboxStateFailed:
+		return strings.TrimSpace(owner.FailedJob)
+	default:
+		return ""
+	}
 }
 
 func overviewQueueDeadRetryAction(health *healthResult, teamName string) string {

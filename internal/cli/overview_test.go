@@ -225,6 +225,100 @@ func TestOverviewReportsOutboxActions(t *testing.T) {
 	}
 }
 
+func TestOverviewPrefersJobScopedOutboxActions(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+	teamDir := filepath.Join(root, ".agent_team")
+	now := time.Date(2026, 6, 27, 18, 0, 0, 0, time.UTC)
+	j := &job.Job{
+		ID:        "squ-812",
+		Ticket:    "SQU-812",
+		Target:    "worker",
+		Instance:  "worker-squ-812",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	for _, item := range []*daemon.OutboxItem{
+		{
+			ID:        "outbox-job-pending",
+			State:     daemon.OutboxStatePending,
+			Type:      "agent.dispatch",
+			Payload:   map[string]any{"job_id": "squ-812", "target": "worker"},
+			Source:    "manager",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "outbox-job-failed",
+			State:     daemon.OutboxStateFailed,
+			Type:      "agent.dispatch",
+			Payload:   map[string]any{"name": "worker-squ-812", "target": "worker"},
+			Source:    "manager",
+			LastError: "topology not configured",
+			CreatedAt: now.Add(time.Minute),
+			UpdatedAt: now.Add(time.Minute),
+		},
+	} {
+		if err := daemon.WriteOutboxItem(teamDir, item); err != nil {
+			t.Fatalf("write outbox item %s: %v", item.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview job outbox json: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview job outbox: %v\nbody=%s", err, out.String())
+	}
+	if overview.OutboxOwner == nil || overview.OutboxOwner.PendingJob != "squ-812" || overview.OutboxOwner.FailedJob != "squ-812" {
+		t.Fatalf("overview outbox owner = %+v", overview.OutboxOwner)
+	}
+	for _, want := range []string{
+		"agent-team job outbox squ-812 --state failed",
+		"agent-team job outbox squ-812 --state pending",
+	} {
+		if !stringSliceContains(overview.Actions, want) {
+			t.Fatalf("overview actions missing %q: %+v", want, overview.Actions)
+		}
+	}
+	for _, broad := range []string{"agent-team outbox ls --state failed", "agent-team outbox drain --dry-run"} {
+		if stringSliceContains(overview.Actions, broad) {
+			t.Fatalf("overview should prefer job-scoped action over %q: %+v", broad, overview.Actions)
+		}
+	}
+
+	next := NewRootCmd()
+	nextOut, nextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	next.SetOut(nextOut)
+	next.SetErr(nextErr)
+	next.SetArgs([]string{"next", "--target", root, "--source", "outbox", "--json"})
+	if err := next.Execute(); err != nil {
+		t.Fatalf("next job outbox json: %v\nstderr=%s", err, nextErr.String())
+	}
+	var nextResult nextActionResult
+	if err := json.Unmarshal(nextOut.Bytes(), &nextResult); err != nil {
+		t.Fatalf("decode next job outbox: %v\nbody=%s", err, nextOut.String())
+	}
+	if len(nextResult.Actions) != 2 {
+		t.Fatalf("next job outbox actions = %+v", nextResult)
+	}
+	for _, want := range []string{"agent-team job outbox squ-812 --state failed", "agent-team job outbox squ-812 --state pending"} {
+		if !stringSliceContains(nextResult.Actions, want) {
+			t.Fatalf("next job outbox actions missing %q: %+v", want, nextResult.Actions)
+		}
+	}
+}
+
 func TestTeamOverviewReportsScopedOutboxActions(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
