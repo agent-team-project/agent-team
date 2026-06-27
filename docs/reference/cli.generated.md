@@ -3413,23 +3413,25 @@ agent-team pipeline advance <pipeline>|--all [flags]
 Flags:
 
 ```text
-      --all                      Advance ready steps across all pipelines.
-      --all-ready-steps          Advance every currently ready independent step for each selected job.
-      --dry-run                  Preview ready steps without dispatching them.
-      --fail-on-failed           With --wait, exit 1 if any advanced job resolves to failed.
-      --format string            Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
-      --json                     Emit advance results as JSON.
-      --limit int                Advance at most this many ready jobs, or ready steps with --all-ready-steps; 0 means no limit.
-      --preview-routes           With --dry-run, include local topology route and dispatch payload previews.
-      --repo string              Repo root containing .agent_team. (default "<repo>")
-      --runtime string           Runtime profile for advanced step dispatches (claude or codex). Overrides env and repo config.
-      --runtime-bin string       Runtime binary for advanced step dispatches. Overrides env and repo config.
-      --wait                     After advancing, wait for advanced jobs to reach a lifecycle status or event.
-      --wait-event strings       With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
-      --wait-interval duration   Polling interval with --wait. (default 500ms)
-      --wait-status strings      With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
-      --wait-timeout duration    Maximum time to wait with --wait (0 = no timeout).
-      --workspace string         Workspace mode for advanced steps: auto, worktree, or repo. (default "auto")
+      --all                       Advance ready steps across all pipelines.
+      --all-ready-steps           Advance every currently ready independent step for each selected job.
+      --dry-run                   Preview ready steps without dispatching them.
+      --fail-on-failed            With --wait, exit 1 if any advanced job resolves to failed.
+      --format string             Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json                      Emit advance results as JSON.
+      --limit int                 Advance at most this many ready jobs, or ready steps with --all-ready-steps; 0 means no limit.
+      --preview-routes            With --dry-run, include local topology route and dispatch payload previews.
+      --repo string               Repo root containing .agent_team. (default "<repo>")
+      --runtime string            Runtime profile for advanced step dispatches (claude or codex). Overrides env and repo config.
+      --runtime-bin string        Runtime binary for advanced step dispatches. Overrides env and repo config.
+      --wait                      After advancing, wait for advanced jobs to reach a lifecycle status, event, or next-step state.
+      --wait-event strings        With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration    Polling interval with --wait. (default 500ms)
+      --wait-next-state strings   With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --wait-status strings       With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-step string          With --wait, pipeline step id that must be the current next step for every advanced job.
+      --wait-timeout duration     Maximum time to wait with --wait (0 = no timeout).
+      --workspace string          Workspace mode for advanced steps: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team pipeline approve`
@@ -6075,22 +6077,24 @@ agent-team team advance <team> [flags]
 Flags:
 
 ```text
-      --all-ready-steps          Advance every currently ready independent step for each selected team job.
-      --dry-run                  Preview ready steps without dispatching them.
-      --fail-on-failed           With --wait, exit 1 if any advanced job resolves to failed.
-      --format string            Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
-      --json                     Emit advance results as JSON.
-      --limit int                Advance at most this many ready team jobs, or ready steps with --all-ready-steps; 0 means no limit.
-      --preview-routes           With --dry-run, include local topology route and dispatch payload previews.
-      --repo string              Repo root containing .agent_team. (default "<repo>")
-      --runtime string           Runtime profile for advanced step dispatches (claude or codex). Overrides env and repo config.
-      --runtime-bin string       Runtime binary for advanced step dispatches. Overrides env and repo config.
-      --wait                     After advancing, wait for advanced jobs to reach a lifecycle status or event.
-      --wait-event strings       With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
-      --wait-interval duration   Polling interval with --wait. (default 500ms)
-      --wait-status strings      With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
-      --wait-timeout duration    Maximum time to wait with --wait (0 = no timeout).
-      --workspace string         Workspace mode for advanced steps: auto, worktree, or repo. (default "auto")
+      --all-ready-steps           Advance every currently ready independent step for each selected team job.
+      --dry-run                   Preview ready steps without dispatching them.
+      --fail-on-failed            With --wait, exit 1 if any advanced job resolves to failed.
+      --format string             Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
+      --json                      Emit advance results as JSON.
+      --limit int                 Advance at most this many ready team jobs, or ready steps with --all-ready-steps; 0 means no limit.
+      --preview-routes            With --dry-run, include local topology route and dispatch payload previews.
+      --repo string               Repo root containing .agent_team. (default "<repo>")
+      --runtime string            Runtime profile for advanced step dispatches (claude or codex). Overrides env and repo config.
+      --runtime-bin string        Runtime binary for advanced step dispatches. Overrides env and repo config.
+      --wait                      After advancing, wait for advanced jobs to reach a lifecycle status, event, or next-step state.
+      --wait-event strings        With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration    Polling interval with --wait. (default 500ms)
+      --wait-next-state strings   With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --wait-status strings       With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-step string          With --wait, pipeline step id that must be the current next step for every advanced job.
+      --wait-timeout duration     Maximum time to wait with --wait (0 = no timeout).
+      --workspace string          Workspace mode for advanced steps: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team team approve`

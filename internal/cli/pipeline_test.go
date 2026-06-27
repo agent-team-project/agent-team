@@ -8958,6 +8958,43 @@ func TestPipelineAdvanceWaitsForRequestedStatus(t *testing.T) {
 	stopAndWaitForTest(t, mgr, "worker-squ-911-implement")
 }
 
+func TestPipelineAdvanceWaitsForNextStepState(t *testing.T) {
+	root, mgr, cleanup := setupManualGateApprovalRepo(t, false)
+	defer cleanup()
+	teamDir := filepath.Join(root, ".agent_team")
+	writeReadyAdvanceJob(t, teamDir, "squ-916")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"pipeline", "advance", "ticket_to_pr",
+		"--repo", root,
+		"--workspace", "repo",
+		"--wait",
+		"--wait-next-state", "running",
+		"--wait-step", "implement",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline advance --wait-next-state: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []pipelineAdvanceResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline advance next-state wait json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Action != "advanced" || rows[0].Job == nil || rows[0].Job.Status != job.StatusRunning {
+		t.Fatalf("advance next-state wait rows = %+v", rows)
+	}
+	if rows[0].Step == nil || rows[0].Step.ID != "implement" || rows[0].Step.Status != job.StatusRunning || rows[0].Step.Instance != "worker-squ-916-implement" {
+		t.Fatalf("advance next-state wait step = %+v", rows[0].Step)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-916-implement")
+}
+
 func TestPipelineAdvanceWaitTimesOutForEvent(t *testing.T) {
 	root, mgr, cleanup := setupManualGateApprovalRepo(t, false)
 	defer cleanup()
@@ -8997,7 +9034,10 @@ func TestPipelineAdvanceWaitValidation(t *testing.T) {
 	}{
 		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait", "--dry-run"}, "--wait cannot be combined with --dry-run"},
 		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait-status", "running"}, "wait-related flags require --wait"},
+		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait-next-state", "running"}, "wait-related flags require --wait"},
+		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait-step", "review"}, "wait-related flags require --wait"},
 		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait-timeout", "-1s", "--wait"}, "--wait-timeout must be >= 0"},
+		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait", "--wait-next-state", "missing"}, "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

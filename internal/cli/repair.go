@@ -506,7 +506,7 @@ func waitForTickResultAdvanceRows(cmd *cobra.Command, teamDir string, result *ti
 		return nil
 	}
 	var err error
-	result.Advance, err = waitForPipelineAdvanceResults(cmd, teamDir, result.Advance, statuses, events, timeout, interval, prefix)
+	result.Advance, err = waitForPipelineAdvanceResults(cmd, teamDir, result.Advance, statuses, events, nil, false, "", timeout, interval, prefix)
 	return err
 }
 

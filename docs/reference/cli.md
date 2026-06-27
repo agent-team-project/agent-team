@@ -180,7 +180,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline ready` | List or watch ready steps; filter by `--step`, sort by `--sort`, and cap rows with `--limit` |
 | `agent-team pipeline hold <pipeline>` | Hold matching pipeline jobs without changing lifecycle status; add `--for` or `--until` for a deadline |
 | `agent-team pipeline release <pipeline>` | Release held jobs in a pipeline; add `--expired` to release only elapsed deadlines |
-| `agent-team pipeline advance <pipeline>` | Advance ready work; use `--workspace`/`--runtime` for dispatched steps and `--wait` for bounded handoff |
+| `agent-team pipeline advance <pipeline>` | Advance ready work; use `--workspace`/`--runtime` for dispatched steps and `--wait-next-state`/`--wait-step` for stage-aware handoff |
 | `agent-team pipeline approve <pipeline>` | Approve blocked manual gates; add `--dispatch --wait` for bounded approval handoff |
 | `agent-team pipeline reject <pipeline>` | Reject blocked manual gates |
 | `agent-team pipeline skip <pipeline> --step <id>` | Mark matching non-running steps intentionally skipped |
@@ -230,7 +230,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team hold <team>` | Hold matching pipeline jobs owned by a team; add `--for` or `--until` for a deadline |
 | `agent-team team release <team>` | Release held pipeline jobs owned by a team; add `--expired` to release only elapsed deadlines |
 | `agent-team team timeout <team>` | Timeout stale team pipeline steps; add `--jobs` for stale step-less team jobs and `--target-agent` to scope by role |
-| `agent-team team advance <team>` | Scoped pipeline advance; use `--runtime` for dispatched steps and `--wait` for bounded handoff |
+| `agent-team team advance <team>` | Scoped pipeline advance; use `--runtime` for dispatched steps and `--wait-next-state`/`--wait-step` for stage-aware handoff |
 | `agent-team team approve <team>` | Scoped manual-gate approval; add `--dispatch --wait` for bounded approval handoff |
 | `agent-team team reject <team>` | Scoped manual-gate rejection |
 | `agent-team team skip <team> --step <id>` | Scoped intentional step skip |

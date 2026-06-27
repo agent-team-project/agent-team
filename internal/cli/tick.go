@@ -177,7 +177,7 @@ func newTickCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			if wait {
-				result.Advance, err = waitForPipelineAdvanceResults(cmd, teamDir, result.Advance, waitStatusesSet, waitEventsSet, waitTimeout, waitInterval, "agent-team tick")
+				result.Advance, err = waitForPipelineAdvanceResults(cmd, teamDir, result.Advance, waitStatusesSet, waitEventsSet, nil, false, "", waitTimeout, waitInterval, "agent-team tick")
 				if err != nil {
 					if err == context.Canceled {
 						return nil

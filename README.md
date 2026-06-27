@@ -378,7 +378,7 @@ Use `overview` when you want the shortest non-mutating answer to “what needs a
 
 Use `pipeline retry <pipeline> --dispatch --wait --wait-status running` or `team retry <team> --dispatch --wait --wait-status running` when failed-step recovery should block until each retried job has a live owner.
 
-Use `pipeline advance <pipeline> --wait --wait-status running` or `team advance <team> --wait --wait-status running` when already-ready work should block until the advanced jobs have live owners.
+Use `pipeline advance <pipeline> --wait --wait-status running` or `team advance <team> --wait --wait-status running` when already-ready work should block until the advanced jobs have live owners. Use `--wait-next-state ready --wait-step review` when the same handoff should stop once the next stage is ready.
 
 Pipeline-scoped next-action hints include `pipeline repair <pipeline> --retry-pipelines --dry-run --preview-routes` for failed steps and `pipeline repair <pipeline> --timeout-jobs --dry-run --preview-routes` for stale running work when one workflow owns the recovery.
 
