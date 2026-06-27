@@ -470,7 +470,7 @@ func newPipelineStatusCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after sorting; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline status rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.Pipeline}} {{.Jobs}} {{.ReadySteps}}'.")
-	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined.")
+	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, queue-quarantined, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined.")
 	return cmd
 }
 
@@ -757,7 +757,7 @@ func newPipelineNextCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended pipeline actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
-	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort pipelines before selecting actions by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined.")
+	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort pipelines before selecting actions by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, queue-quarantined, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined.")
 	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit recommended actions as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each action with a Go template, e.g. '{{.Pipeline}} {{.Action}}'.")
@@ -5374,10 +5374,10 @@ func parsePipelineStatusSort(raw string) (string, error) {
 		return "declared", nil
 	}
 	switch value {
-	case "declared", "pipeline", "steps", "jobs", "queued", "running", "blocked", "done", "failed", "ready", "queued-steps", "running-steps", "stale", "stale-running", "blocked-steps", "manual", "manual-gates", "failed-steps", "held", "done-steps", "none", "no-step", "queue", "queue-pending", "queue-dead", "quarantine", "quarantined", "outbox", "outbox-pending", "outbox-failed", "outbox-processed", "outbox-quarantine", "outbox-quarantined":
+	case "declared", "pipeline", "steps", "jobs", "queued", "running", "blocked", "done", "failed", "ready", "queued-steps", "running-steps", "stale", "stale-running", "blocked-steps", "manual", "manual-gates", "failed-steps", "held", "done-steps", "none", "no-step", "queue", "queue-pending", "queue-dead", "queue-quarantine", "queue-quarantined", "quarantine", "quarantined", "outbox", "outbox-pending", "outbox-failed", "outbox-processed", "outbox-quarantine", "outbox-quarantined":
 		return value, nil
 	default:
-		return "", fmt.Errorf("--sort must be declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, queued-steps, running-steps, stale, blocked-steps, manual, failed-steps, held, done-steps, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined")
+		return "", fmt.Errorf("--sort must be declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, queued-steps, running-steps, stale, blocked-steps, manual, failed-steps, held, done-steps, none, queue, queue-pending, queue-dead, queue-quarantined, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined")
 	}
 }
 
@@ -5451,8 +5451,10 @@ func pipelineStatusSortValue(row pipelineStatusRow, sortMode string) int {
 		return row.QueuePending
 	case "queue-dead":
 		return row.QueueDead
-	case "quarantine", "quarantined":
+	case "queue-quarantine", "queue-quarantined":
 		return row.QueueQuarantined
+	case "quarantine", "quarantined":
+		return row.QueueQuarantined + row.OutboxQuarantined
 	case "outbox":
 		return row.OutboxPending + row.OutboxFailed + row.OutboxProcessed + row.OutboxQuarantined
 	case "outbox-pending":
@@ -5903,16 +5905,37 @@ func pipelineNextActionsFromStatus(rows []pipelineStatusRow, limit int, reasonFi
 
 func parsePipelineNextReasonFilters(raw []string) ([]string, error) {
 	filters := []string{}
+	seen := map[string]bool{}
 	for _, value := range splitFilterValues(raw) {
 		value = strings.ToLower(strings.TrimSpace(value))
-		if value != "" {
-			filters = append(filters, value)
+		for _, normalized := range normalizePipelineNextReasonFilter(value) {
+			if normalized == "" || seen[normalized] {
+				continue
+			}
+			seen[normalized] = true
+			filters = append(filters, normalized)
 		}
 	}
 	if len(raw) > 0 && len(filters) == 0 {
 		return nil, fmt.Errorf("--reason requires at least one non-empty value")
 	}
 	return filters, nil
+}
+
+func normalizePipelineNextReasonFilter(value string) []string {
+	value = strings.ReplaceAll(strings.ToLower(strings.TrimSpace(value)), "-", "_")
+	switch value {
+	case "":
+		return nil
+	case "quarantine", "quarantined":
+		return []string{"queue_quarantined", "outbox_quarantined"}
+	case "queue_quarantine", "queue_quarantined":
+		return []string{"queue_quarantined"}
+	case "outbox_quarantine", "outbox_quarantined":
+		return []string{"outbox_quarantined"}
+	default:
+		return []string{value}
+	}
 }
 
 func pipelineNextActionMatchesReason(action pipelineNextAction, filters []string) bool {

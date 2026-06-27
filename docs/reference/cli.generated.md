@@ -4406,7 +4406,7 @@ Flags:
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --reason strings      Only show actions with this reason. Values match exactly, or as prefixes before '='. Can repeat or comma-separate.
       --repo string         Repo root containing .agent_team. (default "<repo>")
-      --sort string         Sort pipelines before selecting actions by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined. (default "declared")
+      --sort string         Sort pipelines before selecting actions by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, queue-quarantined, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined. (default "declared")
       --team string         Only consider pipelines owned by this declared team; actions are rendered with team-scoped commands.
   -w, --watch               Refresh recommended pipeline actions until interrupted.
 ```
@@ -5276,7 +5276,7 @@ Flags:
       --limit int           Limit rows after sorting; 0 means no limit.
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
-      --sort string         Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined. (default "declared")
+      --sort string         Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, queue-quarantined, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined. (default "declared")
   -w, --watch               Refresh the pipeline status table until interrupted.
 ```
 
@@ -7703,7 +7703,7 @@ Flags:
       --limit int           Limit rows after sorting; 0 means no limit.
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
-      --sort string         Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined. (default "declared")
+      --sort string         Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, queue-quarantined, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined. (default "declared")
   -w, --watch               Refresh the team pipeline status table until interrupted.
 ```
 

@@ -2862,6 +2862,21 @@ pipelines = ["ticket_to_pr"]
 		}
 	}
 
+	nextAlias := NewRootCmd()
+	nextAliasOut, nextAliasErr := &bytes.Buffer{}, &bytes.Buffer{}
+	nextAlias.SetOut(nextAliasOut)
+	nextAlias.SetErr(nextAliasErr)
+	nextAlias.SetArgs([]string{"pipeline", "next", "ticket_to_pr", "--repo", root, "--reason", "quarantined", "--format", "{{.Reason}}|{{.Action}}"})
+	if err := nextAlias.Execute(); err != nil {
+		t.Fatalf("pipeline next quarantined alias: %v\nstderr=%s", err, nextAliasErr.String())
+	}
+	if want := "outbox_quarantined=2|agent-team pipeline outbox quarantine ticket_to_pr"; !strings.Contains(nextAliasOut.String(), want) {
+		t.Fatalf("pipeline next quarantined alias missing %q:\n%s", want, nextAliasOut.String())
+	}
+	if strings.Contains(nextAliasOut.String(), "outbox_failed=") || strings.Contains(nextAliasOut.String(), "outbox_pending=") {
+		t.Fatalf("pipeline next quarantined alias included active outbox reasons:\n%s", nextAliasOut.String())
+	}
+
 	teamNext := NewRootCmd()
 	teamNextOut, teamNextErr := &bytes.Buffer{}, &bytes.Buffer{}
 	teamNext.SetOut(teamNextOut)
@@ -2902,6 +2917,18 @@ pipelines = ["ticket_to_pr"]
 	}
 	if got, want := strings.TrimSpace(sortedQuarantineOut.String()), "ticket_to_pr 2 2 0"; got != want {
 		t.Fatalf("pipeline status outbox quarantine sort = %q, want %q", got, want)
+	}
+
+	sortedAnyQuarantine := NewRootCmd()
+	sortedAnyQuarantineOut, sortedAnyQuarantineErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sortedAnyQuarantine.SetOut(sortedAnyQuarantineOut)
+	sortedAnyQuarantine.SetErr(sortedAnyQuarantineErr)
+	sortedAnyQuarantine.SetArgs([]string{"pipeline", "status", "--repo", root, "--sort", "quarantined", "--limit", "1", "--format", "{{.Pipeline}} {{.QueueQuarantined}} {{.OutboxQuarantined}}"})
+	if err := sortedAnyQuarantine.Execute(); err != nil {
+		t.Fatalf("pipeline status sort quarantined alias: %v\nstderr=%s", err, sortedAnyQuarantineErr.String())
+	}
+	if got, want := strings.TrimSpace(sortedAnyQuarantineOut.String()), "ticket_to_pr 0 2"; got != want {
+		t.Fatalf("pipeline status quarantined alias sort = %q, want %q", got, want)
 	}
 
 	text := NewRootCmd()
@@ -3097,6 +3124,18 @@ pipelines = ["ticket_to_pr"]
 		t.Fatalf("pipeline status queue sort = %q, want %q", got, want)
 	}
 
+	sortedQueueQuarantine := NewRootCmd()
+	sortedQueueQuarantineOut, sortedQueueQuarantineErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sortedQueueQuarantine.SetOut(sortedQueueQuarantineOut)
+	sortedQueueQuarantine.SetErr(sortedQueueQuarantineErr)
+	sortedQueueQuarantine.SetArgs([]string{"pipeline", "status", "--repo", root, "--sort", "queue-quarantined", "--limit", "1", "--format", "{{.Pipeline}} {{.QueueQuarantined}} {{.OutboxQuarantined}}"})
+	if err := sortedQueueQuarantine.Execute(); err != nil {
+		t.Fatalf("pipeline status sort queue quarantine: %v\nstderr=%s", err, sortedQueueQuarantineErr.String())
+	}
+	if got, want := strings.TrimSpace(sortedQueueQuarantineOut.String()), "ticket_to_pr 2 0"; got != want {
+		t.Fatalf("pipeline status queue quarantine sort = %q, want %q", got, want)
+	}
+
 	next := NewRootCmd()
 	nextOut, nextErr := &bytes.Buffer{}, &bytes.Buffer{}
 	next.SetOut(nextOut)
@@ -3114,6 +3153,21 @@ pipelines = ["ticket_to_pr"]
 		if !strings.Contains(nextOut.String(), want) {
 			t.Fatalf("pipeline next queue reason missing %q:\n%s", want, nextOut.String())
 		}
+	}
+
+	nextAlias := NewRootCmd()
+	nextAliasOut, nextAliasErr := &bytes.Buffer{}, &bytes.Buffer{}
+	nextAlias.SetOut(nextAliasOut)
+	nextAlias.SetErr(nextAliasErr)
+	nextAlias.SetArgs([]string{"pipeline", "next", "ticket_to_pr", "--repo", root, "--reason", "quarantined", "--format", "{{.Reason}}|{{.Action}}"})
+	if err := nextAlias.Execute(); err != nil {
+		t.Fatalf("pipeline next queue quarantined alias: %v\nstderr=%s", err, nextAliasErr.String())
+	}
+	if want := "queue_quarantined=2|agent-team pipeline queue quarantine ticket_to_pr"; !strings.Contains(nextAliasOut.String(), want) {
+		t.Fatalf("pipeline next queue quarantined alias missing %q:\n%s", want, nextAliasOut.String())
+	}
+	if strings.Contains(nextAliasOut.String(), "queue_dead=") || strings.Contains(nextAliasOut.String(), "queue_pending=") {
+		t.Fatalf("pipeline next queue quarantined alias included non-quarantine reasons:\n%s", nextAliasOut.String())
 	}
 
 	teamNext := NewRootCmd()
