@@ -1997,21 +1997,27 @@ agent-team job create <ticket> [kickoff...] [flags]
 Flags:
 
 ```text
-      --dispatch              Dispatch the created job immediately using the running daemon.
-      --dry-run               Preview the job that would be created without writing it.
-      --format string         Render the job with a Go template, e.g. '{{.ID}} {{.Status}}'.
-      --id string             Override the normalized job id (default: ticket slug).
-      --instance string       Instance name that owns the job (default set during dispatch).
-      --json                  Emit the job as JSON.
-      --kickoff string        Kickoff text for the target agent.
-      --kickoff-file string   Read kickoff text from a file, or '-' for stdin.
-      --pipeline string       Create this job from a declared pipeline in instances.toml.
-      --repo string           Repo root containing .agent_team. (default "<repo>")
-      --runtime string        Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
-      --runtime-bin string    Runtime binary for --dispatch. Overrides env and repo config.
-      --target string         Target agent that should own this job. (default "worker")
-      --ticket-url string     Canonical ticket URL to store on the job.
-      --workspace string      Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
+      --dispatch                 Dispatch the created job immediately using the running daemon.
+      --dry-run                  Preview the job that would be created without writing it.
+      --fail-on-failed           With --wait, exit 1 if the job resolves to failed.
+      --format string            Render the job with a Go template, e.g. '{{.ID}} {{.Status}}'.
+      --id string                Override the normalized job id (default: ticket slug).
+      --instance string          Instance name that owns the job (default set during dispatch).
+      --json                     Emit the job as JSON.
+      --kickoff string           Kickoff text for the target agent.
+      --kickoff-file string      Read kickoff text from a file, or '-' for stdin.
+      --pipeline string          Create this job from a declared pipeline in instances.toml.
+      --repo string              Repo root containing .agent_team. (default "<repo>")
+      --runtime string           Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
+      --runtime-bin string       Runtime binary for --dispatch. Overrides env and repo config.
+      --target string            Target agent that should own this job. (default "worker")
+      --ticket-url string        Canonical ticket URL to store on the job.
+      --wait                     After creating or dispatching, wait for the job to reach a lifecycle status or event.
+      --wait-event strings       With --wait, last event to wait for, e.g. dispatched, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration   Polling interval with --wait. (default 500ms)
+      --wait-status strings      With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-timeout duration    Maximum time to wait with --wait (0 = no timeout).
+      --workspace string         Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team job dispatch`

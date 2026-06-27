@@ -842,21 +842,27 @@ func newJobEventsCmd() *cobra.Command {
 
 func newJobCreateCmd() *cobra.Command {
 	var (
-		repo        string
-		targetAgent string
-		pipeline    string
-		id          string
-		ticketURL   string
-		kickoff     string
-		kickoffFile string
-		instance    string
-		dispatchNow bool
-		workspace   string
-		runtimeKind string
-		runtimeBin  string
-		dryRun      bool
-		jsonOut     bool
-		format      string
+		repo         string
+		targetAgent  string
+		pipeline     string
+		id           string
+		ticketURL    string
+		kickoff      string
+		kickoffFile  string
+		instance     string
+		dispatchNow  bool
+		workspace    string
+		runtimeKind  string
+		runtimeBin   string
+		dryRun       bool
+		wait         bool
+		waitStatuses []string
+		waitEvents   []string
+		waitTimeout  time.Duration
+		waitInterval time.Duration
+		failOnFailed bool
+		jsonOut      bool
+		format       string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -868,10 +874,40 @@ func newJobCreateCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
+			if waitInterval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --wait-interval must be >= 0.")
+				return exitErr(2)
+			}
+			if waitTimeout < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --wait-timeout must be >= 0.")
+				return exitErr(2)
+			}
+			if dryRun && wait {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --wait cannot be combined with --dry-run.")
+				return exitErr(2)
+			}
+			if !wait && (cmd.Flags().Changed("wait-status") || cmd.Flags().Changed("wait-event") || cmd.Flags().Changed("wait-timeout") || cmd.Flags().Changed("wait-interval") || failOnFailed) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: wait-related flags require --wait.")
+				return exitErr(2)
+			}
 			tmpl, err := parseJobFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
 				return exitErr(2)
+			}
+			waitEventsSet := map[string]bool{}
+			waitStatusesSet := map[job.Status]bool{}
+			if wait {
+				waitEventsSet = parseJobWaitEvents(waitEvents)
+				waitStatusesSet, err = parseJobWaitStatuses(waitStatuses, !cmd.Flags().Changed("wait-status") && len(waitEventsSet) == 0)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
+					return exitErr(2)
+				}
+				if len(waitStatusesSet) == 0 && len(waitEventsSet) == 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: pass at least one non-empty --wait-status or --wait-event.")
+					return exitErr(2)
+				}
 			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
@@ -976,29 +1012,98 @@ func newJobCreateCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
+					if wait {
+						waited, err := waitForJobCommand(cmd, teamDir, res.Job.ID, waitStatusesSet, waitEventsSet, waitTimeout, waitInterval, "agent-team job create")
+						if err != nil {
+							if err == context.Canceled {
+								return nil
+							}
+							return err
+						}
+						refreshJobAdvanceResultAfterWait(res, waited)
+					}
 					if jsonOut {
-						return json.NewEncoder(cmd.OutOrStdout()).Encode(res)
+						if err := json.NewEncoder(cmd.OutOrStdout()).Encode(res); err != nil {
+							return err
+						}
+						if failOnFailed && res.Job.Status == job.StatusFailed {
+							return exitErr(1)
+						}
+						return nil
 					}
 					if tmpl != nil {
-						return renderJobTemplate(cmd.OutOrStdout(), res.Job, tmpl)
+						if err := renderJobTemplate(cmd.OutOrStdout(), res.Job, tmpl); err != nil {
+							return err
+						}
+						if failOnFailed && res.Job.Status == job.StatusFailed {
+							return exitErr(1)
+						}
+						return nil
 					}
-					return renderJobAdvanceResult(cmd.OutOrStdout(), res)
+					if err := renderJobAdvanceResult(cmd.OutOrStdout(), res); err != nil {
+						return err
+					}
+					if failOnFailed && res.Job.Status == job.StatusFailed {
+						return exitErr(1)
+					}
+					return nil
 				}
 				res, requestedName, err := dispatchJobWithPrefix(cmd, teamDir, j, "", workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin}, "agent-team job create")
 				if err != nil {
 					return err
 				}
+				if wait {
+					waited, err := waitForJobCommand(cmd, teamDir, res.Job.ID, waitStatusesSet, waitEventsSet, waitTimeout, waitInterval, "agent-team job create")
+					if err != nil {
+						if err == context.Canceled {
+							return nil
+						}
+						return err
+					}
+					res.Job = waited
+				}
 				if jsonOut {
-					return json.NewEncoder(cmd.OutOrStdout()).Encode(res)
+					if err := json.NewEncoder(cmd.OutOrStdout()).Encode(res); err != nil {
+						return err
+					}
+					if failOnFailed && res.Job.Status == job.StatusFailed {
+						return exitErr(1)
+					}
+					return nil
 				}
 				if tmpl != nil {
-					return renderJobTemplate(cmd.OutOrStdout(), res.Job, tmpl)
+					if err := renderJobTemplate(cmd.OutOrStdout(), res.Job, tmpl); err != nil {
+						return err
+					}
+					if failOnFailed && res.Job.Status == job.StatusFailed {
+						return exitErr(1)
+					}
+					return nil
 				}
 				renderDispatchOutcome(cmd.OutOrStdout(), res.Job.Target, requestedName, res.Event)
 				fmt.Fprintf(cmd.OutOrStdout(), "Job: %s status=%s instance=%s\n", res.Job.ID, res.Job.Status, res.Job.Instance)
+				if failOnFailed && res.Job.Status == job.StatusFailed {
+					return exitErr(1)
+				}
 				return nil
 			}
-			return renderJobResult(cmd.OutOrStdout(), j, jsonOut, tmpl)
+			if wait {
+				waited, err := waitForJobCommand(cmd, teamDir, j.ID, waitStatusesSet, waitEventsSet, waitTimeout, waitInterval, "agent-team job create")
+				if err != nil {
+					if err == context.Canceled {
+						return nil
+					}
+					return err
+				}
+				j = waited
+			}
+			if err := renderJobResult(cmd.OutOrStdout(), j, jsonOut, tmpl); err != nil {
+				return err
+			}
+			if failOnFailed && j.Status == job.StatusFailed {
+				return exitErr(1)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -1014,6 +1119,12 @@ func newJobCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile for --dispatch (claude or codex). Overrides env and repo config.")
 	cmd.Flags().StringVar(&runtimeBin, "runtime-bin", "", "Runtime binary for --dispatch. Overrides env and repo config.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the job that would be created without writing it.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "After creating or dispatching, wait for the job to reach a lifecycle status or event.")
+	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&waitEvents, "wait-event", nil, "With --wait, last event to wait for, e.g. dispatched, closed, or pipeline_done. Can repeat or comma-separate.")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
+	cmd.Flags().DurationVar(&waitInterval, "wait-interval", 500*time.Millisecond, "Polling interval with --wait.")
+	cmd.Flags().BoolVar(&failOnFailed, "fail-on-failed", false, "With --wait, exit 1 if the job resolves to failed.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
@@ -1487,31 +1598,8 @@ func newJobDispatchCmd() *cobra.Command {
 				return err
 			}
 			if wait {
-				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
-				defer stop()
-				cancel := func() {}
-				if waitTimeout > 0 {
-					ctx, cancel = context.WithTimeout(ctx, waitTimeout)
-				}
-				defer cancel()
-				waited, err := runJobWait(ctx, teamDir, res.Job.ID, waitStatusesSet, waitEventsSet, waitInterval)
+				waited, err := waitForJobCommand(cmd, teamDir, res.Job.ID, waitStatusesSet, waitEventsSet, waitTimeout, waitInterval, "agent-team job dispatch")
 				if err != nil {
-					if timeoutErr, ok := err.(*jobWaitTimeoutError); ok {
-						status := "unknown"
-						event := ""
-						if timeoutErr.Job != nil {
-							status = string(timeoutErr.Job.Status)
-							event = strings.TrimSpace(timeoutErr.Job.LastEvent)
-						}
-						if len(waitEventsSet) > 0 {
-							fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job dispatch: timed out waiting for %s to reach %s (current=%s event=%s).\n",
-								res.Job.ID, jobWaitConditionList(waitStatusesSet, waitEventsSet), status, emptyDash(event))
-						} else {
-							fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job dispatch: timed out waiting for %s to reach %s (current=%s).\n",
-								res.Job.ID, jobWaitStatusList(waitStatusesSet), status)
-						}
-						return exitErr(1)
-					}
 					if err == context.Canceled {
 						return nil
 					}
@@ -7228,6 +7316,57 @@ func runJobWait(ctx context.Context, teamDir, id string, statuses map[job.Status
 		case <-timer.C:
 		}
 	}
+}
+
+func waitForJobCommand(cmd *cobra.Command, teamDir, id string, statuses map[job.Status]bool, events map[string]bool, timeout, interval time.Duration, prefix string) (*job.Job, error) {
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	defer stop()
+	cancel := func() {}
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	defer cancel()
+	waited, err := runJobWait(ctx, teamDir, id, statuses, events, interval)
+	if err == nil {
+		return waited, nil
+	}
+	if timeoutErr, ok := err.(*jobWaitTimeoutError); ok {
+		status := "unknown"
+		event := ""
+		if timeoutErr.Job != nil {
+			status = string(timeoutErr.Job.Status)
+			event = strings.TrimSpace(timeoutErr.Job.LastEvent)
+		}
+		if len(events) > 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s: timed out waiting for %s to reach %s (current=%s event=%s).\n",
+				prefix, id, jobWaitConditionList(statuses, events), status, emptyDash(event))
+		} else {
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s: timed out waiting for %s to reach %s (current=%s).\n",
+				prefix, id, jobWaitStatusList(statuses), status)
+		}
+		return nil, exitErr(1)
+	}
+	return nil, err
+}
+
+func refreshJobAdvanceResultAfterWait(res *jobAdvanceResult, waited *job.Job) {
+	if res == nil || waited == nil {
+		return
+	}
+	stepID := ""
+	if res.Step != nil {
+		stepID = res.Step.ID
+	}
+	res.Job = waited
+	if stepID == "" {
+		return
+	}
+	idx := jobStepIndex(waited, stepID)
+	if idx == -1 {
+		res.Step = nil
+		return
+	}
+	res.Step = &waited.Steps[idx]
 }
 
 func jobWaitConditionList(statuses map[job.Status]bool, events map[string]bool) string {

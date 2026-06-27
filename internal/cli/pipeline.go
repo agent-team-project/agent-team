@@ -3881,7 +3881,7 @@ func runPipelineJobCreate(cmd *cobra.Command, teamDir, pipelineName, ticket stri
 				}
 				return err
 			}
-			res.Job = waited
+			refreshJobAdvanceResultAfterWait(res, waited)
 		}
 		if opts.JSON {
 			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(res); err != nil {
@@ -3929,34 +3929,7 @@ func runPipelineJobCreate(cmd *cobra.Command, teamDir, pipelineName, ticket stri
 }
 
 func waitForPipelineRunJob(cmd *cobra.Command, teamDir, id string, statuses map[job.Status]bool, events map[string]bool, opts pipelineRunOptions, prefix string) (*job.Job, error) {
-	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
-	defer stop()
-	cancel := func() {}
-	if opts.WaitTimeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, opts.WaitTimeout)
-	}
-	defer cancel()
-	waited, err := runJobWait(ctx, teamDir, id, statuses, events, opts.WaitInterval)
-	if err == nil {
-		return waited, nil
-	}
-	if timeoutErr, ok := err.(*jobWaitTimeoutError); ok {
-		status := "unknown"
-		event := ""
-		if timeoutErr.Job != nil {
-			status = string(timeoutErr.Job.Status)
-			event = strings.TrimSpace(timeoutErr.Job.LastEvent)
-		}
-		if len(events) > 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(), "%s: timed out waiting for %s to reach %s (current=%s event=%s).\n",
-				prefix, id, jobWaitConditionList(statuses, events), status, emptyDash(event))
-		} else {
-			fmt.Fprintf(cmd.ErrOrStderr(), "%s: timed out waiting for %s to reach %s (current=%s).\n",
-				prefix, id, jobWaitStatusList(statuses), status)
-		}
-		return nil, exitErr(1)
-	}
-	return nil, err
+	return waitForJobCommand(cmd, teamDir, id, statuses, events, opts.WaitTimeout, opts.WaitInterval, prefix)
 }
 
 type pipelineInfo struct {

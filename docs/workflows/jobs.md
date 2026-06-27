@@ -65,16 +65,28 @@ agent-team job create SQU-42 \
   --dispatch
 ```
 
-Dispatch and wait in scripts:
+Create, dispatch, and wait in scripts:
+
+```sh
+agent-team job create SQU-42 \
+  --target worker \
+  --kickoff "Implement the ticket" \
+  --dispatch \
+  --wait \
+  --wait-status running \
+  --wait-timeout 30s
+```
+
+Dispatch an existing job and wait:
 
 ```sh
 agent-team job dispatch squ-42 --wait --wait-status running --wait-timeout 30s
 agent-team job dispatch squ-42 --wait --wait-timeout 30m --fail-on-failed
 ```
 
-With `--wait`, dispatch waits for terminal status by default. Add
-`--wait-status running`, `--wait-event dispatched`, or `--wait-event closed`
-when automation needs a different handoff point.
+With `--wait`, create-and-dispatch and dispatch wait for terminal status by
+default. Add `--wait-status running`, `--wait-event dispatched`, or
+`--wait-event closed` when automation needs a different handoff point.
 
 Preview first:
 

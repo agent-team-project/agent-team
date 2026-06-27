@@ -91,7 +91,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 
 | Command | Purpose |
 | --- | --- |
-| `agent-team job create <ticket>` | Create a durable job |
+| `agent-team job create <ticket>` | Create a durable job; add `--dispatch --wait` for bounded create-and-run automation |
 | `agent-team job ls` | List jobs; filter held state, hold deadlines, and mixed-runtime ownership; sort rows and cap output with `--limit` |
 | `agent-team job show <job-id>` | Show job detail, runtime metadata, queue, quarantine, status previews, and actions |
 | `agent-team job wait <job-id>` | Wait for lifecycle status or last event with `--event` |

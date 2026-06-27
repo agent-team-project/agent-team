@@ -4163,6 +4163,121 @@ func TestJobCreateDispatchesImmediately(t *testing.T) {
 	}
 }
 
+func TestJobCreateDispatchWaitsForRequestedStatus(t *testing.T) {
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-job-create-dispatch-wait-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	mgr := daemon.NewInstanceManager(root, fakeSpawnerForTest(t, 2*time.Second))
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{
+		"job", "create", "SQU-219",
+		"--repo", tmp,
+		"--dispatch",
+		"--workspace", "repo",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("job create --dispatch --wait: %v\nstderr=%s", err, createErr.String())
+	}
+	var dispatched jobDispatchResult
+	if err := json.Unmarshal(createOut.Bytes(), &dispatched); err != nil {
+		t.Fatalf("decode dispatch wait json: %v\nbody=%s", err, createOut.String())
+	}
+	if dispatched.Job == nil || dispatched.Job.Status != job.StatusRunning || dispatched.Job.Instance != "worker-squ-219" || dispatched.Job.LastEvent != "dispatched" {
+		t.Fatalf("waited dispatch result = %+v", dispatched)
+	}
+
+	pipeline := NewRootCmd()
+	pipelineOut, pipelineErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipeline.SetOut(pipelineOut)
+	pipeline.SetErr(pipelineErr)
+	pipeline.SetArgs([]string{
+		"job", "create", "SQU-220",
+		"--repo", tmp,
+		"--pipeline", "ticket_to_pr",
+		"--dispatch",
+		"--workspace", "repo",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := pipeline.Execute(); err != nil {
+		t.Fatalf("job create pipeline --dispatch --wait: %v\nstderr=%s", err, pipelineErr.String())
+	}
+	var advanced jobAdvanceResult
+	if err := json.Unmarshal(pipelineOut.Bytes(), &advanced); err != nil {
+		t.Fatalf("decode pipeline dispatch wait json: %v\nbody=%s", err, pipelineOut.String())
+	}
+	if advanced.Job == nil || advanced.Step == nil {
+		t.Fatalf("advanced wait result missing job/step = %+v", advanced)
+	}
+	if advanced.Job.Status != job.StatusRunning || advanced.Job.Instance != "worker-squ-220-implement" || advanced.Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("waited advanced job = %+v", advanced.Job)
+	}
+	if advanced.Step.ID != "implement" || advanced.Step.Status != job.StatusRunning || advanced.Step.Instance != "worker-squ-220-implement" {
+		t.Fatalf("waited advanced step = %+v", advanced.Step)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-219")
+	stopAndWaitForTest(t, mgr, "worker-squ-220-implement")
+}
+
+func TestJobCreateDispatchWaitTimesOutForEvent(t *testing.T) {
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-job-create-dispatch-wait-timeout-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	mgr := daemon.NewInstanceManager(root, fakeSpawnerForTest(t, 2*time.Second))
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"job", "create", "SQU-221",
+		"--repo", tmp,
+		"--dispatch",
+		"--workspace", "repo",
+		"--wait",
+		"--wait-event", "closed",
+		"--wait-timeout", "1ms",
+		"--wait-interval", "10ms",
+	})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("job create --dispatch --wait succeeded unexpectedly")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("dispatch wait timeout wrote stdout=%q", out.String())
+	}
+	if !strings.Contains(stderr.String(), "timed out waiting for squ-221 to reach event=closed") ||
+		!strings.Contains(stderr.String(), "current=running event=dispatched") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-221")
+}
+
 func TestJobCreateDispatchQueuesStoppedPersistentInstance(t *testing.T) {
 	target, _, cleanup := setupIntakePipelineRepo(t)
 	defer cleanup()
