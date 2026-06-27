@@ -3745,6 +3745,18 @@ func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 		t.Fatalf("ready actions = %+v", rows[0].Actions)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"pipeline", "ready", "ticket_to_pr", "--repo", root, "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("pipeline ready commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	if got := strings.TrimSpace(commandsOut.String()); got != "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes" {
+		t.Fatalf("pipeline ready commands = %q", commandsOut.String())
+	}
+
 	format := NewRootCmd()
 	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	format.SetOut(formatOut)
@@ -3890,6 +3902,42 @@ func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 	}
 	if !strings.Contains(invalidErr.String(), "--state requires at least one non-empty state") {
 		t.Fatalf("invalid state stderr = %q", invalidErr.String())
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "json",
+			args: []string{"pipeline", "ready", "ticket_to_pr", "--repo", root, "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "format",
+			args: []string{"pipeline", "ready", "ticket_to_pr", "--repo", root, "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "watch",
+			args: []string{"pipeline", "ready", "ticket_to_pr", "--repo", root, "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
+		},
+	} {
+		t.Run("ready-commands-conflict-"+tc.name, func(t *testing.T) {
+			conflict := NewRootCmd()
+			conflictOut, conflictErr := &bytes.Buffer{}, &bytes.Buffer{}
+			conflict.SetOut(conflictOut)
+			conflict.SetErr(conflictErr)
+			conflict.SetArgs(tc.args)
+			if err := conflict.Execute(); err == nil {
+				t.Fatalf("pipeline ready accepted %s conflict: stdout=%s", tc.name, conflictOut.String())
+			}
+			if !strings.Contains(conflictErr.String(), tc.want) {
+				t.Fatalf("pipeline ready %s conflict stderr = %q, want %q", tc.name, conflictErr.String(), tc.want)
+			}
+		})
 	}
 }
 

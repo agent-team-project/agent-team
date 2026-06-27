@@ -4855,6 +4855,7 @@ func newJobReadyCmd() *cobra.Command {
 		interval time.Duration
 		jsonOut  bool
 		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -4862,6 +4863,18 @@ func newJobReadyCmd() *cobra.Command {
 		Short: "List pipeline jobs with ready or selected next-step states.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ready: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ready: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ready: --commands cannot be combined with --watch.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ready: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -4905,7 +4918,7 @@ func newJobReadyCmd() *cobra.Command {
 				defer stop()
 				return runJobReadyWatch(ctx, cmd.OutOrStdout(), teamDir, opts, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
-			return runJobReady(cmd.OutOrStdout(), teamDir, opts, jsonOut, tmpl)
+			return runJobReady(cmd.OutOrStdout(), teamDir, opts, jsonOut, tmpl, commands)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -4919,6 +4932,7 @@ func newJobReadyCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit ready rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended commands, one per line.")
 	return cmd
 }
 
@@ -7540,18 +7554,21 @@ type jobReadyOptions struct {
 	Limit    int
 }
 
-func runJobReady(w io.Writer, teamDir string, opts jobReadyOptions, jsonOut bool, tmpl *template.Template) error {
+func runJobReady(w io.Writer, teamDir string, opts jobReadyOptions, jsonOut bool, tmpl *template.Template, commands bool) error {
 	rows, err := collectJobReadyRows(teamDir, opts.Pipeline, opts.States)
 	if err != nil {
 		return err
 	}
 	rows = prepareJobReadyRows(rows, opts)
-	return renderJobReadyRows(w, rows, jsonOut, tmpl)
+	return renderJobReadyRows(w, rows, jsonOut, tmpl, commands)
 }
 
-func renderJobReadyRows(w io.Writer, rows []jobReadyRow, jsonOut bool, tmpl *template.Template) error {
+func renderJobReadyRows(w io.Writer, rows []jobReadyRow, jsonOut bool, tmpl *template.Template, commands bool) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(rows)
+	}
+	if commands {
+		return renderJobReadyCommands(w, rows)
 	}
 	if tmpl != nil {
 		for _, row := range rows {
@@ -7568,6 +7585,20 @@ func renderJobReadyRows(w io.Writer, rows []jobReadyRow, jsonOut bool, tmpl *tem
 	return nil
 }
 
+func renderJobReadyCommands(w io.Writer, rows []jobReadyRow) error {
+	for _, row := range rows {
+		for _, action := range row.Actions {
+			if strings.TrimSpace(action) == "" {
+				continue
+			}
+			if _, err := fmt.Fprintln(w, action); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func runJobReadyWatch(ctx context.Context, w io.Writer, teamDir string, opts jobReadyOptions, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
@@ -7580,7 +7611,7 @@ func runJobReadyWatch(ctx context.Context, w io.Writer, teamDir string, opts job
 				return err
 			}
 		}
-		if err := runJobReady(w, teamDir, opts, jsonOut, tmpl); err != nil {
+		if err := runJobReady(w, teamDir, opts, jsonOut, tmpl, false); err != nil {
 			return err
 		}
 		if !waitForWatchTick(ctx, ticker.C) {

@@ -2917,6 +2917,7 @@ agent-team job ready [flags]
 Flags:
 
 ```text
+      --commands            Print only recommended commands, one per line.
       --format string       Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
       --interval duration   Refresh interval for --watch. (default 2s)
       --json                Emit ready rows as JSON.
@@ -5061,6 +5062,7 @@ Flags:
 
 ```text
       --all                 List ready jobs across all pipelines. This is the default when no pipeline is passed.
+      --commands            Print only recommended commands, one per line.
       --format string       Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
       --interval duration   Refresh interval for --watch. (default 2s)
       --json                Emit ready rows as JSON.
@@ -8175,6 +8177,7 @@ agent-team team ready <team> [flags]
 Flags:
 
 ```text
+      --commands            Print only recommended commands, one per line.
       --format string       Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.
       --interval duration   Refresh interval for --watch. (default 2s)
       --json                Emit team ready rows as JSON.

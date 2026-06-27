@@ -1727,6 +1727,7 @@ func newPipelineReadyCmd() *cobra.Command {
 		interval time.Duration
 		jsonOut  bool
 		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1734,6 +1735,18 @@ func newPipelineReadyCmd() *cobra.Command {
 		Short: "List ready pipeline jobs.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: --commands cannot be combined with --watch.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -1794,7 +1807,7 @@ func newPipelineReadyCmd() *cobra.Command {
 				defer stop()
 				return runPipelineReadyWatch(ctx, cmd.OutOrStdout(), teamDir, pipelineName, allPipelines, opts, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
-			return runPipelineReady(cmd.OutOrStdout(), teamDir, pipelineName, allPipelines, opts, jsonOut, tmpl)
+			return runPipelineReady(cmd.OutOrStdout(), teamDir, pipelineName, allPipelines, opts, jsonOut, tmpl, commands)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -1808,10 +1821,11 @@ func newPipelineReadyCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit ready rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.JobID}} {{.State}} {{.StepID}}'.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended commands, one per line.")
 	return cmd
 }
 
-func runPipelineReady(w io.Writer, teamDir, pipeline string, allPipelines bool, opts jobReadyOptions, jsonOut bool, tmpl *template.Template) error {
+func runPipelineReady(w io.Writer, teamDir, pipeline string, allPipelines bool, opts jobReadyOptions, jsonOut bool, tmpl *template.Template, commands bool) error {
 	rows, err := collectJobReadyRows(teamDir, opts.Pipeline, opts.States)
 	if err != nil {
 		return err
@@ -1822,7 +1836,7 @@ func runPipelineReady(w io.Writer, teamDir, pipeline string, allPipelines bool, 
 		rows = scopePipelineReadyRows(pipeline, rows)
 	}
 	rows = prepareJobReadyRows(rows, opts)
-	return renderJobReadyRows(w, rows, jsonOut, tmpl)
+	return renderJobReadyRows(w, rows, jsonOut, tmpl, commands)
 }
 
 func runPipelineReadyWatch(ctx context.Context, w io.Writer, teamDir, pipeline string, allPipelines bool, opts jobReadyOptions, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
@@ -1837,7 +1851,7 @@ func runPipelineReadyWatch(ctx context.Context, w io.Writer, teamDir, pipeline s
 				return err
 			}
 		}
-		if err := runPipelineReady(w, teamDir, pipeline, allPipelines, opts, jsonOut, tmpl); err != nil {
+		if err := runPipelineReady(w, teamDir, pipeline, allPipelines, opts, jsonOut, tmpl, false); err != nil {
 			return err
 		}
 		if !waitForWatchTick(ctx, ticker.C) {

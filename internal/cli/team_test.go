@@ -331,6 +331,18 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team ready rows = %+v", readyRows)
 	}
 
+	readyCommands := NewRootCmd()
+	readyCommandsOut, readyCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	readyCommands.SetOut(readyCommandsOut)
+	readyCommands.SetErr(readyCommandsErr)
+	readyCommands.SetArgs([]string{"team", "ready", "delivery", "--repo", root, "--commands"})
+	if err := readyCommands.Execute(); err != nil {
+		t.Fatalf("team ready commands: %v\nstderr=%s", err, readyCommandsErr.String())
+	}
+	if got := strings.TrimSpace(readyCommandsOut.String()); got != "agent-team team tick delivery --dry-run --preview-routes" {
+		t.Fatalf("team ready commands = %q", readyCommandsOut.String())
+	}
+
 	readyFormat := NewRootCmd()
 	readyFormatOut, readyFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	readyFormat.SetOut(readyFormatOut)
@@ -368,6 +380,42 @@ since = "2026-06-18T12:00:00Z"
 	}
 	if !strings.Contains(readyIntervalErr.String(), "--interval must be >= 0") {
 		t.Fatalf("team ready negative interval stderr = %q", readyIntervalErr.String())
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "json",
+			args: []string{"team", "ready", "delivery", "--repo", root, "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "format",
+			args: []string{"team", "ready", "delivery", "--repo", root, "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "watch",
+			args: []string{"team", "ready", "delivery", "--repo", root, "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
+		},
+	} {
+		t.Run("ready-commands-conflict-"+tc.name, func(t *testing.T) {
+			conflict := NewRootCmd()
+			conflictOut, conflictErr := &bytes.Buffer{}, &bytes.Buffer{}
+			conflict.SetOut(conflictOut)
+			conflict.SetErr(conflictErr)
+			conflict.SetArgs(tc.args)
+			if err := conflict.Execute(); err == nil {
+				t.Fatalf("team ready accepted %s conflict: stdout=%s", tc.name, conflictOut.String())
+			}
+			if !strings.Contains(conflictErr.String(), tc.want) {
+				t.Fatalf("team ready %s conflict stderr = %q, want %q", tc.name, conflictErr.String(), tc.want)
+			}
+		})
 	}
 
 	advance := NewRootCmd()

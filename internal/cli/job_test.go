@@ -10311,6 +10311,18 @@ func TestJobReadyListsAdvanceablePipelineJobs(t *testing.T) {
 	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job ready commands: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "agent-team job advance squ-210" {
+		t.Fatalf("ready commands = %q", out.String())
+	}
+
+	cmd = NewRootCmd()
+	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
 	cmd.SetArgs([]string{"job", "ready", "--repo", tmp, "--pipeline", "ticket_to_pr", "--state", "all", "--format", "{{.JobID}} {{.State}} {{.StepID}}"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("job ready all format: %v\nstderr=%s", err, stderr.String())
@@ -10416,6 +10428,42 @@ func TestJobReadyListsAdvanceablePipelineJobs(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--state requires at least one non-empty state") {
 		t.Fatalf("missing state error:\n%s", stderr.String())
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "json",
+			args: []string{"job", "ready", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "format",
+			args: []string{"job", "ready", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "watch",
+			args: []string{"job", "ready", "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
+		},
+	} {
+		t.Run("ready-commands-conflict-"+tc.name, func(t *testing.T) {
+			conflict := NewRootCmd()
+			conflictOut, conflictErr := &bytes.Buffer{}, &bytes.Buffer{}
+			conflict.SetOut(conflictOut)
+			conflict.SetErr(conflictErr)
+			conflict.SetArgs(tc.args)
+			if err := conflict.Execute(); err == nil {
+				t.Fatalf("job ready accepted %s conflict: stdout=%s", tc.name, conflictOut.String())
+			}
+			if !strings.Contains(conflictErr.String(), tc.want) {
+				t.Fatalf("job ready %s conflict stderr = %q, want %q", tc.name, conflictErr.String(), tc.want)
+			}
+		})
 	}
 }
 
