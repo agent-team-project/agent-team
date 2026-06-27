@@ -49,6 +49,7 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobUnblockCmd())
 	cmd.AddCommand(newJobLogsCmd())
 	cmd.AddCommand(newJobResumePlanCmd())
+	cmd.AddCommand(newJobStatsCmd())
 	cmd.AddCommand(newJobSnapshotCmd())
 	cmd.AddCommand(newJobAttachCmd())
 	cmd.AddCommand(newJobStopCmd())
@@ -1999,6 +2000,42 @@ func jobStepCommandFlag(stepID string) string {
 	return " --step " + stepID
 }
 
+type jobStatsLister struct {
+	instanceLister
+	job    *job.Job
+	stepID string
+}
+
+func (l jobStatsLister) Instances() ([]*daemon.Metadata, error) {
+	metas, err := l.instanceLister.Instances()
+	if err != nil {
+		return nil, err
+	}
+	byInstance := map[string]*daemon.Metadata{}
+	for _, meta := range metas {
+		if meta == nil || strings.TrimSpace(meta.Instance) == "" {
+			continue
+		}
+		byInstance[meta.Instance] = meta
+	}
+	if stepID := strings.TrimSpace(l.stepID); stepID != "" {
+		idx := jobStepIndex(l.job, stepID)
+		if idx < 0 {
+			return nil, fmt.Errorf("step %q not found", stepID)
+		}
+		instance := strings.TrimSpace(l.job.Steps[idx].Instance)
+		if instance == "" {
+			return nil, nil
+		}
+		meta := byInstance[instance]
+		if meta == nil {
+			return nil, nil
+		}
+		return []*daemon.Metadata{meta}, nil
+	}
+	return metadataForResumePlanJob(metas, byInstance, l.job), nil
+}
+
 func newJobLogsCmd() *cobra.Command {
 	var (
 		repo   string
@@ -2086,6 +2123,149 @@ func newJobLogsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&grep, "grep", "", "Only print log lines matching this regular expression. One-shot reads only.")
 	cmd.Flags().BoolVar(&last, "last-message", false, "Show the clean final Codex response sidecar for the owning instance.")
 	cmd.Flags().BoolVar(&clean, "clean", false, "Hide known Codex runtime diagnostic noise when printing the raw owning instance log.")
+	return cmd
+}
+
+func newJobStatsCmd() *cobra.Command {
+	var (
+		repo             string
+		stepID           string
+		all              bool
+		latest           bool
+		last             int
+		watch            bool
+		jsonOut          bool
+		summary          bool
+		noClear          bool
+		format           string
+		sortBy           string
+		interval         time.Duration
+		statusFilters    []string
+		runtimeFilters   []string
+		agentFilters     []string
+		phaseFilters     []string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "stats <job-id>",
+		Short: "Show CPU and memory usage for a job's instances.",
+		Long: "Show a one-shot or watchable resource snapshot for daemon-known instances owned by one durable job. " +
+			"Pipeline jobs can own several stage instances; pass --step to focus one stage. With no filters, only running job-owned instances are shown.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if last < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job stats: --last must be >= 0.")
+				return exitErr(2)
+			}
+			if latest && last > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job stats: choose one of --latest or --last.")
+				return exitErr(2)
+			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job stats: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if format != "" && (jsonOut || summary) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job stats: --format cannot be combined with --json or --summary.")
+				return exitErr(2)
+			}
+			formatTemplate, err := parseStatsFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job stats: %v\n", err)
+				return exitErr(2)
+			}
+			opts, err := newStatsOptionsWithRuntimeInstancesPhasesAndUnhealthy(all, statusFilters, runtimeFilters, agentFilters, phaseFilters, nil, unhealthyOnly)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job stats: %v\n", err)
+				return exitErr(2)
+			}
+			sortMode, err := parseStatsSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job stats: %v\n", err)
+				return exitErr(2)
+			}
+			opts.Sort = sortMode
+			opts.SortSet = cmd.Flags().Changed("sort")
+			opts.Latest = latest
+			opts.Limit = last
+			opts.Stale = staleOnly
+			opts.RuntimeStale = runtimeStaleOnly
+			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(stepID) != "" && jobStepIndex(j, stepID) < 0 {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job stats: step %q not found\n", strings.TrimSpace(stepID))
+				return exitErr(2)
+			}
+			opts.phaseByInstance = statsPhaseByInstance(teamDir, time.Now())
+			opts.staleByInstance = staleInstanceSet(teamDir, time.Now())
+			var base instanceLister
+			base, err = newDaemonClient(teamDir)
+			if err != nil {
+				if errors.Is(err, errDaemonNotRunning) {
+					base = localInstanceLister{daemonRoot: daemon.DaemonRoot(teamDir)}
+				} else {
+					return err
+				}
+			}
+			lister := jobStatsLister{instanceLister: base, job: j, stepID: stepID}
+			var renderErr error
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				clear := !noClear && !jsonOut
+				switch {
+				case summary:
+					renderErr = runStatsSummaryWatchWithClear(ctx, cmd.OutOrStdout(), lister, nil, opts, interval, time.Now, readProcessStats, jsonOut, clear)
+				case formatTemplate != nil:
+					renderErr = runStatsFormatWatch(ctx, cmd.OutOrStdout(), lister, nil, opts, interval, time.Now, readProcessStats, formatTemplate)
+				default:
+					renderErr = runStatsWatchWithClear(ctx, cmd.OutOrStdout(), lister, nil, opts, interval, time.Now, readProcessStats, jsonOut, clear)
+				}
+			} else {
+				switch {
+				case summary && jsonOut:
+					renderErr = runStatsSummaryJSON(cmd.OutOrStdout(), lister, nil, opts, time.Now(), readProcessStats)
+				case summary:
+					renderErr = runStatsSummary(cmd.OutOrStdout(), lister, nil, opts, time.Now(), readProcessStats)
+				case jsonOut:
+					renderErr = runStatsJSON(cmd.OutOrStdout(), lister, nil, opts, time.Now(), readProcessStats)
+				case formatTemplate != nil:
+					renderErr = runStatsFormat(cmd.OutOrStdout(), lister, nil, opts, time.Now(), readProcessStats, formatTemplate)
+				default:
+					renderErr = runStats(cmd.OutOrStdout(), lister, nil, opts, time.Now(), readProcessStats)
+				}
+			}
+			if renderErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job stats: %v\n", renderErr)
+				return exitErr(1)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&stepID, "step", "", "Show stats for this pipeline step's owning instance.")
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "Include stopped, exited, and crashed job-owned instances.")
+	cmd.Flags().BoolVar(&latest, "latest", false, "Show stats for the most recently started job-owned instance after other filters.")
+	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show stats for the N most recently started job-owned instances after other filters (0 = all).")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh job stats until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON. With --watch, writes one JSON array per refresh.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate CPU, memory, and RSS totals instead of job instance rows.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.Instance}} {{.CPUPercent}} {{.RSS}}'.")
+	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort rows by name, cpu, mem, rss, status, agent, phase, stale, runtime-stale, or unhealthy.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
+	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show job-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show job-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&agentFilters, "agent", nil, "Only show job-owned instances for this agent. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show job-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show job-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show job-owned running instances whose recorded runtime PID is no longer live.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed, status-stale, or runtime-stale job-owned instances.")
 	return cmd
 }
 

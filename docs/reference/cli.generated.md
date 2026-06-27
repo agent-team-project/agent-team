@@ -1779,6 +1779,7 @@ Subcommands:
 - `agent-team job show` - Show one durable job.
 - `agent-team job snapshot` - Capture a job-scoped diagnostic snapshot.
 - `agent-team job start` - Start or resume a job&#39;s owning instance.
+- `agent-team job stats` - Show CPU and memory usage for a job&#39;s instances.
 - `agent-team job step` - Update a pipeline job step status.
 - `agent-team job stop` - Stop a job&#39;s owning instance.
 - `agent-team job timeout` - Mark stale running job work failed.
@@ -2790,6 +2791,40 @@ Flags:
       --step string              Use this pipeline step's owning instance.
       --timeout duration         Maximum time to wait with --wait (0 = no timeout).
       --wait                     Wait for the owning instance to become healthy after starting or resuming.
+```
+
+## `agent-team job stats`
+
+Show CPU and memory usage for a job&#39;s instances.
+
+Show a one-shot or watchable resource snapshot for daemon-known instances owned by one durable job. Pipeline jobs can own several stage instances; pass --step to focus one stage. With no filters, only running job-owned instances are shown.
+
+```text
+agent-team job stats <job-id> [flags]
+```
+
+Flags:
+
+```text
+      --agent strings       Only show job-owned instances for this agent. Can repeat or comma-separate.
+  -a, --all                 Include stopped, exited, and crashed job-owned instances.
+      --format string       Render each row with a Go template, e.g. '{{.Instance}} {{.CPUPercent}} {{.RSS}}'.
+      --interval duration   Refresh interval for --watch. (default 2s)
+      --json                Emit JSON. With --watch, writes one JSON array per refresh.
+  -n, --last int            Show stats for the N most recently started job-owned instances after other filters (0 = all).
+      --latest              Show stats for the most recently started job-owned instance after other filters.
+      --no-clear            With --watch, append snapshots instead of redrawing the terminal.
+      --phase strings       Only show job-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
+      --repo string         Repo root containing .agent_team. (default "<repo>")
+      --runtime strings     Only show job-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale       Only show job-owned running instances whose recorded runtime PID is no longer live.
+      --sort string         Sort rows by name, cpu, mem, rss, status, agent, phase, stale, runtime-stale, or unhealthy. (default "name")
+      --stale               Only show job-owned instances whose status.toml is stale.
+      --status strings      Only show job-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
+      --step string         Show stats for this pipeline step's owning instance.
+      --summary             Show aggregate CPU, memory, and RSS totals instead of job instance rows.
+      --unhealthy           Only show crashed, status-stale, or runtime-stale job-owned instances.
+  -w, --watch               Refresh job stats until interrupted.
 ```
 
 ## `agent-team job step`

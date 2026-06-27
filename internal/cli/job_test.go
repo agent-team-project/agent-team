@@ -5346,6 +5346,115 @@ func TestJobWaitFailOnFailed(t *testing.T) {
 	}
 }
 
+func TestJobStatsScopesRowsAndSteps(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-120",
+		Ticket:    "SQU-120",
+		Target:    "manager",
+		Instance:  "manager-squ-120",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-120-implement", StartedAt: now.Add(-30 * time.Minute)},
+			{ID: "review", Target: "manager", Status: job.StatusBlocked, Instance: "reviewer-squ-120-review", StartedAt: now.Add(-20 * time.Minute)},
+		},
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager-squ-120", Job: "squ-120", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp, StartedAt: now.Add(-40 * time.Minute)},
+		{Instance: "worker-squ-120-implement", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp, StartedAt: now.Add(-30 * time.Minute)},
+		{Instance: "reviewer-squ-120-review", Agent: "manager", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusStopped, PID: os.Getpid(), Workspace: tmp, StartedAt: now.Add(-20 * time.Minute), StoppedAt: now.Add(-10 * time.Minute)},
+		{Instance: "sidecar-squ-120", Job: "squ-120", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp, StartedAt: now.Add(-15 * time.Minute)},
+		{Instance: "worker-squ-121", Job: "squ-121", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp, StartedAt: now.Add(-5 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	running := NewRootCmd()
+	runningOut, runningErr := &bytes.Buffer{}, &bytes.Buffer{}
+	running.SetOut(runningOut)
+	running.SetErr(runningErr)
+	running.SetArgs([]string{"job", "stats", "SQU-120", "--repo", tmp, "--json"})
+	if err := running.Execute(); err != nil {
+		t.Fatalf("job stats running: %v\nstderr=%s", err, runningErr.String())
+	}
+	var rows []statsJSONRow
+	if err := json.Unmarshal(runningOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode job stats running: %v\nbody=%s", err, runningOut.String())
+	}
+	if got := statsJSONRowNames(rows); strings.Join(got, ",") != "manager-squ-120,sidecar-squ-120,worker-squ-120-implement" {
+		t.Fatalf("job stats rows = %v", got)
+	}
+
+	codex := NewRootCmd()
+	codexOut, codexErr := &bytes.Buffer{}, &bytes.Buffer{}
+	codex.SetOut(codexOut)
+	codex.SetErr(codexErr)
+	codex.SetArgs([]string{"job", "stats", "SQU-120", "--repo", tmp, "--runtime", "codex", "--format", "{{.Instance}}"})
+	if err := codex.Execute(); err != nil {
+		t.Fatalf("job stats runtime format: %v\nstderr=%s", err, codexErr.String())
+	}
+	if got, want := strings.TrimSpace(codexOut.String()), "sidecar-squ-120\nworker-squ-120-implement"; got != want {
+		t.Fatalf("job stats runtime format = %q, want %q", got, want)
+	}
+
+	step := NewRootCmd()
+	stepOut, stepErr := &bytes.Buffer{}, &bytes.Buffer{}
+	step.SetOut(stepOut)
+	step.SetErr(stepErr)
+	step.SetArgs([]string{"job", "stats", "SQU-120", "--repo", tmp, "--step", "review", "--all", "--json"})
+	if err := step.Execute(); err != nil {
+		t.Fatalf("job stats step: %v\nstderr=%s", err, stepErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(stepOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode job stats step: %v\nbody=%s", err, stepOut.String())
+	}
+	if got := statsJSONRowNames(rows); strings.Join(got, ",") != "reviewer-squ-120-review" {
+		t.Fatalf("job stats step rows = %v", got)
+	}
+	if rows[0].Status != string(daemon.StatusStopped) {
+		t.Fatalf("job stats step status = %+v", rows[0])
+	}
+
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"job", "stats", "SQU-120", "--repo", tmp, "--all", "--summary", "--json"})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("job stats summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var statsSummary statsSummaryJSON
+	if err := json.Unmarshal(summaryOut.Bytes(), &statsSummary); err != nil {
+		t.Fatalf("decode job stats summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if statsSummary.Total != 4 || statsSummary.Running != 3 || statsSummary.Stopped != 1 {
+		t.Fatalf("job stats summary = %+v", statsSummary)
+	}
+
+	invalidStep := NewRootCmd()
+	invalidStep.SetOut(&bytes.Buffer{})
+	invalidStepErr := &bytes.Buffer{}
+	invalidStep.SetErr(invalidStepErr)
+	invalidStep.SetArgs([]string{"job", "stats", "SQU-120", "--repo", tmp, "--step", "deploy"})
+	if err := invalidStep.Execute(); err == nil {
+		t.Fatal("job stats accepted unknown step")
+	}
+	if !strings.Contains(invalidStepErr.String(), `step "deploy" not found`) {
+		t.Fatalf("unknown step error = %q", invalidStepErr.String())
+	}
+}
+
 func TestJobLogsReadsOwningInstanceLog(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
