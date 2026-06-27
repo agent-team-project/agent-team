@@ -152,6 +152,7 @@ type overviewResult struct {
 	Runtime       overviewRuntimeSummary  `json:"runtime"`
 	Inbox         overviewInboxSummary    `json:"inbox"`
 	Jobs          overviewJobSummary      `json:"jobs"`
+	Outbox        outboxSummary           `json:"outbox"`
 	Queue         queueSummary            `json:"queue"`
 	Pipelines     overviewPipelineSummary `json:"pipelines"`
 	Schedules     overviewScheduleSummary `json:"schedules"`
@@ -295,6 +296,12 @@ func collectOverview(teamDir string, now time.Time, scheduleLimit int) *overview
 				out.Queue = triage.Queue
 			}
 		}
+	}
+
+	if outbox, err := collectOverviewOutbox(teamDir); err != nil {
+		out.addError("outbox", err)
+	} else {
+		out.Outbox = outbox
 	}
 
 	if out.Pipelines.Total == 0 {
@@ -671,6 +678,14 @@ func overviewIntakeFromDeliveries(deliveries []intakeDelivery) overviewIntakeSum
 	}
 }
 
+func collectOverviewOutbox(teamDir string) (outboxSummary, error) {
+	items, err := daemon.ListOutboxItems(teamDir)
+	if err != nil {
+		return outboxSummary{}, err
+	}
+	return summarizeOutboxItems(items), nil
+}
+
 func overviewActions(out *overviewResult, health *healthResult) []string {
 	return overviewActionCommands(overviewActionHints(out, health))
 }
@@ -762,6 +777,12 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 	}
 	if out.Queue.Quarantined > 0 {
 		add(overviewQueueQuarantineAction(health, teamName), "queue", fmt.Sprintf("quarantined=%d", out.Queue.Quarantined))
+	}
+	if teamName == "" && out.Outbox.Failed > 0 {
+		add("agent-team outbox ls --state failed", "outbox", fmt.Sprintf("failed=%d", out.Outbox.Failed))
+	}
+	if teamName == "" && out.Outbox.Pending > 0 {
+		add("agent-team outbox drain --dry-run", "outbox", fmt.Sprintf("pending=%d", out.Outbox.Pending))
 	}
 	if out.Jobs.Attention > 0 {
 		if teamName != "" {
@@ -876,6 +897,7 @@ func overviewHasDrainableWork(out *overviewResult) bool {
 		return false
 	}
 	return out.Queue.Pending > out.Queue.Delayed ||
+		out.Outbox.Pending > 0 ||
 		out.Jobs.StatusChanges > 0 ||
 		out.Jobs.ReadySteps > 0 ||
 		out.Pipelines.ReadySteps > 0 ||
@@ -890,6 +912,7 @@ func overviewDrainableWorkReason(out *overviewResult) string {
 	if out.Queue.Pending > out.Queue.Delayed {
 		total += out.Queue.Pending - out.Queue.Delayed
 	}
+	total += out.Outbox.Pending
 	total += out.Jobs.StatusChanges
 	total += out.Jobs.ReadySteps
 	total += out.Pipelines.ReadySteps
@@ -1101,6 +1124,8 @@ func overviewOK(out *overviewResult, health *healthResult) bool {
 	return out.Queue.Dead == 0 &&
 		out.Queue.Pending <= out.Queue.Delayed &&
 		out.Queue.Quarantined == 0 &&
+		out.Outbox.Pending == 0 &&
+		out.Outbox.Failed == 0 &&
 		out.Inbox.Unread == 0 &&
 		out.Jobs.Attention == 0 &&
 		out.Jobs.ReadySteps == 0 &&
@@ -1124,6 +1149,7 @@ func overviewState(out *overviewResult) string {
 		(out.Topology != nil && !out.Topology.OK) ||
 		out.Queue.Dead > 0 ||
 		out.Queue.Quarantined > 0 ||
+		out.Outbox.Failed > 0 ||
 		out.Jobs.Attention > 0 ||
 		out.Pipelines.BlockedSteps > 0 ||
 		out.Pipelines.FailedSteps > 0 ||
@@ -1245,6 +1271,11 @@ func renderOverview(w io.Writer, result *overviewResult, jsonOut bool, tmpl *tem
 		result.Jobs.ReadySteps,
 		result.Jobs.StatusChanges)
 	fmt.Fprintln(w, queueSummaryLine(result.Queue))
+	fmt.Fprintf(w, "outbox: total=%d pending=%d failed=%d processed=%d\n",
+		result.Outbox.Total,
+		result.Outbox.Pending,
+		result.Outbox.Failed,
+		result.Outbox.Processed)
 	fmt.Fprintf(w, "pipelines: total=%d jobs=%d ready_steps=%d parallel_ready_steps=%d stale_running_steps=%d blocked_steps=%d failed_steps=%d\n",
 		result.Pipelines.Total,
 		result.Pipelines.Jobs,

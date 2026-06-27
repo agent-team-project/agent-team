@@ -132,6 +132,99 @@ func TestOverviewReportsUnreadInboxActions(t *testing.T) {
 	}
 }
 
+func TestOverviewReportsOutboxActions(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+	teamDir := filepath.Join(root, ".agent_team")
+	now := time.Now().UTC()
+	items := []*daemon.OutboxItem{
+		{
+			ID:        "outbox-pending",
+			State:     daemon.OutboxStatePending,
+			Type:      "agent.dispatch",
+			Payload:   map[string]any{"job_id": "squ-810", "target": "worker"},
+			Source:    "manager",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "outbox-failed",
+			State:     daemon.OutboxStateFailed,
+			Type:      "agent.dispatch",
+			Payload:   map[string]any{"job_id": "squ-811", "target": "worker"},
+			Source:    "manager",
+			LastError: "topology not configured",
+			CreatedAt: now.Add(time.Minute),
+			UpdatedAt: now.Add(time.Minute),
+		},
+	}
+	for _, item := range items {
+		if err := daemon.WriteOutboxItem(teamDir, item); err != nil {
+			t.Fatalf("write outbox item %s: %v", item.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview outbox json: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview outbox: %v\nbody=%s", err, out.String())
+	}
+	if overview.OK || overview.State != "attention" {
+		t.Fatalf("overview state = ok:%v state:%q", overview.OK, overview.State)
+	}
+	if overview.Outbox.Total != 2 || overview.Outbox.Pending != 1 || overview.Outbox.Failed != 1 {
+		t.Fatalf("outbox summary = %+v", overview.Outbox)
+	}
+	for _, want := range []string{
+		"agent-team outbox ls --state failed",
+		"agent-team outbox drain --dry-run",
+		"agent-team drain",
+	} {
+		if !stringSliceContains(overview.Actions, want) {
+			t.Fatalf("actions missing %q: %+v", want, overview.Actions)
+		}
+	}
+	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team outbox ls --state failed"); !ok || detail.Source != "outbox" || detail.Reason != "failed=1" {
+		t.Fatalf("failed outbox detail = %+v, ok=%v", detail, ok)
+	}
+	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team outbox drain --dry-run"); !ok || detail.Source != "outbox" || detail.Reason != "pending=1" {
+		t.Fatalf("pending outbox detail = %+v, ok=%v", detail, ok)
+	}
+
+	next := NewRootCmd()
+	nextOut, nextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	next.SetOut(nextOut)
+	next.SetErr(nextErr)
+	next.SetArgs([]string{"next", "--target", root, "--source", "outbox", "--json"})
+	if err := next.Execute(); err != nil {
+		t.Fatalf("next outbox json: %v\nstderr=%s", err, nextErr.String())
+	}
+	var nextResult nextActionResult
+	if err := json.Unmarshal(nextOut.Bytes(), &nextResult); err != nil {
+		t.Fatalf("decode next outbox: %v\nbody=%s", err, nextOut.String())
+	}
+	if len(nextResult.Actions) != 2 {
+		t.Fatalf("next outbox actions = %+v", nextResult)
+	}
+	for _, want := range []string{"agent-team outbox ls --state failed", "agent-team outbox drain --dry-run"} {
+		if !stringSliceContains(nextResult.Actions, want) {
+			t.Fatalf("next outbox actions missing %q: %+v", want, nextResult.Actions)
+		}
+	}
+	for _, detail := range nextResult.ActionDetails {
+		if detail.Source != "outbox" {
+			t.Fatalf("next outbox detail = %+v, want source outbox", detail)
+		}
+	}
+}
+
 func TestTeamOverviewScopesUnreadInboxActions(t *testing.T) {
 	root := writeOverviewAttentionFixture(t)
 	teamDir := filepath.Join(root, ".agent_team")
