@@ -8520,6 +8520,7 @@ agent-team team schedules <team> [flags]
 Flags:
 
 ```text
+      --commands        Print the due team schedule preview command, one per line.
       --format string   Render each schedule with a Go template, e.g. '{{.Name}} {{.Every}}'.
       --json            Emit team schedules as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")

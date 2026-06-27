@@ -43,6 +43,7 @@ after = ["implement"]
 
 [schedules.nightly]
 every = "24h"
+run_on_start = true
 
 [teams.delivery]
 description = "Default delivery team."
@@ -925,6 +926,47 @@ since = "2026-06-18T12:00:00Z"
 	}
 	if got := strings.TrimSpace(schedulesFormatOut.String()); got != "nightly 24h0m0s" {
 		t.Fatalf("team schedules format = %q", got)
+	}
+
+	schedulesCommands := NewRootCmd()
+	schedulesCommandsOut, schedulesCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	schedulesCommands.SetOut(schedulesCommandsOut)
+	schedulesCommands.SetErr(schedulesCommandsErr)
+	schedulesCommands.SetArgs([]string{"team", "schedules", "delivery", "--repo", root, "--commands"})
+	if err := schedulesCommands.Execute(); err != nil {
+		t.Fatalf("team schedules --commands: %v\nstderr=%s", err, schedulesCommandsErr.String())
+	}
+	if got, want := strings.TrimSpace(schedulesCommandsOut.String()), "agent-team team tick delivery --dry-run --preview-routes"; got != want {
+		t.Fatalf("team schedules --commands = %q, want %q", got, want)
+	}
+
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "json",
+			args: []string{"team", "schedules", "delivery", "--repo", root, "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "format",
+			args: []string{"team", "schedules", "delivery", "--repo", root, "--commands", "--format", "{{.Name}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		invalid := NewRootCmd()
+		invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
+		invalid.SetOut(invalidOut)
+		invalid.SetErr(invalidErr)
+		invalid.SetArgs(tt.args)
+		if err := invalid.Execute(); err == nil {
+			t.Fatalf("team schedules --commands with %s succeeded", tt.name)
+		}
+		if !strings.Contains(invalidErr.String(), tt.want) {
+			t.Fatalf("team schedules --commands with %s stderr = %q", tt.name, invalidErr.String())
+		}
 	}
 
 	status := NewRootCmd()

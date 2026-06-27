@@ -4408,9 +4408,10 @@ func newTeamExplainCmd() *cobra.Command {
 
 func newTeamSchedulesCmd() *cobra.Command {
 	var (
-		repo    string
-		jsonOut bool
-		format  string
+		repo     string
+		jsonOut  bool
+		commands bool
+		format   string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -4418,6 +4419,14 @@ func newTeamSchedulesCmd() *cobra.Command {
 		Short: "List schedules owned by one team.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team schedules: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team schedules: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team schedules: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -4436,11 +4445,12 @@ func newTeamSchedulesCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team schedules: %v\n", err)
 				return exitErr(1)
 			}
-			return renderTeamSchedules(cmd.OutOrStdout(), schedules, jsonOut, tmpl)
+			return renderTeamSchedules(cmd.OutOrStdout(), args[0], schedules, jsonOut, tmpl, commands)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team schedules as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print the due team schedule preview command, one per line.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each schedule with a Go template, e.g. '{{.Name}} {{.Every}}'.")
 	return cmd
 }
@@ -10298,9 +10308,12 @@ func renderTeamJobs(w io.Writer, teamDir string, jobs []*job.Job, jsonOut bool, 
 	return nil
 }
 
-func renderTeamSchedules(w io.Writer, schedules []scheduleInfo, jsonOut bool, tmpl *template.Template) error {
+func renderTeamSchedules(w io.Writer, teamName string, schedules []scheduleInfo, jsonOut bool, tmpl *template.Template, commands bool) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(schedules)
+	}
+	if commands {
+		return renderTeamScheduleCommands(w, teamName, schedules)
 	}
 	if tmpl != nil {
 		for _, schedule := range schedules {
@@ -10314,4 +10327,15 @@ func renderTeamSchedules(w io.Writer, schedules []scheduleInfo, jsonOut bool, tm
 		return nil
 	}
 	return renderScheduleList(w, schedules, false, nil)
+}
+
+func renderTeamScheduleCommands(w io.Writer, teamName string, schedules []scheduleInfo) error {
+	for _, row := range dueScheduleRows(schedules, time.Now().UTC()) {
+		if !row.Due {
+			continue
+		}
+		_, err := fmt.Fprintln(w, teamTickPreviewAction(teamName, false))
+		return err
+	}
+	return nil
 }
