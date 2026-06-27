@@ -398,7 +398,7 @@ Use `repair --dry-run` when `health` reports dead-letter queue items or stale da
 
 `health` now reports outbox quarantine as a warning with the same job, pipeline, or team-scoped recovery actions used by overview and next-action hints.
 
-Use `job doctor` when job list/show/triage fails to parse durable job files. Start with `job doctor --quarantine --dry-run` to preview problem files that would be moved under `.agent_team/jobs/quarantine/`, then rerun without `--dry-run` to remove those files from the active job set without deleting them. Inspect preserved files with `job quarantine`, restore a fixed and validated TOML file with `job quarantine restore <path> --dry-run`, or drop a stale preserved file with `job quarantine drop <path> --dry-run`.
+Use `job doctor` when job list/show/triage fails to parse durable job files. Start with `job doctor --quarantine --dry-run` to preview problem files that would be moved under `.agent_team/jobs/quarantine/`, then rerun without `--dry-run` to remove those files from the active job set without deleting them. Inspect preserved files with `job quarantine`, restore a fixed and validated TOML file with `job quarantine restore <path> --dry-run`, or drop a stale preserved file with `job quarantine drop <path> --dry-run`. `overview`, `next --reason quarantined`, and `next --reason job_quarantined` surface preserved job files until they are restored or dropped.
 
 Add `--timeout-pipeline` or `--timeout-target-agent` with either timeout mode to keep stale-work repair scoped to one workflow or agent role. Team repair accepts the same timeout filters inside the team's ownership boundary.
 

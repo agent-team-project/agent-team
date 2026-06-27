@@ -668,6 +668,77 @@ func TestNextCommandReportsQueueQuarantineAction(t *testing.T) {
 	}
 }
 
+func TestNextCommandReportsJobQuarantineAction(t *testing.T) {
+	root := writeNextJobQuarantineFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"next", "--target", root, "--reason", "job_quarantined", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("next job quarantine alias json: %v\nstderr=%s", err, stderr.String())
+	}
+
+	var result nextActionResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode next job quarantine alias: %v\nbody=%s", err, out.String())
+	}
+	for _, want := range []string{
+		"agent-team job quarantine",
+		"agent-team job quarantine --unrestorable",
+		"agent-team job quarantine --restorable",
+		"agent-team snapshot --json",
+	} {
+		if !stringSliceContains(result.Actions, want) {
+			t.Fatalf("job quarantine alias actions missing %q: %+v", want, result)
+		}
+	}
+	if result.TotalActions != len(result.Actions) || result.TotalActions != 4 {
+		t.Fatalf("job quarantine alias actions = %+v", result)
+	}
+	if len(result.ActionDetails) != len(result.Actions) {
+		t.Fatalf("job quarantine alias details = %+v", result.ActionDetails)
+	}
+	for _, detail := range result.ActionDetails {
+		if detail.Source != "jobs" || detail.Reason != "job_quarantined" {
+			t.Fatalf("job quarantine alias detail = %+v", detail)
+		}
+	}
+
+	broad := NewRootCmd()
+	broadOut, broadErr := &bytes.Buffer{}, &bytes.Buffer{}
+	broad.SetOut(broadOut)
+	broad.SetErr(broadErr)
+	broad.SetArgs([]string{"next", "--target", root, "--reason", "quarantined", "--json"})
+	if err := broad.Execute(); err != nil {
+		t.Fatalf("next broad quarantine alias json: %v\nstderr=%s", err, broadErr.String())
+	}
+	var broadResult nextActionResult
+	if err := json.Unmarshal(broadOut.Bytes(), &broadResult); err != nil {
+		t.Fatalf("decode next broad quarantine alias: %v\nbody=%s", err, broadOut.String())
+	}
+	if !stringSliceContains(broadResult.Actions, "agent-team job quarantine") {
+		t.Fatalf("broad quarantine alias should include job quarantine actions: %+v", broadResult)
+	}
+}
+
+func writeNextJobQuarantineFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	initInto(t, root)
+	teamDir := filepath.Join(root, ".agent_team")
+	writeQuarantinedJobFile(t, teamDir, "20260627T231500.000000000Z", "squ-231.toml", []byte(`id = "squ-231"
+ticket = "SQU-231"
+target = "worker"
+status = "queued"
+created_at = 2026-06-27T23:15:00Z
+updated_at = 2026-06-27T23:15:00Z
+`))
+	writeQuarantinedJobFile(t, teamDir, "20260627T231500.000000000Z", "broken.toml", []byte("id = [\n"))
+	return root
+}
+
 func TestNextActionResultHandlesNoActions(t *testing.T) {
 	result := nextActionResultFromOverview(&overviewResult{
 		OK:    true,

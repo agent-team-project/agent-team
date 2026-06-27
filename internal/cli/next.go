@@ -103,7 +103,7 @@ func newNextCmd() *cobra.Command {
 	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 5, "Upcoming schedules to inspect while building recommendations; 0 means all.")
 	cmd.Flags().StringVar(&sortBy, "sort", "default", "Sort actions before applying --limit by default, source, reason, or command.")
 	cmd.Flags().StringSliceVar(&sources, "source", nil, "Only show actions from this source: health, topology, runtime, inbox, outbox, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.")
-	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Queue/outbox quarantine aliases are supported. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Queue/job/outbox quarantine aliases are supported. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&details, "details", false, "Include source and reason metadata in text output.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
@@ -196,7 +196,7 @@ func newTeamNextCmd() *cobra.Command {
 	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 5, "Upcoming schedules to inspect while building recommendations; 0 means all.")
 	cmd.Flags().StringVar(&sortBy, "sort", "default", "Sort actions before applying --limit by default, source, reason, or command.")
 	cmd.Flags().StringSliceVar(&sources, "source", nil, "Only show actions from this source: health, topology, runtime, inbox, outbox, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.")
-	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Queue/outbox quarantine aliases are supported. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Queue/job/outbox quarantine aliases are supported. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&details, "details", false, "Include source and reason metadata in text output.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
@@ -343,9 +343,11 @@ func normalizeNextActionReasonFilter(raw string) []nextActionReasonFilter {
 	case "":
 		return nil
 	case "quarantine", "quarantined":
-		return []nextActionReasonFilter{{reason: "quarantined"}, {reason: "queue_quarantined"}, {reason: "outbox_quarantined"}}
+		return []nextActionReasonFilter{{reason: "quarantined"}, {reason: "queue_quarantined"}, {reason: "job_quarantined"}, {reason: "outbox_quarantined"}}
 	case "queue_quarantine", "queue_quarantined":
 		return []nextActionReasonFilter{{source: "queue", reason: "quarantined"}, {source: "queue", reason: "queue_quarantined"}}
+	case "job_quarantine", "job_quarantined":
+		return []nextActionReasonFilter{{source: "jobs", reason: "job_quarantined"}}
 	case "outbox_quarantine", "outbox_quarantined":
 		return []nextActionReasonFilter{{source: "outbox", reason: "quarantined"}, {source: "outbox", reason: "outbox_quarantined"}}
 	default:
