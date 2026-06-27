@@ -55,9 +55,10 @@ func newMonitorCmd() *cobra.Command {
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "monitor",
-		Short: "Show a combined health, inbox, instance, and resource snapshot.",
+		Short: "Show a combined health, recovery, inbox, instance, and resource snapshot.",
 		Long: "Show a Docker-style operator snapshot combining fleet health, inbox state, " +
-			"the instance table, and daemon-managed process stats. With --watch, refresh until interrupted.",
+			"queue and outbox recovery signals, the instance table, and daemon-managed process stats. " +
+			"With --watch, refresh until interrupted.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team monitor: --interval must be >= 0.")
@@ -805,6 +806,18 @@ func collectMonitorSnapshot(teamDir string, now time.Time, probe processStatsPro
 		filters:        opts.PS,
 		strictTopology: opts.StrictTopology,
 	})
+	if err := addPipelineWorkflowHealth(health, teamDir); err != nil {
+		return nil, err
+	}
+	if err := addQueueHealth(health, teamDir, now); err != nil {
+		return nil, err
+	}
+	if err := addOutboxQuarantineHealth(health, teamDir); err != nil {
+		return nil, err
+	}
+	if err := addIntakeHealth(health, teamDir); err != nil {
+		return nil, err
+	}
 	displayRows := filterLimitSortPsRows(rows, opts.PS)
 	selectedInstances := monitorSelectedInstanceSet(displayRows, opts.PS)
 	selectedInboxInstances := monitorInboxSelectedInstanceSet(displayRows, opts.PS)
@@ -941,6 +954,9 @@ func collectTeamMonitorSnapshot(teamDir, name string, now time.Time, probe proce
 	}
 	ownedJobs := teamJobs(top, team, jobs)
 	if err := addTeamQueueHealth(health, teamDir, top, team, ownedJobs, now); err != nil {
+		return nil, err
+	}
+	if err := addTeamOutboxQuarantineHealth(health, teamDir, top, team, ownedJobs); err != nil {
 		return nil, err
 	}
 	if opts.IncludeJobs {

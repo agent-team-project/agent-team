@@ -5548,7 +5548,8 @@ func newTeamMonitorCmd() *cobra.Command {
 		Use:   "monitor <team>",
 		Short: "Show a combined operator snapshot for one team.",
 		Long: "Show a Docker-style operator snapshot scoped to one declared team, combining team health, " +
-			"inbox state, instance rows, daemon-managed process stats, and optional plan, job, schedule, and lifecycle event sections.",
+			"team-owned queue and outbox recovery signals, inbox state, instance rows, daemon-managed process stats, " +
+			"and optional plan, job, schedule, and lifecycle event sections.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if interval < 0 {

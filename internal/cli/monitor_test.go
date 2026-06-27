@@ -133,6 +133,169 @@ func TestMonitorReportsUnreadInboxSummary(t *testing.T) {
 	}
 }
 
+func TestMonitorReportsQueueAndOutboxHealth(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Date(2026, 6, 27, 21, 0, 0, 0, time.UTC)
+	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), &daemon.QueueItem{
+		ID:             "q-monitor-dead",
+		State:          daemon.QueueStateDead,
+		EventType:      "agent.dispatch",
+		Instance:       "worker",
+		InstanceID:     "worker-squ-920",
+		Payload:        map[string]any{"target": "worker", "ticket": "SQU-920"},
+		Attempts:       daemon.MaxQueueAttempts,
+		LastError:      "spawn failed",
+		QueuedAt:       now.Add(-time.Hour),
+		UpdatedAt:      now,
+		DeadLetteredAt: now,
+	}); err != nil {
+		t.Fatalf("write queue item: %v", err)
+	}
+	writeQuarantinedOutboxFile(t, teamDir, "20260627T210000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-monitor-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"target": "worker", "ticket": "SQU-920"},
+		CreatedAt: now.Add(-time.Minute),
+		UpdatedAt: now,
+	})
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --json queue/outbox health: %v\nstderr=%s", err, stderr.String())
+	}
+	var body monitorSnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode monitor queue/outbox json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Health == nil {
+		t.Fatalf("health missing: %+v", body)
+	}
+	if body.Health.Queue.Total != 1 || body.Health.Queue.Dead != 1 {
+		t.Fatalf("queue = %+v, want one dead item", body.Health.Queue)
+	}
+	if body.Health.OutboxQuarantine.Quarantined != 1 || body.Health.OutboxQuarantine.Restorable != 1 || body.Health.OutboxQuarantine.Unrestorable != 0 {
+		t.Fatalf("outbox quarantine = %+v, want one restorable item", body.Health.OutboxQuarantine)
+	}
+	codes := map[string]bool{}
+	for _, issue := range body.Health.Issues {
+		codes[issue.Code] = true
+	}
+	for _, want := range []string{"queue_dead_letter", "outbox_quarantined"} {
+		if !codes[want] {
+			t.Fatalf("issues = %+v, missing %s", body.Health.Issues, want)
+		}
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"monitor", "--target", tmp})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("monitor text queue/outbox health: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"queue: total=1", "dead=1", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "queue_dead_letter", "outbox_quarantined"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("monitor text missing %q:\n%s", want, textOut.String())
+		}
+	}
+}
+
+func TestTeamMonitorReportsScopedOutboxQuarantineHealth(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.manager]
+agent = "manager"
+
+[instances.worker]
+agent = "worker"
+
+[instances.other]
+agent = "other"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+
+[teams.platform]
+instances = ["other"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 27, 21, 30, 0, 0, time.UTC)
+	writeQuarantinedOutboxFile(t, teamDir, "20260627T213000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-delivery-monitor-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"target": "worker", "ticket": "SQU-921"},
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	writeQuarantinedOutboxFile(t, teamDir, "20260627T213000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-platform-monitor-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"target": "other", "ticket": "OTH-921"},
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "monitor", "delivery", "--repo", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team monitor --json outbox quarantine: %v\nstderr=%s", err, stderr.String())
+	}
+	var body monitorSnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode team monitor outbox quarantine json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.Team == nil || body.Team.Name != "delivery" || body.Health == nil {
+		t.Fatalf("team monitor snapshot = %+v", body)
+	}
+	if body.Health.OutboxQuarantine.Quarantined != 1 || body.Health.OutboxQuarantine.Restorable != 1 || body.Health.OutboxQuarantine.Unrestorable != 0 {
+		t.Fatalf("team outbox quarantine = %+v", body.Health.OutboxQuarantine)
+	}
+	var sawScopedAction bool
+	for _, issue := range body.Health.Issues {
+		if issue.Code == "outbox_quarantined" && containsString(issue.Actions, "agent-team team outbox quarantine delivery") && containsString(issue.Actions, "agent-team team outbox quarantine delivery --restorable") {
+			sawScopedAction = true
+		}
+	}
+	if !sawScopedAction {
+		t.Fatalf("issues = %+v, missing scoped outbox quarantine action", body.Health.Issues)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"team", "monitor", "delivery", "--repo", root})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("team monitor text outbox quarantine: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"Team: delivery", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "outbox_quarantined", "agent-team team outbox quarantine delivery --restorable"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("team monitor text missing %q:\n%s", want, textOut.String())
+		}
+	}
+}
+
 func TestMonitorSummaryJSONUsesHealthSnapshot(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

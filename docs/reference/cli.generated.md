@@ -50,7 +50,7 @@ Subcommands:
 - `agent-team job` - Manage durable work units.
 - `agent-team kill` - Force-stop running instances.
 - `agent-team logs` - Show an instance&#39;s daemon-captured log.
-- `agent-team monitor` - Show a combined health, inbox, instance, and resource snapshot.
+- `agent-team monitor` - Show a combined health, recovery, inbox, instance, and resource snapshot.
 - `agent-team next` - Print recommended next operator actions.
 - `agent-team outbox` - Inspect and control sandboxed agent outbox events.
 - `agent-team overview` - Show a concise operator overview across health, jobs, queue, pipelines, and schedules.
@@ -3458,9 +3458,9 @@ Inherited Flags:
 
 ## `agent-team monitor`
 
-Show a combined health, inbox, instance, and resource snapshot.
+Show a combined health, recovery, inbox, instance, and resource snapshot.
 
-Show a Docker-style operator snapshot combining fleet health, inbox state, the instance table, and daemon-managed process stats. With --watch, refresh until interrupted.
+Show a Docker-style operator snapshot combining fleet health, inbox state, queue and outbox recovery signals, the instance table, and daemon-managed process stats. With --watch, refresh until interrupted.
 
 ```text
 agent-team monitor [flags]
@@ -7369,7 +7369,7 @@ Flags:
 
 Show a combined operator snapshot for one team.
 
-Show a Docker-style operator snapshot scoped to one declared team, combining team health, inbox state, instance rows, daemon-managed process stats, and optional plan, job, schedule, and lifecycle event sections.
+Show a Docker-style operator snapshot scoped to one declared team, combining team health, team-owned queue and outbox recovery signals, inbox state, instance rows, daemon-managed process stats, and optional plan, job, schedule, and lifecycle event sections.
 
 ```text
 agent-team team monitor <team> [flags]
