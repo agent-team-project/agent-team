@@ -290,6 +290,8 @@ agent-team pipeline resume-plan [<pipeline>|--all] [--step <id>] [--status crash
                                                 # show pipeline-owned runtime resume, attach, start, and log fallback commands
 agent-team pipeline send <pipeline> [message...] [--message "..."] [--message-file <path|->] [--all] [--latest|--last N] [--runtime codex] [--stale] [--runtime-stale] [--unhealthy] [--dry-run] [--format '{{.To}} {{.ID}}'] [--json]
                                                 # send a mailbox message to pipeline-owned daemon-known instances
+agent-team pipeline stats [<pipeline>|--all] [-w] [--runtime codex] [--status crashed] [--summary] [--sort cpu|mem|rss] [--format '{{.Instance}} {{.CPUPercent}}'] [--json]
+                                                # show CPU and memory usage for one or all pipeline-owned workflows
 agent-team pipeline logs [<pipeline>|--all] [--list] [--runtime codex] [--latest|--last N] [--last-message] [--clean] [--tail N] [--format '{{.Instance}} {{.LogPath}}'] [--json]
                                                 # read daemon-captured logs for one or all pipeline-owned workflows
 agent-team pipeline events [<pipeline>|--all] [-f] [--runtime codex] [--tail N] [--summary] [--action stop] [--format '{{.Action}} {{.Instance}}'] [--json]

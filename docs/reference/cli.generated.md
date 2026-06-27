@@ -3217,6 +3217,7 @@ Subcommands:
 - `agent-team pipeline show` - Show one declared pipeline.
 - `agent-team pipeline skip` - Mark matching pipeline steps intentionally skipped.
 - `agent-team pipeline snapshot` - Capture a read-only diagnostic snapshot for one pipeline.
+- `agent-team pipeline stats` - Show CPU and memory usage for pipeline-owned instances.
 - `agent-team pipeline status` - Summarize pipeline jobs and next steps.
 - `agent-team pipeline timeout` - Mark stale running pipeline steps failed.
 - `agent-team pipeline triage` - Show pipeline-owned jobs that need operator attention.
@@ -4101,6 +4102,38 @@ Flags:
       --no-redact       Include raw payload values and latest inbox bodies instead of redacting them.
   -o, --output string   Write the full JSON pipeline snapshot to this file. Use '-' for stdout.
       --repo string     Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team pipeline stats`
+
+Show CPU and memory usage for pipeline-owned instances.
+
+Show a one-shot or watchable resource snapshot for daemon-known instances owned by durable jobs in one declared pipeline. Omit the pipeline or pass --all to inspect every pipeline-owned job. With no filters, only running pipeline-owned instances are shown; use --status or --unhealthy to include inactive rows.
+
+```text
+agent-team pipeline stats [<pipeline>|--all] [flags]
+```
+
+Flags:
+
+```text
+      --all                 Show stats across all pipelines. This is the default when no pipeline is passed.
+      --format string       Render each row with a Go template, e.g. '{{.Instance}} {{.CPUPercent}} {{.RSS}}'.
+      --interval duration   Refresh interval for --watch. (default 2s)
+      --json                Emit JSON. With --watch, writes one JSON array per refresh.
+  -n, --last int            Show stats for the N most recently started pipeline-owned instances after other filters (0 = all).
+      --latest              Show stats for the most recently started pipeline-owned instance after other filters.
+      --no-clear            With --watch, append snapshots instead of redrawing the terminal.
+      --phase strings       Only show pipeline-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
+      --repo string         Repo root containing .agent_team. (default "<repo>")
+      --runtime strings     Only show pipeline-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale       Only show pipeline-owned running instances whose recorded runtime PID is no longer live.
+      --sort string         Sort rows by name, cpu, mem, rss, status, agent, phase, stale, runtime-stale, or unhealthy. (default "name")
+      --stale               Only show pipeline-owned instances whose status.toml is stale.
+      --status strings      Only show pipeline-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
+      --summary             Show aggregate CPU, memory, and RSS totals instead of pipeline instance rows.
+      --unhealthy           Only show crashed, status-stale, or runtime-stale pipeline-owned instances.
+  -w, --watch               Refresh pipeline stats until interrupted.
 ```
 
 ## `agent-team pipeline status`

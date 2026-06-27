@@ -53,6 +53,7 @@ func newPipelineCmd() *cobra.Command {
 	cmd.AddCommand(newPipelineCleanupCmd())
 	cmd.AddCommand(newPipelineResumePlanCmd())
 	cmd.AddCommand(newPipelineSendCmd())
+	cmd.AddCommand(newPipelineStatsCmd())
 	cmd.AddCommand(newPipelineLogsCmd())
 	cmd.AddCommand(newPipelineEventsCmd())
 	cmd.AddCommand(newPipelineRetryCmd())
@@ -2550,6 +2551,150 @@ func newPipelineSendCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching recipients without appending mailbox messages.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each send result with a Go template, e.g. '{{.To}} {{.ID}}'.")
+	return cmd
+}
+
+func newPipelineStatsCmd() *cobra.Command {
+	var (
+		repo             string
+		allPipelines     bool
+		latest           bool
+		last             int
+		watch            bool
+		jsonOut          bool
+		summary          bool
+		noClear          bool
+		format           string
+		sortBy           string
+		interval         time.Duration
+		statusFilters    []string
+		runtimeFilters   []string
+		phaseFilters     []string
+		staleOnly        bool
+		runtimeStaleOnly bool
+		unhealthyOnly    bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "stats [<pipeline>|--all]",
+		Short: "Show CPU and memory usage for pipeline-owned instances.",
+		Long: "Show a one-shot or watchable resource snapshot for daemon-known instances owned by durable jobs in one declared pipeline. " +
+			"Omit the pipeline or pass --all to inspect every pipeline-owned job. With no filters, only running pipeline-owned instances are shown; use --status or --unhealthy to include inactive rows.",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline stats: pass at most one pipeline name.")
+				return exitErr(2)
+			}
+			if allPipelines && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline stats: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if last < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline stats: --last must be >= 0.")
+				return exitErr(2)
+			}
+			if latest && last > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline stats: choose one of --latest or --last.")
+				return exitErr(2)
+			}
+			if interval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline stats: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			if format != "" && (jsonOut || summary) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline stats: --format cannot be combined with --json or --summary.")
+				return exitErr(2)
+			}
+			formatTemplate, err := parseStatsFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline stats: %v\n", err)
+				return exitErr(2)
+			}
+			opts, err := newStatsOptionsWithRuntimeInstancesPhasesAndUnhealthy(false, statusFilters, runtimeFilters, nil, phaseFilters, nil, unhealthyOnly)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline stats: %v\n", err)
+				return exitErr(2)
+			}
+			sortMode, err := parseStatsSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline stats: %v\n", err)
+				return exitErr(2)
+			}
+			opts.Sort = sortMode
+			opts.SortSet = cmd.Flags().Changed("sort")
+			opts.Latest = latest
+			opts.Limit = last
+			opts.Stale = staleOnly
+			opts.RuntimeStale = runtimeStaleOnly
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			pipelineName := ""
+			if len(args) == 1 {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if len(args) == 1 && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline stats: pipeline name is required.")
+				return exitErr(2)
+			}
+			opts.phaseByInstance = statsPhaseByInstance(teamDir, time.Now())
+			opts.staleByInstance = staleInstanceSet(teamDir, time.Now())
+			var base instanceLister
+			base, err = newDaemonClient(teamDir)
+			if err != nil {
+				if errors.Is(err, errDaemonNotRunning) {
+					base = localInstanceLister{daemonRoot: daemon.DaemonRoot(teamDir)}
+				} else {
+					return err
+				}
+			}
+			lister := pipelineStatsLister{instanceLister: base, teamDir: teamDir, pipeline: pipelineName}
+			if watch {
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				defer stop()
+				clear := !noClear && !jsonOut
+				switch {
+				case summary:
+					return runStatsSummaryWatchWithClear(ctx, cmd.OutOrStdout(), lister, nil, opts, interval, time.Now, readProcessStats, jsonOut, clear)
+				case formatTemplate != nil:
+					return runStatsFormatWatch(ctx, cmd.OutOrStdout(), lister, nil, opts, interval, time.Now, readProcessStats, formatTemplate)
+				default:
+					return runStatsWatchWithClear(ctx, cmd.OutOrStdout(), lister, nil, opts, interval, time.Now, readProcessStats, jsonOut, clear)
+				}
+			}
+			switch {
+			case summary && jsonOut:
+				return runStatsSummaryJSON(cmd.OutOrStdout(), lister, nil, opts, time.Now(), readProcessStats)
+			case summary:
+				return runStatsSummary(cmd.OutOrStdout(), lister, nil, opts, time.Now(), readProcessStats)
+			case jsonOut:
+				return runStatsJSON(cmd.OutOrStdout(), lister, nil, opts, time.Now(), readProcessStats)
+			case formatTemplate != nil:
+				return runStatsFormat(cmd.OutOrStdout(), lister, nil, opts, time.Now(), readProcessStats, formatTemplate)
+			default:
+				return runStats(cmd.OutOrStdout(), lister, nil, opts, time.Now(), readProcessStats)
+			}
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().BoolVar(&allPipelines, "all", false, "Show stats across all pipelines. This is the default when no pipeline is passed.")
+	cmd.Flags().BoolVar(&latest, "latest", false, "Show stats for the most recently started pipeline-owned instance after other filters.")
+	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show stats for the N most recently started pipeline-owned instances after other filters (0 = all).")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh pipeline stats until interrupted.")
+	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON. With --watch, writes one JSON array per refresh.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate CPU, memory, and RSS totals instead of pipeline instance rows.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.Instance}} {{.CPUPercent}} {{.RSS}}'.")
+	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort rows by name, cpu, mem, rss, status, agent, phase, stale, runtime-stale, or unhealthy.")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
+	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show pipeline-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show pipeline-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show pipeline-owned instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show pipeline-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show pipeline-owned running instances whose recorded runtime PID is no longer live.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed, status-stale, or runtime-stale pipeline-owned instances.")
 	return cmd
 }
 
@@ -5777,6 +5922,24 @@ func (c pipelineSendClient) Instances() ([]*daemon.Metadata, error) {
 		return nil, err
 	}
 	owned, err := collectPipelineOwnedMetadata(c.teamDir, c.pipeline, metas)
+	if err != nil {
+		return nil, err
+	}
+	return owned.Metadata, nil
+}
+
+type pipelineStatsLister struct {
+	instanceLister
+	teamDir  string
+	pipeline string
+}
+
+func (l pipelineStatsLister) Instances() ([]*daemon.Metadata, error) {
+	metas, err := l.instanceLister.Instances()
+	if err != nil {
+		return nil, err
+	}
+	owned, err := collectPipelineOwnedMetadata(l.teamDir, l.pipeline, metas)
 	if err != nil {
 		return nil, err
 	}
