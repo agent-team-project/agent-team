@@ -166,6 +166,41 @@ func TestNextCommandDetailsTextIncludesSourceAndReason(t *testing.T) {
 	}
 }
 
+func TestNextCommandCommandsPrintsOnlyActions(t *testing.T) {
+	root := writeOverviewAttentionFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"next", "--target", root, "--source", "queue", "--reason", "queue_dead_letter", "--sort", "command", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("next commands: %v\nstderr=%s", err, stderr.String())
+	}
+	want := strings.Join([]string{
+		"agent-team job queue retry squ-700 --all --sort attempts --limit 10 --dry-run",
+		"agent-team repair --skip-tick --dry-run",
+	}, "\n") + "\n"
+	if got := out.String(); got != want {
+		t.Fatalf("next commands output = %q, want %q", got, want)
+	}
+
+	team := NewRootCmd()
+	teamOut, teamErr := &bytes.Buffer{}, &bytes.Buffer{}
+	team.SetOut(teamOut)
+	team.SetErr(teamErr)
+	team.SetArgs([]string{"team", "next", "delivery", "--repo", root, "--source", "queue", "--commands"})
+	if err := team.Execute(); err != nil {
+		t.Fatalf("team next commands: %v\nstderr=%s", err, teamErr.String())
+	}
+	if strings.Contains(teamOut.String(), "next:") || strings.Contains(teamOut.String(), "team:") || strings.Contains(teamOut.String(), "[queue/") {
+		t.Fatalf("team next commands should not include headers or detail labels:\n%s", teamOut.String())
+	}
+	if !strings.Contains(teamOut.String(), "agent-team team queue retry delivery --all --job squ-700 --sort attempts --limit 10 --dry-run") {
+		t.Fatalf("team next commands missing scoped queue retry:\n%s", teamOut.String())
+	}
+}
+
 func TestNextCommandFormat(t *testing.T) {
 	root := writeOverviewAttentionFixture(t)
 
@@ -466,6 +501,21 @@ func TestNextCommandFormatValidation(t *testing.T) {
 			want: "--format cannot be combined",
 		},
 		{
+			name: "next-commands-json-conflict",
+			args: []string{"next", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "next-commands-format-conflict",
+			args: []string{"next", "--commands", "--format", "{{.State}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "next-commands-watch-conflict",
+			args: []string{"next", "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
+		},
+		{
 			name: "next-invalid-template",
 			args: []string{"next", "--format", "{{"},
 			want: "invalid --format template",
@@ -474,6 +524,21 @@ func TestNextCommandFormatValidation(t *testing.T) {
 			name: "team-next-json-conflict",
 			args: []string{"team", "next", "delivery", "--format", "{{.State}}", "--json"},
 			want: "--format cannot be combined",
+		},
+		{
+			name: "team-next-commands-json-conflict",
+			args: []string{"team", "next", "delivery", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "team-next-commands-format-conflict",
+			args: []string{"team", "next", "delivery", "--commands", "--format", "{{.State}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "team-next-commands-watch-conflict",
+			args: []string{"team", "next", "delivery", "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
 		},
 		{
 			name: "team-next-invalid-template",
@@ -749,7 +814,7 @@ func TestNextActionResultHandlesNoActions(t *testing.T) {
 	}
 
 	out := &bytes.Buffer{}
-	if err := renderNextActionResult(out, result, false, nil, false); err != nil {
+	if err := renderNextActionResult(out, result, false, nil, false, false); err != nil {
 		t.Fatalf("render next: %v", err)
 	}
 	if !strings.Contains(out.String(), "actions: none") {

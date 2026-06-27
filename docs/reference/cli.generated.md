@@ -3639,6 +3639,7 @@ agent-team next [flags]
 Flags:
 
 ```text
+      --commands             Print only recommended commands, one per line.
       --details              Include source and reason metadata in text output.
       --format string        Render the next-action result with a Go template, e.g. '{{.State}} {{len .Actions}}'.
       --interval duration    Refresh interval for --watch. (default 2s)
@@ -7567,6 +7568,7 @@ agent-team team next <team> [flags]
 Flags:
 
 ```text
+      --commands             Print only recommended commands, one per line.
       --details              Include source and reason metadata in text output.
       --format string        Render the next-action result with a Go template, e.g. '{{.Team.Name}} {{len .Actions}}'.
       --interval duration    Refresh interval for --watch. (default 2s)

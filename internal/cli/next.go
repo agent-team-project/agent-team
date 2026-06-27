@@ -25,6 +25,7 @@ func newNextCmd() *cobra.Command {
 		sources       []string
 		reasons       []string
 		details       bool
+		commandsOnly  bool
 		watch         bool
 		noClear       bool
 		interval      time.Duration
@@ -58,6 +59,18 @@ func newNextCmd() *cobra.Command {
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team next: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commandsOnly && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team next: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commandsOnly && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team next: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commandsOnly && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team next: --commands cannot be combined with --watch.")
 				return exitErr(2)
 			}
 			tmpl, err := parseNextFormat(format)
@@ -94,7 +107,7 @@ func newNextCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team next: %v\n", err)
 				return exitErr(1)
 			}
-			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverviewFilteredSorted(overview, limit, filters, sortMode), jsonOut, tmpl, details)
+			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverviewFilteredSorted(overview, limit, filters, sortMode), jsonOut, tmpl, details, commandsOnly)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
@@ -105,6 +118,7 @@ func newNextCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&sources, "source", nil, "Only show actions from this source: health, topology, runtime, inbox, outbox, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Queue/job/outbox quarantine aliases are supported. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&details, "details", false, "Include source and reason metadata in text output.")
+	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print only recommended commands, one per line.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
@@ -122,6 +136,7 @@ func newTeamNextCmd() *cobra.Command {
 		sources       []string
 		reasons       []string
 		details       bool
+		commandsOnly  bool
 		watch         bool
 		noClear       bool
 		interval      time.Duration
@@ -156,6 +171,18 @@ func newTeamNextCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team next: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
+			if commandsOnly && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team next: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commandsOnly && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team next: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commandsOnly && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team next: --commands cannot be combined with --watch.")
+				return exitErr(2)
+			}
 			tmpl, err := parseNextFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team next: %v\n", err)
@@ -188,7 +215,7 @@ func newTeamNextCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team next: %v\n", err)
 				return exitErr(1)
 			}
-			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverviewFilteredSorted(overview, limit, filters, sortMode), jsonOut, tmpl, details)
+			return renderNextActionResult(cmd.OutOrStdout(), nextActionResultFromOverviewFilteredSorted(overview, limit, filters, sortMode), jsonOut, tmpl, details, commandsOnly)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -198,6 +225,7 @@ func newTeamNextCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&sources, "source", nil, "Only show actions from this source: health, topology, runtime, inbox, outbox, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Queue/job/outbox quarantine aliases are supported. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&details, "details", false, "Include source and reason metadata in text output.")
+	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print only recommended commands, one per line.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
@@ -469,9 +497,15 @@ func nextActionMatchesFilters(detail operatorActionHint, filters nextActionFilte
 	return true
 }
 
-func renderNextActionResult(w io.Writer, result nextActionResult, jsonOut bool, tmpl *template.Template, showDetails bool) error {
+func renderNextActionResult(w io.Writer, result nextActionResult, jsonOut bool, tmpl *template.Template, showDetails bool, commandsOnly bool) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(result)
+	}
+	if commandsOnly {
+		for _, action := range result.Actions {
+			fmt.Fprintln(w, action)
+		}
+		return nil
 	}
 	if tmpl != nil {
 		return renderNextActionFormat(w, result, tmpl)
@@ -549,7 +583,7 @@ func runNextWatch(ctx context.Context, w io.Writer, collect func(time.Time) (*ov
 		if err != nil {
 			return err
 		}
-		if err := renderNextActionResult(w, nextActionResultFromOverviewFilteredSorted(overview, limit, filters, sortMode), jsonOut, tmpl, showDetails); err != nil {
+		if err := renderNextActionResult(w, nextActionResultFromOverviewFilteredSorted(overview, limit, filters, sortMode), jsonOut, tmpl, showDetails, false); err != nil {
 			return err
 		}
 		if !waitForWatchTick(ctx, ticker.C) {

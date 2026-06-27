@@ -73,16 +73,19 @@ agent-team next --team delivery
 agent-team next --source queue
 agent-team next --reason dead
 agent-team next --sort source --limit 10
+agent-team next --source queue --commands
 agent-team next --source jobs --reason stale_running
 agent-team team next delivery
 agent-team team next delivery --sort command --limit 5
+agent-team team next delivery --commands
 agent-team team next delivery --source jobs --reason stale_running
 ```
 
 `next` is a compact command-hint view derived from overview. Text output stays
 focused on copyable commands; JSON output also includes `action_details` so
 scripts can group recommendations by source and reason without parsing command
-strings.
+strings. Add `--commands` when scripts need only the filtered, sorted, and
+limited commands with no headers or reason labels.
 
 Use `--source` to narrow recommendations to one subsystem such as `queue`,
 `jobs`, `runtime`, or `pipelines`. Use `--reason` when an automation only wants a
@@ -289,7 +292,7 @@ Add `--runtime codex` or `--runtime-bin <path>` when repair retry or final tick 
 | Symptom | First command |
 | --- | --- |
 | Unsure what is wrong | `agent-team overview` |
-| Need exact next commands | `agent-team next` |
+| Need exact next commands | `agent-team next --commands` |
 | CI wants pass/fail | `agent-team health --jobs` |
 | Need only unhealthy instance rows | `agent-team ps --unhealthy --json` |
 | Need only stale recorded runtime PIDs | `agent-team ps --runtime-stale --json` |

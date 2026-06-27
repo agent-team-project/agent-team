@@ -62,6 +62,7 @@ agent-team inbox ls --team delivery --unread
 agent-team inbox show manager --unread
 agent-team inbox ack manager --all
 agent-team next --source inbox --reason unread
+agent-team next --source inbox --reason unread --commands
 ```
 
 Agent-side skills can read messages from the instance inbox.
@@ -75,7 +76,7 @@ Messages are stored locally so they can be inspected or delivered even when a ru
 - `inbox show <instance>` lists message IDs, senders, unread state, and bodies.
 - `inbox ack <instance> <message-id>` advances the cursor through one message; `--all` marks every current message read. Use `--dry-run` before changing the cursor.
 
-`overview`, `team overview`, `next`, `team next`, `monitor`, and `team monitor` include unread inbox counts and actions. `snapshot`, `team snapshot`, `pipeline snapshot`, and `job snapshot` also include inbox summaries for handoff artifacts; latest message bodies are redacted unless `--no-redact` is used. Use `next --source inbox --reason unread` when a script or operator view should focus only on unread mailbox work.
+`overview`, `team overview`, `next`, `team next`, `monitor`, and `team monitor` include unread inbox counts and actions. `snapshot`, `team snapshot`, `pipeline snapshot`, and `job snapshot` also include inbox summaries for handoff artifacts; latest message bodies are redacted unless `--no-redact` is used. Use `next --source inbox --reason unread` when a script or operator view should focus only on unread mailbox work, and add `--commands` when that script needs one command per line.
 
 ## Channels
 
