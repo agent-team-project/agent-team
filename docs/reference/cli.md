@@ -139,7 +139,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job queue drop <job-id> <id>` | Drop one job-owned queue item |
 | `agent-team job queue drop <job-id> --all` | Drop matching job-owned queue items; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
 | `agent-team job queue prune <job-id>` | Age-prune job-owned queue entries; filter and limit prune candidates with `--runtime`, `--ready`, and `--limit` |
-| `agent-team job queue quarantine <job-id>` | List job-owned quarantined queue files; sort rows with `--sort` and cap output with `--limit` |
+| `agent-team job queue quarantine <job-id>` | List or summarize job-owned quarantined queue files; sort rows with `--sort` and cap output with `--limit` |
 | `agent-team job queue quarantine show <job-id> <path>` | Inspect one preserved file |
 | `agent-team job queue quarantine restore <job-id> <path>` | Restore one preserved file |
 | `agent-team job queue quarantine restore <job-id> --all` | Restore matching restorable files; sort and cap batch actions with `--sort` and `--limit` |
@@ -157,7 +157,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job outbox drop <job-id> <id>` | Remove one inspected job-owned outbox event |
 | `agent-team job outbox drop <job-id> --all` | Drop matching job-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--sort`, and `--limit` |
 | `agent-team job outbox prune <job-id>` | Remove old job-owned processed outbox events by default; pass `--state failed`, `pending`, or `all` for explicit cleanup and bound with `--older-than`, filters, and `--limit` |
-| `agent-team job outbox quarantine <job-id>` | List quarantined outbox files owned by one job; filter by state, type, source, or restorable state |
+| `agent-team job outbox quarantine <job-id>` | List or summarize quarantined outbox files owned by one job; filter by state, type, source, or restorable state |
 | `agent-team job outbox quarantine show <job-id> <path>` | Inspect one job-owned quarantined outbox file and its payload when parseable |
 | `agent-team job outbox quarantine restore <job-id> <path>` | Restore one validated job-owned quarantined outbox file to the active outbox |
 | `agent-team job outbox quarantine restore <job-id> --all` | Restore matching job-owned restorable quarantined outbox files; filter, sort, and limit batch actions |

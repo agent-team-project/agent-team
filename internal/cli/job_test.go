@@ -2190,6 +2190,46 @@ func TestJobQueueQuarantineScopesOwnedFiles(t *testing.T) {
 		t.Fatalf("listed job quarantined items = %+v", listed)
 	}
 
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"job", "queue", "quarantine", "SQU-123", "--repo", tmp, "--summary", "--json"})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("job queue quarantine summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var summaryBody queueQuarantineSummary
+	if err := json.Unmarshal(summaryOut.Bytes(), &summaryBody); err != nil {
+		t.Fatalf("decode job queue quarantine summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if summaryBody.Quarantined != 2 || summaryBody.Restorable != 2 || summaryBody.Unrestorable != 0 || summaryBody.States[daemon.QueueStatePending] != 1 || summaryBody.States[daemon.QueueStateDead] != 1 || summaryBody.Jobs["squ-123"] != 2 {
+		t.Fatalf("job queue quarantine summary = %+v", summaryBody)
+	}
+
+	summaryText := NewRootCmd()
+	summaryTextOut, summaryTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryText.SetOut(summaryTextOut)
+	summaryText.SetErr(summaryTextErr)
+	summaryText.SetArgs([]string{"job", "queue", "quarantine", "SQU-123", "--repo", tmp, "--state", daemon.QueueStatePending, "--summary"})
+	if err := summaryText.Execute(); err != nil {
+		t.Fatalf("job queue quarantine summary text: %v\nstderr=%s", err, summaryTextErr.String())
+	}
+	if got, want := summaryTextOut.String(), "queue quarantine: quarantined=1 restorable=1 unrestorable=0\n"; got != want {
+		t.Fatalf("job queue quarantine summary text = %q, want %q", got, want)
+	}
+
+	invalidSummary := NewRootCmd()
+	invalidSummaryOut, invalidSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSummary.SetOut(invalidSummaryOut)
+	invalidSummary.SetErr(invalidSummaryErr)
+	invalidSummary.SetArgs([]string{"job", "queue", "quarantine", "SQU-123", "--repo", tmp, "--summary", "--sort", "attempts"})
+	if err := invalidSummary.Execute(); err == nil {
+		t.Fatalf("job queue quarantine summary accepted --sort; stdout=%s stderr=%s", invalidSummaryOut.String(), invalidSummaryErr.String())
+	}
+	if !strings.Contains(invalidSummaryErr.String(), "--sort and --limit cannot be combined with --summary") {
+		t.Fatalf("job queue quarantine summary invalid stderr = %q", invalidSummaryErr.String())
+	}
+
 	listSorted := NewRootCmd()
 	listSortedOut, listSortedErr := &bytes.Buffer{}, &bytes.Buffer{}
 	listSorted.SetOut(listSortedOut)

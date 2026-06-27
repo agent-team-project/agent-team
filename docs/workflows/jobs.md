@@ -422,8 +422,10 @@ Triage rows include action hints such as:
 ```sh
 agent-team job retry squ-42 --dispatch
 agent-team job queue retry squ-42 --all --sort attempts --limit 10
+agent-team job queue quarantine squ-42 --summary --json
 agent-team job queue quarantine squ-42
 agent-team job queue quarantine restore squ-42 --all --sort attempts --limit 10 --dry-run
+agent-team job outbox quarantine squ-42 --summary --json
 agent-team job outbox quarantine squ-42
 agent-team job outbox quarantine restore squ-42 --all --sort path --limit 10 --dry-run
 agent-team job unblock squ-42 <answer...>

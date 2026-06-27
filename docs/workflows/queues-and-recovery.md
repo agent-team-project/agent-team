@@ -178,6 +178,7 @@ agent-team queue quarantine drop --all --unrestorable --sort modified --limit 10
 When a durable job owns preserved files, prefer job-scoped commands:
 
 ```sh
+agent-team job queue quarantine squ-42 --summary --json
 agent-team job queue quarantine squ-42
 agent-team job queue quarantine squ-42 --sort attempts --limit 10
 agent-team job queue quarantine show squ-42 <path>
@@ -238,6 +239,7 @@ listing individual rows.
 When one durable job owns the files, prefer the scoped command before restoring or dropping:
 
 ```sh
+agent-team job outbox quarantine squ-42 --summary --json
 agent-team job outbox quarantine squ-42
 agent-team job outbox quarantine show squ-42 <path>
 agent-team job outbox quarantine restore squ-42 <path> --dry-run
