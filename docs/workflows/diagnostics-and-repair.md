@@ -124,9 +124,10 @@ agent-team monitor --jobs --schedules
 agent-team monitor -w --jobs --events 20
 agent-team watch --jobs
 agent-team team monitor delivery --jobs --schedules
+agent-team team watch delivery --jobs --schedules
 ```
 
-Monitor combines health, queue/outbox recovery signals, inbox counts, instance rows, resources, events, jobs, schedules, and plan previews. `team monitor <team>` applies the same view to team-owned queue and outbox quarantine before rendering recovery actions.
+Monitor combines health, queue/outbox recovery signals, inbox counts, instance rows, resources, events, jobs, schedules, and plan previews. `team monitor <team>` applies the same view to team-owned queue and outbox quarantine before rendering recovery actions, and `team watch <team>` is the continuous shortcut.
 
 ## Snapshot
 

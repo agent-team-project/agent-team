@@ -294,6 +294,29 @@ instances = ["other"]
 			t.Fatalf("team monitor text missing %q:\n%s", want, textOut.String())
 		}
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	watch := NewRootCmd()
+	watch.SetContext(ctx)
+	watchOut, watchErr := &bytes.Buffer{}, &bytes.Buffer{}
+	watch.SetOut(watchOut)
+	watch.SetErr(watchErr)
+	watch.SetArgs([]string{"team", "watch", "delivery", "--repo", root, "--json", "--interval", "1ms"})
+	if err := watch.Execute(); err != nil {
+		t.Fatalf("team watch json outbox quarantine: %v\nstderr=%s", err, watchErr.String())
+	}
+	watchBody := strings.TrimSpace(watchOut.String())
+	if watchBody == "" {
+		t.Fatalf("team watch emitted no snapshot")
+	}
+	var watched monitorSnapshot
+	if err := json.Unmarshal([]byte(strings.Split(watchBody, "\n")[0]), &watched); err != nil {
+		t.Fatalf("decode team watch snapshot: %v\nbody=%s", err, watchOut.String())
+	}
+	if watched.Team == nil || watched.Team.Name != "delivery" || watched.Health == nil || watched.Health.OutboxQuarantine.Quarantined != 1 {
+		t.Fatalf("team watch snapshot = %+v", watched)
+	}
 }
 
 func TestMonitorSummaryJSONUsesHealthSnapshot(t *testing.T) {
