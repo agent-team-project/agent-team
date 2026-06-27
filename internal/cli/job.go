@@ -4947,6 +4947,7 @@ func newJobTriageCmd() *cobra.Command {
 		interval    time.Duration
 		jsonOut     bool
 		format      string
+		commands    bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -4956,6 +4957,18 @@ func newJobTriageCmd() *cobra.Command {
 			"status-file update previews, and ready pipeline steps.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job triage: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job triage: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job triage: --commands cannot be combined with --watch.")
+				return exitErr(2)
+			}
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job triage: --interval must be >= 0.")
 				return exitErr(2)
@@ -5001,7 +5014,7 @@ func newJobTriageCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			snapshot = filterJobTriageSnapshot(snapshot, filters)
-			return renderJobTriage(cmd.OutOrStdout(), snapshot, jsonOut, tmpl)
+			return renderJobTriage(cmd.OutOrStdout(), snapshot, jsonOut, tmpl, commands)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -5013,6 +5026,7 @@ func newJobTriageCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit triage snapshot as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the triage snapshot with a Go template, e.g. '{{.Summary.Total}} {{len .Attention}}'.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended commands, one per line.")
 	return cmd
 }
 
@@ -6795,7 +6809,7 @@ func runJobTriageWatch(ctx context.Context, w io.Writer, teamDir string, staleAf
 			if err := writeWatchClear(w, clear); err != nil {
 				return err
 			}
-			if err := renderJobTriage(w, snapshot, false, nil); err != nil {
+			if err := renderJobTriage(w, snapshot, false, nil, false); err != nil {
 				return err
 			}
 		}
@@ -7063,9 +7077,12 @@ func parseJobTriageFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
-func renderJobTriage(w io.Writer, snapshot jobTriageSnapshot, jsonOut bool, tmpl *template.Template) error {
+func renderJobTriage(w io.Writer, snapshot jobTriageSnapshot, jsonOut bool, tmpl *template.Template, commands bool) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(snapshot)
+	}
+	if commands {
+		return renderJobTriageCommands(w, snapshot)
 	}
 	if tmpl != nil {
 		return renderJobTriageFormat(w, snapshot, tmpl)
@@ -7088,6 +7105,20 @@ func renderJobTriage(w io.Writer, snapshot jobTriageSnapshot, jsonOut bool, tmpl
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Ready pipeline steps:")
 		renderJobReadyTable(w, snapshot.ReadySteps)
+	}
+	return nil
+}
+
+func renderJobTriageCommands(w io.Writer, snapshot jobTriageSnapshot) error {
+	for _, item := range snapshot.Attention {
+		for _, action := range item.Actions {
+			if strings.TrimSpace(action) == "" {
+				continue
+			}
+			if _, err := fmt.Fprintln(w, action); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

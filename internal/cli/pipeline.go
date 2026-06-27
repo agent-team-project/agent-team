@@ -491,6 +491,7 @@ func newPipelineTriageCmd() *cobra.Command {
 		interval    time.Duration
 		jsonOut     bool
 		format      string
+		commands    bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -501,6 +502,18 @@ func newPipelineTriageCmd() *cobra.Command {
 			"With no pipeline, all pipeline-owned jobs are considered.",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline triage: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline triage: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline triage: --commands cannot be combined with --watch.")
+				return exitErr(2)
+			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline triage: --all cannot be combined with a pipeline argument.")
 				return exitErr(2)
@@ -561,7 +574,7 @@ func newPipelineTriageCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline triage: %v\n", err)
 				return exitErr(1)
 			}
-			return renderJobTriage(cmd.OutOrStdout(), snapshot, jsonOut, tmpl)
+			return renderJobTriage(cmd.OutOrStdout(), snapshot, jsonOut, tmpl, commands)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -574,6 +587,7 @@ func newPipelineTriageCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline triage snapshot as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the pipeline triage snapshot with a Go template, e.g. '{{.Summary.Total}} {{len .Attention}}'.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended commands, one per line.")
 	return cmd
 }
 
@@ -6329,7 +6343,7 @@ func runPipelineTriageWatch(ctx context.Context, w io.Writer, teamDir, pipeline 
 			if err := writeWatchClear(w, clear); err != nil {
 				return err
 			}
-			if err := renderJobTriage(w, snapshot, false, nil); err != nil {
+			if err := renderJobTriage(w, snapshot, false, nil, false); err != nil {
 				return err
 			}
 		}

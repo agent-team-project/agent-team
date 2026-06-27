@@ -3174,6 +3174,19 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	if !containsString(actions["squ-209"], "agent-team job outbox quarantine squ-209") || !containsString(actions["squ-209"], fmt.Sprintf("agent-team job outbox quarantine restore squ-209 %s --dry-run", outboxQuarantinePath)) {
 		t.Fatalf("squ-209 actions = %v", actions["squ-209"])
 	}
+
+	commandsCmd := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commandsCmd.SetOut(commandsOut)
+	commandsCmd.SetErr(commandsErr)
+	commandsCmd.SetArgs([]string{"job", "triage", "--repo", tmp, "--stale-after", "24h", "--reason", "queue_dead", "--commands"})
+	if err := commandsCmd.Execute(); err != nil {
+		t.Fatalf("job triage commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	if got := strings.TrimSpace(commandsOut.String()); got != "agent-team job queue retry squ-204 q-triage-dead" {
+		t.Fatalf("triage commands = %q", commandsOut.String())
+	}
+
 	readyByID := map[string]jobReadyRow{}
 	for _, row := range snapshot.ReadySteps {
 		readyByID[row.JobID] = row
@@ -3921,6 +3934,21 @@ func TestJobTriageRejectsNegativeInterval(t *testing.T) {
 			name: "format with json",
 			args: []string{"job", "triage", "--repo", tmp, "--format", "{{.Summary.Total}}", "--json"},
 			want: "--format cannot be combined",
+		},
+		{
+			name: "commands with json",
+			args: []string{"job", "triage", "--repo", tmp, "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "commands with format",
+			args: []string{"job", "triage", "--repo", tmp, "--commands", "--format", "{{.Summary.Total}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "commands with watch",
+			args: []string{"job", "triage", "--repo", tmp, "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
 		},
 		{
 			name: "format with watch",

@@ -3392,6 +3392,7 @@ agent-team job triage [flags]
 Flags:
 
 ```text
+      --commands               Print only recommended commands, one per line.
       --format string          Render the triage snapshot with a Go template, e.g. '{{.Summary.Total}} {{len .Attention}}'.
       --interval duration      Refresh interval for --watch. (default 2s)
       --json                   Emit triage snapshot as JSON.
@@ -5497,6 +5498,7 @@ Flags:
 
 ```text
       --all                    Triage all pipeline-owned jobs. This is the default when no pipeline is passed.
+      --commands               Print only recommended commands, one per line.
       --format string          Render the pipeline triage snapshot with a Go template, e.g. '{{.Summary.Total}} {{len .Attention}}'.
       --interval duration      Refresh interval for --watch. (default 2s)
       --json                   Emit pipeline triage snapshot as JSON.
@@ -8739,6 +8741,7 @@ agent-team team triage <team> [flags]
 Flags:
 
 ```text
+      --commands               Print only recommended commands, one per line.
       --format string          Render the team triage snapshot with a Go template, e.g. '{{.Summary.Total}} {{len .Attention}}'.
       --interval duration      Refresh interval for --watch. (default 2s)
       --json                   Emit team triage snapshot as JSON.

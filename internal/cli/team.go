@@ -1348,6 +1348,7 @@ func newTeamTriageCmd() *cobra.Command {
 		interval    time.Duration
 		jsonOut     bool
 		format      string
+		commands    bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1357,6 +1358,18 @@ func newTeamTriageCmd() *cobra.Command {
 			"persisted daemon queue items, status-file update previews, and ready pipeline steps.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --commands cannot be combined with --watch.")
+				return exitErr(2)
+			}
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --interval must be >= 0.")
 				return exitErr(2)
@@ -1401,7 +1414,7 @@ func newTeamTriageCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team triage: %v\n", err)
 				return exitErr(1)
 			}
-			return renderJobTriage(cmd.OutOrStdout(), snapshot, jsonOut, tmpl)
+			return renderJobTriage(cmd.OutOrStdout(), snapshot, jsonOut, tmpl, commands)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -1413,6 +1426,7 @@ func newTeamTriageCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team triage snapshot as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the team triage snapshot with a Go template, e.g. '{{.Summary.Total}} {{len .Attention}}'.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended commands, one per line.")
 	return cmd
 }
 
@@ -7396,7 +7410,7 @@ func runTeamTriageWatch(ctx context.Context, w io.Writer, teamDir, name string, 
 			if err := writeWatchClear(w, clear); err != nil {
 				return err
 			}
-			if err := renderJobTriage(w, snapshot, false, nil); err != nil {
+			if err := renderJobTriage(w, snapshot, false, nil, false); err != nil {
 				return err
 			}
 		}

@@ -402,6 +402,7 @@ Use `--force-branch` only when the PR is merged but the local branch is not reco
 agent-team job triage
 agent-team job triage --min-severity warning
 agent-team job triage --reason queue_dead
+agent-team job triage --reason queue_dead --commands
 agent-team job triage --reason queue_quarantined
 agent-team job triage --reason outbox_quarantined
 agent-team job triage --json
@@ -438,6 +439,10 @@ agent-team job adopt squ-42 --pid <pid> --dry-run
 agent-team job timeout squ-42 --dry-run
 agent-team job cleanup squ-42 --dry-run
 ```
+
+Add `--commands` when scripts need only attention-row recovery commands after
+`--reason` or `--min-severity` filtering. Ready pipeline step commands are
+available separately with `agent-team job ready --commands`.
 
 ## Job File Quarantine
 

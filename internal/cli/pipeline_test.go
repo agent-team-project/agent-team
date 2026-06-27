@@ -3520,6 +3520,19 @@ target = "worker"
 		containsString(attention["squ-832"].Actions, "agent-team job queue retry squ-832 q-pipeline-triage-dead") {
 		t.Fatalf("dead queue actions = %+v", attention["squ-832"].Actions)
 	}
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"pipeline", "triage", "ticket_to_pr", "--repo", root, "--stale-after", "24h", "--reason", "queue_dead", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("pipeline triage commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	if !strings.Contains(commandsOut.String(), "agent-team pipeline queue retry ticket_to_pr q-pipeline-triage-dead") ||
+		strings.Contains(commandsOut.String(), "agent-team job queue retry squ-832 q-pipeline-triage-dead") ||
+		strings.Contains(commandsOut.String(), "Attention:") {
+		t.Fatalf("pipeline triage commands = %q", commandsOut.String())
+	}
 	if !containsString(attention["squ-833"].Actions, "agent-team pipeline queue quarantine ticket_to_pr --job squ-833") ||
 		!containsString(attention["squ-833"].Actions, fmt.Sprintf("agent-team pipeline queue quarantine restore ticket_to_pr %s --dry-run", quarantinePath)) {
 		t.Fatalf("quarantine actions = %+v", attention["squ-833"].Actions)
@@ -3592,6 +3605,42 @@ target = "worker"
 	}
 	if !strings.Contains(invalidManyErr.String(), "pass at most one pipeline name") {
 		t.Fatalf("multiple pipeline error = %q", invalidManyErr.String())
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "json",
+			args: []string{"pipeline", "triage", "ticket_to_pr", "--repo", root, "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "format",
+			args: []string{"pipeline", "triage", "ticket_to_pr", "--repo", root, "--commands", "--format", "{{.Summary.Total}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "watch",
+			args: []string{"pipeline", "triage", "ticket_to_pr", "--repo", root, "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
+		},
+	} {
+		t.Run("triage-commands-conflict-"+tc.name, func(t *testing.T) {
+			conflict := NewRootCmd()
+			conflictOut, conflictErr := &bytes.Buffer{}, &bytes.Buffer{}
+			conflict.SetOut(conflictOut)
+			conflict.SetErr(conflictErr)
+			conflict.SetArgs(tc.args)
+			if err := conflict.Execute(); err == nil {
+				t.Fatalf("pipeline triage accepted %s conflict: stdout=%s", tc.name, conflictOut.String())
+			}
+			if !strings.Contains(conflictErr.String(), tc.want) {
+				t.Fatalf("pipeline triage %s conflict stderr = %q, want %q", tc.name, conflictErr.String(), tc.want)
+			}
+		})
 	}
 }
 

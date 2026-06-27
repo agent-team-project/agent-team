@@ -484,6 +484,20 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team triage ready steps = %+v", triageSnapshot.ReadySteps)
 	}
 
+	triageCommands := NewRootCmd()
+	triageCommandsOut, triageCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	triageCommands.SetOut(triageCommandsOut)
+	triageCommands.SetErr(triageCommandsErr)
+	triageCommands.SetArgs([]string{"team", "triage", "delivery", "--repo", root, "--reason", "queue_dead", "--commands"})
+	if err := triageCommands.Execute(); err != nil {
+		t.Fatalf("team triage commands: %v\nstderr=%s", err, triageCommandsErr.String())
+	}
+	if !strings.Contains(triageCommandsOut.String(), "agent-team team queue retry delivery q-status-team") ||
+		strings.Contains(triageCommandsOut.String(), "agent-team job queue retry squ-801 q-status-team") ||
+		strings.Contains(triageCommandsOut.String(), "Attention:") {
+		t.Fatalf("team triage commands = %q", triageCommandsOut.String())
+	}
+
 	triageText := NewRootCmd()
 	triageTextOut, triageTextErr := &bytes.Buffer{}, &bytes.Buffer{}
 	triageText.SetOut(triageTextOut)
@@ -10648,6 +10662,21 @@ func TestTeamTriageRejectsFormatCombinations(t *testing.T) {
 			name: "format with json",
 			args: []string{"team", "triage", "delivery", "--format", "{{.Summary.Total}}", "--json"},
 			want: "--format cannot be combined",
+		},
+		{
+			name: "commands with json",
+			args: []string{"team", "triage", "delivery", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "commands with format",
+			args: []string{"team", "triage", "delivery", "--commands", "--format", "{{.Summary.Total}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "commands with watch",
+			args: []string{"team", "triage", "delivery", "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
 		},
 		{
 			name: "format with watch",
