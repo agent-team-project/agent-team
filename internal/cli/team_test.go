@@ -10387,6 +10387,77 @@ func TestTeamSyncDryRunScopesRowsAndFilters(t *testing.T) {
 	if strings.Contains(formatBody, "adhoc-worker") || strings.Contains(formatBody, "build-worker") {
 		t.Fatalf("formatted team sync included unrelated/extra rows:\n%s", formatBody)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "sync", "delivery", "--repo", root, "--dry-run", "--stop-extras", "--runtime", "codex", "--action", "stop", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team sync --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := "agent-team team sync delivery --repo " + root + " --stop-extras --runtime codex --action stop"
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("team sync --dry-run --commands = %q, want %q", got, wantCommand)
+	}
+
+	noAction := NewRootCmd()
+	noActionOut, noActionErr := &bytes.Buffer{}, &bytes.Buffer{}
+	noAction.SetOut(noActionOut)
+	noAction.SetErr(noActionErr)
+	noAction.SetArgs([]string{"team", "sync", "delivery", "--repo", root, "--dry-run", "--action", "keep", "--commands"})
+	if err := noAction.Execute(); err != nil {
+		t.Fatalf("team sync --dry-run --commands no actionable rows: %v\nstderr=%s", err, noActionErr.String())
+	}
+	if got := strings.TrimSpace(noActionOut.String()); got != "" {
+		t.Fatalf("team sync --dry-run --commands with no actionable rows = %q, want empty", got)
+	}
+}
+
+func TestTeamSyncCommandsRejectsInvalidRenderModes(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "no-dry-run",
+			args: []string{"team", "sync", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "json",
+			args: []string{"team", "sync", "delivery", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "summary",
+			args: []string{"team", "sync", "delivery", "--dry-run", "--commands", "--summary"},
+			want: "--commands cannot be combined with --summary",
+		},
+		{
+			name: "quiet",
+			args: []string{"team", "sync", "delivery", "--dry-run", "--commands", "--quiet"},
+			want: "--commands cannot be combined with --quiet",
+		},
+		{
+			name: "format",
+			args: []string{"team", "sync", "delivery", "--dry-run", "--commands", "--format", "{{.Instance}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tt.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("team sync --commands with %s succeeded", tt.name)
+		}
+		if !strings.Contains(stderr.String(), tt.want) {
+			t.Fatalf("team sync --commands with %s stderr = %q, want %q", tt.name, stderr.String(), tt.want)
+		}
+	}
 }
 
 func lifecycleResultInstances(rows []lifecycleActionResult) []string {

@@ -5350,6 +5350,7 @@ func newTeamSyncCmd() *cobra.Command {
 		dryRun         bool
 		wait           bool
 		stopExtras     bool
+		commands       bool
 		timeout        time.Duration
 		readyTimeout   time.Duration
 		summary        bool
@@ -5377,6 +5378,26 @@ func newTeamSyncCmd() *cobra.Command {
 			}
 			if dryRun && wait {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: --dry-run cannot be combined with --wait.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: --commands cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && quiet {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: --commands cannot be combined with --quiet.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if quiet && jsonOut {
@@ -5418,11 +5439,22 @@ func newTeamSyncCmd() *cobra.Command {
 				Format:       formatTemplate,
 				Filters:      filters,
 				Actions:      actionFilters,
+				Commands:     commands,
+				Command: planCommandOptions{
+					BaseArgs:       []string{"agent-team", "team", "sync", args[0]},
+					TargetFlag:     "--repo",
+					Target:         repo,
+					TargetSet:      cmd.Flags().Changed("repo"),
+					StopExtras:     stopExtras,
+					RuntimeFilters: runtimeFilters,
+					ActionFilters:  actions,
+				},
 			})
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview team topology convergence without starting the daemon or instances.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team sync apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for selected team instances to become healthy after syncing.")
 	cmd.Flags().BoolVar(&stopExtras, "stop-extras", false, "Also stop running daemon-known extras for this team's agents.")
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
@@ -5499,6 +5531,7 @@ func newTeamPlanCmd() *cobra.Command {
 					TargetFlag:     "--repo",
 					Target:         repo,
 					TargetSet:      cmd.Flags().Changed("repo"),
+					DryRun:         true,
 					StopExtras:     stopExtras,
 					RuntimeFilters: runtimeFilters,
 					ActionFilters:  actionFilters,
@@ -6308,6 +6341,9 @@ func renderTeamSyncDryRun(w io.Writer, snapshot *teamPlanSnapshot, opts syncOpti
 		return renderSyncNoActions(w, opts)
 	}
 	rows := snapshot.Plan.Instances
+	if opts.Commands {
+		return renderPlanCommands(w, rows, opts.Command)
+	}
 	if opts.JSON {
 		if opts.Summary {
 			return json.NewEncoder(w).Encode(lifecycleActionSummaryResult{

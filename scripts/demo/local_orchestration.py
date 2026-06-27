@@ -123,6 +123,13 @@ def main(argv: list[str]) -> int:
         require_command(team_plan_commands, f"agent-team team sync delivery --repo {repo} --dry-run")
         print("plan commands verified: sync preview, team sync preview")
 
+        step("verify command-only sync apply hints")
+        sync_commands = run(binary, "sync", "--target", repo, "--dry-run", "--commands")
+        require_command(sync_commands, f"agent-team sync --target {repo}")
+        team_sync_commands = run(binary, "team", "sync", "delivery", "--repo", repo, "--dry-run", "--commands")
+        require_command(team_sync_commands, f"agent-team team sync delivery --repo {repo}")
+        print("sync commands verified: sync apply, team sync apply")
+
         step("start daemon")
         run(binary, "daemon", "start", "--target", repo, "--ready-timeout", "5s", "--json", env=env, parse_json=True)
         if args.runtime == "claude":

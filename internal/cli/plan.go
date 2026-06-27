@@ -90,6 +90,7 @@ func newPlanCmd() *cobra.Command {
 					TargetFlag:      "--target",
 					Target:          target,
 					TargetSet:       cmd.Flags().Changed("target"),
+					DryRun:          true,
 					StopExtras:      stopExtras,
 					StatusFilters:   statusFilters,
 					RuntimeFilters:  runtimeFilters,
@@ -475,6 +476,7 @@ type planCommandOptions struct {
 	TargetFlag      string
 	Target          string
 	TargetSet       bool
+	DryRun          bool
 	StopExtras      bool
 	StatusFilters   []string
 	RuntimeFilters  []string
@@ -492,7 +494,9 @@ func renderPlanCommands(w fmtWriter, rows []planRow, opts planCommandOptions) er
 	if opts.TargetSet && strings.TrimSpace(opts.Target) != "" {
 		args = append(args, opts.TargetFlag, opts.Target)
 	}
-	args = append(args, "--dry-run")
+	if opts.DryRun {
+		args = append(args, "--dry-run")
+	}
 	if opts.StopExtras {
 		args = append(args, "--stop-extras")
 	}

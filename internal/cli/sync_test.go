@@ -286,6 +286,49 @@ func TestSyncDryRunStopExtrasMarksRunningExtra(t *testing.T) {
 	}
 }
 
+func TestSyncDryRunCommandsPrintsApplyCommand(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance: "adhoc",
+		Agent:    "worker",
+		Runtime:  string(runtimebin.KindCodex),
+		Status:   daemon.StatusRunning,
+		PID:      os.Getpid(),
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"sync", "--target", tmp, "--dry-run", "--stop-extras", "--runtime", "codex", "--action", "stop", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("sync --dry-run --commands: %v\nstderr: %s", err, stderr.String())
+	}
+	want := "agent-team sync --target " + tmp + " --stop-extras --runtime codex --action stop"
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Fatalf("sync --dry-run --commands = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(daemon.PidPath(teamDir)); !os.IsNotExist(err) {
+		t.Fatalf("commands dry-run should not create daemon pidfile, stat err=%v", err)
+	}
+
+	noAction := NewRootCmd()
+	noActionOut, noActionErr := &bytes.Buffer{}, &bytes.Buffer{}
+	noAction.SetOut(noActionOut)
+	noAction.SetErr(noActionErr)
+	noAction.SetArgs([]string{"sync", "--target", tmp, "--dry-run", "--action", "keep", "--commands"})
+	if err := noAction.Execute(); err != nil {
+		t.Fatalf("sync --dry-run --commands no actionable rows: %v\nstderr: %s", err, noActionErr.String())
+	}
+	if got := strings.TrimSpace(noActionOut.String()); got != "" {
+		t.Fatalf("sync --dry-run --commands with no actionable rows = %q, want empty", got)
+	}
+}
+
 func TestSyncQuietDryRunSuppressesOutput(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -1082,6 +1125,11 @@ func TestSyncFormatRejectsConflictingModes(t *testing.T) {
 		{[]string{"sync", "--format", "{{.Instance}}", "--json"}, "--format cannot be combined"},
 		{[]string{"sync", "--format", "{{.Instance}}", "--summary"}, "--format cannot be combined"},
 		{[]string{"sync", "--format", "{{"}, "invalid --format template"},
+		{[]string{"sync", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"sync", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"sync", "--dry-run", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
+		{[]string{"sync", "--dry-run", "--commands", "--quiet"}, "--commands cannot be combined with --quiet"},
+		{[]string{"sync", "--dry-run", "--commands", "--format", "{{.Instance}}"}, "--commands cannot be combined with --format"},
 		{[]string{"sync", "--status", "paused"}, "unknown --status"},
 		{[]string{"sync", "--status", "  "}, "non-empty status"},
 		{[]string{"sync", "--phase", "reviewing"}, "unknown --phase"},

@@ -7031,6 +7031,7 @@ Flags:
 ```text
       --action strings           Only sync plan rows with this action: start, resume, keep, unsupported, on-demand, stop, or extra. Can repeat or comma-separate.
       --agent strings            Only sync plan rows for this agent. Can repeat or comma-separate.
+      --commands                 With --dry-run, print the matching apply command when the preview has actionable work.
       --dry-run                  Preview topology convergence without starting the daemon or instances.
       --format string            Render each sync action with a Go template, e.g. '{{.Instance}} {{.Action}}'.
       --instance strings         Only sync plan rows with this name. Can repeat or comma-separate.
@@ -8691,6 +8692,7 @@ Flags:
 
 ```text
       --action strings           Only sync plan rows with this action: start, resume, keep, unsupported, on-demand, stop, or extra. Can repeat or comma-separate.
+      --commands                 With --dry-run, print the matching team sync apply command when the preview has actionable work.
       --dry-run                  Preview team topology convergence without starting the daemon or instances.
       --format string            Render each sync action with a Go template, e.g. '{{.Instance}} {{.Action}}'.
       --json                     Emit machine-readable JSON.

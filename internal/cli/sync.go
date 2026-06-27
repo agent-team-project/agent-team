@@ -22,6 +22,7 @@ func newSyncCmd() *cobra.Command {
 		dryRun       bool
 		wait         bool
 		stopExtras   bool
+		commands     bool
 		timeout      time.Duration
 		readyTimeout time.Duration
 		summary      bool
@@ -54,6 +55,26 @@ func newSyncCmd() *cobra.Command {
 			}
 			if dryRun && wait {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team sync: --dry-run cannot be combined with --wait.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team sync: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team sync: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team sync: --commands cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && quiet {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team sync: --commands cannot be combined with --quiet.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team sync: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if quiet && jsonOut {
@@ -95,11 +116,26 @@ func newSyncCmd() *cobra.Command {
 				Format:       formatTemplate,
 				Filters:      filters,
 				Actions:      actionFilters,
+				Commands:     commands,
+				Command: planCommandOptions{
+					BaseArgs:        []string{"agent-team", "sync"},
+					TargetFlag:      "--target",
+					Target:          target,
+					TargetSet:       cmd.Flags().Changed("target"),
+					StopExtras:      stopExtras,
+					StatusFilters:   statuses,
+					RuntimeFilters:  runtimes,
+					AgentFilters:    agents,
+					PhaseFilters:    phases,
+					InstanceFilters: instances,
+					ActionFilters:   actions,
+				},
 			})
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview topology convergence without starting the daemon or instances.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for selected instances to become healthy after syncing. With no filters, waits for the fleet.")
 	cmd.Flags().BoolVar(&stopExtras, "stop-extras", false, "Also stop running daemon-known instances not declared in instances.toml.")
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
@@ -129,6 +165,8 @@ type syncOptions struct {
 	Format       *template.Template
 	Filters      psOptions
 	Actions      map[string]bool
+	Commands     bool
+	Command      planCommandOptions
 }
 
 func runSync(cmd *cobra.Command, target string, opts syncOptions) error {
@@ -145,6 +183,9 @@ func runSync(cmd *cobra.Command, target string, opts syncOptions) error {
 			markPlanStopExtras(result)
 		}
 		filterSyncPlan(result, opts.Filters, opts.Actions)
+		if opts.Commands {
+			return renderPlanCommands(cmd.OutOrStdout(), result.Instances, opts.Command)
+		}
 		if opts.JSON {
 			if opts.Summary {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(lifecycleActionSummaryResult{
