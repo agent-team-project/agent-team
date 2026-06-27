@@ -2111,8 +2111,10 @@ agent-team job doctor [flags]
 Flags:
 
 ```text
+      --dry-run         With --quarantine, preview files that would be moved.
       --format string   Render the job doctor result with a Go template, e.g. '{{.OK}} {{.Summary.Valid}}'.
       --json            Emit durable job doctor findings as JSON.
+      --quarantine      Move job files with doctor problems out of the active jobs directory.
       --repo string     Repo root containing .agent_team. (default "<repo>")
 ```
 

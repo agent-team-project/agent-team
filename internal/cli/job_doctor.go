@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/jamesaud/agent-team/internal/job"
@@ -33,19 +34,39 @@ type jobDoctorSummary struct {
 }
 
 type jobDoctorResult struct {
-	OK       bool               `json:"ok"`
-	Root     string             `json:"root"`
-	Summary  jobDoctorSummary   `json:"summary"`
-	Problems []jobDoctorFinding `json:"problems,omitempty"`
-	Warnings []jobDoctorFinding `json:"warnings,omitempty"`
-	Actions  []string           `json:"actions,omitempty"`
+	OK         bool                       `json:"ok"`
+	Root       string                     `json:"root"`
+	Summary    jobDoctorSummary           `json:"summary"`
+	Problems   []jobDoctorFinding         `json:"problems,omitempty"`
+	Warnings   []jobDoctorFinding         `json:"warnings,omitempty"`
+	Actions    []string                   `json:"actions,omitempty"`
+	Quarantine *jobDoctorQuarantineResult `json:"quarantine,omitempty"`
+}
+
+type jobDoctorQuarantineResult struct {
+	DryRun     bool                      `json:"dry_run,omitempty"`
+	Directory  string                    `json:"directory,omitempty"`
+	Candidates int                       `json:"candidates"`
+	Moved      int                       `json:"moved"`
+	Items      []jobDoctorQuarantineItem `json:"items,omitempty"`
+}
+
+type jobDoctorQuarantineItem struct {
+	ID          string   `json:"id,omitempty"`
+	Path        string   `json:"path"`
+	Destination string   `json:"destination,omitempty"`
+	Codes       []string `json:"codes,omitempty"`
+	Action      string   `json:"action"`
+	DryRun      bool     `json:"dry_run,omitempty"`
 }
 
 func newJobDoctorCmd() *cobra.Command {
 	var (
-		repo    string
-		jsonOut bool
-		format  string
+		repo       string
+		jsonOut    bool
+		format     string
+		quarantine bool
+		dryRun     bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -56,6 +77,10 @@ func newJobDoctorCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job doctor: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if dryRun && !quarantine {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job doctor: --dry-run requires --quarantine.")
 				return exitErr(2)
 			}
 			tmpl, err := parseJobDoctorFormat(format)
@@ -72,10 +97,30 @@ func newJobDoctorCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job doctor: %v\n", err)
 				return exitErr(1)
 			}
+			if quarantine {
+				q, err := quarantineJobDoctorProblems(result.Root, result, dryRun, time.Now())
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job doctor: quarantine: %v\n", err)
+					return exitErr(1)
+				}
+				result.Quarantine = q
+				if !dryRun && q.Moved > 0 {
+					refreshed, err := collectJobDoctor(teamDir)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job doctor: %v\n", err)
+						return exitErr(1)
+					}
+					refreshed.Quarantine = q
+					result = refreshed
+				}
+			}
 			if err := renderJobDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, tmpl); err != nil {
 				return err
 			}
-			if !result.OK {
+			if !result.OK && !quarantine {
+				return exitErr(1)
+			}
+			if !result.OK && quarantine && !dryRun {
 				return exitErr(1)
 			}
 			return nil
@@ -84,6 +129,8 @@ func newJobDoctorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit durable job doctor findings as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the job doctor result with a Go template, e.g. '{{.OK}} {{.Summary.Valid}}'.")
+	cmd.Flags().BoolVar(&quarantine, "quarantine", false, "Move job files with doctor problems out of the active jobs directory.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "With --quarantine, preview files that would be moved.")
 	return cmd
 }
 
@@ -200,7 +247,7 @@ func jobDoctorActions(result jobDoctorResult) []string {
 	if len(result.Problems) == 0 {
 		return nil
 	}
-	return []string{"agent-team job doctor --json", "agent-team snapshot --json"}
+	return []string{"agent-team job doctor --quarantine --dry-run", "agent-team job doctor --json", "agent-team snapshot --json"}
 }
 
 func renderJobDoctor(stdout, stderr io.Writer, result jobDoctorResult, jsonOut bool, tmpl *template.Template) error {
@@ -215,6 +262,7 @@ func renderJobDoctor(stdout, stderr io.Writer, result jobDoctorResult, jsonOut b
 	if result.OK {
 		fmt.Fprintln(stdout, "agent-team job doctor: OK")
 		renderJobDoctorSummary(stdout, result.Summary)
+		renderJobDoctorQuarantine(stdout, result.Quarantine)
 		for _, warning := range result.Warnings {
 			fmt.Fprintf(stderr, "  warning: %s\n", warning.Message)
 		}
@@ -233,11 +281,137 @@ func renderJobDoctor(stdout, stderr io.Writer, result jobDoctorResult, jsonOut b
 			fmt.Fprintf(stderr, "  - %s\n", action)
 		}
 	}
+	renderJobDoctorQuarantine(stdout, result.Quarantine)
 	return nil
 }
 
 func renderJobDoctorSummary(w io.Writer, summary jobDoctorSummary) {
 	fmt.Fprintf(w, "jobs: files=%d valid=%d invalid=%d ignored=%d\n", summary.Files, summary.Valid, summary.Invalid, summary.Ignored)
+}
+
+func quarantineJobDoctorProblems(root string, result jobDoctorResult, dryRun bool, now time.Time) (*jobDoctorQuarantineResult, error) {
+	items := jobDoctorQuarantineCandidates(result)
+	out := &jobDoctorQuarantineResult{
+		DryRun:     dryRun,
+		Candidates: len(items),
+		Items:      items,
+	}
+	if len(items) == 0 {
+		return out, nil
+	}
+	out.Directory = filepath.Join("quarantine", now.UTC().Format("20060102T150405.000000000Z"))
+	for i := range out.Items {
+		item := &out.Items[i]
+		item.DryRun = dryRun
+		item.Action = "would_quarantine"
+		item.Destination = filepath.Join(out.Directory, filepath.Base(item.Path))
+		if dryRun {
+			continue
+		}
+		source, err := jobDoctorSafePath(root, item.Path)
+		if err != nil {
+			return out, err
+		}
+		destination, err := jobDoctorSafePath(root, item.Destination)
+		if err != nil {
+			return out, err
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+			return out, err
+		}
+		if err := os.Rename(source, destination); err != nil {
+			return out, err
+		}
+		item.Action = "quarantined"
+		item.DryRun = false
+		out.Moved++
+	}
+	return out, nil
+}
+
+func jobDoctorQuarantineCandidates(result jobDoctorResult) []jobDoctorQuarantineItem {
+	byPath := map[string]*jobDoctorQuarantineItem{}
+	for _, problem := range result.Problems {
+		path := strings.TrimSpace(problem.Path)
+		if path == "" {
+			continue
+		}
+		item := byPath[path]
+		if item == nil {
+			item = &jobDoctorQuarantineItem{
+				ID:     problem.ID,
+				Path:   path,
+				Action: "would_quarantine",
+			}
+			byPath[path] = item
+		}
+		if item.ID == "" {
+			item.ID = problem.ID
+		}
+		if problem.Code != "" && !stringSliceContains(item.Codes, problem.Code) {
+			item.Codes = append(item.Codes, problem.Code)
+		}
+	}
+	out := make([]jobDoctorQuarantineItem, 0, len(byPath))
+	for _, item := range byPath {
+		sort.Strings(item.Codes)
+		out = append(out, *item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func jobDoctorSafePath(root, raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", fmt.Errorf("empty job doctor path")
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	candidate := raw
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(rootAbs, candidate)
+	}
+	candidate, err = filepath.Abs(candidate)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(rootAbs, candidate)
+	if err != nil {
+		return "", err
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("refusing path outside jobs directory: %s", raw)
+	}
+	return candidate, nil
+}
+
+func renderJobDoctorQuarantine(w io.Writer, result *jobDoctorQuarantineResult) {
+	if result == nil {
+		return
+	}
+	action := "quarantined"
+	if result.DryRun {
+		action = "would_quarantine"
+	}
+	fmt.Fprintf(w, "quarantine: candidates=%d moved=%d action=%s", result.Candidates, result.Moved, action)
+	if result.Directory != "" {
+		fmt.Fprintf(w, " directory=%s", result.Directory)
+	}
+	fmt.Fprintln(w)
+	for _, item := range result.Items {
+		fmt.Fprintf(w, "  - %s -> %s", item.Path, item.Destination)
+		if len(item.Codes) > 0 {
+			fmt.Fprintf(w, " codes=%s", strings.Join(item.Codes, ","))
+		}
+		fmt.Fprintf(w, " action=%s\n", item.Action)
+	}
 }
 
 func parseJobDoctorFormat(format string) (*template.Template, error) {

@@ -171,6 +171,105 @@ updated_at = 2026-06-18T12:00:00Z
 	}
 }
 
+func TestJobDoctorQuarantineDryRunAndApply(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	jobsDir := job.Directory(teamDir)
+	if err := os.MkdirAll(jobsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := job.Write(teamDir, mustNewJob(t, "SQU-302", "worker")); err != nil {
+		t.Fatalf("write valid job: %v", err)
+	}
+	brokenPath := filepath.Join(jobsDir, "broken.toml")
+	if err := os.WriteFile(brokenPath, []byte("id = [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	invalidPath := filepath.Join(jobsDir, "squ-303.toml")
+	if err := os.WriteFile(invalidPath, []byte(`id = "squ-303"
+ticket = "SQU-303"
+target = "worker"
+status = "paused"
+created_at = 2026-06-18T12:00:00Z
+updated_at = 2026-06-18T12:00:00Z
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"job", "doctor", "--repo", tmp, "--quarantine", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("job doctor quarantine dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var dryResult jobDoctorResult
+	if err := json.Unmarshal(dryOut.Bytes(), &dryResult); err != nil {
+		t.Fatalf("decode dry-run job doctor: %v\nbody=%s", err, dryOut.String())
+	}
+	if dryResult.OK || dryResult.Quarantine == nil || !dryResult.Quarantine.DryRun || dryResult.Quarantine.Candidates != 2 || dryResult.Quarantine.Moved != 0 {
+		t.Fatalf("dry-run job doctor result = %+v", dryResult)
+	}
+	for _, path := range []string{brokenPath, invalidPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("dry-run should leave %s in place: %v", path, err)
+		}
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"job", "doctor", "--repo", tmp, "--quarantine", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("job doctor quarantine apply: %v\nstderr=%s\nstdout=%s", err, applyErr.String(), applyOut.String())
+	}
+	var applied jobDoctorResult
+	if err := json.Unmarshal(applyOut.Bytes(), &applied); err != nil {
+		t.Fatalf("decode applied job doctor: %v\nbody=%s", err, applyOut.String())
+	}
+	if !applied.OK || applied.Quarantine == nil || applied.Quarantine.DryRun || applied.Quarantine.Candidates != 2 || applied.Quarantine.Moved != 2 {
+		t.Fatalf("applied job doctor result = %+v", applied)
+	}
+	if applied.Summary.Valid != 1 || applied.Summary.Invalid != 0 || applied.Summary.Ignored != 1 {
+		t.Fatalf("applied summary = %+v", applied.Summary)
+	}
+	for _, path := range []string{brokenPath, invalidPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("active invalid file %s still exists: %v", path, err)
+		}
+	}
+	for _, item := range applied.Quarantine.Items {
+		if item.Action != "quarantined" || item.Destination == "" {
+			t.Fatalf("quarantine item = %+v", item)
+		}
+		if _, err := os.Stat(filepath.Join(jobsDir, item.Destination)); err != nil {
+			t.Fatalf("quarantined destination missing for %+v: %v", item, err)
+		}
+	}
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		t.Fatalf("job list after quarantine: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].ID != "squ-302" {
+		t.Fatalf("jobs after quarantine = %+v", jobs)
+	}
+
+	check := NewRootCmd()
+	checkOut, checkErr := &bytes.Buffer{}, &bytes.Buffer{}
+	check.SetOut(checkOut)
+	check.SetErr(checkErr)
+	check.SetArgs([]string{"job", "doctor", "--repo", tmp, "--format", "{{.OK}} {{.Summary.Valid}} {{.Summary.Invalid}} {{.Summary.Ignored}}"})
+	if err := check.Execute(); err != nil {
+		t.Fatalf("job doctor after quarantine: %v\nstderr=%s", err, checkErr.String())
+	}
+	if got, want := checkOut.String(), "true 1 0 1\n"; got != want {
+		t.Fatalf("job doctor after quarantine = %q, want %q", got, want)
+	}
+}
+
 func TestJobCreateListShowClose(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
