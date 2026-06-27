@@ -662,6 +662,10 @@ func pruneOutboxItems(teamDir, state string, olderThan time.Duration, now time.T
 	if err != nil {
 		return nil, err
 	}
+	return pruneOutboxItemsFromList(teamDir, items, state, olderThan, now, dryRun, filters, limit)
+}
+
+func pruneOutboxItemsFromList(teamDir string, items []*daemon.OutboxItem, state string, olderThan time.Duration, now time.Time, dryRun bool, filters outboxListFilters, limit int) ([]outboxPruneResult, error) {
 	matches := make([]*daemon.OutboxItem, 0, len(items))
 	for _, item := range filterOutboxItems(items, filters) {
 		if outboxItemMatchesPrune(item, state, olderThan, now) {

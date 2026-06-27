@@ -2311,6 +2311,7 @@ Flags:
 Subcommands:
 
 - `agent-team job outbox drop` - Drop outbox events owned by one job.
+- `agent-team job outbox prune` - Prune old outbox events owned by one job.
 - `agent-team job outbox retry` - Retry outbox events owned by one job.
 - `agent-team job outbox show` - Show one outbox event owned by one job.
 
@@ -2337,6 +2338,30 @@ Flags:
       --source strings   With --all, filter by source agent/instance; repeat or comma-separate values.
       --state string     With --all, filter by outbox state: pending, processed, or failed. Defaults to failed.
       --type strings     With --all, filter by event type; repeat or comma-separate values.
+```
+
+## `agent-team job outbox prune`
+
+Prune old outbox events owned by one job.
+
+Prune old sandboxed agent outbox events owned by one durable job. By default this removes processed events; pass --state failed, pending, or all for explicit cleanup.
+
+```text
+agent-team job outbox prune <job-id> [flags]
+```
+
+Flags:
+
+```text
+      --dry-run               Preview job-owned outbox events that would be pruned without dropping them.
+      --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.Dropped}}'.
+      --json                  Emit prune results as JSON.
+      --limit int             Prune at most this many matching job-owned outbox events; 0 means no limit.
+      --older-than duration   Only prune items older than this duration based on processed/failed/update/create time.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --source strings        Filter by source agent/instance before pruning; repeat or comma-separate values.
+      --state string          Outbox state to prune: processed, failed, pending, or all. (default "processed")
+      --type strings          Filter by event type before pruning; repeat or comma-separate values.
 ```
 
 ## `agent-team job outbox retry`
@@ -4142,6 +4167,7 @@ Flags:
 Subcommands:
 
 - `agent-team pipeline outbox drop` - Drop outbox events owned by one pipeline.
+- `agent-team pipeline outbox prune` - Prune old outbox events owned by one pipeline.
 - `agent-team pipeline outbox retry` - Retry outbox events owned by one pipeline.
 - `agent-team pipeline outbox show` - Show one outbox event owned by one pipeline.
 
@@ -4169,6 +4195,31 @@ Flags:
       --source strings   With --all, filter by source agent/instance; repeat or comma-separate values.
       --state string     With --all, filter by outbox state: pending, processed, or failed. Defaults to failed.
       --type strings     With --all, filter by event type; repeat or comma-separate values.
+```
+
+## `agent-team pipeline outbox prune`
+
+Prune old outbox events owned by one pipeline.
+
+Prune old sandboxed agent outbox events owned by one pipeline. By default this removes processed events; pass --state failed, pending, or all for explicit cleanup.
+
+```text
+agent-team pipeline outbox prune <pipeline> [flags]
+```
+
+Flags:
+
+```text
+      --dry-run               Preview pipeline-owned outbox events that would be pruned without dropping them.
+      --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.Dropped}}'.
+      --job strings           Filter by job id or ticket before pruning; repeat or comma-separate values.
+      --json                  Emit prune results as JSON.
+      --limit int             Prune at most this many matching pipeline-owned outbox events; 0 means no limit.
+      --older-than duration   Only prune items older than this duration based on processed/failed/update/create time.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --source strings        Filter by source agent/instance before pruning; repeat or comma-separate values.
+      --state string          Outbox state to prune: processed, failed, pending, or all. (default "processed")
+      --type strings          Filter by event type before pruning; repeat or comma-separate values.
 ```
 
 ## `agent-team pipeline outbox retry`
@@ -7030,6 +7081,7 @@ Flags:
 Subcommands:
 
 - `agent-team team outbox drop` - Drop outbox events owned by one team.
+- `agent-team team outbox prune` - Prune old outbox events owned by one team.
 - `agent-team team outbox retry` - Retry outbox events owned by one team.
 - `agent-team team outbox show` - Show one outbox event owned by one team.
 
@@ -7057,6 +7109,31 @@ Flags:
       --source strings   With --all, filter by source agent/instance; repeat or comma-separate values.
       --state string     With --all, filter by outbox state: pending, processed, or failed. Defaults to failed.
       --type strings     With --all, filter by event type; repeat or comma-separate values.
+```
+
+## `agent-team team outbox prune`
+
+Prune old outbox events owned by one team.
+
+Prune old sandboxed agent outbox events owned by one team. By default this removes processed events; pass --state failed, pending, or all for explicit cleanup.
+
+```text
+agent-team team outbox prune <team> [flags]
+```
+
+Flags:
+
+```text
+      --dry-run               Preview team-owned outbox events that would be pruned without dropping them.
+      --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.Dropped}}'.
+      --job strings           Filter by job id or ticket before pruning; repeat or comma-separate values.
+      --json                  Emit prune results as JSON.
+      --limit int             Prune at most this many matching team-owned outbox events; 0 means no limit.
+      --older-than duration   Only prune items older than this duration based on processed/failed/update/create time.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --source strings        Filter by source agent/instance before pruning; repeat or comma-separate values.
+      --state string          Outbox state to prune: processed, failed, pending, or all. (default "processed")
+      --type strings          Filter by event type before pruning; repeat or comma-separate values.
 ```
 
 ## `agent-team team outbox retry`

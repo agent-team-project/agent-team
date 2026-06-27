@@ -262,6 +262,164 @@ func TestOutboxPruneLocal(t *testing.T) {
 	}
 }
 
+func TestScopedOutboxPruneRespectsOwnership(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.other]
+agent = "other"
+
+[[instances.other.triggers]]
+event = "agent.dispatch"
+match.target = "other"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[pipelines.ops_review]
+trigger.event = "ops.created"
+
+[[pipelines.ops_review.steps]]
+id = "implement"
+target = "other"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+
+[teams.platform]
+instances = ["other"]
+pipelines = ["ops_review"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	old := now.Add(-72 * time.Hour)
+	for _, j := range []*job.Job{
+		{ID: "squ-905", Ticket: "SQU-905", Target: "worker", Pipeline: "ticket_to_pr", Status: job.StatusRunning, CreatedAt: now, UpdatedAt: now},
+		{ID: "squ-906", Ticket: "SQU-906", Target: "worker", Pipeline: "ticket_to_pr", Status: job.StatusRunning, CreatedAt: now, UpdatedAt: now},
+		{ID: "squ-907", Ticket: "SQU-907", Target: "worker", Status: job.StatusRunning, CreatedAt: now, UpdatedAt: now},
+		{ID: "ops-905", Ticket: "OPS-905", Target: "other", Pipeline: "ops_review", Status: job.StatusRunning, CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	for _, item := range []*daemon.OutboxItem{
+		{
+			ID:          "outbox-job-prune",
+			State:       daemon.OutboxStateProcessed,
+			Type:        "agent.dispatch",
+			Source:      "manager",
+			Payload:     map[string]any{"job_id": "squ-905", "ticket": "SQU-905", "target": "worker"},
+			CreatedAt:   old,
+			UpdatedAt:   old,
+			ProcessedAt: old,
+		},
+		{
+			ID:          "outbox-pipeline-prune",
+			State:       daemon.OutboxStateProcessed,
+			Type:        "agent.dispatch",
+			Source:      "manager",
+			Payload:     map[string]any{"job_id": "squ-906", "ticket": "SQU-906", "target": "worker"},
+			CreatedAt:   old,
+			UpdatedAt:   old,
+			ProcessedAt: old,
+		},
+		{
+			ID:          "outbox-team-prune",
+			State:       daemon.OutboxStateProcessed,
+			Type:        "agent.dispatch",
+			Source:      "manager",
+			Payload:     map[string]any{"job_id": "squ-907", "ticket": "SQU-907", "target": "worker"},
+			CreatedAt:   old,
+			UpdatedAt:   old,
+			ProcessedAt: old,
+		},
+		{
+			ID:          "outbox-owned-new",
+			State:       daemon.OutboxStateProcessed,
+			Type:        "agent.dispatch",
+			Source:      "manager",
+			Payload:     map[string]any{"job_id": "squ-905", "ticket": "SQU-905", "target": "worker"},
+			CreatedAt:   now.Add(-time.Hour),
+			UpdatedAt:   now.Add(-time.Hour),
+			ProcessedAt: now.Add(-time.Hour),
+		},
+		{
+			ID:        "outbox-owned-failed",
+			State:     daemon.OutboxStateFailed,
+			Type:      "agent.dispatch",
+			Source:    "manager",
+			Payload:   map[string]any{"job_id": "squ-905", "ticket": "SQU-905", "target": "worker"},
+			CreatedAt: old,
+			UpdatedAt: old,
+			FailedAt:  old,
+		},
+		{
+			ID:          "outbox-unowned-prune",
+			State:       daemon.OutboxStateProcessed,
+			Type:        "agent.dispatch",
+			Source:      "manager",
+			Payload:     map[string]any{"job_id": "ops-905", "ticket": "OPS-905", "target": "other"},
+			CreatedAt:   old,
+			UpdatedAt:   old,
+			ProcessedAt: old,
+		},
+	} {
+		writeCLIOutboxItem(t, teamDir, item)
+	}
+
+	dryJob := runRootForOutboxTest(t, "job", "outbox", "prune", "squ-905", "--repo", root, "--older-than", "24h", "--dry-run", "--json")
+	var dryJobRows []outboxPruneResult
+	if err := json.Unmarshal(dryJob.Bytes(), &dryJobRows); err != nil {
+		t.Fatalf("decode job prune dry-run: %v\n%s", err, dryJob.String())
+	}
+	if len(dryJobRows) != 1 || dryJobRows[0].ID != "outbox-job-prune" || !dryJobRows[0].DryRun || dryJobRows[0].Dropped {
+		t.Fatalf("job prune dry-run rows = %+v", dryJobRows)
+	}
+
+	jobPrune := runRootForOutboxTest(t, "job", "outbox", "prune", "squ-905", "--repo", root, "--older-than", "24h", "--format", "{{.ID}} {{.Dropped}}")
+	if got, want := strings.TrimSpace(jobPrune.String()), "outbox-job-prune true"; got != want {
+		t.Fatalf("job prune output = %q, want %q", got, want)
+	}
+	pipelinePrune := runRootForOutboxTest(t, "pipeline", "outbox", "prune", "ticket_to_pr", "--repo", root, "--older-than", "24h", "--job", "SQU-906", "--json")
+	var pipelineRows []outboxPruneResult
+	if err := json.Unmarshal(pipelinePrune.Bytes(), &pipelineRows); err != nil {
+		t.Fatalf("decode pipeline prune: %v\n%s", err, pipelinePrune.String())
+	}
+	if len(pipelineRows) != 1 || pipelineRows[0].ID != "outbox-pipeline-prune" || !pipelineRows[0].Dropped {
+		t.Fatalf("pipeline prune rows = %+v", pipelineRows)
+	}
+	teamPrune := runRootForOutboxTest(t, "team", "outbox", "prune", "delivery", "--repo", root, "--older-than", "24h", "--job", "SQU-907", "--json")
+	var teamRows []outboxPruneResult
+	if err := json.Unmarshal(teamPrune.Bytes(), &teamRows); err != nil {
+		t.Fatalf("decode team prune: %v\n%s", err, teamPrune.String())
+	}
+	if len(teamRows) != 1 || teamRows[0].ID != "outbox-team-prune" || !teamRows[0].Dropped {
+		t.Fatalf("team prune rows = %+v", teamRows)
+	}
+
+	for _, id := range []string{"outbox-job-prune", "outbox-pipeline-prune", "outbox-team-prune"} {
+		if _, err := daemon.ReadOutboxItem(teamDir, id); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s should be removed, err=%v", id, err)
+		}
+	}
+	for _, id := range []string{"outbox-owned-new", "outbox-owned-failed", "outbox-unowned-prune"} {
+		if _, err := daemon.ReadOutboxItem(teamDir, id); err != nil {
+			t.Fatalf("%s should remain after scoped prune: %v", id, err)
+		}
+	}
+}
+
 func TestOutboxDrainDryRunOffline(t *testing.T) {
 	target := t.TempDir()
 	teamDir := filepath.Join(target, ".agent_team")

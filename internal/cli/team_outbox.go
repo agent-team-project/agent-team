@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/jamesaud/agent-team/internal/job"
@@ -85,6 +86,7 @@ func newTeamOutboxCmd() *cobra.Command {
 	cmd.AddCommand(newTeamOutboxShowCmd())
 	cmd.AddCommand(newTeamOutboxRetryCmd())
 	cmd.AddCommand(newTeamOutboxDropCmd())
+	cmd.AddCommand(newTeamOutboxPruneCmd())
 	return cmd
 }
 
@@ -317,6 +319,73 @@ func newTeamOutboxDropCmd() *cobra.Command {
 	return cmd
 }
 
+func newTeamOutboxPruneCmd() *cobra.Command {
+	var (
+		repo      string
+		stateFlag string
+		olderThan time.Duration
+		dryRun    bool
+		jsonOut   bool
+		format    string
+		types     []string
+		sources   []string
+		jobs      []string
+		limit     int
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "prune <team>",
+		Short: "Prune old outbox events owned by one team.",
+		Long:  "Prune old sandboxed agent outbox events owned by one team. By default this removes processed events; pass --state failed, pending, or all for explicit cleanup.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team outbox prune: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if olderThan < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team outbox prune: --older-than must be >= 0.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team outbox prune: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			tmpl, err := parseOutboxPruneFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team outbox prune: %v\n", err)
+				return exitErr(2)
+			}
+			state, err := parseOutboxPruneState(stateFlag)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team outbox prune: %v\n", err)
+				return exitErr(2)
+			}
+			filters, err := parseOutboxFilters("", types, sources, jobs)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team outbox prune: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			return runTeamOutboxPrune(cmd.OutOrStdout(), teamDir, args[0], state, olderThan, time.Now().UTC(), dryRun, filters, limit, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&stateFlag, "state", daemon.OutboxStateProcessed, "Outbox state to prune: processed, failed, pending, or all.")
+	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "Only prune items older than this duration based on processed/failed/update/create time.")
+	cmd.Flags().StringSliceVar(&types, "type", nil, "Filter by event type before pruning; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&sources, "source", nil, "Filter by source agent/instance before pruning; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Filter by job id or ticket before pruning; repeat or comma-separate values.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Prune at most this many matching team-owned outbox events; 0 means no limit.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview team-owned outbox events that would be pruned without dropping them.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit prune results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each prune result with a Go template, e.g. '{{.ID}} {{.Dropped}}'.")
+	return cmd
+}
+
 func runTeamOutboxList(w io.Writer, teamDir, name string, filters outboxListFilters, opts outboxListOptions, jsonOut bool, tmpl *template.Template) error {
 	items, err := collectTeamOutboxItems(teamDir, name)
 	if err != nil {
@@ -355,6 +424,18 @@ func runTeamOutboxDropAll(w io.Writer, teamDir, name string, filters outboxListF
 		return err
 	}
 	return renderOutboxActionResults(w, results, jsonOut, tmpl)
+}
+
+func runTeamOutboxPrune(w io.Writer, teamDir, name string, state string, olderThan time.Duration, now time.Time, dryRun bool, filters outboxListFilters, limit int, jsonOut bool, tmpl *template.Template) error {
+	items, err := collectTeamOutboxItems(teamDir, name)
+	if err != nil {
+		return err
+	}
+	results, err := pruneOutboxItemsFromList(teamDir, items, state, olderThan, now, dryRun, filters, limit)
+	if err != nil {
+		return err
+	}
+	return renderOutboxPruneResults(w, results, jsonOut, tmpl)
 }
 
 func filteredTeamOutboxItems(teamDir, name string, filters outboxListFilters, opts outboxListOptions) ([]*daemon.OutboxItem, error) {
