@@ -846,6 +846,209 @@ since = "2026-06-18T12:00:00Z"
 	}
 }
 
+func TestTeamJobWaitPollsNextStepState(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.platform-manager]
+agent = "platform-manager"
+
+[instances.platform-worker]
+agent = "platform-worker"
+ephemeral = true
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+
+[pipelines.platform_ops]
+trigger.event = "ops.created"
+
+[[pipelines.platform_ops.steps]]
+id = "audit"
+target = "platform-worker"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+
+[teams.platform]
+instances = ["platform-manager", "platform-worker"]
+pipelines = ["platform_ops"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-811",
+			Ticket:    "SQU-811",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusQueued},
+				{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"implement"}},
+			},
+		},
+		{
+			ID:        "squ-812",
+			Ticket:    "SQU-812",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(time.Second),
+			UpdatedAt: now.Add(time.Second),
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning},
+				{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"implement"}},
+			},
+		},
+		{
+			ID:        "ops-811",
+			Ticket:    "OPS-811",
+			Target:    "platform-worker",
+			Pipeline:  "platform_ops",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "audit", Target: "platform-worker", Status: job.StatusQueued},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+
+	queued := NewRootCmd()
+	queuedOut, queuedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	queued.SetOut(queuedOut)
+	queued.SetErr(queuedErr)
+	queued.SetArgs([]string{"team", "wait-jobs", "delivery", "--repo", root, "--job", "squ-811", "--next-state", "all", "--step", "implement", "--format", "{{.ID}} {{.Status}}"})
+	if err := queued.Execute(); err != nil {
+		t.Fatalf("team wait-jobs next-state all: %v\nstderr=%s", err, queuedErr.String())
+	}
+	if got, want := queuedOut.String(), "squ-811 running\n"; got != want {
+		t.Fatalf("team wait-jobs next-state all output = %q, want %q", got, want)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		time.Sleep(25 * time.Millisecond)
+		for _, id := range []string{"squ-811", "squ-812"} {
+			updated, err := job.Read(teamDir, id)
+			if err != nil {
+				t.Errorf("read job %s in updater: %v", id, err)
+				return
+			}
+			updated.Status = job.StatusBlocked
+			updated.Steps[0].Status = job.StatusDone
+			updated.Steps[0].FinishedAt = time.Now().UTC()
+			updated.UpdatedAt = time.Now().UTC()
+			if err := job.Write(teamDir, updated); err != nil {
+				t.Errorf("write job %s in updater: %v", id, err)
+				return
+			}
+		}
+	}()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "wait-jobs", "delivery", "--repo", root, "--next-state", "ready", "--step", "review", "--timeout", "2s", "--interval", "10ms", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team wait-jobs next-state ready: %v\nstderr=%s", err, stderr.String())
+	}
+	<-done
+	var got []job.Job
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode team wait-jobs json: %v\nbody=%s", err, out.String())
+	}
+	nextByJob := map[string]jobNextResult{}
+	for i := range got {
+		nextByJob[got[i].ID] = inspectNextJobStep(&got[i])
+	}
+	if len(got) != 2 ||
+		nextByJob["squ-811"].State != "ready" ||
+		jobWaitNextStep(nextByJob["squ-811"]) != "review" ||
+		nextByJob["squ-812"].State != "ready" ||
+		jobWaitNextStep(nextByJob["squ-812"]) != "review" ||
+		nextByJob["ops-811"].State != "" {
+		t.Fatalf("team wait-jobs = %+v next=%+v", got, nextByJob)
+	}
+
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-813",
+		Ticket:    "SQU-813",
+		Target:    "worker",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		LastEvent: "created",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusQueued},
+			{ID: "review", Target: "manager", Status: job.StatusBlocked, After: []string{"implement"}},
+		},
+	}); err != nil {
+		t.Fatalf("write timeout job: %v", err)
+	}
+	timeoutCmd := NewRootCmd()
+	timeoutOut, timeoutErr := &bytes.Buffer{}, &bytes.Buffer{}
+	timeoutCmd.SetOut(timeoutOut)
+	timeoutCmd.SetErr(timeoutErr)
+	timeoutCmd.SetArgs([]string{"team", "wait-jobs", "delivery", "--repo", root, "--job", "squ-813", "--next-state", "ready", "--step", "review", "--timeout", "1ms", "--interval", "10ms"})
+	if err := timeoutCmd.Execute(); err == nil {
+		t.Fatalf("team wait-jobs timeout succeeded unexpectedly")
+	}
+	for _, want := range []string{"next-state=ready", "step=review", "squ-813=running", "next_state=queued", "step=implement"} {
+		if !strings.Contains(timeoutErr.String(), want) {
+			t.Fatalf("timeout stderr = %q, want %q", timeoutErr.String(), want)
+		}
+	}
+
+	badState := NewRootCmd()
+	badState.SetOut(&bytes.Buffer{})
+	badStateErr := &bytes.Buffer{}
+	badState.SetErr(badStateErr)
+	badState.SetArgs([]string{"team", "wait-jobs", "delivery", "--repo", root, "--next-state", "stuck"})
+	if err := badState.Execute(); err == nil {
+		t.Fatalf("team wait-jobs bad next-state succeeded")
+	}
+	if !strings.Contains(badStateErr.String(), "--next-state must be ready") {
+		t.Fatalf("bad next-state stderr = %q", badStateErr.String())
+	}
+
+	missing := NewRootCmd()
+	missing.SetOut(&bytes.Buffer{})
+	missingErr := &bytes.Buffer{}
+	missing.SetErr(missingErr)
+	missing.SetArgs([]string{"team", "wait-jobs", "delivery", "--repo", root, "--job", "ops-811"})
+	if err := missing.Execute(); err == nil {
+		t.Fatalf("team wait-jobs foreign job succeeded")
+	}
+	if !strings.Contains(missingErr.String(), "job(s) not owned by team: ops-811") {
+		t.Fatalf("foreign job stderr = %q", missingErr.String())
+	}
+}
+
 func TestTeamAdoptUsesScopedJobDefaults(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")

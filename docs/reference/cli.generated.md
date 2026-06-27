@@ -6027,6 +6027,7 @@ Subcommands:
 - `agent-team team unblock` - Answer blocked pipeline workers owned by one team.
 - `agent-team team up` - Start or resume a team&#39;s declared persistent instances.
 - `agent-team team wait` - Wait for team-owned instances to reach a lifecycle condition.
+- `agent-team team wait-jobs` - Wait for team-owned jobs to reach a lifecycle status, event, or next step.
 
 ## `agent-team team adopt`
 
@@ -7513,6 +7514,33 @@ Flags:
       --unhealthy             Wait for team-owned instances that are crashed, status-stale, or runtime-stale.
       --until string          Lifecycle condition to wait for: running, terminal, stopped, exited, crashed, or removed. (default "running")
       --until-phase strings   Work phase condition to wait for: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
+```
+
+## `agent-team team wait-jobs`
+
+Wait for team-owned jobs to reach a lifecycle status, event, or next step.
+
+Wait for every selected job owned by one team to reach one of the requested lifecycle statuses, last events, and/or pipeline next-step states. By default this waits for terminal statuses: done or failed. When --event, --next-state, or --step is set without --status, any status is accepted. Use `team wait` for team-owned instance lifecycle waits.
+
+```text
+agent-team team wait-jobs <team> [flags]
+```
+
+Flags:
+
+```text
+      --event strings        Last event to wait for, e.g. closed, adopted, pipeline_done, or pipeline_failed. Can repeat or comma-separate.
+      --fail-on-failed       Exit 1 if any selected job resolves to failed.
+      --format string        Render each final job with a Go template, e.g. '{{.ID}} {{.Status}}'.
+      --interval duration    Polling interval. (default 500ms)
+      --job strings          Only wait for these team-owned job ids. Can repeat or comma-separate.
+      --json                 Emit final team-owned jobs as JSON.
+      --next-state strings   Next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+  -q, --quiet                Suppress output and use only the exit code.
+      --repo string          Repo root containing .agent_team. (default "<repo>")
+      --status strings       Status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --step string          Pipeline step id that must be the current next step for every selected job.
+      --timeout duration     Maximum time to wait (0 = no timeout).
 ```
 
 ## `agent-team template`
