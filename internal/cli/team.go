@@ -6415,7 +6415,10 @@ func teamReadyRowActions(teamName string, row jobReadyRow) []string {
 	if row.State == "queued" {
 		return []string{fmt.Sprintf("agent-team team tick %s", teamName)}
 	}
-	return row.Actions
+	if strings.TrimSpace(row.Pipeline) == "" {
+		return row.Actions
+	}
+	return scopeTeamExplainActionList(teamName, row.Pipeline, row.JobID, row.StepID, row.Actions)
 }
 
 func scopeTeamTriageActions(teamName string, items []jobTriageItem) []jobTriageItem {

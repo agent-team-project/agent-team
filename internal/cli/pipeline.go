@@ -4957,7 +4957,7 @@ func pipelineReadyRowActions(pipeline string, row jobReadyRow) []string {
 		}
 		return actions
 	}
-	return row.Actions
+	return scopePipelineExplainActionList(pipeline, row.JobID, row.StepID, row.Actions)
 }
 
 func scopePipelineTriageActions(pipeline string, items []jobTriageItem) []jobTriageItem {

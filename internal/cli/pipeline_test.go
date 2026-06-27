@@ -2853,6 +2853,47 @@ func TestPipelineReadyRowActionsPreservesNonAdvanceableQueuedHint(t *testing.T) 
 		containsString(advanceActions, "agent-team job advance squ-836") {
 		t.Fatalf("advanceable queued actions = %+v", advanceActions)
 	}
+
+	gated := jobReadyRow{
+		JobID:  "squ-837",
+		State:  "blocked",
+		StepID: "review",
+		Gate:   job.StepGateManual,
+		Actions: []string{
+			"agent-team job approve squ-837 --step review",
+			"agent-team job reject squ-837 --step review",
+		},
+	}
+	gatedActions := pipelineReadyRowActions("ticket_to_pr", gated)
+	if !containsString(gatedActions, "agent-team pipeline approve ticket_to_pr --step review --dry-run --dispatch --preview-routes") ||
+		!containsString(gatedActions, "agent-team pipeline reject ticket_to_pr --step review --dry-run") ||
+		containsString(gatedActions, "agent-team job approve squ-837 --step review") ||
+		containsString(gatedActions, "agent-team job reject squ-837 --step review") {
+		t.Fatalf("gated actions = %+v", gatedActions)
+	}
+
+	failed := jobReadyRow{
+		JobID:   "squ-838",
+		State:   "failed",
+		StepID:  "implement",
+		Actions: []string{"agent-team job retry squ-838 --dispatch"},
+	}
+	failedActions := pipelineReadyRowActions("ticket_to_pr", failed)
+	if !containsString(failedActions, "agent-team pipeline retry ticket_to_pr --step implement --dry-run --dispatch --preview-routes") ||
+		containsString(failedActions, "agent-team job retry squ-838 --dispatch") {
+		t.Fatalf("failed actions = %+v", failedActions)
+	}
+
+	held := jobReadyRow{
+		JobID:   "squ-839",
+		State:   "held",
+		Actions: []string{"agent-team job release squ-839"},
+	}
+	heldActions := pipelineReadyRowActions("ticket_to_pr", held)
+	if !containsString(heldActions, "agent-team pipeline release ticket_to_pr --dry-run") ||
+		containsString(heldActions, "agent-team job release squ-839") {
+		t.Fatalf("held actions = %+v", heldActions)
+	}
 }
 
 func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {

@@ -1122,6 +1122,63 @@ func TestScopeTeamTriageActionsUsesTeamRecoveryCommands(t *testing.T) {
 	}
 }
 
+func TestTeamReadyRowActionsScopesRecoveryCommands(t *testing.T) {
+	failed := jobReadyRow{
+		JobID:    "squ-840",
+		Pipeline: "ticket_to_pr",
+		State:    "failed",
+		StepID:   "implement",
+		Actions:  []string{"agent-team job retry squ-840 --dispatch"},
+	}
+	failedActions := teamReadyRowActions("delivery", failed)
+	if !containsString(failedActions, "agent-team team retry delivery --step implement --dry-run --dispatch --preview-routes") ||
+		containsString(failedActions, "agent-team job retry squ-840 --dispatch") {
+		t.Fatalf("failed actions = %+v", failedActions)
+	}
+
+	gated := jobReadyRow{
+		JobID:    "squ-841",
+		Pipeline: "ticket_to_pr",
+		State:    "blocked",
+		StepID:   "review",
+		Gate:     job.StepGateManual,
+		Actions: []string{
+			"agent-team job approve squ-841 --step review",
+			"agent-team job reject squ-841 --step review",
+		},
+	}
+	gatedActions := teamReadyRowActions("delivery", gated)
+	if !containsString(gatedActions, "agent-team team approve delivery --step review --dry-run --dispatch --preview-routes") ||
+		!containsString(gatedActions, "agent-team team reject delivery --step review --dry-run") ||
+		containsString(gatedActions, "agent-team job approve squ-841 --step review") ||
+		containsString(gatedActions, "agent-team job reject squ-841 --step review") {
+		t.Fatalf("gated actions = %+v", gatedActions)
+	}
+
+	held := jobReadyRow{
+		JobID:    "squ-842",
+		Pipeline: "ticket_to_pr",
+		State:    "held",
+		Actions:  []string{"agent-team job release squ-842"},
+	}
+	heldActions := teamReadyRowActions("delivery", held)
+	if !containsString(heldActions, "agent-team team release delivery --dry-run") ||
+		containsString(heldActions, "agent-team job release squ-842") {
+		t.Fatalf("held actions = %+v", heldActions)
+	}
+
+	standalone := jobReadyRow{
+		JobID:   "squ-843",
+		State:   "failed",
+		Actions: []string{"agent-team job retry squ-843 --dispatch"},
+	}
+	standaloneActions := teamReadyRowActions("delivery", standalone)
+	if !containsString(standaloneActions, "agent-team job retry squ-843 --dispatch") ||
+		containsString(standaloneActions, "agent-team team retry delivery --dry-run --dispatch --preview-routes") {
+		t.Fatalf("standalone actions = %+v", standaloneActions)
+	}
+}
+
 func TestTeamAdoptRejectsJobOutsideTeam(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
