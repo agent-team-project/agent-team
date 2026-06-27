@@ -874,6 +874,22 @@ func TestRuntimeResumePlanUnhealthyFilter(t *testing.T) {
 		t.Fatalf("unhealthy resume-plan = %q, want %q", got, want)
 	}
 
+	sorted := NewRootCmd()
+	sortedOut, sortedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sorted.SetOut(sortedOut)
+	sorted.SetErr(sortedErr)
+	sorted.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--unhealthy", "--sort", "stale", "--format", "{{.Instance}} {{.RecommendedAction}} {{.Stale}}"})
+	if err := sorted.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan unhealthy sort: %v\nstderr=%s", err, sortedErr.String())
+	}
+	sortedWant := strings.Join([]string{
+		"stale-manager start true",
+		"crashed-worker logs false",
+	}, "\n")
+	if got := strings.TrimSpace(sortedOut.String()); got != sortedWant {
+		t.Fatalf("sorted unhealthy resume-plan = %q, want %q", got, sortedWant)
+	}
+
 	summary := NewRootCmd()
 	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	summary.SetOut(summaryOut)
@@ -1242,6 +1258,27 @@ func TestRuntimeResumePlanRejectsInvalidAction(t *testing.T) {
 		t.Fatalf("error = %v, want exit 1", err)
 	}
 	if !strings.Contains(errOut.String(), "--action accepts start, attach, resume, logs, or all") {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+}
+
+func TestRuntimeResumePlanRejectsInvalidSort(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--sort", "age"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("runtime resume-plan --sort age succeeded")
+	}
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 2 {
+		t.Fatalf("error = %v, want exit 2", err)
+	}
+	if !strings.Contains(errOut.String(), "--sort must be instance") {
 		t.Fatalf("stderr = %q", errOut.String())
 	}
 }

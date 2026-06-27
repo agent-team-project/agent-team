@@ -4599,6 +4599,22 @@ target = "worker"
 		t.Fatalf("pipeline unhealthy resume-plan = %q, want %q", got, want)
 	}
 
+	sortStale := NewRootCmd()
+	sortStaleOut, sortStaleErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sortStale.SetOut(sortStaleOut)
+	sortStale.SetErr(sortStaleErr)
+	sortStale.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--unhealthy", "--sort", "stale", "--format", "{{.Instance}} {{.RecommendedAction}} {{.Stale}}"})
+	if err := sortStale.Execute(); err != nil {
+		t.Fatalf("pipeline resume-plan sort stale: %v\nstderr=%s", err, sortStaleErr.String())
+	}
+	if got, want := strings.TrimSpace(sortStaleOut.String()), strings.Join([]string{
+		"worker-squ-942 start true",
+		"manager-squ-940 logs false",
+		"worker-squ-940 logs false",
+	}, "\n"); got != want {
+		t.Fatalf("pipeline stale-sorted resume-plan = %q, want %q", got, want)
+	}
+
 	invalidMany := NewRootCmd()
 	invalidManyOut, invalidManyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	invalidMany.SetOut(invalidManyOut)
@@ -4621,6 +4637,18 @@ target = "worker"
 	}
 	if !strings.Contains(invalidAllErr.String(), "--all cannot be combined with a pipeline argument") {
 		t.Fatalf("--all conflict error = %q", invalidAllErr.String())
+	}
+
+	invalidSort := NewRootCmd()
+	invalidSortOut, invalidSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSort.SetOut(invalidSortOut)
+	invalidSort.SetErr(invalidSortErr)
+	invalidSort.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--sort", "age"})
+	if err := invalidSort.Execute(); err == nil {
+		t.Fatalf("pipeline resume-plan accepted invalid sort: stdout=%s", invalidSortOut.String())
+	}
+	if !strings.Contains(invalidSortErr.String(), "--sort must be instance") {
+		t.Fatalf("invalid sort error = %q", invalidSortErr.String())
 	}
 }
 

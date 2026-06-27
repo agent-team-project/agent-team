@@ -2766,6 +2766,7 @@ Flags:
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
+      --sort string       Sort plans before rendering by instance, action, runtime, status, stale, job, pipeline, step, or agent. (default "instance")
       --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --step string       Only include plans for this pipeline step id.
@@ -4174,6 +4175,7 @@ Flags:
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
+      --sort string       Sort plans before rendering by instance, action, runtime, status, stale, job, pipeline, step, or agent. (default "instance")
       --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --step string       Only include plans for this pipeline step id.
@@ -5164,6 +5166,7 @@ Flags:
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
+      --sort string       Sort plans before rendering by instance, action, runtime, status, stale, job, pipeline, step, or agent. (default "instance")
       --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --step string       Only include plans for this pipeline step id.
@@ -5435,6 +5438,7 @@ Flags:
       --json              Emit machine-readable JSON.
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
+      --sort string       Sort plans before rendering by instance, action, runtime, status, stale, job, pipeline, step, or agent. (default "instance")
       --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --step string       Only include plans for this pipeline step id.
@@ -7009,6 +7013,7 @@ Flags:
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
+      --sort string       Sort plans before rendering by instance, action, runtime, status, stale, job, pipeline, step, or agent. (default "instance")
       --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --step string       Only include plans for this pipeline step id.
@@ -7124,6 +7129,7 @@ Flags:
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
+      --sort string       Sort plans before rendering by instance, action, runtime, status, stale, job, pipeline, step, or agent. (default "instance")
       --stale             Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.
       --status strings    Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.
       --step string       Only include plans for this pipeline step id.

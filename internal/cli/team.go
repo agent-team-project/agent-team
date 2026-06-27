@@ -287,6 +287,7 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 		statusFilters []string
 		runtimeFilter []string
 		actionFilters []string
+		sortBy        string
 		staleOnly     bool
 		runtimeStale  bool
 		unhealthyOnly bool
@@ -309,6 +310,11 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --summary cannot be combined with --format.\n", cfg.ErrorName)
 				return exitErr(2)
 			}
+			sortMode, err := parseRuntimeResumeSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", cfg.ErrorName, err)
+				return exitErr(2)
+			}
 			tmpl, err := parseRuntimeResumePlanFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", cfg.ErrorName, err)
@@ -323,6 +329,7 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", cfg.ErrorName, err)
 				return exitErr(1)
 			}
+			sortRuntimeResumePlans(plans, sortMode)
 			if summary {
 				out := summarizeRuntimeResumePlans(plans)
 				if jsonOut {
@@ -346,6 +353,7 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&sortBy, "sort", "instance", "Sort plans before rendering by instance, action, runtime, status, stale, job, pipeline, step, or agent.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.")
 	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Only include running metadata whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only include crashed or stale running metadata.")

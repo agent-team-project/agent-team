@@ -93,6 +93,7 @@ func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Comm
 		statusFilters []string
 		runtimeFilter []string
 		actionFilters []string
+		sortBy        string
 		staleOnly     bool
 		runtimeStale  bool
 		unhealthyOnly bool
@@ -119,6 +120,11 @@ func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Comm
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --job cannot be combined with instance names.\n", cfg.ErrorName)
 				return exitErr(2)
 			}
+			sortMode, err := parseRuntimeResumeSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", cfg.ErrorName, err)
+				return exitErr(2)
+			}
 			tmpl, err := parseRuntimeResumePlanFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", cfg.ErrorName, err)
@@ -133,6 +139,7 @@ func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Comm
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", cfg.ErrorName, err)
 				return exitErr(1)
 			}
+			sortRuntimeResumePlans(plans, sortMode)
 			if summary {
 				out := summarizeRuntimeResumePlans(plans)
 				if jsonOut {
@@ -161,6 +168,7 @@ func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Comm
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&sortBy, "sort", "instance", "Sort plans before rendering by instance, action, runtime, status, stale, job, pipeline, step, or agent.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.")
 	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Only include running metadata whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only include crashed or stale running metadata.")
@@ -177,6 +185,7 @@ func newJobResumePlanCmd() *cobra.Command {
 		statusFilters []string
 		runtimeFilter []string
 		actionFilters []string
+		sortBy        string
 		staleOnly     bool
 		runtimeStale  bool
 		unhealthyOnly bool
@@ -200,6 +209,11 @@ func newJobResumePlanCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job resume-plan: --summary cannot be combined with --format.")
 				return exitErr(2)
 			}
+			sortMode, err := parseRuntimeResumeSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job resume-plan: %v\n", err)
+				return exitErr(2)
+			}
 			tmpl, err := parseRuntimeResumePlanFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job resume-plan: %v\n", err)
@@ -214,6 +228,7 @@ func newJobResumePlanCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job resume-plan: %v\n", err)
 				return exitErr(1)
 			}
+			sortRuntimeResumePlans(plans, sortMode)
 			if summary {
 				out := summarizeRuntimeResumePlans(plans)
 				if jsonOut {
@@ -237,6 +252,7 @@ func newJobResumePlanCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only include metadata with this status: running, stopped, exited, or crashed. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilter, "runtime", nil, "Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&sortBy, "sort", "instance", "Sort plans before rendering by instance, action, runtime, status, stale, job, pipeline, step, or agent.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only include running metadata whose recorded runtime PID is no longer live. Compatibility alias for --runtime-stale.")
 	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Only include running metadata whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only include crashed or stale running metadata.")
@@ -626,6 +642,63 @@ func parseRuntimeResumeActionFilter(raw []string) (map[string]bool, error) {
 		}
 	}
 	return out, nil
+}
+
+func parseRuntimeResumeSort(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	switch value {
+	case "", "instance":
+		return "instance", nil
+	case "action", "runtime", "status", "stale", "job", "pipeline", "step", "agent":
+		return value, nil
+	default:
+		return "", fmt.Errorf("--sort must be instance, action, runtime, status, stale, job, pipeline, step, or agent")
+	}
+}
+
+func sortRuntimeResumePlans(plans []runtimeResumePlan, sortMode string) {
+	sortMode, err := parseRuntimeResumeSort(sortMode)
+	if err != nil || len(plans) < 2 {
+		return
+	}
+	sort.SliceStable(plans, func(i, j int) bool {
+		left := plans[i]
+		right := plans[j]
+		switch sortMode {
+		case "action":
+			return runtimeResumePlanSortLess(left.RecommendedAction, right.RecommendedAction, left.Instance, right.Instance)
+		case "runtime":
+			return runtimeResumePlanSortLess(left.Runtime, right.Runtime, left.Instance, right.Instance)
+		case "status":
+			return runtimeResumePlanSortLess(left.Status, right.Status, left.Instance, right.Instance)
+		case "stale":
+			if left.Stale != right.Stale {
+				return left.Stale
+			}
+			return runtimeResumePlanSortLess(left.Instance, right.Instance, "", "")
+		case "job":
+			return runtimeResumePlanSortLess(left.Job, right.Job, left.Instance, right.Instance)
+		case "pipeline":
+			return runtimeResumePlanSortLess(left.Pipeline, right.Pipeline, left.Instance, right.Instance)
+		case "step":
+			return runtimeResumePlanSortLess(left.StepID, right.StepID, left.Instance, right.Instance)
+		case "agent":
+			return runtimeResumePlanSortLess(left.Agent, right.Agent, left.Instance, right.Instance)
+		default:
+			return runtimeResumePlanSortLess(left.Instance, right.Instance, "", "")
+		}
+	})
+}
+
+func runtimeResumePlanSortLess(primaryLeft, primaryRight, fallbackLeft, fallbackRight string) bool {
+	left := strings.ToLower(strings.TrimSpace(primaryLeft))
+	right := strings.ToLower(strings.TrimSpace(primaryRight))
+	if left != right {
+		return left < right
+	}
+	left = strings.ToLower(strings.TrimSpace(fallbackLeft))
+	right = strings.ToLower(strings.TrimSpace(fallbackRight))
+	return left < right
 }
 
 func splitRuntimeResumeCSVValues(raw []string) []string {

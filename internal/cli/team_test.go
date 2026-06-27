@@ -5202,6 +5202,34 @@ func TestTeamRuntimeResumePlanScopesMetadata(t *testing.T) {
 	}, "\n"); got != want {
 		t.Fatalf("team unhealthy resume-plan = %q, want %q", got, want)
 	}
+
+	sortStale := NewRootCmd()
+	sortStaleOut, sortStaleErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sortStale.SetOut(sortStaleOut)
+	sortStale.SetErr(sortStaleErr)
+	sortStale.SetArgs([]string{"team", "runtime", "resume-plan", "delivery", "--repo", root, "--unhealthy", "--sort", "stale", "--format", "{{.Instance}} {{.RecommendedAction}} {{.Stale}}"})
+	if err := sortStale.Execute(); err != nil {
+		t.Fatalf("team runtime resume-plan sort stale: %v\nstderr=%s", err, sortStaleErr.String())
+	}
+	if got, want := strings.TrimSpace(sortStaleOut.String()), strings.Join([]string{
+		"worker-squ-902 start true",
+		"manager logs false",
+		"worker-squ-900 logs false",
+	}, "\n"); got != want {
+		t.Fatalf("team stale-sorted resume-plan = %q, want %q", got, want)
+	}
+
+	invalidSort := NewRootCmd()
+	invalidSortOut, invalidSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSort.SetOut(invalidSortOut)
+	invalidSort.SetErr(invalidSortErr)
+	invalidSort.SetArgs([]string{"team", "resume-plan", "delivery", "--repo", root, "--sort", "age"})
+	if err := invalidSort.Execute(); err == nil {
+		t.Fatalf("team resume-plan accepted invalid sort: stdout=%s", invalidSortOut.String())
+	}
+	if !strings.Contains(invalidSortErr.String(), "--sort must be instance") {
+		t.Fatalf("invalid team resume-plan sort error = %q", invalidSortErr.String())
+	}
 }
 
 func TestTeamStatusFiltersByRuntime(t *testing.T) {

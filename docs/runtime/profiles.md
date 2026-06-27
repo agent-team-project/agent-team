@@ -230,7 +230,7 @@ agent-team resume-plan --runtime codex --status exited
 agent-team resume-plan --action resume --format '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'
 agent-team resume-plan --status crashed --summary --json
 agent-team resume-plan --runtime-stale --summary
-agent-team resume-plan --unhealthy --summary
+agent-team resume-plan --unhealthy --sort stale
 agent-team resume-plan --json
 agent-team runtime resume-plan --status crashed
 agent-team team resume-plan delivery --status crashed
@@ -254,9 +254,10 @@ log follow, and Codex last-message commands. Job-linked metadata also includes
 work unit. Use `--action start|attach|resume|logs` when scripts or operators
 only need one recovery class, add `--stale` to isolate recorded running PIDs
 that are no longer live, add `--unhealthy` to include both crashed and stale
-running metadata, and add `--summary` to count matching plans by recommended
-action, runtime, lifecycle status, stale running metadata, and unhealthy
-metadata.
+running metadata, add `--sort instance|action|runtime|status|stale|job|pipeline|step|agent`
+before rendering when a large recovery list needs stable grouping, and add
+`--summary` to count matching plans by recommended action, runtime, lifecycle
+status, stale running metadata, and unhealthy metadata.
 When a positive recorded `running` PID is no longer live, resume-plan marks the
 row as `stale` and recommends the recovery path that can reconcile or resume it.
 
