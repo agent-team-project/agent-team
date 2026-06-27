@@ -123,6 +123,16 @@ description = "complete"
 		CreatedAt: now,
 		UpdatedAt: now,
 	})
+	writeQuarantinedOutboxFile(t, teamDir, "20260623T120000.000000000Z", daemon.OutboxStateFailed, &daemon.OutboxItem{
+		ID:        "outbox-quarantined-160",
+		State:     daemon.OutboxStateFailed,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": j.ID, "target": "worker", "api_key": "quarantined-secret"},
+		LastError: "invalid state file",
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
 	if err := daemon.AppendMessage(root, j.Instance, &daemon.Message{
 		ID:   "msg-160",
 		From: "manager",
@@ -174,6 +184,9 @@ description = "complete"
 	if snapshot.OutboxSummary == nil || snapshot.OutboxSummary.Total != 1 || snapshot.OutboxSummary.Failed != 1 {
 		t.Fatalf("outbox summary = %+v", snapshot.OutboxSummary)
 	}
+	if len(snapshot.OutboxQuarantine) != 1 || snapshot.OutboxQuarantine[0].ID != "outbox-quarantined-160" || snapshot.OutboxQuarantine[0].Job != j.ID || snapshot.OutboxQuarantineSummary == nil || snapshot.OutboxQuarantineSummary.Quarantined != 1 || snapshot.OutboxQuarantineSummary.Restorable != 1 {
+		t.Fatalf("outbox quarantine = %+v summary=%+v", snapshot.OutboxQuarantine, snapshot.OutboxQuarantineSummary)
+	}
 	if snapshot.InboxSummary == nil || snapshot.InboxSummary.Total != 1 || snapshot.InboxSummary.Unread != 1 || snapshot.InboxSummary.UnreadInstances != 1 {
 		t.Fatalf("inbox summary = %+v", snapshot.InboxSummary)
 	}
@@ -187,6 +200,7 @@ description = "complete"
 		"agent-team job logs squ-160 --last-message",
 		"agent-team job queue squ-160 --summary",
 		"agent-team job outbox squ-160 --summary",
+		"agent-team job outbox quarantine squ-160",
 	} {
 		if !containsString(snapshot.Actions, want) {
 			t.Fatalf("actions missing %q: %+v", want, snapshot.Actions)
@@ -207,6 +221,9 @@ description = "complete"
 	}
 	if len(rawSnapshot.Outbox) != 1 || rawSnapshot.Outbox[0].Payload["api_key"] != "secret-outbox" {
 		t.Fatalf("raw outbox rows = %+v", rawSnapshot.Outbox)
+	}
+	if len(rawSnapshot.OutboxQuarantine) != 1 || rawSnapshot.OutboxQuarantine[0].ID != "outbox-quarantined-160" {
+		t.Fatalf("raw outbox quarantine rows = %+v", rawSnapshot.OutboxQuarantine)
 	}
 }
 

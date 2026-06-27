@@ -111,32 +111,34 @@ type jobSnapshotOptions struct {
 }
 
 type jobSnapshotResult struct {
-	Version         string                  `json:"version"`
-	CapturedAt      string                  `json:"captured_at"`
-	Repo            string                  `json:"repo"`
-	TeamDir         string                  `json:"team_dir"`
-	Provenance      *snapshotProvenance     `json:"provenance,omitempty"`
-	Redacted        bool                    `json:"redacted"`
-	Job             *job.Job                `json:"job"`
-	Instance        string                  `json:"instance,omitempty"`
-	Runtime         *inspectRuntimeJSON     `json:"runtime,omitempty"`
-	State           *jobSnapshotState       `json:"state,omitempty"`
-	Status          *inspectStatusJSON      `json:"status,omitempty"`
-	StatusError     string                  `json:"status_error,omitempty"`
-	Files           []inspectFileJSON       `json:"files,omitempty"`
-	Log             *jobSnapshotFile        `json:"log,omitempty"`
-	LastMessage     *jobSnapshotFile        `json:"last_message,omitempty"`
-	JobEvents       []job.Event             `json:"job_events,omitempty"`
-	LifecycleEvents []daemon.LifecycleEvent `json:"lifecycle_events,omitempty"`
-	Queue           []*daemon.QueueItem     `json:"queue,omitempty"`
-	QueueSummary    *queueSummary           `json:"queue_summary,omitempty"`
-	QueueQuarantine []queueQuarantineItem   `json:"queue_quarantine,omitempty"`
-	Outbox          []*daemon.OutboxItem    `json:"outbox,omitempty"`
-	OutboxSummary   *outboxSummary          `json:"outbox_summary,omitempty"`
-	Inbox           []inboxSummaryRow       `json:"inbox,omitempty"`
-	InboxSummary    *overviewInboxSummary   `json:"inbox_summary,omitempty"`
-	Actions         []string                `json:"actions,omitempty"`
-	SectionErrors   map[string]string       `json:"section_errors,omitempty"`
+	Version                 string                   `json:"version"`
+	CapturedAt              string                   `json:"captured_at"`
+	Repo                    string                   `json:"repo"`
+	TeamDir                 string                   `json:"team_dir"`
+	Provenance              *snapshotProvenance      `json:"provenance,omitempty"`
+	Redacted                bool                     `json:"redacted"`
+	Job                     *job.Job                 `json:"job"`
+	Instance                string                   `json:"instance,omitempty"`
+	Runtime                 *inspectRuntimeJSON      `json:"runtime,omitempty"`
+	State                   *jobSnapshotState        `json:"state,omitempty"`
+	Status                  *inspectStatusJSON       `json:"status,omitempty"`
+	StatusError             string                   `json:"status_error,omitempty"`
+	Files                   []inspectFileJSON        `json:"files,omitempty"`
+	Log                     *jobSnapshotFile         `json:"log,omitempty"`
+	LastMessage             *jobSnapshotFile         `json:"last_message,omitempty"`
+	JobEvents               []job.Event              `json:"job_events,omitempty"`
+	LifecycleEvents         []daemon.LifecycleEvent  `json:"lifecycle_events,omitempty"`
+	Queue                   []*daemon.QueueItem      `json:"queue,omitempty"`
+	QueueSummary            *queueSummary            `json:"queue_summary,omitempty"`
+	QueueQuarantine         []queueQuarantineItem    `json:"queue_quarantine,omitempty"`
+	Outbox                  []*daemon.OutboxItem     `json:"outbox,omitempty"`
+	OutboxSummary           *outboxSummary           `json:"outbox_summary,omitempty"`
+	OutboxQuarantine        []outboxQuarantineItem   `json:"outbox_quarantine,omitempty"`
+	OutboxQuarantineSummary *outboxQuarantineSummary `json:"outbox_quarantine_summary,omitempty"`
+	Inbox                   []inboxSummaryRow        `json:"inbox,omitempty"`
+	InboxSummary            *overviewInboxSummary    `json:"inbox_summary,omitempty"`
+	Actions                 []string                 `json:"actions,omitempty"`
+	SectionErrors           map[string]string        `json:"section_errors,omitempty"`
 }
 
 type jobSnapshotState struct {
@@ -225,6 +227,13 @@ func collectJobSnapshot(teamDir, repoRoot string, j *job.Job, opts jobSnapshotOp
 		out.Outbox = outbox
 		summary := summarizeOutboxItems(outbox)
 		out.OutboxSummary = &summary
+	}
+	if quarantine, err := collectJobOutboxQuarantineItems(teamDir, j, outboxListFilters{}); err != nil {
+		out.addError("outbox_quarantine", err)
+	} else {
+		out.OutboxQuarantine = quarantine
+		summary := summarizeOutboxQuarantineItems(quarantine)
+		out.OutboxQuarantineSummary = &summary
 	}
 	if inbox, summary, err := collectJobSnapshotInbox(teamDir, j, meta); err != nil {
 		out.addError("inbox", err)
@@ -531,6 +540,9 @@ func jobSnapshotActions(j *job.Job, snapshot *jobSnapshotResult, instance string
 		if len(snapshot.Outbox) > 0 {
 			add(fmt.Sprintf("agent-team job outbox %s --summary", j.ID))
 		}
+		if len(snapshot.OutboxQuarantine) > 0 {
+			add(fmt.Sprintf("agent-team job outbox quarantine %s", j.ID))
+		}
 		for _, row := range snapshot.Inbox {
 			if row.Unread > 0 {
 				add(fmt.Sprintf("agent-team inbox show %s --unread", row.Instance))
@@ -633,6 +645,9 @@ func renderJobSnapshotSummary(w io.Writer, snapshot *jobSnapshotResult) {
 			snapshot.OutboxSummary.Pending,
 			snapshot.OutboxSummary.Failed,
 			snapshot.OutboxSummary.Processed)
+	}
+	if snapshot.OutboxQuarantineSummary != nil && snapshot.OutboxQuarantineSummary.Quarantined > 0 {
+		fmt.Fprintln(w, outboxQuarantineSummaryLine(*snapshot.OutboxQuarantineSummary))
 	}
 	if snapshot.InboxSummary != nil {
 		fmt.Fprintf(w, "inbox: instances=%d total=%d unread=%d unread_instances=%d\n",

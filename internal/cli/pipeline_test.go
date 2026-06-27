@@ -2210,6 +2210,24 @@ target = "worker"
 		QueuedAt:   now.Add(-2 * time.Minute),
 		UpdatedAt:  now.Add(-2 * time.Minute),
 	})
+	writeQuarantinedOutboxFile(t, teamDir, "20260619T010000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-ticket-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": "squ-704", "target": "worker", "ticket": "SQU-704"},
+		CreatedAt: now.Add(-2 * time.Minute),
+		UpdatedAt: now.Add(-2 * time.Minute),
+	})
+	writeQuarantinedOutboxFile(t, teamDir, "20260619T010000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-platform-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": "squ-705", "target": "worker", "ticket": "SQU-705"},
+		CreatedAt: now.Add(-2 * time.Minute),
+		UpdatedAt: now.Add(-2 * time.Minute),
+	})
 	for _, msg := range []struct {
 		instance string
 		id       string
@@ -2273,6 +2291,9 @@ target = "worker"
 	if len(snapshot.Outbox) != 1 || snapshot.Outbox[0].ID != "outbox-ticket-pipeline" || snapshot.OutboxSummary == nil || snapshot.OutboxSummary.Total != 1 || snapshot.OutboxSummary.Pending != 1 {
 		t.Fatalf("snapshot outbox = %+v summary=%+v", snapshot.Outbox, snapshot.OutboxSummary)
 	}
+	if len(snapshot.OutboxQuarantine) != 1 || snapshot.OutboxQuarantine[0].ID != "outbox-ticket-quarantined" || snapshot.OutboxQuarantine[0].Job != "squ-704" || snapshot.OutboxQuarantineSummary == nil || snapshot.OutboxQuarantineSummary.Quarantined != 1 || snapshot.OutboxQuarantineSummary.Restorable != 1 {
+		t.Fatalf("snapshot outbox quarantine = %+v summary=%+v", snapshot.OutboxQuarantine, snapshot.OutboxQuarantineSummary)
+	}
 	if snapshot.Outbox[0].Payload["access_token"] != snapshotRedactedValue {
 		t.Fatalf("snapshot outbox payload not redacted: %+v", snapshot.Outbox[0].Payload)
 	}
@@ -2308,7 +2329,7 @@ target = "worker"
 	if len(rawSnapshot.Outbox) != 1 || rawSnapshot.Outbox[0].Payload["access_token"] != "outbox-ticket-secret" {
 		t.Fatalf("raw pipeline outbox = %+v", rawSnapshot.Outbox)
 	}
-	if strings.Contains(rawOut.String(), "platform pipeline inbox secret") || strings.Contains(rawOut.String(), "outbox-platform-pipeline") {
+	if strings.Contains(rawOut.String(), "platform pipeline inbox secret") || strings.Contains(rawOut.String(), "outbox-platform") {
 		t.Fatalf("raw pipeline snapshot leaked unrelated workflow:\n%s", rawOut.String())
 	}
 
@@ -2320,7 +2341,7 @@ target = "worker"
 	if err := text.Execute(); err != nil {
 		t.Fatalf("pipeline snapshot text: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"pipeline snapshot:", "pipeline: ticket_to_pr", "command: agent-team pipeline snapshot scope=pipeline subject=ticket_to_pr", "status: jobs=1 ready_steps=1", "explain: jobs=1 steps=1", "jobs: total=1", "inbox: instances=1 total=1 unread=1 unread_instances=1", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "outbox: total=1 pending=1 failed=0 processed=0", "advance: ready=1 route_previews=1"} {
+	for _, want := range []string{"pipeline snapshot:", "pipeline: ticket_to_pr", "command: agent-team pipeline snapshot scope=pipeline subject=ticket_to_pr", "status: jobs=1 ready_steps=1", "explain: jobs=1 steps=1", "jobs: total=1", "inbox: instances=1 total=1 unread=1 unread_instances=1", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "outbox: total=1 pending=1 failed=0 processed=0", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "advance: ready=1 route_previews=1"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("pipeline snapshot text missing %q:\n%s", want, textOut.String())
 		}

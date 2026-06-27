@@ -91,6 +91,19 @@ branch = "worker-squ-501"
 		QueuedAt:   now.Add(-45 * time.Minute),
 		UpdatedAt:  now.Add(-40 * time.Minute),
 	})
+	writeQuarantinedOutboxFile(t, teamDir, "20260619T010000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:     "outbox-snapshot-quarantined",
+		State:  daemon.OutboxStatePending,
+		Type:   "agent.dispatch",
+		Source: "manager",
+		Payload: map[string]any{
+			"job_id": "squ-501",
+			"target": "worker",
+			"ticket": "SQU-501",
+		},
+		CreatedAt: now.Add(-44 * time.Minute),
+		UpdatedAt: now.Add(-39 * time.Minute),
+	})
 	if err := appendIntakeDelivery(teamDir, intakeDelivery{
 		ID:         "intake-snapshot",
 		Time:       now.Add(-20 * time.Minute),
@@ -178,6 +191,9 @@ branch = "worker-squ-501"
 	}
 	if len(snapshot.Outbox) != 1 || snapshot.Outbox[0].ID != "outbox-snapshot" || snapshot.OutboxSummary == nil || snapshot.OutboxSummary.Total != 1 || snapshot.OutboxSummary.Pending != 1 {
 		t.Fatalf("outbox = %+v summary=%+v", snapshot.Outbox, snapshot.OutboxSummary)
+	}
+	if len(snapshot.OutboxQuarantine) != 1 || snapshot.OutboxQuarantine[0].ID != "outbox-snapshot-quarantined" || !snapshot.OutboxQuarantine[0].Restorable || snapshot.OutboxQuarantine[0].Job != "squ-501" || snapshot.OutboxQuarantineSummary == nil || snapshot.OutboxQuarantineSummary.Quarantined != 1 || snapshot.OutboxQuarantineSummary.Restorable != 1 || snapshot.OutboxQuarantineSummary.Unrestorable != 0 {
+		t.Fatalf("outbox quarantine = %+v summary=%+v", snapshot.OutboxQuarantine, snapshot.OutboxQuarantineSummary)
 	}
 	if snapshot.Overview == nil || snapshot.Overview.Outbox.Pending != 1 {
 		t.Fatalf("overview outbox = %+v", snapshot.Overview)
@@ -482,6 +498,9 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		Outbox: []snapshotDiffOutboxItem{
 			{ID: "outbox-1", State: "pending", Type: "agent.dispatch", Source: "manager", Payload: map[string]any{"job_id": "squ-801", "target": "worker"}},
 		},
+		OutboxQuarantine: []snapshotDiffOutboxQuarantine{
+			{Path: "pending/outbox-quarantine-old.json", State: "pending", ID: "outbox-quarantine-old", Type: "agent.dispatch", Source: "manager", Job: "squ-802", Target: "worker", Restorable: false, Problem: "invalid json"},
+		},
 		Queue: []snapshotDiffQueueItem{
 			{ID: "q-1", State: "pending"},
 		},
@@ -583,6 +602,10 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 			{ID: "outbox-1", State: "failed", Type: "agent.dispatch", Source: "manager", Payload: map[string]any{"job_id": "squ-801", "target": "worker"}, LastError: "route missing"},
 			{ID: "outbox-2", State: "pending", Type: "agent.dispatch", Source: "manager", Payload: map[string]any{"job_id": "squ-803", "target": "manager"}},
 		},
+		OutboxQuarantine: []snapshotDiffOutboxQuarantine{
+			{Path: "pending/outbox-quarantine-old.json", State: "pending", ID: "outbox-quarantine-old", Type: "agent.dispatch", Source: "manager", Job: "squ-802", Target: "worker", Restorable: true},
+			{Path: "failed/outbox-quarantine-new.json", State: "failed", ID: "outbox-quarantine-new", Type: "agent.dispatch", Source: "manager", Job: "squ-803", Target: "manager", Restorable: true},
+		},
 		Queue: []snapshotDiffQueueItem{
 			{ID: "q-1", State: "dead"},
 			{ID: "q-2", State: "pending"},
@@ -668,6 +691,9 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	if result.Summary.Outbox.Added != 1 || result.Summary.Outbox.Changed != 1 {
 		t.Fatalf("outbox counters = %+v", result.Summary.Outbox)
 	}
+	if result.Summary.OutboxQuarantine.Added != 1 || result.Summary.OutboxQuarantine.Changed != 1 {
+		t.Fatalf("outbox quarantine counters = %+v", result.Summary.OutboxQuarantine)
+	}
 	if result.Summary.Queue.Added != 1 || result.Summary.Queue.Changed != 1 {
 		t.Fatalf("queue counters = %+v", result.Summary.Queue)
 	}
@@ -713,6 +739,8 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		!hasSnapshotDiffChange(result.Changes, "inbox", "worker-squ-803", "added") ||
 		!hasSnapshotDiffChange(result.Changes, "outbox", "outbox-1", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "outbox", "outbox-2", "added") ||
+		!hasSnapshotDiffChange(result.Changes, "outbox_quarantine", "pending/outbox-quarantine-old.json", "changed") ||
+		!hasSnapshotDiffChange(result.Changes, "outbox_quarantine", "failed/outbox-quarantine-new.json", "added") ||
 		!hasSnapshotDiffChange(result.Changes, "queue_quarantine", "dead/q-dead.json", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "schedules", "declared/delivery_due", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "intake", "duplicate/github/github-delivery-1", "changed") ||
@@ -744,6 +772,7 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		"pipelines:",
 		"inbox: added=1 removed=0 changed=1",
 		"outbox: added=1 removed=0 changed=1",
+		"outbox_quarantine: added=1 removed=0 changed=1",
 		"queue: added=1 removed=0 changed=1",
 		"queue_quarantine: added=1 removed=0 changed=1",
 		"schedules: added=0 removed=0 changed=2",
@@ -1969,8 +1998,9 @@ func TestSnapshotSummaryIncludesJobTriage(t *testing.T) {
 				Message: "pipeline target outside team",
 			}},
 		},
-		QueueSummary: &queueSummary{Total: 1, Pending: 1, Quarantined: 1, QuarantineRestorable: 1},
-		InboxSummary: &overviewInboxSummary{Instances: 2, Total: 3, Unread: 1, UnreadInstances: 1},
+		QueueSummary:            &queueSummary{Total: 1, Pending: 1, Quarantined: 1, QuarantineRestorable: 1},
+		OutboxQuarantineSummary: &outboxQuarantineSummary{Quarantined: 1, Restorable: 1},
+		InboxSummary:            &overviewInboxSummary{Instances: 2, Total: 3, Unread: 1, UnreadInstances: 1},
 		IntakeSummary: &overviewIntakeSummary{
 			Deliveries: 1,
 			Errors:     1,
@@ -1986,7 +2016,7 @@ func TestSnapshotSummaryIncludesJobTriage(t *testing.T) {
 
 	var out bytes.Buffer
 	renderSnapshotSummary(&out, snapshot)
-	for _, want := range []string{"command: agent-team snapshot scope=global", "git: branch=main commit=abcdef123456 dirty=yes changes=2 ahead=1 behind=0", "jobs: total=1", "job triage: attention=1 ready_steps=0", "job status: previews=1 changes=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1 manual_gates=0 stale_running_steps=0 failed_steps=0", "pipeline advance: ready=1 route_previews=1", "teams doctor: teams=1 problems=1 warnings=1", "team doctor: problems=1 warnings=0", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "inbox: instances=2 total=3 unread=1 unread_instances=1", "intake: deliveries=1 errors=1 recovered=0 replayable=1 duplicate_request_ids=1"} {
+	for _, want := range []string{"command: agent-team snapshot scope=global", "git: branch=main commit=abcdef123456 dirty=yes changes=2 ahead=1 behind=0", "jobs: total=1", "job triage: attention=1 ready_steps=0", "job status: previews=1 changes=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1 manual_gates=0 stale_running_steps=0 failed_steps=0", "pipeline advance: ready=1 route_previews=1", "teams doctor: teams=1 problems=1 warnings=1", "team doctor: problems=1 warnings=0", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "inbox: instances=2 total=3 unread=1 unread_instances=1", "intake: deliveries=1 errors=1 recovered=0 replayable=1 duplicate_request_ids=1"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, out.String())
 		}

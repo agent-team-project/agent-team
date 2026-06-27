@@ -96,26 +96,28 @@ type pipelineSnapshotOptions struct {
 }
 
 type pipelineSnapshotResult struct {
-	Version         string                  `json:"version"`
-	CapturedAt      string                  `json:"captured_at"`
-	Repo            string                  `json:"repo"`
-	TeamDir         string                  `json:"team_dir"`
-	Provenance      *snapshotProvenance     `json:"provenance,omitempty"`
-	Pipeline        string                  `json:"pipeline"`
-	Git             *snapshotGitInfo        `json:"git,omitempty"`
-	Redacted        bool                    `json:"redacted"`
-	Status          *pipelineStatusRow      `json:"status,omitempty"`
-	Explain         *pipelineExplainRow     `json:"explain,omitempty"`
-	Jobs            []*job.Job              `json:"jobs,omitempty"`
-	Inbox           []inboxSummaryRow       `json:"inbox,omitempty"`
-	InboxSummary    *overviewInboxSummary   `json:"inbox_summary,omitempty"`
-	Queue           []*daemon.QueueItem     `json:"queue,omitempty"`
-	QueueSummary    *queueSummary           `json:"queue_summary,omitempty"`
-	QueueQuarantine []queueQuarantineItem   `json:"queue_quarantine,omitempty"`
-	Outbox          []*daemon.OutboxItem    `json:"outbox,omitempty"`
-	OutboxSummary   *outboxSummary          `json:"outbox_summary,omitempty"`
-	AdvancePreview  []pipelineAdvanceResult `json:"advance_preview,omitempty"`
-	SectionErrors   map[string]string       `json:"section_errors,omitempty"`
+	Version                 string                   `json:"version"`
+	CapturedAt              string                   `json:"captured_at"`
+	Repo                    string                   `json:"repo"`
+	TeamDir                 string                   `json:"team_dir"`
+	Provenance              *snapshotProvenance      `json:"provenance,omitempty"`
+	Pipeline                string                   `json:"pipeline"`
+	Git                     *snapshotGitInfo         `json:"git,omitempty"`
+	Redacted                bool                     `json:"redacted"`
+	Status                  *pipelineStatusRow       `json:"status,omitempty"`
+	Explain                 *pipelineExplainRow      `json:"explain,omitempty"`
+	Jobs                    []*job.Job               `json:"jobs,omitempty"`
+	Inbox                   []inboxSummaryRow        `json:"inbox,omitempty"`
+	InboxSummary            *overviewInboxSummary    `json:"inbox_summary,omitempty"`
+	Queue                   []*daemon.QueueItem      `json:"queue,omitempty"`
+	QueueSummary            *queueSummary            `json:"queue_summary,omitempty"`
+	QueueQuarantine         []queueQuarantineItem    `json:"queue_quarantine,omitempty"`
+	Outbox                  []*daemon.OutboxItem     `json:"outbox,omitempty"`
+	OutboxSummary           *outboxSummary           `json:"outbox_summary,omitempty"`
+	OutboxQuarantine        []outboxQuarantineItem   `json:"outbox_quarantine,omitempty"`
+	OutboxQuarantineSummary *outboxQuarantineSummary `json:"outbox_quarantine_summary,omitempty"`
+	AdvancePreview          []pipelineAdvanceResult  `json:"advance_preview,omitempty"`
+	SectionErrors           map[string]string        `json:"section_errors,omitempty"`
 }
 
 func collectPipelineSnapshot(teamDir, repoRoot, pipeline string, opts pipelineSnapshotOptions) *pipelineSnapshotResult {
@@ -165,6 +167,13 @@ func collectPipelineSnapshot(teamDir, repoRoot, pipeline string, opts pipelineSn
 		out.Outbox = outboxItemsForJobs(outbox, out.Jobs)
 		summary := summarizeOutboxItems(out.Outbox)
 		out.OutboxSummary = &summary
+	}
+	if quarantine, err := listOutboxQuarantine(teamDir); err != nil {
+		out.addError("outbox_quarantine", err)
+	} else {
+		out.OutboxQuarantine = outboxQuarantineItemsForJobs(quarantine, out.Jobs)
+		summary := summarizeOutboxQuarantineItems(out.OutboxQuarantine)
+		out.OutboxQuarantineSummary = &summary
 	}
 	if inbox, summary, err := collectPipelineSnapshotInbox(teamDir, out.Jobs); err != nil {
 		out.addError("inbox", err)
@@ -406,6 +415,9 @@ func renderPipelineSnapshotSummary(w io.Writer, snapshot *pipelineSnapshotResult
 			snapshot.OutboxSummary.Pending,
 			snapshot.OutboxSummary.Failed,
 			snapshot.OutboxSummary.Processed)
+	}
+	if snapshot.OutboxQuarantineSummary != nil && snapshot.OutboxQuarantineSummary.Quarantined > 0 {
+		fmt.Fprintln(w, outboxQuarantineSummaryLine(*snapshot.OutboxQuarantineSummary))
 	}
 	if snapshot.AdvancePreview != nil {
 		fmt.Fprintf(w, "advance: ready=%d route_previews=%d\n",

@@ -39,6 +39,16 @@ type outboxQuarantineItem struct {
 	Problem     string    `json:"problem,omitempty"`
 }
 
+type outboxQuarantineSummary struct {
+	Quarantined  int            `json:"quarantined"`
+	Restorable   int            `json:"restorable,omitempty"`
+	Unrestorable int            `json:"unrestorable,omitempty"`
+	States       map[string]int `json:"states,omitempty"`
+	Types        map[string]int `json:"types,omitempty"`
+	Sources      map[string]int `json:"sources,omitempty"`
+	Jobs         map[string]int `json:"jobs,omitempty"`
+}
+
 type outboxQuarantineRestoreResult struct {
 	Path        string `json:"path"`
 	Destination string `json:"destination"`
@@ -47,6 +57,43 @@ type outboxQuarantineRestoreResult struct {
 	Action      string `json:"action"`
 	DryRun      bool   `json:"dry_run,omitempty"`
 	Overwrite   bool   `json:"overwrite,omitempty"`
+}
+
+func summarizeOutboxQuarantineItems(items []outboxQuarantineItem) outboxQuarantineSummary {
+	summary := outboxQuarantineSummary{
+		States:  map[string]int{},
+		Types:   map[string]int{},
+		Sources: map[string]int{},
+		Jobs:    map[string]int{},
+	}
+	for _, item := range items {
+		summary.Quarantined++
+		if item.Restorable {
+			summary.Restorable++
+		} else {
+			summary.Unrestorable++
+		}
+		if strings.TrimSpace(item.State) != "" {
+			summary.States[item.State]++
+		}
+		if strings.TrimSpace(item.Type) != "" {
+			summary.Types[item.Type]++
+		}
+		if strings.TrimSpace(item.Source) != "" {
+			summary.Sources[item.Source]++
+		}
+		if job := normalizeOutboxJob(item.Job); job != "" {
+			summary.Jobs[job]++
+		}
+	}
+	return summary
+}
+
+func outboxQuarantineSummaryLine(summary outboxQuarantineSummary) string {
+	return fmt.Sprintf("outbox quarantine: quarantined=%d restorable=%d unrestorable=%d",
+		summary.Quarantined,
+		summary.Restorable,
+		summary.Unrestorable)
 }
 
 type outboxQuarantineDropResult struct {

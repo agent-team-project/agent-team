@@ -165,7 +165,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit snapshot diff as JSON.")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write the JSON snapshot diff to this file. Use '-' for stdout.")
 	cmd.Flags().BoolVar(&exitCode, "exit-code", false, "Exit with status 1 when snapshots differ.")
-	cmd.Flags().StringSliceVar(&sections, "section", nil, "Only compare sections: provenance, git, runtime, health, plan, triage, next, instances, jobs, pipelines, inbox, outbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&sections, "section", nil, "Only compare sections: provenance, git, runtime, health, plan, triage, next, instances, jobs, pipelines, inbox, outbox, outbox_quarantine, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actions, "action", nil, "Only compare change actions: added, removed, or changed. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the diff result with a Go template, e.g. '{{.Summary.TotalChanges}} {{len .Changes}}'.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit emitted change detail rows after summarizing all changes; 0 means all.")
@@ -196,42 +196,43 @@ const (
 )
 
 type snapshotDiffInput struct {
-	Version          string                        `json:"version,omitempty"`
-	CapturedAt       string                        `json:"captured_at,omitempty"`
-	Repo             string                        `json:"repo,omitempty"`
-	Provenance       *snapshotProvenance           `json:"provenance,omitempty"`
-	Git              *snapshotGitInfo              `json:"git,omitempty"`
-	Runtime          *runtimeInfo                  `json:"runtime,omitempty"`
-	Health           *healthResult                 `json:"health,omitempty"`
-	Plan             *planResult                   `json:"plan,omitempty"`
-	JobTriage        *jobTriageSnapshot            `json:"job_triage,omitempty"`
-	Next             *nextActionResult             `json:"next,omitempty"`
-	Actions          []string                      `json:"actions,omitempty"`
-	Team             *teamInfo                     `json:"team,omitempty"`
-	Pipeline         string                        `json:"pipeline,omitempty"`
-	Job              *snapshotDiffDetailedJob      `json:"job,omitempty"`
-	Instance         string                        `json:"instance,omitempty"`
-	State            *jobSnapshotState             `json:"state,omitempty"`
-	Status           *snapshotDiffStatus           `json:"status,omitempty"`
-	Log              *jobSnapshotFile              `json:"log,omitempty"`
-	LastMessage      *jobSnapshotFile              `json:"last_message,omitempty"`
-	Instances        []snapshotDiffInstance        `json:"instances,omitempty"`
-	Jobs             []snapshotDiffJob             `json:"jobs,omitempty"`
-	Inbox            []snapshotDiffInbox           `json:"inbox,omitempty"`
-	Outbox           []snapshotDiffOutboxItem      `json:"outbox,omitempty"`
-	Queue            []snapshotDiffQueueItem       `json:"queue,omitempty"`
-	QueueQuarantine  []snapshotDiffQuarantine      `json:"queue_quarantine,omitempty"`
-	Schedules        []snapshotDiffSchedule        `json:"schedules,omitempty"`
-	ScheduleNext     []snapshotDiffSchedule        `json:"schedule_next,omitempty"`
-	Intake           []snapshotDiffIntake          `json:"intake,omitempty"`
-	IntakeDuplicates []snapshotDiffIntakeDuplicate `json:"intake_duplicates,omitempty"`
-	Events           []snapshotDiffEvent           `json:"events,omitempty"`
-	JobEvents        []snapshotDiffJobEvent        `json:"job_events,omitempty"`
-	LifecycleEvents  []snapshotDiffEvent           `json:"lifecycle_events,omitempty"`
-	PipelineStatus   []pipelineStatusRow           `json:"pipeline_status,omitempty"`
-	PipelineAdvance  []snapshotDiffAdvance         `json:"pipeline_advance_preview,omitempty"`
-	AdvancePreview   []snapshotDiffAdvance         `json:"advance_preview,omitempty"`
-	SectionErrors    map[string]string             `json:"section_errors,omitempty"`
+	Version          string                         `json:"version,omitempty"`
+	CapturedAt       string                         `json:"captured_at,omitempty"`
+	Repo             string                         `json:"repo,omitempty"`
+	Provenance       *snapshotProvenance            `json:"provenance,omitempty"`
+	Git              *snapshotGitInfo               `json:"git,omitempty"`
+	Runtime          *runtimeInfo                   `json:"runtime,omitempty"`
+	Health           *healthResult                  `json:"health,omitempty"`
+	Plan             *planResult                    `json:"plan,omitempty"`
+	JobTriage        *jobTriageSnapshot             `json:"job_triage,omitempty"`
+	Next             *nextActionResult              `json:"next,omitempty"`
+	Actions          []string                       `json:"actions,omitempty"`
+	Team             *teamInfo                      `json:"team,omitempty"`
+	Pipeline         string                         `json:"pipeline,omitempty"`
+	Job              *snapshotDiffDetailedJob       `json:"job,omitempty"`
+	Instance         string                         `json:"instance,omitempty"`
+	State            *jobSnapshotState              `json:"state,omitempty"`
+	Status           *snapshotDiffStatus            `json:"status,omitempty"`
+	Log              *jobSnapshotFile               `json:"log,omitempty"`
+	LastMessage      *jobSnapshotFile               `json:"last_message,omitempty"`
+	Instances        []snapshotDiffInstance         `json:"instances,omitempty"`
+	Jobs             []snapshotDiffJob              `json:"jobs,omitempty"`
+	Inbox            []snapshotDiffInbox            `json:"inbox,omitempty"`
+	Outbox           []snapshotDiffOutboxItem       `json:"outbox,omitempty"`
+	OutboxQuarantine []snapshotDiffOutboxQuarantine `json:"outbox_quarantine,omitempty"`
+	Queue            []snapshotDiffQueueItem        `json:"queue,omitempty"`
+	QueueQuarantine  []snapshotDiffQuarantine       `json:"queue_quarantine,omitempty"`
+	Schedules        []snapshotDiffSchedule         `json:"schedules,omitempty"`
+	ScheduleNext     []snapshotDiffSchedule         `json:"schedule_next,omitempty"`
+	Intake           []snapshotDiffIntake           `json:"intake,omitempty"`
+	IntakeDuplicates []snapshotDiffIntakeDuplicate  `json:"intake_duplicates,omitempty"`
+	Events           []snapshotDiffEvent            `json:"events,omitempty"`
+	JobEvents        []snapshotDiffJobEvent         `json:"job_events,omitempty"`
+	LifecycleEvents  []snapshotDiffEvent            `json:"lifecycle_events,omitempty"`
+	PipelineStatus   []pipelineStatusRow            `json:"pipeline_status,omitempty"`
+	PipelineAdvance  []snapshotDiffAdvance          `json:"pipeline_advance_preview,omitempty"`
+	AdvancePreview   []snapshotDiffAdvance          `json:"advance_preview,omitempty"`
+	SectionErrors    map[string]string              `json:"section_errors,omitempty"`
 }
 
 type snapshotDiffDetailedJob struct {
@@ -403,6 +404,20 @@ type snapshotDiffQuarantine struct {
 	Problem    string `json:"problem,omitempty"`
 }
 
+type snapshotDiffOutboxQuarantine struct {
+	Path       string `json:"path"`
+	State      string `json:"state,omitempty"`
+	ID         string `json:"id,omitempty"`
+	Type       string `json:"type,omitempty"`
+	Source     string `json:"source,omitempty"`
+	Job        string `json:"job,omitempty"`
+	Instance   string `json:"instance,omitempty"`
+	Target     string `json:"target,omitempty"`
+	Agent      string `json:"agent,omitempty"`
+	Restorable bool   `json:"restorable"`
+	Problem    string `json:"problem,omitempty"`
+}
+
 type snapshotDiffSchedule struct {
 	Name        string `json:"name"`
 	Event       string `json:"event,omitempty"`
@@ -487,32 +502,33 @@ type snapshotDiffMeta struct {
 }
 
 type snapshotDiffSummary struct {
-	TotalChanges    int                  `json:"total_changes"`
-	ShownChanges    int                  `json:"shown_changes,omitempty"`
-	OmittedChanges  int                  `json:"omitted_changes,omitempty"`
-	DetailLimit     int                  `json:"detail_limit,omitempty"`
-	DetailSort      string               `json:"detail_sort,omitempty"`
-	ActionFilter    []string             `json:"action_filter,omitempty"`
-	SummaryOnly     bool                 `json:"summary_only,omitempty"`
-	Provenance      snapshotDiffCounters `json:"provenance"`
-	Git             snapshotDiffCounters `json:"git"`
-	Runtime         snapshotDiffCounters `json:"runtime"`
-	Health          snapshotDiffCounters `json:"health"`
-	Plan            snapshotDiffCounters `json:"plan"`
-	Triage          snapshotDiffCounters `json:"triage"`
-	Next            snapshotDiffCounters `json:"next"`
-	Instances       snapshotDiffCounters `json:"instances"`
-	Jobs            snapshotDiffCounters `json:"jobs"`
-	Pipelines       snapshotDiffCounters `json:"pipelines"`
-	Inbox           snapshotDiffCounters `json:"inbox"`
-	Outbox          snapshotDiffCounters `json:"outbox"`
-	Queue           snapshotDiffCounters `json:"queue"`
-	QueueQuarantine snapshotDiffCounters `json:"queue_quarantine"`
-	Schedules       snapshotDiffCounters `json:"schedules"`
-	Intake          snapshotDiffCounters `json:"intake"`
-	Events          snapshotDiffCounters `json:"events"`
-	Advance         snapshotDiffCounters `json:"advance"`
-	SectionErrors   snapshotDiffCounters `json:"section_errors"`
+	TotalChanges     int                  `json:"total_changes"`
+	ShownChanges     int                  `json:"shown_changes,omitempty"`
+	OmittedChanges   int                  `json:"omitted_changes,omitempty"`
+	DetailLimit      int                  `json:"detail_limit,omitempty"`
+	DetailSort       string               `json:"detail_sort,omitempty"`
+	ActionFilter     []string             `json:"action_filter,omitempty"`
+	SummaryOnly      bool                 `json:"summary_only,omitempty"`
+	Provenance       snapshotDiffCounters `json:"provenance"`
+	Git              snapshotDiffCounters `json:"git"`
+	Runtime          snapshotDiffCounters `json:"runtime"`
+	Health           snapshotDiffCounters `json:"health"`
+	Plan             snapshotDiffCounters `json:"plan"`
+	Triage           snapshotDiffCounters `json:"triage"`
+	Next             snapshotDiffCounters `json:"next"`
+	Instances        snapshotDiffCounters `json:"instances"`
+	Jobs             snapshotDiffCounters `json:"jobs"`
+	Pipelines        snapshotDiffCounters `json:"pipelines"`
+	Inbox            snapshotDiffCounters `json:"inbox"`
+	Outbox           snapshotDiffCounters `json:"outbox"`
+	OutboxQuarantine snapshotDiffCounters `json:"outbox_quarantine"`
+	Queue            snapshotDiffCounters `json:"queue"`
+	QueueQuarantine  snapshotDiffCounters `json:"queue_quarantine"`
+	Schedules        snapshotDiffCounters `json:"schedules"`
+	Intake           snapshotDiffCounters `json:"intake"`
+	Events           snapshotDiffCounters `json:"events"`
+	Advance          snapshotDiffCounters `json:"advance"`
+	SectionErrors    snapshotDiffCounters `json:"section_errors"`
 }
 
 type snapshotDiffCounters struct {
@@ -530,26 +546,27 @@ type snapshotDiffChange struct {
 }
 
 type snapshotDiffComparable struct {
-	Meta            snapshotDiffMeta
-	Provenance      map[string]string
-	Git             map[string]string
-	Runtime         map[string]string
-	Health          map[string]string
-	Plan            map[string]string
-	Triage          map[string]string
-	Next            map[string]string
-	Instances       map[string]string
-	Jobs            map[string]string
-	Pipelines       map[string]string
-	Inbox           map[string]string
-	Outbox          map[string]string
-	Queue           map[string]string
-	QueueQuarantine map[string]string
-	Schedules       map[string]string
-	Intake          map[string]string
-	Events          map[string]string
-	Advance         map[string]string
-	SectionErrors   map[string]string
+	Meta             snapshotDiffMeta
+	Provenance       map[string]string
+	Git              map[string]string
+	Runtime          map[string]string
+	Health           map[string]string
+	Plan             map[string]string
+	Triage           map[string]string
+	Next             map[string]string
+	Instances        map[string]string
+	Jobs             map[string]string
+	Pipelines        map[string]string
+	Inbox            map[string]string
+	Outbox           map[string]string
+	OutboxQuarantine map[string]string
+	Queue            map[string]string
+	QueueQuarantine  map[string]string
+	Schedules        map[string]string
+	Intake           map[string]string
+	Events           map[string]string
+	Advance          map[string]string
+	SectionErrors    map[string]string
 }
 
 type snapshotDiffOptions struct {
@@ -626,6 +643,9 @@ func diffSnapshotComparables(before, after snapshotDiffComparable, opts snapshot
 	}
 	if snapshotDiffSectionEnabled(opts.Sections, "outbox") {
 		result.Changes = append(result.Changes, diffSnapshotStringMaps("outbox", before.Outbox, after.Outbox, &result.Summary.Outbox)...)
+	}
+	if snapshotDiffSectionEnabled(opts.Sections, "outbox_quarantine") {
+		result.Changes = append(result.Changes, diffSnapshotStringMaps("outbox_quarantine", before.OutboxQuarantine, after.OutboxQuarantine, &result.Summary.OutboxQuarantine)...)
 	}
 	if snapshotDiffSectionEnabled(opts.Sections, "queue") {
 		result.Changes = append(result.Changes, diffSnapshotStringMaps("queue", before.Queue, after.Queue, &result.Summary.Queue)...)
@@ -801,6 +821,8 @@ func snapshotDiffSummaryCounter(summary *snapshotDiffSummary, section string) *s
 		return &summary.Inbox
 	case "outbox":
 		return &summary.Outbox
+	case "outbox_quarantine":
+		return &summary.OutboxQuarantine
 	case "queue":
 		return &summary.Queue
 	case "queue_quarantine":
@@ -927,25 +949,26 @@ func parseSnapshotDiffSections(values []string) (map[string]bool, error) {
 		return nil, nil
 	}
 	valid := map[string]bool{
-		"provenance":       true,
-		"git":              true,
-		"runtime":          true,
-		"health":           true,
-		"plan":             true,
-		"triage":           true,
-		"next":             true,
-		"instances":        true,
-		"jobs":             true,
-		"pipelines":        true,
-		"inbox":            true,
-		"outbox":           true,
-		"queue":            true,
-		"queue_quarantine": true,
-		"schedules":        true,
-		"intake":           true,
-		"events":           true,
-		"advance":          true,
-		"section_errors":   true,
+		"provenance":        true,
+		"git":               true,
+		"runtime":           true,
+		"health":            true,
+		"plan":              true,
+		"triage":            true,
+		"next":              true,
+		"instances":         true,
+		"jobs":              true,
+		"pipelines":         true,
+		"inbox":             true,
+		"outbox":            true,
+		"outbox_quarantine": true,
+		"queue":             true,
+		"queue_quarantine":  true,
+		"schedules":         true,
+		"intake":            true,
+		"events":            true,
+		"advance":           true,
+		"section_errors":    true,
 	}
 	out := map[string]bool{}
 	for _, raw := range values {
@@ -961,7 +984,7 @@ func parseSnapshotDiffSections(values []string) (map[string]bool, error) {
 				name = "queue_quarantine"
 			}
 			if !valid[name] {
-				return nil, fmt.Errorf("--section must be provenance, git, runtime, health, plan, triage, next, instances, jobs, pipelines, inbox, outbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all")
+				return nil, fmt.Errorf("--section must be provenance, git, runtime, health, plan, triage, next, instances, jobs, pipelines, inbox, outbox, outbox_quarantine, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all")
 			}
 			out[name] = true
 		}
@@ -998,25 +1021,26 @@ func snapshotDiffComparableFromInput(path string, input snapshotDiffInput) snaps
 			CapturedAt: input.CapturedAt,
 			Repo:       input.Repo,
 		},
-		Provenance:      snapshotDiffProvenanceMap(input.Provenance),
-		Git:             snapshotDiffGitMap(input.Git),
-		Runtime:         snapshotDiffRuntimeMap(input.Runtime),
-		Health:          snapshotDiffHealthMap(input.Health),
-		Plan:            snapshotDiffPlanMap(input.Plan),
-		Triage:          snapshotDiffTriageMap(input.JobTriage),
-		Next:            snapshotDiffNextMap(input.Next, input.Actions),
-		Instances:       map[string]string{},
-		Jobs:            map[string]string{},
-		Pipelines:       map[string]string{},
-		Inbox:           map[string]string{},
-		Outbox:          map[string]string{},
-		Queue:           map[string]string{},
-		QueueQuarantine: map[string]string{},
-		Schedules:       map[string]string{},
-		Intake:          map[string]string{},
-		Events:          map[string]string{},
-		Advance:         map[string]string{},
-		SectionErrors:   map[string]string{},
+		Provenance:       snapshotDiffProvenanceMap(input.Provenance),
+		Git:              snapshotDiffGitMap(input.Git),
+		Runtime:          snapshotDiffRuntimeMap(input.Runtime),
+		Health:           snapshotDiffHealthMap(input.Health),
+		Plan:             snapshotDiffPlanMap(input.Plan),
+		Triage:           snapshotDiffTriageMap(input.JobTriage),
+		Next:             snapshotDiffNextMap(input.Next, input.Actions),
+		Instances:        map[string]string{},
+		Jobs:             map[string]string{},
+		Pipelines:        map[string]string{},
+		Inbox:            map[string]string{},
+		Outbox:           map[string]string{},
+		OutboxQuarantine: map[string]string{},
+		Queue:            map[string]string{},
+		QueueQuarantine:  map[string]string{},
+		Schedules:        map[string]string{},
+		Intake:           map[string]string{},
+		Events:           map[string]string{},
+		Advance:          map[string]string{},
+		SectionErrors:    map[string]string{},
 	}
 	for _, inst := range input.Instances {
 		id := strings.TrimSpace(inst.Instance)
@@ -1076,6 +1100,30 @@ func snapshotDiffComparableFromInput(path string, input snapshotDiffInput) snaps
 			outboxPayloadString(item.Payload, "target"),
 			outboxPayloadString(item.Payload, "name"),
 			item.LastError,
+		)
+	}
+	for _, item := range input.OutboxQuarantine {
+		id := strings.TrimSpace(item.Path)
+		if id == "" {
+			id = strings.TrimSpace(item.ID)
+		}
+		if id == "" {
+			id = compactSnapshotDiffValue(item.State, item.Type, item.Source, item.Job, item.Target, item.Instance)
+		}
+		if id == "" || id == "-" {
+			continue
+		}
+		out.OutboxQuarantine[id] = compactSnapshotDiffValue(
+			item.State,
+			item.ID,
+			item.Type,
+			item.Source,
+			normalizeOutboxJob(item.Job),
+			item.Target,
+			item.Instance,
+			item.Agent,
+			boolSnapshotDiffValue("restorable", item.Restorable),
+			item.Problem,
 		)
 	}
 	for _, item := range input.QueueQuarantine {
@@ -1936,6 +1984,7 @@ func renderSnapshotDiff(w io.Writer, result *snapshotDiffResult) {
 	renderSnapshotDiffCounterLine(w, "pipelines", result.Summary.Pipelines)
 	renderSnapshotDiffCounterLine(w, "inbox", result.Summary.Inbox)
 	renderSnapshotDiffCounterLine(w, "outbox", result.Summary.Outbox)
+	renderSnapshotDiffCounterLine(w, "outbox_quarantine", result.Summary.OutboxQuarantine)
 	renderSnapshotDiffCounterLine(w, "queue", result.Summary.Queue)
 	renderSnapshotDiffCounterLine(w, "queue_quarantine", result.Summary.QueueQuarantine)
 	renderSnapshotDiffCounterLine(w, "schedules", result.Summary.Schedules)
