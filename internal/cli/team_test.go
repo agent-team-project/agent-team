@@ -4804,6 +4804,8 @@ func TestTeamRunDispatchWaitsForRequestedStatus(t *testing.T) {
 		"--workspace", "repo",
 		"--wait",
 		"--wait-status", "running",
+		"--wait-next-state", "running",
+		"--wait-step", "implement",
 		"--wait-timeout", "2s",
 		"--wait-interval", "10ms",
 		"--json",
@@ -4825,6 +4827,41 @@ func TestTeamRunDispatchWaitsForRequestedStatus(t *testing.T) {
 		t.Fatalf("waited team step = %+v", result.Step)
 	}
 	stopAndWaitForTest(t, mgr, "worker-squ-813-implement")
+}
+
+func TestTeamRunRejectsInvalidWaitFlags(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{
+			args: []string{"team", "run", "delivery", "SQU-816", "--repo", root, "--wait-next-state", "running"},
+			want: "wait-related flags require --wait",
+		},
+		{
+			args: []string{"team", "run", "delivery", "SQU-817", "--repo", root, "--wait-step", "implement"},
+			want: "wait-related flags require --wait",
+		},
+		{
+			args: []string{"team", "run", "delivery", "SQU-818", "--repo", root, "--wait", "--wait-next-state", "missing"},
+			want: "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all",
+		},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+	}
 }
 
 func TestTeamRunSelectsPipelineForMultiPipelineTeam(t *testing.T) {

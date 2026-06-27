@@ -4242,24 +4242,26 @@ func newPipelineReleaseCmd() *cobra.Command {
 
 func newPipelineRunCmd() *cobra.Command {
 	var (
-		repo         string
-		id           string
-		ticketURL    string
-		kickoff      string
-		kickoffFile  string
-		dispatchNow  bool
-		workspace    string
-		runtimeKind  string
-		runtimeBin   string
-		dryRun       bool
-		wait         bool
-		waitStatuses []string
-		waitEvents   []string
-		waitTimeout  time.Duration
-		waitInterval time.Duration
-		failOnFailed bool
-		jsonOut      bool
-		format       string
+		repo          string
+		id            string
+		ticketURL     string
+		kickoff       string
+		kickoffFile   string
+		dispatchNow   bool
+		workspace     string
+		runtimeKind   string
+		runtimeBin    string
+		dryRun        bool
+		wait          bool
+		waitStatuses  []string
+		waitEvents    []string
+		waitNextState []string
+		waitStep      string
+		waitTimeout   time.Duration
+		waitInterval  time.Duration
+		failOnFailed  bool
+		jsonOut       bool
+		format        string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -4272,23 +4274,25 @@ func newPipelineRunCmd() *cobra.Command {
 				return err
 			}
 			return runPipelineJobCreate(cmd, teamDir, args[0], args[1], args[2:], pipelineRunOptions{
-				ID:           id,
-				TicketURL:    ticketURL,
-				Kickoff:      kickoff,
-				KickoffFile:  kickoffFile,
-				DispatchNow:  dispatchNow,
-				Workspace:    workspace,
-				Runtime:      runtimeSelection{Kind: runtimeKind, Binary: runtimeBin},
-				DryRun:       dryRun,
-				Wait:         wait,
-				WaitStatuses: waitStatuses,
-				WaitEvents:   waitEvents,
-				WaitTimeout:  waitTimeout,
-				WaitInterval: waitInterval,
-				FailOnFailed: failOnFailed,
-				JSON:         jsonOut,
-				Format:       format,
-				ErrPrefix:    "agent-team pipeline run",
+				ID:             id,
+				TicketURL:      ticketURL,
+				Kickoff:        kickoff,
+				KickoffFile:    kickoffFile,
+				DispatchNow:    dispatchNow,
+				Workspace:      workspace,
+				Runtime:        runtimeSelection{Kind: runtimeKind, Binary: runtimeBin},
+				DryRun:         dryRun,
+				Wait:           wait,
+				WaitStatuses:   waitStatuses,
+				WaitEvents:     waitEvents,
+				WaitNextStates: waitNextState,
+				WaitStep:       waitStep,
+				WaitTimeout:    waitTimeout,
+				WaitInterval:   waitInterval,
+				FailOnFailed:   failOnFailed,
+				JSON:           jsonOut,
+				Format:         format,
+				ErrPrefix:      "agent-team pipeline run",
 			})
 		},
 	}
@@ -4305,6 +4309,8 @@ func newPipelineRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&wait, "wait", false, "After creating or dispatching, wait for the job to reach a lifecycle status or event.")
 	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&waitEvents, "wait-event", nil, "With --wait, last event to wait for, e.g. advance_dispatched, closed, or pipeline_done. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&waitNextState, "wait-next-state", nil, "With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&waitStep, "wait-step", "", "With --wait, pipeline step id that must be the current next step.")
 	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
 	cmd.Flags().DurationVar(&waitInterval, "wait-interval", 500*time.Millisecond, "Polling interval with --wait.")
 	cmd.Flags().BoolVar(&failOnFailed, "fail-on-failed", false, "With --wait, exit 1 if the job resolves to failed.")
@@ -4314,23 +4320,25 @@ func newPipelineRunCmd() *cobra.Command {
 }
 
 type pipelineRunOptions struct {
-	ID           string
-	TicketURL    string
-	Kickoff      string
-	KickoffFile  string
-	DispatchNow  bool
-	Workspace    string
-	Runtime      runtimeSelection
-	DryRun       bool
-	Wait         bool
-	WaitStatuses []string
-	WaitEvents   []string
-	WaitTimeout  time.Duration
-	WaitInterval time.Duration
-	FailOnFailed bool
-	JSON         bool
-	Format       string
-	ErrPrefix    string
+	ID             string
+	TicketURL      string
+	Kickoff        string
+	KickoffFile    string
+	DispatchNow    bool
+	Workspace      string
+	Runtime        runtimeSelection
+	DryRun         bool
+	Wait           bool
+	WaitStatuses   []string
+	WaitEvents     []string
+	WaitNextStates []string
+	WaitStep       string
+	WaitTimeout    time.Duration
+	WaitInterval   time.Duration
+	FailOnFailed   bool
+	JSON           bool
+	Format         string
+	ErrPrefix      string
 }
 
 func runPipelineJobCreate(cmd *cobra.Command, teamDir, pipelineName, ticket string, positional []string, opts pipelineRunOptions) error {
@@ -4354,7 +4362,7 @@ func runPipelineJobCreate(cmd *cobra.Command, teamDir, pipelineName, ticket stri
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --wait cannot be combined with --dry-run.\n", prefix)
 		return exitErr(2)
 	}
-	if !opts.Wait && (cmd.Flags().Changed("wait-status") || cmd.Flags().Changed("wait-event") || cmd.Flags().Changed("wait-timeout") || cmd.Flags().Changed("wait-interval") || opts.FailOnFailed) {
+	if !opts.Wait && (cmd.Flags().Changed("wait-status") || cmd.Flags().Changed("wait-event") || cmd.Flags().Changed("wait-next-state") || cmd.Flags().Changed("wait-step") || cmd.Flags().Changed("wait-timeout") || cmd.Flags().Changed("wait-interval") || opts.FailOnFailed) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s: wait-related flags require --wait.\n", prefix)
 		return exitErr(2)
 	}
@@ -4363,17 +4371,11 @@ func runPipelineJobCreate(cmd *cobra.Command, teamDir, pipelineName, ticket stri
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", prefix, err)
 		return exitErr(2)
 	}
-	waitEvents := map[string]bool{}
-	waitStatuses := map[job.Status]bool{}
+	waitFilters := jobWaitFilters{}
 	if opts.Wait {
-		waitEvents = parseJobWaitEvents(opts.WaitEvents)
-		waitStatuses, err = parseJobWaitStatuses(opts.WaitStatuses, !cmd.Flags().Changed("wait-status") && len(waitEvents) == 0)
+		waitFilters, err = parseJobCommandWaitFilters(cmd, opts.WaitStatuses, opts.WaitEvents, opts.WaitNextStates, opts.WaitStep)
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", prefix, err)
-			return exitErr(2)
-		}
-		if len(waitStatuses) == 0 && len(waitEvents) == 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(), "%s: pass at least one non-empty --wait-status or --wait-event.\n", prefix)
 			return exitErr(2)
 		}
 	}
@@ -4439,7 +4441,7 @@ func runPipelineJobCreate(cmd *cobra.Command, teamDir, pipelineName, ticket stri
 			return err
 		}
 		if opts.Wait {
-			waited, err := waitForPipelineRunJob(cmd, teamDir, res.Job.ID, waitStatuses, waitEvents, opts, prefix)
+			waited, err := waitForPipelineRunJob(cmd, teamDir, res.Job.ID, waitFilters, opts, prefix)
 			if err != nil {
 				if err == context.Canceled {
 					return nil
@@ -4475,7 +4477,7 @@ func runPipelineJobCreate(cmd *cobra.Command, teamDir, pipelineName, ticket stri
 		return nil
 	}
 	if opts.Wait {
-		waited, err := waitForPipelineRunJob(cmd, teamDir, j.ID, waitStatuses, waitEvents, opts, prefix)
+		waited, err := waitForPipelineRunJob(cmd, teamDir, j.ID, waitFilters, opts, prefix)
 		if err != nil {
 			if err == context.Canceled {
 				return nil
@@ -4493,8 +4495,8 @@ func runPipelineJobCreate(cmd *cobra.Command, teamDir, pipelineName, ticket stri
 	return nil
 }
 
-func waitForPipelineRunJob(cmd *cobra.Command, teamDir, id string, statuses map[job.Status]bool, events map[string]bool, opts pipelineRunOptions, prefix string) (*job.Job, error) {
-	return waitForJobCommand(cmd, teamDir, id, statuses, events, nil, false, "", opts.WaitTimeout, opts.WaitInterval, prefix)
+func waitForPipelineRunJob(cmd *cobra.Command, teamDir, id string, filters jobWaitFilters, opts pipelineRunOptions, prefix string) (*job.Job, error) {
+	return waitForJobCommand(cmd, teamDir, id, filters.statuses, filters.events, filters.nextStates, filters.nextStateSet, filters.step, opts.WaitTimeout, opts.WaitInterval, prefix)
 }
 
 type pipelineInfo struct {

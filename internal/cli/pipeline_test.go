@@ -8578,6 +8578,8 @@ func TestPipelineRunDispatchWaitsForRequestedStatus(t *testing.T) {
 		"--workspace", "repo",
 		"--wait",
 		"--wait-status", "running",
+		"--wait-next-state", "running",
+		"--wait-step", "implement",
 		"--wait-timeout", "2s",
 		"--wait-interval", "10ms",
 		"--json",
@@ -8599,6 +8601,41 @@ func TestPipelineRunDispatchWaitsForRequestedStatus(t *testing.T) {
 		t.Fatalf("waited step = %+v", result.Step)
 	}
 	stopAndWaitForTest(t, mgr, "worker-squ-315-implement")
+}
+
+func TestPipelineRunRejectsInvalidWaitFlags(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{
+			args: []string{"pipeline", "run", "ticket_to_pr", "SQU-316", "--repo", root, "--wait-next-state", "running"},
+			want: "wait-related flags require --wait",
+		},
+		{
+			args: []string{"pipeline", "run", "ticket_to_pr", "SQU-317", "--repo", root, "--wait-step", "implement"},
+			want: "wait-related flags require --wait",
+		},
+		{
+			args: []string{"pipeline", "run", "ticket_to_pr", "SQU-318", "--repo", root, "--wait", "--wait-next-state", "missing"},
+			want: "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all",
+		},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+	}
 }
 
 func TestPipelineAdvanceIncludesQueuedReadyFirstStep(t *testing.T) {

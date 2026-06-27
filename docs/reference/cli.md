@@ -169,7 +169,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline show <pipeline>` | Show one declaration |
 | `agent-team pipeline graph <pipeline>` | Render text, Mermaid, DOT, or JSON step graphs |
 | `agent-team pipeline doctor --all` | Validate workflows; add `--strict-runtime` to fail on unavailable step runtime defaults |
-| `agent-team pipeline run <pipeline> <ticket>` | Create pipeline job; `--dispatch` accepts workspace/runtime overrides and `--wait` blocks for the created job |
+| `agent-team pipeline run <pipeline> <ticket>` | Create pipeline job; `--dispatch` accepts workspace/runtime overrides and `--wait-next-state`/`--wait-step` can block for the first stage handoff |
 | `agent-team pipeline status` | Summarize or watch pipeline jobs plus owned queue/quarantine counts; sort rows and cap output with `--limit` |
 | `agent-team pipeline triage [<pipeline>]` | Show pipeline-owned jobs needing attention, including queue/quarantine and ready-step recovery hints |
 | `agent-team pipeline explain <pipeline>` | Expand or watch pipeline jobs as per-step readiness, blockers, gates, and actions; sort and cap large histories with `--sort` and `--limit`, or add `--step` to focus one stage |
@@ -213,7 +213,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team resume-plan <team>` | Team-scoped runtime recovery commands; filter by `--step`, `--action`, `--runtime-stale`, or `--unhealthy`, sort/limit large recovery lists, or summarize with `--summary`; `team runtime resume-plan` remains available |
 | `agent-team team status <team>` | Scoped status |
 | `agent-team team monitor <team>` | Scoped dashboard |
-| `agent-team team run <team> <ticket>` | Create a team-owned job; `--dispatch` accepts workspace/runtime overrides and `--wait` blocks for the created job |
+| `agent-team team run <team> <ticket>` | Create a team-owned job; `--dispatch` accepts workspace/runtime overrides and `--wait-next-state`/`--wait-step` can block for the first stage handoff |
 | `agent-team team jobs <team>` | Scoped job list, summary, or watch view; filter held state, mixed-runtime ownership, and cap output with `--limit` |
 | `agent-team team wait-jobs <team>` | Wait for team-owned jobs to reach a lifecycle status, event, or next-step state/stage |
 | `agent-team team tick <team>` | Scoped maintenance cycle; use `--workspace` and `--runtime` for advanced steps |
