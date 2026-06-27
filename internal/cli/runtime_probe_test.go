@@ -30,7 +30,7 @@ func withRuntimeProbeRunExecCommand(t *testing.T, fn func(context.Context, strin
 	t.Cleanup(func() { runtimeProbeRunExecCommand = old })
 }
 
-func withRuntimeProbeStartDaemon(t *testing.T, fn func(*cobra.Command, string, time.Duration) (daemonLifecycleJSON, error)) {
+func withRuntimeProbeStartDaemon(t *testing.T, fn func(*cobra.Command, string, time.Duration, string) (daemonLifecycleJSON, error)) {
 	t.Helper()
 	old := runtimeProbeStartDaemon
 	runtimeProbeStartDaemon = fn
@@ -333,7 +333,7 @@ func TestRuntimeProbeStartDaemon(t *testing.T) {
 		t.Fatalf("codex doctor should be skipped")
 		return runtimeProbeCommandResult{}
 	})
-	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration) (daemonLifecycleJSON, error) {
+	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration, httpAddr string) (daemonLifecycleJSON, error) {
 		if timeout != 20*time.Second {
 			t.Fatalf("timeout = %s, want default 20s", timeout)
 		}
@@ -386,7 +386,7 @@ func TestRuntimeProbeStartDaemonFailure(t *testing.T) {
 		t.Fatalf("codex doctor should be skipped")
 		return runtimeProbeCommandResult{}
 	})
-	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration) (daemonLifecycleJSON, error) {
+	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration, httpAddr string) (daemonLifecycleJSON, error) {
 		return daemonLifecycleJSON{}, errors.New("spawn failed")
 	})
 
@@ -591,7 +591,7 @@ func TestRuntimeProbeCodexExecSocketCheckSuccess(t *testing.T) {
 		t.Fatalf("codex doctor should be skipped")
 		return runtimeProbeCommandResult{}
 	})
-	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration) (daemonLifecycleJSON, error) {
+	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration, httpAddr string) (daemonLifecycleJSON, error) {
 		return daemonLifecycleJSON{
 			Action:  "start",
 			Changed: true,
@@ -656,6 +656,125 @@ func TestRuntimeProbeCodexExecSocketCheckSuccess(t *testing.T) {
 	}
 }
 
+func TestRuntimeProbeCodexExecHTTPCheckSuccess(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "codex")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	socketPath := filepath.Join(tmp, ".agent_team", "daemon.sock")
+	httpURL := "http://127.0.0.1:49152"
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "codex" {
+			t.Fatalf("look path bin = %q, want codex", bin)
+		}
+		return "/opt/homebrew/bin/codex", nil
+	})
+	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration, httpAddr string) (daemonLifecycleJSON, error) {
+		if httpAddr != "127.0.0.1:0" {
+			t.Fatalf("http addr = %q, want 127.0.0.1:0", httpAddr)
+		}
+		return daemonLifecycleJSON{
+			Action: "start",
+			PID:    1234,
+			Status: daemonStatusJSON{
+				Running:  true,
+				Ready:    true,
+				PID:      1234,
+				TeamDir:  filepath.ToSlash(teamDir),
+				Socket:   socketPath,
+				HTTPAddr: "127.0.0.1:49152",
+				HTTPURL:  httpURL,
+			},
+		}, nil
+	})
+	withRuntimeProbeRunExecCommand(t, func(ctx context.Context, binary string, args []string, env []string, cwd, stdin string) runtimeProbeExecCommandResult {
+		for _, want := range []string{"AGENT_TEAM_DAEMON_URL", "/v1/instances", runtimeProbeHTTPCheckSuccessReply} {
+			if !strings.Contains(stdin, want) {
+				t.Fatalf("HTTP-check stdin missing %q:\n%s", want, stdin)
+			}
+		}
+		if !containsString(env, "AGENT_TEAM_DAEMON_URL="+httpURL) {
+			t.Fatalf("exec env = %#v, want daemon URL", env)
+		}
+		lastMessage := ""
+		for i := range args {
+			if args[i] == "--output-last-message" && i+1 < len(args) {
+				lastMessage = args[i+1]
+				break
+			}
+		}
+		if lastMessage == "" {
+			t.Fatalf("exec args = %#v, missing last-message path", args)
+		}
+		if err := os.WriteFile(lastMessage, []byte(runtimeProbeHTTPCheckSuccessReply+"\n"), 0o644); err != nil {
+			t.Fatalf("write last-message: %v", err)
+		}
+		return runtimeProbeExecCommandResult{}
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"runtime", "probe", "--target", tmp, "--skip-doctor", "--start-daemon", "--daemon-http-addr", "127.0.0.1:0", "--exec-http-check", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime probe exec HTTP check failed: %v\nstderr=%s", err, stderr.String())
+	}
+	var result runtimeProbeResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode result: %v\nbody=%s", err, out.String())
+	}
+	if !result.OK || result.ExecProbe == nil || !result.ExecProbe.HTTPCheck || result.ExecProbe.DaemonURL != httpURL {
+		t.Fatalf("result = %+v, want successful HTTP exec probe", result)
+	}
+	if got := result.ExecProbe.LastMessage; got != runtimeProbeHTTPCheckSuccessReply {
+		t.Fatalf("last message = %q", got)
+	}
+}
+
+func TestRuntimeProbeCodexExecHTTPCheckRequiresHTTPURL(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "codex")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "codex" {
+			t.Fatalf("look path bin = %q, want codex", bin)
+		}
+		return "/opt/homebrew/bin/codex", nil
+	})
+	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration, httpAddr string) (daemonLifecycleJSON, error) {
+		return daemonLifecycleJSON{
+			Action: "start",
+			PID:    1234,
+			Status: daemonStatusJSON{
+				Running: true,
+				Ready:   true,
+				PID:     1234,
+				TeamDir: filepath.ToSlash(teamDir),
+				Socket:  filepath.Join(tmp, ".agent_team", "daemon.sock"),
+			},
+		}, nil
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"runtime", "probe", "--target", tmp, "--skip-doctor", "--start-daemon", "--exec-http-check", "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("runtime probe HTTP check succeeded unexpectedly")
+	}
+	var result runtimeProbeResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode result: %v\nbody=%s stderr=%s", err, out.String(), stderr.String())
+	}
+	if !containsRuntimeProbeIssue(result.Issues, "fail", "exec_probe", "daemon_http_not_enabled") {
+		t.Fatalf("issues = %+v, want daemon_http_not_enabled", result.Issues)
+	}
+}
+
 func TestRuntimeProbeCodexExecSocketCheckFailure(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "codex")
 	t.Setenv(runtimebin.EnvBinary, "")
@@ -668,7 +787,7 @@ func TestRuntimeProbeCodexExecSocketCheckFailure(t *testing.T) {
 		}
 		return "/opt/homebrew/bin/codex", nil
 	})
-	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration) (daemonLifecycleJSON, error) {
+	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration, httpAddr string) (daemonLifecycleJSON, error) {
 		return daemonLifecycleJSON{
 			Action: "start",
 			PID:    1234,
@@ -731,7 +850,7 @@ func TestRuntimeProbeCodexExecSocketCheckPermissionFailure(t *testing.T) {
 		}
 		return "/opt/homebrew/bin/codex", nil
 	})
-	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration) (daemonLifecycleJSON, error) {
+	withRuntimeProbeStartDaemon(t, func(cmd *cobra.Command, teamDir string, timeout time.Duration, httpAddr string) (daemonLifecycleJSON, error) {
 		return daemonLifecycleJSON{
 			Action: "start",
 			PID:    1234,
@@ -851,9 +970,19 @@ func TestRuntimeExecProbeClassifiesFailures(t *testing.T) {
 			want:  "sandbox_blocked",
 		},
 		{
+			name:  "HTTP check sandbox last message",
+			probe: &runtimeExecProbe{HTTPCheck: true, LastMessagePresent: true, LastMessage: "Failed: `daemon HTTP check failed: <urlopen error [Errno 1] Operation not permitted>`", Stderr: `WARN codex_core_plugins::manager: failed to warm featured plugin ids cache error=remote featured plugin request failed with status 401 Unauthorized: {"detail":"Unauthorized"}`, Error: `Codex exec HTTP check did not confirm daemon HTTP access; expected final message "agent-team daemon http ok"`},
+			want:  "sandbox_blocked",
+		},
+		{
 			name:  "generic socket check failure",
 			probe: &runtimeExecProbe{SocketCheck: true, LastMessagePresent: true, LastMessage: "daemon returned HTTP 503", Error: `Codex exec socket check did not confirm daemon socket access; expected final message "agent-team daemon socket ok"`},
 			want:  "socket_check_failed",
+		},
+		{
+			name:  "generic HTTP check failure",
+			probe: &runtimeExecProbe{HTTPCheck: true, LastMessagePresent: true, LastMessage: "daemon returned HTTP 503", Error: `Codex exec HTTP check did not confirm daemon HTTP access; expected final message "agent-team daemon http ok"`},
+			want:  "http_check_failed",
 		},
 		{
 			name:  "codex banner sandbox line",
@@ -892,10 +1021,14 @@ func TestRuntimeExecProbeClassifiesFailures(t *testing.T) {
 			if remediation := runtimeExecProbeRemediation(tc.probe, tc.want); strings.TrimSpace(remediation) == "" {
 				t.Fatalf("empty remediation for %s", tc.want)
 			}
-			if tc.name == "socket check sandbox last message" {
+			if tc.name == "socket check sandbox last message" || tc.name == "HTTP check sandbox last message" {
 				remediation := runtimeExecProbeRemediation(tc.probe, tc.want)
-				if !strings.Contains(remediation, "--exec-socket-check") {
-					t.Fatalf("remediation = %q, want socket-check command", remediation)
+				wantFlag := "--exec-socket-check"
+				if tc.probe.HTTPCheck {
+					wantFlag = "--exec-http-check"
+				}
+				if !strings.Contains(remediation, wantFlag) {
+					t.Fatalf("remediation = %q, want %s command", remediation, wantFlag)
 				}
 			}
 		})

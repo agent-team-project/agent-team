@@ -641,6 +641,7 @@ Flags:
 ```text
       --detach                   Background the restarted daemon (writes log to .agent_team/daemon/agent-teamd.log). (default true)
       --format string            Render daemon restart result with a Go template, e.g. '{{.Action}} {{.Changed}} {{.Status.Ready}}'. Requires detached mode.
+      --http-addr string         Also expose the restarted daemon API on this loopback HTTP address, e.g. 127.0.0.1:0. Empty disables HTTP.
       --json                     Emit machine-readable JSON. Requires detached mode.
   -q, --quiet                    Suppress output and use only the exit code. Requires detached mode.
       --ready-timeout duration   Maximum time to wait for restarted detached daemon readiness (0 = no timeout). (default 3s)
@@ -669,6 +670,7 @@ Flags:
 ```text
       --detach                   Background the daemon (writes log to .agent_team/daemon/agent-teamd.log). (default true)
       --format string            Render daemon start result with a Go template, e.g. '{{.Action}} {{.PID}}'. Requires detached mode.
+      --http-addr string         Also expose the daemon API on this loopback HTTP address, e.g. 127.0.0.1:0. Empty disables HTTP.
       --json                     Emit machine-readable JSON. Requires detached mode.
   -q, --quiet                    Suppress output and use only the exit code. Requires detached mode.
       --ready-timeout duration   Maximum time to wait for detached daemon readiness (0 = no timeout). (default 3s)
@@ -5425,8 +5427,10 @@ Aliases: `check`, `doctor`
 Flags:
 
 ```text
+      --daemon-http-addr string    With --start-daemon, also expose agent-teamd on this loopback HTTP address, e.g. 127.0.0.1:0.
       --daemon-interval duration   Polling interval for --wait-daemon. (default 200ms)
       --exec                       Run a minimal runtime-native execution probe. Currently supports Codex one-shot execution.
+      --exec-http-check            Run a Codex exec probe that verifies daemon loopback HTTP access through AGENT_TEAM_DAEMON_URL. Implies --exec and --require-daemon.
       --exec-prompt string         Prompt sent to the runtime when --exec is set. (default "Reply exactly with: agent-team runtime probe ok")
       --exec-prompt-file string    Read --exec probe prompt from a file, or '-' for stdin.
       --exec-socket-check          Run a Codex exec probe that verifies daemon Unix-socket access from inside the runtime sandbox. Implies --exec and --require-daemon.

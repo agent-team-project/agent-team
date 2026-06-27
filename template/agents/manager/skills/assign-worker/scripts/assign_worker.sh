@@ -33,6 +33,9 @@ socket_path() {
 }
 
 require_daemon() {
+    if [[ -n "${AGENT_TEAM_DAEMON_URL:-}" ]]; then
+        return 0
+    fi
     local sock
     sock="$(socket_path)"
     if [[ ! -S "$sock" ]]; then
@@ -49,7 +52,15 @@ slugify_ticket() {
         sed 's/^-*//; s/-*$//; s/--*/-/g'
 }
 
-curl_socket() {
+curl_daemon() {
+    if [[ -n "${AGENT_TEAM_DAEMON_URL:-}" ]]; then
+        local args=("$@")
+        local last_index=$((${#args[@]} - 1))
+        local endpoint="${args[last_index]}"
+        args[last_index]="${AGENT_TEAM_DAEMON_URL%/}${endpoint#http://daemon}"
+        curl -sS --fail-with-body "${args[@]}"
+        return
+    fi
     local sock
     sock="$(socket_path)"
     curl --unix-socket "$sock" -sS --fail-with-body "$@"
@@ -157,7 +168,7 @@ print(json.dumps({"type": "agent.dispatch", "payload": event_payload}))
 PY
 )
 
-    curl_socket -X POST \
+    curl_daemon -X POST \
         -H "Content-Type: application/json" \
         -d "$payload" \
         http://daemon/v1/event

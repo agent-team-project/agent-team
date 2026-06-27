@@ -15,6 +15,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/jamesaud/agent-team/internal/loader"
 	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/spf13/cobra"
@@ -26,6 +27,7 @@ var runtimeProbeStartDaemon = daemonStartDetachedOperation
 
 const (
 	defaultRuntimeProbeExecPrompt       = "Reply exactly with: agent-team runtime probe ok"
+	runtimeProbeHTTPCheckSuccessReply   = "agent-team daemon http ok"
 	runtimeProbeSocketCheckSuccessReply = "agent-team daemon socket ok"
 )
 
@@ -40,8 +42,10 @@ func newRuntimeProbeCmd() *cobra.Command {
 		skipDoctor      bool
 		execProbe       bool
 		execSocketCheck bool
+		execHTTPCheck   bool
 		execPrompt      string
 		execPromptFile  string
+		daemonHTTPAddr  string
 		output          string
 		requireDaemon   bool
 		waitDaemon      bool
@@ -71,11 +75,28 @@ func newRuntimeProbeCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime probe: --daemon-interval must be > 0.")
 				return exitErr(2)
 			}
+			if execSocketCheck && execHTTPCheck {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime probe: choose one of --exec-socket-check or --exec-http-check.")
+				return exitErr(2)
+			}
 			if execSocketCheck && (cmd.Flags().Changed("exec-prompt") || strings.TrimSpace(execPromptFile) != "") {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime probe: --exec-socket-check cannot be combined with --exec-prompt or --exec-prompt-file.")
 				return exitErr(2)
 			}
-			if execSocketCheck {
+			if execHTTPCheck && (cmd.Flags().Changed("exec-prompt") || strings.TrimSpace(execPromptFile) != "") {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime probe: --exec-http-check cannot be combined with --exec-prompt or --exec-prompt-file.")
+				return exitErr(2)
+			}
+			if strings.TrimSpace(daemonHTTPAddr) != "" && !startDaemon {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime probe: --daemon-http-addr requires --start-daemon.")
+				return exitErr(2)
+			}
+			normalizedHTTPAddr, err := daemon.NormalizeLoopbackHTTPAddr(daemonHTTPAddr)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime probe: %v\n", err)
+				return exitErr(2)
+			}
+			if execSocketCheck || execHTTPCheck {
 				execProbe = true
 				requireDaemon = true
 			}
@@ -98,7 +119,9 @@ func newRuntimeProbeCmd() *cobra.Command {
 				SkipDoctor:      skipDoctor,
 				Exec:            execProbe,
 				ExecSocketCheck: execSocketCheck,
+				ExecHTTPCheck:   execHTTPCheck,
 				ExecPrompt:      resolvedExecPrompt,
+				DaemonHTTPAddr:  normalizedHTTPAddr,
 				RequireDaemon:   requireDaemon,
 				WaitDaemon:      waitDaemon,
 				StartDaemon:     startDaemon,
@@ -142,8 +165,10 @@ func newRuntimeProbeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "Skip runtime-native diagnostics such as codex doctor --json.")
 	cmd.Flags().BoolVar(&execProbe, "exec", false, "Run a minimal runtime-native execution probe. Currently supports Codex one-shot execution.")
 	cmd.Flags().BoolVar(&execSocketCheck, "exec-socket-check", false, "Run a Codex exec probe that verifies daemon Unix-socket access from inside the runtime sandbox. Implies --exec and --require-daemon.")
+	cmd.Flags().BoolVar(&execHTTPCheck, "exec-http-check", false, "Run a Codex exec probe that verifies daemon loopback HTTP access through AGENT_TEAM_DAEMON_URL. Implies --exec and --require-daemon.")
 	cmd.Flags().StringVar(&execPrompt, "exec-prompt", defaultRuntimeProbeExecPrompt, "Prompt sent to the runtime when --exec is set.")
 	cmd.Flags().StringVar(&execPromptFile, "exec-prompt-file", "", "Read --exec probe prompt from a file, or '-' for stdin.")
+	cmd.Flags().StringVar(&daemonHTTPAddr, "daemon-http-addr", "", "With --start-daemon, also expose agent-teamd on this loopback HTTP address, e.g. 127.0.0.1:0.")
 	cmd.Flags().StringVar(&output, "output", "", "Write the full probe result as pretty JSON to this file.")
 	cmd.Flags().BoolVar(&requireDaemon, "require-daemon", false, "Fail when the repo daemon is not running and ready.")
 	cmd.Flags().BoolVar(&waitDaemon, "wait-daemon", false, "Wait for the repo daemon to become ready before reporting daemon health.")
@@ -181,7 +206,9 @@ type runtimeProbeOptions struct {
 	SkipDoctor      bool
 	Exec            bool
 	ExecSocketCheck bool
+	ExecHTTPCheck   bool
 	ExecPrompt      string
+	DaemonHTTPAddr  string
 	RequireDaemon   bool
 	WaitDaemon      bool
 	StartDaemon     bool
@@ -233,7 +260,9 @@ type runtimeExecProbe struct {
 	Ran                 bool     `json:"ran"`
 	Runtime             string   `json:"runtime"`
 	SocketCheck         bool     `json:"socket_check,omitempty"`
+	HTTPCheck           bool     `json:"http_check,omitempty"`
 	DaemonSocket        string   `json:"daemon_socket,omitempty"`
+	DaemonURL           string   `json:"daemon_url,omitempty"`
 	ExpectedLastMessage string   `json:"expected_last_message,omitempty"`
 	Command             []string `json:"command,omitempty"`
 	Workdir             string   `json:"workdir,omitempty"`
@@ -306,7 +335,7 @@ func collectRuntimeProbe(cmd *cobra.Command, opts runtimeProbeOptions) (*runtime
 		teamDir = resolved
 		status := collectDaemonStatus(teamDir)
 		if opts.StartDaemon && !status.Ready {
-			startResult, err := runtimeProbeStartDaemon(cmd, teamDir, opts.Timeout)
+			startResult, err := runtimeProbeStartDaemon(cmd, teamDir, opts.Timeout, opts.DaemonHTTPAddr)
 			if err != nil {
 				result.addIssue("fail", "daemon", "start_failed", err.Error(), "Run `agent-team daemon start` and inspect the daemon log.")
 			} else {
@@ -356,7 +385,7 @@ func collectRuntimeProbe(cmd *cobra.Command, opts runtimeProbeOptions) (*runtime
 			result.addIssue("fail", "codex_doctor", "doctor_failed", probe.Error, "Run `codex doctor --json` directly for the full diagnostic output.")
 		}
 	}
-	if opts.Exec || opts.ExecSocketCheck {
+	if opts.Exec || opts.ExecSocketCheck || opts.ExecHTTPCheck {
 		switch {
 		case info.Runtime != string(runtimebin.KindCodex):
 			result.addIssue("fail", "exec_probe", "unsupported_runtime", "runtime exec probe currently supports Codex only", "Run `agent-team runtime probe --runtime codex --exec`.")
@@ -366,8 +395,12 @@ func collectRuntimeProbe(cmd *cobra.Command, opts runtimeProbeOptions) (*runtime
 			// team_missing already records the actionable failure.
 		case opts.ExecSocketCheck && (result.Daemon == nil || !result.Daemon.Ready):
 			result.addIssue("fail", "exec_probe", "daemon_not_ready", "daemon socket exec check requires a running, ready agent-teamd", "Run `agent-team runtime probe --runtime codex --start-daemon --require-daemon --exec-socket-check`.")
+		case opts.ExecHTTPCheck && (result.Daemon == nil || !result.Daemon.Ready):
+			result.addIssue("fail", "exec_probe", "daemon_not_ready", "daemon HTTP exec check requires a running, ready agent-teamd", "Run `agent-team runtime probe --runtime codex --start-daemon --daemon-http-addr 127.0.0.1:0 --require-daemon --exec-http-check`.")
+		case opts.ExecHTTPCheck && strings.TrimSpace(result.Daemon.HTTPURL) == "":
+			result.addIssue("fail", "exec_probe", "daemon_http_not_enabled", "daemon HTTP exec check requires agent-teamd to expose a loopback HTTP URL", "Restart with `agent-team daemon restart --http-addr 127.0.0.1:0`, or rerun the probe with `--start-daemon --daemon-http-addr 127.0.0.1:0`.")
 		default:
-			probe := runCodexExecProbe(cmd.Context(), repo, teamDir, result.Daemon, info.Binary, opts.Timeout, opts.ExecPrompt, opts.ExecSocketCheck)
+			probe := runCodexExecProbe(cmd.Context(), repo, teamDir, result.Daemon, info.Binary, opts.Timeout, opts.ExecPrompt, opts.ExecSocketCheck, opts.ExecHTTPCheck)
 			result.ExecProbe = probe
 			if probe.Error != "" {
 				issueID := runtimeExecProbeIssueID(probe)
@@ -486,7 +519,7 @@ func defaultRuntimeProbeRunExecCommand(ctx context.Context, binary string, args 
 	}
 }
 
-func runCodexExecProbe(parent context.Context, repo, teamDir string, status *daemonStatusJSON, binary string, timeout time.Duration, prompt string, socketCheck bool) *runtimeExecProbe {
+func runCodexExecProbe(parent context.Context, repo, teamDir string, status *daemonStatusJSON, binary string, timeout time.Duration, prompt string, socketCheck, httpCheck bool) *runtimeExecProbe {
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
@@ -496,6 +529,8 @@ func runCodexExecProbe(parent context.Context, repo, teamDir string, status *dae
 	}
 	if socketCheck {
 		prompt = runtimeProbeSocketCheckPrompt()
+	} else if httpCheck {
+		prompt = runtimeProbeHTTPCheckPrompt()
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
@@ -504,6 +539,7 @@ func runCodexExecProbe(parent context.Context, repo, teamDir string, status *dae
 		Ran:         true,
 		Runtime:     string(runtimebin.KindCodex),
 		SocketCheck: socketCheck,
+		HTTPCheck:   httpCheck,
 		Workdir:     filepath.ToSlash(repo),
 	}
 	stateDir, err := os.MkdirTemp("", "agent-team-runtime-probe-")
@@ -514,18 +550,27 @@ func runCodexExecProbe(parent context.Context, repo, teamDir string, status *dae
 	defer os.RemoveAll(stateDir)
 
 	socket := ""
+	daemonURL := ""
 	if status != nil {
 		socket = status.Socket
+		daemonURL = status.HTTPURL
 	}
 	if socketCheck {
 		probe.DaemonSocket = socket
 		probe.ExpectedLastMessage = runtimeProbeSocketCheckSuccessReply
+	}
+	if httpCheck {
+		probe.DaemonURL = daemonURL
+		probe.ExpectedLastMessage = runtimeProbeHTTPCheckSuccessReply
 	}
 	teamEnv := []string{
 		"AGENT_TEAM_ROOT=" + teamDir,
 		"AGENT_TEAM_INSTANCE=runtime-probe",
 		"AGENT_TEAM_STATE_DIR=" + stateDir,
 		"AGENT_TEAM_DAEMON_SOCKET=" + socket,
+	}
+	if daemonURL != "" {
+		teamEnv = append(teamEnv, "AGENT_TEAM_DAEMON_URL="+daemonURL)
 	}
 	lastMessagePath := filepath.Join(stateDir, runtimebin.CodexLastMessageFile)
 	args := []string{"exec"}
@@ -558,8 +603,44 @@ func runCodexExecProbe(parent context.Context, repo, teamDir string, status *dae
 		probe.Error = "Codex exec wrote an empty last-message sidecar"
 	} else if socketCheck && !runtimeProbeSocketCheckPassed(probe.LastMessage) {
 		probe.Error = fmt.Sprintf("Codex exec socket check did not confirm daemon socket access; expected final message %q", runtimeProbeSocketCheckSuccessReply)
+	} else if httpCheck && !runtimeProbeHTTPCheckPassed(probe.LastMessage) {
+		probe.Error = fmt.Sprintf("Codex exec HTTP check did not confirm daemon HTTP access; expected final message %q", runtimeProbeHTTPCheckSuccessReply)
 	}
 	return probe
+}
+
+func runtimeProbeHTTPCheckPrompt() string {
+	return fmt.Sprintf(`Validate that commands run by Codex can reach agent-teamd over the loopback HTTP URL exported in AGENT_TEAM_DAEMON_URL.
+
+Run this Python script from the shell:
+
+python3 - <<'PY'
+import json
+import os
+import sys
+import urllib.request
+
+daemon_url = os.environ.get("AGENT_TEAM_DAEMON_URL", "").rstrip("/")
+if not daemon_url:
+    print("AGENT_TEAM_DAEMON_URL is not set", file=sys.stderr)
+    sys.exit(2)
+
+try:
+    with urllib.request.urlopen(daemon_url + "/v1/instances", timeout=5) as resp:
+        body = resp.read().decode("utf-8", "replace")
+        if resp.status != 200:
+            print(f"daemon returned HTTP {resp.status}: {body}", file=sys.stderr)
+            sys.exit(1)
+        json.loads(body)
+except Exception as exc:
+    print(f"daemon HTTP check failed: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+
+If the script exits 0, reply exactly:
+%s
+
+If the script fails, reply with a concise failure summary including stderr.`, runtimeProbeHTTPCheckSuccessReply)
 }
 
 func runtimeProbeSocketCheckPrompt() string {
@@ -611,6 +692,10 @@ func runtimeProbeSocketCheckPassed(lastMessage string) bool {
 	return strings.TrimSpace(lastMessage) == runtimeProbeSocketCheckSuccessReply
 }
 
+func runtimeProbeHTTPCheckPassed(lastMessage string) bool {
+	return strings.TrimSpace(lastMessage) == runtimeProbeHTTPCheckSuccessReply
+}
+
 func runtimeExecProbeIssueID(probe *runtimeExecProbe) string {
 	if probe == nil {
 		return "exec_failed"
@@ -619,6 +704,18 @@ func runtimeExecProbeIssueID(probe *runtimeExecProbe) string {
 		return "exec_timeout"
 	}
 	execText := runtimeExecProbeClassifiableText(probe)
+	if probe.SocketCheck && probe.LastMessagePresent && strings.TrimSpace(probe.LastMessage) != "" && !runtimeProbeSocketCheckPassed(probe.LastMessage) {
+		if runtimeExecProbeTextIndicatesSandbox(execText) {
+			return "sandbox_blocked"
+		}
+		return "socket_check_failed"
+	}
+	if probe.HTTPCheck && probe.LastMessagePresent && strings.TrimSpace(probe.LastMessage) != "" && !runtimeProbeHTTPCheckPassed(probe.LastMessage) {
+		if runtimeExecProbeTextIndicatesSandbox(execText) {
+			return "sandbox_blocked"
+		}
+		return "http_check_failed"
+	}
 	switch {
 	case strings.Contains(execText, "could not resolve host"),
 		strings.Contains(execText, "failed to lookup"),
@@ -637,15 +734,8 @@ func runtimeExecProbeIssueID(probe *runtimeExecProbe) string {
 		strings.Contains(execText, "not logged in"),
 		strings.Contains(execText, "login required"):
 		return "auth_failed"
-	case strings.Contains(execText, "operation not permitted"),
-		strings.Contains(execText, "permission denied"),
-		strings.Contains(execText, "sandbox denied"),
-		strings.Contains(execText, "sandbox blocked"),
-		strings.Contains(execText, "blocked by sandbox"):
+	case runtimeExecProbeTextIndicatesSandbox(execText):
 		return "sandbox_blocked"
-	}
-	if probe.SocketCheck && probe.LastMessagePresent && strings.TrimSpace(probe.LastMessage) != "" && !runtimeProbeSocketCheckPassed(probe.LastMessage) {
-		return "socket_check_failed"
 	}
 	if probe.LastMessagePresent && strings.TrimSpace(probe.LastMessage) == "" {
 		return "last_message_empty"
@@ -654,6 +744,14 @@ func runtimeExecProbeIssueID(probe *runtimeExecProbe) string {
 		return "last_message_missing"
 	}
 	return "exec_failed"
+}
+
+func runtimeExecProbeTextIndicatesSandbox(execText string) bool {
+	return strings.Contains(execText, "operation not permitted") ||
+		strings.Contains(execText, "permission denied") ||
+		strings.Contains(execText, "sandbox denied") ||
+		strings.Contains(execText, "sandbox blocked") ||
+		strings.Contains(execText, "blocked by sandbox")
 }
 
 func runtimeExecProbeClassifiableText(probe *runtimeExecProbe) string {
@@ -689,6 +787,8 @@ func runtimeExecProbeIssueSummary(probe *runtimeExecProbe, issueID string) strin
 		return appendRuntimeProbeError(base, "stderr indicates sandbox or filesystem/socket permission failure")
 	case "socket_check_failed":
 		return appendRuntimeProbeError(base, "Codex exec did not return the socket-check success marker")
+	case "http_check_failed":
+		return appendRuntimeProbeError(base, "Codex exec did not return the HTTP-check success marker")
 	case "exec_timeout":
 		if base != "" {
 			return base
@@ -713,12 +813,17 @@ func runtimeExecProbeRemediation(probe *runtimeExecProbe, issueID string) string
 	case "auth_failed":
 		return "Run `codex login` or refresh the selected runtime credentials, then rerun the exec probe."
 	case "sandbox_blocked":
+		if probe != nil && probe.HTTPCheck {
+			return "Inspect Codex sandbox and loopback network policy for this repo, then rerun `agent-team runtime probe --runtime codex --start-daemon --daemon-http-addr 127.0.0.1:0 --require-daemon --exec-http-check --timeout 2m`."
+		}
 		if probe != nil && probe.SocketCheck {
 			return "Inspect Codex sandbox and Unix socket policy for this repo, then rerun `agent-team runtime probe --runtime codex --start-daemon --require-daemon --exec-socket-check --timeout 2m`."
 		}
 		return "Inspect Codex sandbox and filesystem/socket policy for this repo, then retry with the same `agent-team runtime probe --runtime codex --exec` command."
 	case "socket_check_failed":
 		return "Inspect the exec probe stdout/stderr and rerun `agent-team runtime probe --runtime codex --start-daemon --require-daemon --exec-socket-check --timeout 2m`."
+	case "http_check_failed":
+		return "Inspect the exec probe stdout/stderr and rerun `agent-team runtime probe --runtime codex --start-daemon --daemon-http-addr 127.0.0.1:0 --require-daemon --exec-http-check --timeout 2m`."
 	case "exec_timeout":
 		return "Increase `--timeout` only after checking provider reachability with `codex doctor --json`."
 	case "last_message_empty", "last_message_missing":
@@ -838,6 +943,12 @@ func runtimeProbeActions(result *runtimeProbeResult) []string {
 		if result.Daemon != nil && result.Daemon.Ready && (result.ExecProbe == nil || !result.ExecProbe.SocketCheck) {
 			add("agent-team runtime probe --runtime codex --exec-socket-check --timeout 2m")
 		}
+		if result.Daemon != nil && result.Daemon.Ready && result.Daemon.HTTPURL != "" && (result.ExecProbe == nil || !result.ExecProbe.HTTPCheck) {
+			add("agent-team runtime probe --runtime codex --exec-http-check --timeout 2m")
+		}
+		if result.Daemon == nil || !result.Daemon.Ready || result.Daemon.HTTPURL == "" {
+			add("agent-team runtime probe --runtime codex --start-daemon --daemon-http-addr 127.0.0.1:0 --exec-http-check --timeout 2m")
+		}
 		add("agent-team run manager --runtime codex --prompt \"probe\" --last-message")
 	}
 	actions := make([]string, 0, len(added))
@@ -903,6 +1014,9 @@ func renderRuntimeProbe(w io.Writer, result *runtimeProbeResult) {
 	}
 	if result.Daemon != nil {
 		fmt.Fprintf(w, "daemon: running=%s ready=%s socket=%s\n", yesNo(result.Daemon.Running), yesNo(result.Daemon.Ready), result.Daemon.Socket)
+		if result.Daemon.HTTPURL != "" {
+			fmt.Fprintf(w, "daemon_http: %s\n", result.Daemon.HTTPURL)
+		}
 		if result.Daemon.Error != "" {
 			fmt.Fprintf(w, "daemon_error: %s\n", result.Daemon.Error)
 		}
@@ -925,16 +1039,20 @@ func renderRuntimeProbe(w io.Writer, result *runtimeProbeResult) {
 		} else if result.ExecProbe.Error != "" {
 			state = "failed"
 		}
-		fmt.Fprintf(w, "exec_probe: status=%s runtime=%s socket_check=%s exit=%d last_message=%s duration=%dms\n",
+		fmt.Fprintf(w, "exec_probe: status=%s runtime=%s socket_check=%s http_check=%s exit=%d last_message=%s duration=%dms\n",
 			state,
 			result.ExecProbe.Runtime,
 			yesNo(result.ExecProbe.SocketCheck),
+			yesNo(result.ExecProbe.HTTPCheck),
 			result.ExecProbe.ExitCode,
 			yesNo(result.ExecProbe.LastMessagePresent),
 			result.ExecProbe.DurationMillis,
 		)
 		if result.ExecProbe.SocketCheck {
 			fmt.Fprintf(w, "exec_probe_socket: %s\n", emptyDash(result.ExecProbe.DaemonSocket))
+		}
+		if result.ExecProbe.HTTPCheck {
+			fmt.Fprintf(w, "exec_probe_http: %s\n", emptyDash(result.ExecProbe.DaemonURL))
 		}
 		if result.ExecProbe.Error != "" {
 			fmt.Fprintf(w, "exec_probe_error: %s\n", result.ExecProbe.Error)

@@ -37,6 +37,7 @@ agent-team runtime probe --runtime codex --start-daemon --require-daemon
 agent-team runtime probe --runtime codex --format '{{.OK}} {{len .Issues}}'
 agent-team runtime probe --runtime codex --exec --timeout 2m
 agent-team runtime probe --runtime codex --start-daemon --exec-socket-check --timeout 2m
+agent-team runtime probe --runtime codex --start-daemon --daemon-http-addr 127.0.0.1:0 --exec-http-check --timeout 2m
 agent-team runtime probe --runtime codex --exec --timeout 2m --output runtime-probe.json
 ```
 
@@ -56,11 +57,14 @@ repo daemon if it is not ready; without that flag the probe remains read-only.
 probe should spend a Codex call specifically verifying that commands inside the
 Codex sandbox can reach `agent-teamd` through `AGENT_TEAM_DAEMON_SOCKET`; it
 implies `--exec` and `--require-daemon`, and combines naturally with
-`--start-daemon`. Add `--output <file>` to write the full structured probe
-result as pretty JSON while still printing the normal text or `--json` response.
+`--start-daemon`. Add `--daemon-http-addr 127.0.0.1:0 --exec-http-check` when
+Unix sockets are blocked and the daemon should expose an opt-in loopback HTTP
+URL for the probe through `AGENT_TEAM_DAEMON_URL`. Add `--output <file>` to
+write the full structured probe result as pretty JSON while still printing the
+normal text or `--json` response.
 Exec probe failures are classified into actionable IDs such as
 `provider_unreachable`, `auth_failed`, `sandbox_blocked`, `socket_check_failed`,
-`exec_timeout`, and last-message sidecar failures.
+`http_check_failed`, `exec_timeout`, and last-message sidecar failures.
 
 ## Selection Order
 

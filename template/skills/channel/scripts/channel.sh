@@ -49,6 +49,9 @@ socket_path() {
 }
 
 require_daemon() {
+    if [[ -n "${AGENT_TEAM_DAEMON_URL:-}" ]]; then
+        return 0
+    fi
     local sock
     sock="$(socket_path)"
     if [[ ! -S "$sock" ]]; then
@@ -69,10 +72,19 @@ url_encode_channel_name() {
     fi
 }
 
-curl_socket() {
-    # All requests go through the unix socket. `-sS` keeps stderr quiet on
-    # success but loud on failure. `--fail-with-body` returns non-zero on
-    # >= 400 so callers can check `$?` while still printing the error JSON.
+curl_daemon() {
+    # Prefer AGENT_TEAM_DAEMON_URL when present so Codex sandboxes that block
+    # Unix sockets can still use the daemon. Fall back to the Unix socket.
+    # `-sS` keeps stderr quiet on success but loud on failure.
+    # `--fail-with-body` returns non-zero on >= 400 while printing error JSON.
+    if [[ -n "${AGENT_TEAM_DAEMON_URL:-}" ]]; then
+        local args=("$@")
+        local last_index=$((${#args[@]} - 1))
+        local endpoint="${args[last_index]}"
+        args[last_index]="${AGENT_TEAM_DAEMON_URL%/}${endpoint#http://daemon}"
+        curl -sS --fail-with-body "${args[@]}"
+        return
+    fi
     local sock
     sock="$(socket_path)"
     curl --unix-socket "$sock" -sS --fail-with-body "$@"
@@ -110,7 +122,7 @@ case "$verb" in
         export CHANNEL_INSTANCE="$AGENT_TEAM_INSTANCE"
         export CHANNEL_CURSOR="$cursor"
         payload=$(python3 -c 'import json, os; print(json.dumps({"instance": os.environ["CHANNEL_INSTANCE"], "cursor": int(os.environ["CHANNEL_CURSOR"])}))')
-        curl_socket -X POST \
+        curl_daemon -X POST \
             -H "Content-Type: application/json" \
             -d "$payload" \
             "http://daemon/v1/channel/${enc}/ack" >/dev/null
@@ -127,7 +139,7 @@ case "$verb" in
         export CHANNEL_SENDER="$AGENT_TEAM_INSTANCE"
         export CHANNEL_BODY="$body"
         payload=$(python3 -c 'import json, os; print(json.dumps({"sender": os.environ["CHANNEL_SENDER"], "body": os.environ["CHANNEL_BODY"]}))')
-        resp=$(curl_socket -X POST \
+        resp=$(curl_daemon -X POST \
             -H "Content-Type: application/json" \
             -d "$payload" \
             "http://daemon/v1/channel/${enc}/publish")
@@ -147,7 +159,7 @@ PY
         enc="$(url_encode_channel_name "$name")"
         export CHANNEL_INSTANCE="$AGENT_TEAM_INSTANCE"
         payload=$(python3 -c 'import json, os; print(json.dumps({"instance": os.environ["CHANNEL_INSTANCE"]}))')
-        resp=$(curl_socket -X POST \
+        resp=$(curl_daemon -X POST \
             -H "Content-Type: application/json" \
             -d "$payload" \
             "http://daemon/v1/channel/${enc}/subscribe")
@@ -168,7 +180,7 @@ PY
         enc="$(url_encode_channel_name "$name")"
         export CHANNEL_INSTANCE="$AGENT_TEAM_INSTANCE"
         payload=$(python3 -c 'import json, os; print(json.dumps({"instance": os.environ["CHANNEL_INSTANCE"]}))')
-        resp=$(curl_socket -X POST \
+        resp=$(curl_daemon -X POST \
             -H "Content-Type: application/json" \
             -d "$payload" \
             "http://daemon/v1/channel/${enc}/unsubscribe")
@@ -183,7 +195,7 @@ PY
     ls)
         require_team_root
         require_daemon
-        resp=$(curl_socket "http://daemon/v1/channels")
+        resp=$(curl_daemon "http://daemon/v1/channels")
         export CHANNEL_RESP="$resp"
         python3 - <<'PY'
 import json, os, sys

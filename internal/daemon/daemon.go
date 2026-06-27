@@ -38,6 +38,11 @@ type Config struct {
 	// nil -> os.Stderr.
 	LogOut io.Writer
 
+	// HTTPAddr optionally exposes the daemon API on a loopback TCP listener in
+	// addition to the Unix socket. Empty keeps the daemon Unix-socket-only.
+	// Use addresses such as "127.0.0.1:0" for an ephemeral local port.
+	HTTPAddr string
+
 	// SpawnerOverride lets tests substitute a fake claude. nil -> DefaultSpawner.
 	SpawnerOverride Spawner
 }
@@ -79,6 +84,60 @@ func LogPath(teamDir string) string {
 	return filepath.Join(DaemonRoot(teamDir), "agent-teamd.log")
 }
 
+// HTTPAddrPath stores the actual loopback listener address when HTTPAddr is
+// enabled. It is removed on graceful shutdown and at the next daemon boot.
+func HTTPAddrPath(teamDir string) string {
+	return filepath.Join(DaemonRoot(teamDir), "http.addr")
+}
+
+// ReadHTTPAddr returns the currently advertised loopback address, if present.
+func ReadHTTPAddr(teamDir string) (string, error) {
+	body, err := os.ReadFile(HTTPAddrPath(teamDir))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(body)), nil
+}
+
+// DaemonHTTPURL formats an address returned by ReadHTTPAddr as an HTTP base
+// URL. The address is expected to already be net.JoinHostPort-compatible.
+func DaemonHTTPURL(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return ""
+	}
+	return "http://" + addr
+}
+
+// NormalizeLoopbackHTTPAddr validates that addr is a loopback-only TCP address
+// accepted for the optional daemon HTTP listener.
+func NormalizeLoopbackHTTPAddr(addr string) (string, error) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return "", nil
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("daemon: --http-addr must be a loopback host:port address such as 127.0.0.1:0: %w", err)
+	}
+	host = strings.TrimSpace(host)
+	port = strings.TrimSpace(port)
+	if host == "" || port == "" {
+		return "", errors.New("daemon: --http-addr must include a loopback host and port")
+	}
+	if strings.EqualFold(host, "localhost") {
+		return net.JoinHostPort(host, port), nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return "", fmt.Errorf("daemon: --http-addr host must be loopback-only, got %q", host)
+	}
+	return net.JoinHostPort(ip.String(), port), nil
+}
+
 // Daemon is one running daemon. Build with New, then call Run.
 type Daemon struct {
 	cfg      Config
@@ -87,6 +146,7 @@ type Daemon struct {
 	events   *EventResolver
 	server   *http.Server
 	listen   net.Listener
+	httpAddr string
 }
 
 // New constructs a Daemon. Defaults are filled in from cfg.TeamDir.
@@ -100,6 +160,11 @@ func New(cfg Config) (*Daemon, error) {
 	if err := os.MkdirAll(DaemonRoot(cfg.TeamDir), 0o755); err != nil {
 		return nil, fmt.Errorf("daemon: mkdir runtime dir: %w", err)
 	}
+	httpAddr, err := NormalizeLoopbackHTTPAddr(cfg.HTTPAddr)
+	if err != nil {
+		return nil, err
+	}
+	cfg.HTTPAddr = httpAddr
 	mgr := NewInstanceManager(DaemonRoot(cfg.TeamDir), cfg.SpawnerOverride)
 	channels := NewChannelStore(DaemonRoot(cfg.TeamDir))
 	// Topology is best-effort: missing or malformed `instances.toml` shouldn't
@@ -150,6 +215,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
 		return fmt.Errorf("daemon: mkdir socket dir: %w", err)
 	}
+	_ = os.Remove(HTTPAddrPath(d.cfg.TeamDir))
 	// Stale socket from a prior crashed daemon would cause `bind: address in
 	// use`. Best-effort remove before listen.
 	_ = os.Remove(socket)
@@ -163,18 +229,40 @@ func (d *Daemon) Run(ctx context.Context) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	defer os.Remove(socket)
+	defer os.Remove(HTTPAddrPath(d.cfg.TeamDir))
+
+	listeners := []net.Listener{l}
+	if d.cfg.HTTPAddr != "" {
+		httpListen, err := net.Listen("tcp", d.cfg.HTTPAddr)
+		if err != nil {
+			_ = l.Close()
+			return fmt.Errorf("daemon: listen http %s: %w", d.cfg.HTTPAddr, err)
+		}
+		listeners = append(listeners, httpListen)
+		d.httpAddr = httpListen.Addr().String()
+		if err := os.WriteFile(HTTPAddrPath(d.cfg.TeamDir), []byte(d.httpAddr+"\n"), 0o644); err != nil {
+			_ = l.Close()
+			_ = httpListen.Close()
+			return fmt.Errorf("daemon: write http addr: %w", err)
+		}
+	}
 
 	d.logf("agent-teamd listening on %s (pid=%d)", socket, os.Getpid())
+	if d.httpAddr != "" {
+		d.logf("agent-teamd loopback http listening on %s", d.httpAddr)
+	}
 
-	errCh := make(chan error, 1)
-	go func() {
-		err := d.server.Serve(l)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-			return
-		}
-		errCh <- nil
-	}()
+	errCh := make(chan error, len(listeners))
+	for _, listener := range listeners {
+		go func(listener net.Listener) {
+			err := d.server.Serve(listener)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- err
+				return
+			}
+			errCh <- nil
+		}(listener)
+	}
 	if d.events != nil {
 		go d.events.RunSchedules(runCtx)
 	}
@@ -186,6 +274,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 		_ = d.server.Shutdown(shutdownCtx)
 		return nil
 	case err := <-errCh:
+		if err != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = d.server.Shutdown(shutdownCtx)
+		}
 		return err
 	}
 }
@@ -205,6 +298,12 @@ func (d *Daemon) Addr() string {
 		return ""
 	}
 	return d.listen.Addr().String()
+}
+
+// HTTPAddr returns the optional loopback HTTP address. Empty when disabled or
+// before Run has started.
+func (d *Daemon) HTTPAddr() string {
+	return d.httpAddr
 }
 
 func (d *Daemon) logf(format string, args ...any) {

@@ -31,6 +31,7 @@ func run(argv []string) error {
 	fs := flag.NewFlagSet("agent-teamd", flag.ContinueOnError)
 	cwd, _ := os.Getwd()
 	target := fs.String("target", cwd, "Repo root containing .agent_team/.")
+	httpAddr := fs.String("http-addr", "", "Optional loopback HTTP listen address, e.g. 127.0.0.1:0.")
 	showVersion := fs.Bool("version", false, "Print version and exit.")
 	if err := fs.Parse(argv); err != nil {
 		return err
@@ -50,7 +51,7 @@ func run(argv []string) error {
 		return fmt.Errorf("%s not found — run `agent-team init` first", teamDir)
 	}
 
-	d, err := daemon.New(daemon.Config{TeamDir: teamDir})
+	d, err := daemon.New(daemon.Config{TeamDir: teamDir, HTTPAddr: *httpAddr})
 	if err != nil {
 		return err
 	}

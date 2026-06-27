@@ -44,6 +44,25 @@ socket_path() {
     fi
 }
 
+curl_daemon() {
+    if [[ -n "${AGENT_TEAM_DAEMON_URL:-}" ]]; then
+        local args=("$@")
+        local last_index=$((${#args[@]} - 1))
+        local endpoint="${args[last_index]}"
+        args[last_index]="${AGENT_TEAM_DAEMON_URL%/}${endpoint#http://daemon}"
+        curl -sS "${args[@]}"
+        return
+    fi
+    local sock
+    sock="$(socket_path)"
+    if [[ ! -S "$sock" ]]; then
+        echo "inbox.sh: daemon not running ($sock missing)." >&2
+        echo "  Start it with \`agent-team daemon start\`." >&2
+        exit 1
+    fi
+    curl --unix-socket "$sock" -sS "$@"
+}
+
 [[ $# -ge 1 ]] || usage
 verb="$1"; shift
 
@@ -73,19 +92,13 @@ case "$verb" in
         body="$*"
         require_team_root
         require_instance
-        sock="$(socket_path)"
-        if [[ ! -S "$sock" ]]; then
-            echo "inbox.sh: daemon not running ($sock missing)." >&2
-            echo "  Start it with \`agent-team daemon start\`." >&2
-            exit 1
-        fi
         # Build JSON via python so arbitrary characters in $body don't
         # need bash-level escaping. Env-var pass keeps the body off argv.
         export INBOX_TO="$to"
         export INBOX_FROM="$AGENT_TEAM_INSTANCE"
         export INBOX_BODY="$body"
         payload=$(python3 -c 'import json, os; print(json.dumps({"to": os.environ["INBOX_TO"], "from": os.environ["INBOX_FROM"], "body": os.environ["INBOX_BODY"]}))')
-        curl --unix-socket "$sock" -sS -X POST \
+        curl_daemon -X POST \
              -H "Content-Type: application/json" \
              -d "$payload" \
              http://daemon/v1/message

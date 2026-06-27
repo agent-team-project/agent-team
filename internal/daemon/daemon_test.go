@@ -68,6 +68,63 @@ func TestDaemonBootsWithLongTeamDir(t *testing.T) {
 	}
 }
 
+func TestDaemonOptionalLoopbackHTTPListener(t *testing.T) {
+	teamDir := shortTempDir(t)
+	d, err := New(Config{
+		TeamDir:         teamDir,
+		LogOut:          io.Discard,
+		HTTPAddr:        "127.0.0.1:0",
+		SpawnerOverride: newFakeSpawner(30 * time.Second).spawn,
+	})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() {
+		_ = d.Run(ctx)
+	}()
+	t.Cleanup(func() { _ = d.Shutdown(context.Background()) })
+
+	deadline := time.Now().Add(5 * time.Second)
+	var httpAddr string
+	for time.Now().Before(deadline) {
+		var err error
+		httpAddr, err = ReadHTTPAddr(teamDir)
+		if err == nil && httpAddr != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if httpAddr == "" {
+		t.Fatalf("daemon HTTP address never appeared at %s", HTTPAddrPath(teamDir))
+	}
+	if d.HTTPAddr() != httpAddr {
+		t.Fatalf("daemon HTTPAddr() = %q, want %q", d.HTTPAddr(), httpAddr)
+	}
+	resp, err := http.Get(DaemonHTTPURL(httpAddr) + "/v1/instances")
+	if err != nil {
+		t.Fatalf("GET /v1/instances over HTTP: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/instances status = %d", resp.StatusCode)
+	}
+}
+
+func TestNormalizeLoopbackHTTPAddrRejectsNonLoopback(t *testing.T) {
+	for _, addr := range []string{"0.0.0.0:0", "192.168.1.10:9000", ":9000", "example.com:9000"} {
+		if got, err := NormalizeLoopbackHTTPAddr(addr); err == nil {
+			t.Fatalf("NormalizeLoopbackHTTPAddr(%q) = %q, want error", addr, got)
+		}
+	}
+	for _, addr := range []string{"127.0.0.1:0", "localhost:9000", "[::1]:0"} {
+		if got, err := NormalizeLoopbackHTTPAddr(addr); err != nil || got == "" {
+			t.Fatalf("NormalizeLoopbackHTTPAddr(%q) = %q, %v; want normalized address", addr, got, err)
+		}
+	}
+}
+
 // startDaemon boots a daemon in-process against teamDir and returns it. The
 // caller MUST defer Shutdown.
 func startDaemon(t *testing.T, teamDir string, spawner Spawner) *Daemon {

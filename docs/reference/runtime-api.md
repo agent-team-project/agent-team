@@ -2,6 +2,8 @@
 
 The daemon API is HTTP over a Unix socket. It normally lives at `.agent_team/daemon.sock`; when that path would exceed the OS socket limit, agent-team uses a deterministic hashed socket under `/tmp/agent-team-<uid>/`.
 
+For runtimes whose sandbox blocks Unix sockets, `agent-team daemon start --http-addr 127.0.0.1:0` also exposes the same API on a loopback-only HTTP listener. The actual address is written to `.agent_team/daemon/http.addr`, surfaced by `agent-team daemon status --json` as `http_url`, and exported to launched runtimes as `AGENT_TEAM_DAEMON_URL`. This endpoint is opt-in and must stay bound to localhost.
+
 The CLI is the supported interface, but the API boundary is useful when working on daemon features.
 
 ## Health

@@ -24,6 +24,7 @@ import os
 import socket
 import sys
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 
@@ -37,18 +38,21 @@ def main() -> int:
         print(f"channel: name {name!r} must start with '#'", file=sys.stderr)
         return 2
 
-    socket_path = os.environ.get("AGENT_TEAM_DAEMON_SOCKET") or str(team_root / "daemon.sock")
-    if not Path(socket_path).exists():
-        print(f"channel: daemon not running ({socket_path} missing).", file=sys.stderr)
-        return 1
-
     encoded_name = urllib.parse.quote(name, safe="")
     qs = {"instance": instance}
     if wait:
         qs["wait"] = wait
     path = f"/v1/channel/{encoded_name}/messages?{urllib.parse.urlencode(qs)}"
 
-    body = _get_unix(socket_path, path)
+    daemon_url = os.environ.get("AGENT_TEAM_DAEMON_URL", "").rstrip("/")
+    if daemon_url:
+        body = _get_http(daemon_url, path)
+    else:
+        socket_path = os.environ.get("AGENT_TEAM_DAEMON_SOCKET") or str(team_root / "daemon.sock")
+        if not Path(socket_path).exists():
+            print(f"channel: daemon not running ({socket_path} missing).", file=sys.stderr)
+            return 1
+        body = _get_unix(socket_path, path)
     payload = json.loads(body)
     msgs = payload.get("messages") or []
     cursor = payload.get("cursor", 0)
@@ -92,6 +96,15 @@ def _get_unix(socket_path: str, path: str) -> str:
     finally:
         sock.close()
         conn.close()
+
+
+def _get_http(daemon_url: str, path: str) -> str:
+    """GET against a loopback HTTP daemon URL."""
+    with urllib.request.urlopen(daemon_url + path, timeout=30) as resp:
+        body = resp.read().decode("utf-8", errors="replace")
+        if resp.status != 200:
+            raise RuntimeError(f"daemon: GET {path}: {resp.status} {body}")
+        return body
 
 
 if __name__ == "__main__":

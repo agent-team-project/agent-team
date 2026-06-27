@@ -847,14 +847,18 @@ func (r *EventResolver) prepareEphemeralRuntime(inst *topology.Instance, name st
 	if err := r.rerenderTmplFiles(stateDir, resolved); err != nil {
 		return nil, fmt.Errorf("event runtime: re-render .tmpl files: %w", err)
 	}
+	env := []string{
+		"AGENT_TEAM_ROOT=" + r.teamDir,
+		"AGENT_TEAM_INSTANCE=" + name,
+		"AGENT_TEAM_STATE_DIR=" + stateDir,
+		"AGENT_TEAM_DAEMON_SOCKET=" + SocketPath(r.teamDir),
+	}
+	if httpAddr, err := ReadHTTPAddr(r.teamDir); err == nil && strings.TrimSpace(httpAddr) != "" {
+		env = append(env, "AGENT_TEAM_DAEMON_URL="+DaemonHTTPURL(httpAddr))
+	}
 	return &ephemeralRuntime{
 		stateDir: stateDir,
-		env: []string{
-			"AGENT_TEAM_ROOT=" + r.teamDir,
-			"AGENT_TEAM_INSTANCE=" + name,
-			"AGENT_TEAM_STATE_DIR=" + stateDir,
-			"AGENT_TEAM_DAEMON_SOCKET=" + SocketPath(r.teamDir),
-		},
+		env:      env,
 	}, nil
 }
 

@@ -46,6 +46,7 @@ func newDaemonStartCmd() *cobra.Command {
 		target       string
 		detach       bool
 		readyTimeout time.Duration
+		httpAddr     string
 		quiet        bool
 		jsonOut      bool
 		format       string
@@ -90,15 +91,21 @@ func newDaemonStartCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team daemon start: %v\n", err)
 				return exitErr(2)
 			}
-			if formatTemplate != nil {
-				return runDaemonStartWithFormat(cmd, target, detach, readyTimeout, formatTemplate)
+			normalizedHTTPAddr, err := daemon.NormalizeLoopbackHTTPAddr(httpAddr)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team daemon start: %v\n", err)
+				return exitErr(2)
 			}
-			return runDaemonStartWithJSON(cmd, target, detach, readyTimeout, jsonOut, quiet)
+			if formatTemplate != nil {
+				return runDaemonStartWithFormat(cmd, target, detach, readyTimeout, normalizedHTTPAddr, formatTemplate)
+			}
+			return runDaemonStartWithJSON(cmd, target, detach, readyTimeout, normalizedHTTPAddr, jsonOut, quiet)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&detach, "detach", true, "Background the daemon (writes log to .agent_team/daemon/agent-teamd.log).")
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for detached daemon readiness (0 = no timeout).")
+	cmd.Flags().StringVar(&httpAddr, "http-addr", "", "Also expose the daemon API on this loopback HTTP address, e.g. 127.0.0.1:0. Empty disables HTTP.")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code. Requires detached mode.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON. Requires detached mode.")
 	cmd.Flags().StringVar(&format, "format", "", "Render daemon start result with a Go template, e.g. '{{.Action}} {{.PID}}'. Requires detached mode.")
@@ -159,6 +166,7 @@ func newDaemonRestartCmd() *cobra.Command {
 		detach       bool
 		timeout      time.Duration
 		readyTimeout time.Duration
+		httpAddr     string
 		quiet        bool
 		jsonOut      bool
 		format       string
@@ -208,16 +216,22 @@ func newDaemonRestartCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team daemon restart: %v\n", err)
 				return exitErr(2)
 			}
-			if formatTemplate != nil {
-				return runDaemonRestartWithFormat(cmd, target, detach, timeout, readyTimeout, formatTemplate)
+			normalizedHTTPAddr, err := daemon.NormalizeLoopbackHTTPAddr(httpAddr)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team daemon restart: %v\n", err)
+				return exitErr(2)
 			}
-			return runDaemonRestartWithJSON(cmd, target, detach, timeout, readyTimeout, jsonOut, quiet)
+			if formatTemplate != nil {
+				return runDaemonRestartWithFormat(cmd, target, detach, timeout, readyTimeout, normalizedHTTPAddr, formatTemplate)
+			}
+			return runDaemonRestartWithJSON(cmd, target, detach, timeout, readyTimeout, normalizedHTTPAddr, jsonOut, quiet)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&detach, "detach", true, "Background the restarted daemon (writes log to .agent_team/daemon/agent-teamd.log).")
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "Grace period for stopping the old daemon before SIGKILL escalation (0 = force immediately).")
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for restarted detached daemon readiness (0 = no timeout).")
+	cmd.Flags().StringVar(&httpAddr, "http-addr", "", "Also expose the restarted daemon API on this loopback HTTP address, e.g. 127.0.0.1:0. Empty disables HTTP.")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code. Requires detached mode.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON. Requires detached mode.")
 	cmd.Flags().StringVar(&format, "format", "", "Render daemon restart result with a Go template, e.g. '{{.Action}} {{.Changed}} {{.Status.Ready}}'. Requires detached mode.")
@@ -433,10 +447,10 @@ func renderDaemonReconcileFormat(w io.Writer, result *daemonReconcileResponse, t
 }
 
 func runDaemonStart(cmd *cobra.Command, target string, detach bool) error {
-	return runDaemonStartWithJSON(cmd, target, detach, defaultDaemonReadyTimeout, false, false)
+	return runDaemonStartWithJSON(cmd, target, detach, defaultDaemonReadyTimeout, "", false, false)
 }
 
-func runDaemonStartWithJSON(cmd *cobra.Command, target string, detach bool, readyTimeout time.Duration, jsonOut bool, quiet bool) error {
+func runDaemonStartWithJSON(cmd *cobra.Command, target string, detach bool, readyTimeout time.Duration, httpAddr string, jsonOut bool, quiet bool) error {
 	if readyTimeout < 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team daemon start: --ready-timeout must be >= 0.")
 		return exitErr(2)
@@ -474,14 +488,18 @@ func runDaemonStartWithJSON(cmd *cobra.Command, target string, detach bool, read
 			return err
 		}
 		// Foreground: re-exec the daemon directly so the user sees its logs.
-		c := exec.Command(bin, "--target", filepath.Dir(teamDir))
+		args := []string{"--target", filepath.Dir(teamDir)}
+		if strings.TrimSpace(httpAddr) != "" {
+			args = append(args, "--http-addr", httpAddr)
+		}
+		c := exec.Command(bin, args...)
 		c.Stdin = os.Stdin
 		c.Stdout = cmd.OutOrStdout()
 		c.Stderr = cmd.ErrOrStderr()
 		return c.Run()
 	}
 
-	result, err := daemonStartDetachedOperation(cmd, teamDir, readyTimeout)
+	result, err := daemonStartDetachedOperation(cmd, teamDir, readyTimeout, httpAddr)
 	if err != nil {
 		return err
 	}
@@ -495,7 +513,7 @@ func runDaemonStartWithJSON(cmd *cobra.Command, target string, detach bool, read
 	return nil
 }
 
-func runDaemonStartWithFormat(cmd *cobra.Command, target string, detach bool, readyTimeout time.Duration, tmpl *template.Template) error {
+func runDaemonStartWithFormat(cmd *cobra.Command, target string, detach bool, readyTimeout time.Duration, httpAddr string, tmpl *template.Template) error {
 	if readyTimeout < 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team daemon start: --ready-timeout must be >= 0.")
 		return exitErr(2)
@@ -508,14 +526,14 @@ func runDaemonStartWithFormat(cmd *cobra.Command, target string, detach bool, re
 	if err != nil {
 		return err
 	}
-	result, err := daemonStartDetachedOperation(cmd, teamDir, readyTimeout)
+	result, err := daemonStartDetachedOperation(cmd, teamDir, readyTimeout, httpAddr)
 	if err != nil {
 		return err
 	}
 	return renderDaemonLifecycleFormat(cmd.OutOrStdout(), result, tmpl)
 }
 
-func daemonStartDetachedOperation(cmd *cobra.Command, teamDir string, readyTimeout time.Duration) (daemonLifecycleJSON, error) {
+func daemonStartDetachedOperation(cmd *cobra.Command, teamDir string, readyTimeout time.Duration, httpAddr string) (daemonLifecycleJSON, error) {
 	if pid, alive := daemonAlive(teamDir); alive {
 		result := daemonLifecycleJSON{
 			Action:         "start",
@@ -532,10 +550,10 @@ func daemonStartDetachedOperation(cmd *cobra.Command, teamDir string, readyTimeo
 	if err != nil {
 		return daemonLifecycleJSON{}, err
 	}
-	return daemonStartDetached(teamDir, bin, readyTimeout)
+	return daemonStartDetached(teamDir, bin, readyTimeout, httpAddr)
 }
 
-func daemonStartDetached(teamDir, bin string, readyTimeout time.Duration) (daemonLifecycleJSON, error) {
+func daemonStartDetached(teamDir, bin string, readyTimeout time.Duration, httpAddr string) (daemonLifecycleJSON, error) {
 	// Detached: open the daemon log file and start the child with new SID.
 	if err := os.MkdirAll(daemon.DaemonRoot(teamDir), 0o755); err != nil {
 		return daemonLifecycleJSON{}, fmt.Errorf("mkdir daemon root: %w", err)
@@ -552,7 +570,11 @@ func daemonStartDetached(teamDir, bin string, readyTimeout time.Duration) (daemo
 	}
 	defer devnull.Close()
 
-	proc, err := os.StartProcess(bin, []string{bin, "--target", filepath.Dir(teamDir)}, &os.ProcAttr{
+	args := []string{bin, "--target", filepath.Dir(teamDir)}
+	if strings.TrimSpace(httpAddr) != "" {
+		args = append(args, "--http-addr", httpAddr)
+	}
+	proc, err := os.StartProcess(bin, args, &os.ProcAttr{
 		Dir:   filepath.Dir(teamDir),
 		Env:   os.Environ(),
 		Files: []*os.File{devnull, logFile, logFile},
@@ -720,10 +742,10 @@ func renderDaemonStopResult(w fmtWriter, result daemonLifecycleJSON) {
 }
 
 func runDaemonRestart(cmd *cobra.Command, target string, detach bool, timeout time.Duration) error {
-	return runDaemonRestartWithJSON(cmd, target, detach, timeout, defaultDaemonReadyTimeout, false, false)
+	return runDaemonRestartWithJSON(cmd, target, detach, timeout, defaultDaemonReadyTimeout, "", false, false)
 }
 
-func runDaemonRestartWithJSON(cmd *cobra.Command, target string, detach bool, timeout, readyTimeout time.Duration, jsonOut bool, quiet bool) error {
+func runDaemonRestartWithJSON(cmd *cobra.Command, target string, detach bool, timeout, readyTimeout time.Duration, httpAddr string, jsonOut bool, quiet bool) error {
 	if timeout < 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team daemon restart: --timeout must be >= 0.")
 		return exitErr(2)
@@ -750,13 +772,13 @@ func runDaemonRestartWithJSON(cmd *cobra.Command, target string, detach bool, ti
 	}
 	if !jsonOut {
 		if quiet {
-			_, err := daemonStartDetachedOperation(cmd, teamDir, readyTimeout)
+			_, err := daemonStartDetachedOperation(cmd, teamDir, readyTimeout, httpAddr)
 			return err
 		}
 		renderDaemonStopResult(cmd.OutOrStdout(), stopResult)
-		return runDaemonStartWithJSON(cmd, target, detach, readyTimeout, false, false)
+		return runDaemonStartWithJSON(cmd, target, detach, readyTimeout, httpAddr, false, false)
 	}
-	startResult, err := daemonStartDetachedOperation(cmd, teamDir, readyTimeout)
+	startResult, err := daemonStartDetachedOperation(cmd, teamDir, readyTimeout, httpAddr)
 	if err != nil {
 		return err
 	}
@@ -769,7 +791,7 @@ func runDaemonRestartWithJSON(cmd *cobra.Command, target string, detach bool, ti
 	})
 }
 
-func runDaemonRestartWithFormat(cmd *cobra.Command, target string, detach bool, timeout, readyTimeout time.Duration, tmpl *template.Template) error {
+func runDaemonRestartWithFormat(cmd *cobra.Command, target string, detach bool, timeout, readyTimeout time.Duration, httpAddr string, tmpl *template.Template) error {
 	if timeout < 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team daemon restart: --timeout must be >= 0.")
 		return exitErr(2)
@@ -790,7 +812,7 @@ func runDaemonRestartWithFormat(cmd *cobra.Command, target string, detach bool, 
 	if err != nil {
 		return err
 	}
-	startResult, err := daemonStartDetachedOperation(cmd, teamDir, readyTimeout)
+	startResult, err := daemonStartDetachedOperation(cmd, teamDir, readyTimeout, httpAddr)
 	if err != nil {
 		return err
 	}
@@ -860,17 +882,21 @@ func renderDaemonReconcile(w fmtWriter, resp *daemonReconcileResponse) error {
 }
 
 type daemonStatusJSON struct {
-	Running      bool   `json:"running"`
-	Ready        bool   `json:"ready"`
-	PID          int    `json:"pid,omitempty"`
-	Instances    int    `json:"instances"`
-	TeamDir      string `json:"team_dir"`
-	Socket       string `json:"socket"`
-	SocketExists bool   `json:"socket_exists"`
-	Pidfile      string `json:"pidfile"`
-	StalePidfile bool   `json:"stale_pidfile,omitempty"`
-	Log          string `json:"log"`
-	Error        string `json:"error,omitempty"`
+	Running        bool   `json:"running"`
+	Ready          bool   `json:"ready"`
+	PID            int    `json:"pid,omitempty"`
+	Instances      int    `json:"instances"`
+	TeamDir        string `json:"team_dir"`
+	Socket         string `json:"socket"`
+	SocketExists   bool   `json:"socket_exists"`
+	HTTPAddr       string `json:"http_addr,omitempty"`
+	HTTPURL        string `json:"http_url,omitempty"`
+	HTTPAddrFile   string `json:"http_addr_file,omitempty"`
+	HTTPAddrExists bool   `json:"http_addr_exists,omitempty"`
+	Pidfile        string `json:"pidfile"`
+	StalePidfile   bool   `json:"stale_pidfile,omitempty"`
+	Log            string `json:"log"`
+	Error          string `json:"error,omitempty"`
 }
 
 type daemonStatusOptions struct {
@@ -1010,6 +1036,9 @@ func renderDaemonStatus(w fmtWriter, status daemonStatusJSON) {
 		fmt.Fprintf(w, "instances: %d\n", status.Instances)
 	}
 	fmt.Fprintf(w, "socket: %s\n", status.Socket)
+	if status.HTTPURL != "" {
+		fmt.Fprintf(w, "http: %s\n", status.HTTPURL)
+	}
 	if status.Error != "" {
 		fmt.Fprintf(w, "error: %s\n", status.Error)
 	}
@@ -1024,13 +1053,19 @@ func appendStatusError(current, next string) string {
 
 func collectDaemonStatus(teamDir string) daemonStatusJSON {
 	status := daemonStatusJSON{
-		TeamDir: teamDir,
-		Socket:  daemon.SocketPath(teamDir),
-		Pidfile: daemon.PidPath(teamDir),
-		Log:     daemon.LogPath(teamDir),
+		TeamDir:      teamDir,
+		Socket:       daemon.SocketPath(teamDir),
+		HTTPAddrFile: daemon.HTTPAddrPath(teamDir),
+		Pidfile:      daemon.PidPath(teamDir),
+		Log:          daemon.LogPath(teamDir),
 	}
 	if _, err := os.Stat(status.Socket); err == nil {
 		status.SocketExists = true
+	}
+	if httpAddr, err := daemon.ReadHTTPAddr(teamDir); err == nil && strings.TrimSpace(httpAddr) != "" {
+		status.HTTPAddr = httpAddr
+		status.HTTPURL = daemon.DaemonHTTPURL(httpAddr)
+		status.HTTPAddrExists = true
 	}
 	pid, err := daemon.ReadPidfile(status.Pidfile)
 	if err != nil {
