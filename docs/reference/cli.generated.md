@@ -2312,6 +2312,7 @@ Subcommands:
 
 - `agent-team job outbox drop` - Drop outbox events owned by one job.
 - `agent-team job outbox prune` - Prune old outbox events owned by one job.
+- `agent-team job outbox quarantine` - List quarantined outbox files owned by one job.
 - `agent-team job outbox retry` - Retry outbox events owned by one job.
 - `agent-team job outbox show` - Show one outbox event owned by one job.
 
@@ -2362,6 +2363,107 @@ Flags:
       --source strings        Filter by source agent/instance before pruning; repeat or comma-separate values.
       --state string          Outbox state to prune: processed, failed, pending, or all. (default "processed")
       --type strings          Filter by event type before pruning; repeat or comma-separate values.
+```
+
+## `agent-team job outbox quarantine`
+
+List quarantined outbox files owned by one job.
+
+List quarantined sandboxed agent outbox files owned by one durable job.
+
+```text
+agent-team job outbox quarantine <job-id> [flags]
+```
+
+Flags:
+
+```text
+      --format string    Render each quarantined outbox file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.
+      --json             Emit quarantined outbox files as JSON.
+      --limit int        Limit rows after filtering and sorting; 0 means no limit.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --restorable       Only show quarantined files that can be restored.
+      --sort string      Sort rows by path, state, id, type, source, job, created, updated, modified, restorable, or size. (default "path")
+      --source strings   Filter by source agent/instance; repeat or comma-separate values.
+      --state string     Filter by outbox state: pending, processed, or failed.
+      --type strings     Filter by event type; repeat or comma-separate values.
+      --unrestorable     Only show quarantined files that cannot be restored.
+```
+
+Subcommands:
+
+- `agent-team job outbox quarantine drop` - Drop job-owned quarantined outbox files after inspection.
+- `agent-team job outbox quarantine restore` - Restore job-owned quarantined outbox files.
+- `agent-team job outbox quarantine show` - Show one job-owned quarantined outbox file.
+
+## `agent-team job outbox quarantine drop`
+
+Drop job-owned quarantined outbox files after inspection.
+
+Drop one job-owned quarantined outbox file by path, or drop a filtered job-owned batch with --all.
+
+```text
+agent-team job outbox quarantine drop <job-id> [quarantine-path] [flags]
+```
+
+Flags:
+
+```text
+      --all                   Drop all matching job-owned quarantined files instead of one path.
+      --dry-run               Preview quarantined files that would be dropped.
+      --format string         Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --json                  Emit drop results as JSON.
+      --limit int             With --all, drop at most this many matching job-owned quarantined files; 0 means no limit.
+      --older-than duration   With --all, only drop files older than this duration based on file mtime.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --restorable            With --all, only drop quarantined files that can be restored.
+      --sort string           With --all, sort matching job-owned quarantined files before limiting: path, state, id, type, source, job, created, updated, modified, restorable, or size. (default "path")
+      --source strings        With --all, filter by source agent/instance; repeat or comma-separate values.
+      --state string          With --all, filter by outbox state: pending, processed, or failed.
+      --type strings          With --all, filter by event type; repeat or comma-separate values.
+      --unrestorable          With --all, only drop quarantined files that cannot be restored.
+```
+
+## `agent-team job outbox quarantine restore`
+
+Restore job-owned quarantined outbox files.
+
+Restore one job-owned quarantined outbox file by path, or restore a filtered batch of job-owned restorable files with --all.
+
+```text
+agent-team job outbox quarantine restore <job-id> [quarantine-path] [flags]
+```
+
+Flags:
+
+```text
+      --all              Restore all matching job-owned restorable quarantined files instead of one path.
+      --dry-run          Preview the restore without moving files.
+      --force            Overwrite an existing active outbox file with the same restore path.
+      --format string    Render each restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --json             Emit restore result as JSON.
+      --limit int        With --all, restore at most this many matching job-owned quarantined files; 0 means no limit.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --sort string      With --all, sort matching job-owned quarantined files before limiting: path, state, id, type, source, job, created, updated, modified, restorable, or size. (default "path")
+      --source strings   With --all, filter by source agent/instance; repeat or comma-separate values.
+      --state string     With --all, filter by outbox state: pending, processed, or failed.
+      --type strings     With --all, filter by event type; repeat or comma-separate values.
+```
+
+## `agent-team job outbox quarantine show`
+
+Show one job-owned quarantined outbox file.
+
+```text
+agent-team job outbox quarantine show <job-id> <quarantine-path> [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render the quarantined outbox file with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --json            Emit the quarantined outbox file as JSON.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
 ```
 
 ## `agent-team job outbox retry`

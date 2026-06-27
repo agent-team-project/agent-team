@@ -27,6 +27,7 @@ type outboxQuarantineItem struct {
 	Type        string    `json:"type,omitempty"`
 	Source      string    `json:"source,omitempty"`
 	Job         string    `json:"job,omitempty"`
+	Instance    string    `json:"instance,omitempty"`
 	RestorePath string    `json:"restore_path,omitempty"`
 	Size        int64     `json:"size"`
 	ModTime     time.Time `json:"mod_time"`
@@ -442,6 +443,7 @@ func inspectOutboxQuarantineFile(outboxRoot, rel string) (outboxQuarantineItem, 
 	item.Type = raw.Type
 	item.Source = raw.Source
 	item.Job = outboxItemJobFromPayload(raw.Payload)
+	item.Instance = outboxPayloadString(raw.Payload, "name")
 	item.CreatedAt = raw.CreatedAt.UTC()
 	item.UpdatedAt = raw.UpdatedAt.UTC()
 	if err := validateOutboxQuarantineRestore(raw, item.State, idFromPath); err != nil {

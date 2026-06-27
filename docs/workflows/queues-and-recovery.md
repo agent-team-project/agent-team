@@ -183,6 +183,43 @@ agent-team job queue quarantine drop squ-42 <path> --dry-run
 
 Global `health` and `overview` also prefer job-scoped quarantine commands when every quarantined file resolves to one job.
 
+## Outbox Quarantine
+
+Sandboxed agents write fallback events under `.agent_team/outbox/` when daemon transport is unavailable. If active outbox files become unreadable, inspect and quarantine them first:
+
+```sh
+agent-team outbox doctor --json
+agent-team outbox doctor --quarantine --dry-run
+agent-team outbox doctor --quarantine
+```
+
+Preserved outbox files live under:
+
+```text
+.agent_team/outbox/quarantine/
+```
+
+Use global quarantine commands when triaging the whole repo:
+
+```sh
+agent-team outbox quarantine ls --job SQU-42 --restorable
+agent-team outbox quarantine show quarantine/<timestamp>/failed/<id>.json
+agent-team outbox quarantine restore <path> --dry-run
+agent-team outbox quarantine drop --all --unrestorable --dry-run
+```
+
+When one durable job owns the files, prefer the scoped command before restoring or dropping:
+
+```sh
+agent-team job outbox quarantine squ-42
+agent-team job outbox quarantine show squ-42 <path>
+agent-team job outbox quarantine restore squ-42 <path> --dry-run
+agent-team job outbox quarantine restore squ-42 --all --state failed --dry-run
+agent-team job outbox quarantine drop squ-42 <path> --dry-run
+```
+
+Job scoping prevents a recovery command for one ticket from restoring or deleting another job's preserved outbox file.
+
 ## Team-Scoped Quarantine
 
 For repos with teams:

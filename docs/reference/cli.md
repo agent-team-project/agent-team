@@ -152,6 +152,12 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job outbox drop <job-id> <id>` | Remove one inspected job-owned outbox event |
 | `agent-team job outbox drop <job-id> --all` | Drop matching job-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--sort`, and `--limit` |
 | `agent-team job outbox prune <job-id>` | Remove old job-owned processed outbox events by default; pass `--state failed`, `pending`, or `all` for explicit cleanup and bound with `--older-than`, filters, and `--limit` |
+| `agent-team job outbox quarantine <job-id>` | List quarantined outbox files owned by one job; filter by state, type, source, or restorable state |
+| `agent-team job outbox quarantine show <job-id> <path>` | Inspect one job-owned quarantined outbox file and its payload when parseable |
+| `agent-team job outbox quarantine restore <job-id> <path>` | Restore one validated job-owned quarantined outbox file to the active outbox |
+| `agent-team job outbox quarantine restore <job-id> --all` | Restore matching job-owned restorable quarantined outbox files; filter, sort, and limit batch actions |
+| `agent-team job outbox quarantine drop <job-id> <path>` | Drop one job-owned quarantined outbox file after inspection |
+| `agent-team job outbox quarantine drop <job-id> --all` | Drop matching job-owned quarantined outbox files; filter by state, source, restorable state, or age before deleting |
 
 ## Global Queue
 

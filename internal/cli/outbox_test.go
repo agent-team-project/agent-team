@@ -1289,6 +1289,136 @@ func TestJobOutboxRetryDropAllScopesAndFilters(t *testing.T) {
 	}
 }
 
+func TestJobOutboxQuarantineScopesRestoreAndDrop(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	now := time.Date(2026, 6, 27, 19, 30, 0, 0, time.UTC)
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-905",
+			Ticket:    "SQU-905",
+			Target:    "worker",
+			Instance:  "worker-squ-905",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "ops-905",
+			Ticket:    "OPS-905",
+			Target:    "worker",
+			Instance:  "worker-ops-905",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	stamp := "20260627T193000.000000000Z"
+	writeQuarantinedOutboxFile(t, teamDir, stamp, daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-job-quarantine-restore",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": "squ-905", "ticket": "SQU-905", "target": "worker"},
+		CreatedAt: now,
+		UpdatedAt: now.Add(time.Minute),
+	})
+	writeQuarantinedOutboxFile(t, teamDir, stamp, daemon.OutboxStateFailed, &daemon.OutboxItem{
+		ID:        "outbox-job-quarantine-instance",
+		State:     daemon.OutboxStateFailed,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"name": "worker-squ-905", "target": "worker"},
+		CreatedAt: now.Add(2 * time.Minute),
+		UpdatedAt: now.Add(3 * time.Minute),
+		FailedAt:  now.Add(3 * time.Minute),
+	})
+	writeQuarantinedOutboxFile(t, teamDir, stamp, daemon.OutboxStateFailed, &daemon.OutboxItem{
+		ID:        "outbox-job-quarantine-other",
+		State:     daemon.OutboxStateFailed,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": "ops-905", "target": "worker"},
+		CreatedAt: now.Add(4 * time.Minute),
+		UpdatedAt: now.Add(5 * time.Minute),
+		FailedAt:  now.Add(5 * time.Minute),
+	})
+	writeRawOutboxFile(t, teamDir, filepath.Join(outboxQuarantineDir, stamp, daemon.OutboxStateFailed), "outbox-job-quarantine-invalid.json", "{\n")
+
+	restorePath := filepath.Join(outboxQuarantineDir, stamp, daemon.OutboxStatePending, "outbox-job-quarantine-restore.json")
+	instancePath := filepath.Join(outboxQuarantineDir, stamp, daemon.OutboxStateFailed, "outbox-job-quarantine-instance.json")
+	otherPath := filepath.Join(outboxQuarantineDir, stamp, daemon.OutboxStateFailed, "outbox-job-quarantine-other.json")
+
+	list := runRootForOutboxTest(t, "job", "outbox", "quarantine", "squ-905", "--repo", root, "--sort", "id", "--json")
+	var listed []outboxQuarantineItem
+	if err := json.Unmarshal(list.Bytes(), &listed); err != nil {
+		t.Fatalf("decode job outbox quarantine list: %v\n%s", err, list.String())
+	}
+	if len(listed) != 2 || listed[0].ID != "outbox-job-quarantine-instance" || listed[1].ID != "outbox-job-quarantine-restore" {
+		t.Fatalf("job outbox quarantine list = %+v", listed)
+	}
+
+	show := runRootForOutboxTest(t, "job", "outbox", "quarantine", "show", "squ-905", restorePath, "--repo", root, "--json")
+	var shown outboxQuarantineShowResult
+	if err := json.Unmarshal(show.Bytes(), &shown); err != nil {
+		t.Fatalf("decode job outbox quarantine show: %v\n%s", err, show.String())
+	}
+	if shown.ID != "outbox-job-quarantine-restore" || shown.OutboxItem == nil || shown.OutboxItem.Payload["ticket"] != "SQU-905" {
+		t.Fatalf("shown job outbox quarantine item = %+v", shown)
+	}
+
+	restoreAllDry := runRootForOutboxTest(t, "job", "outbox", "quarantine", "restore", "squ-905", "--repo", root, "--all", "--state", daemon.OutboxStatePending, "--dry-run", "--json")
+	var restoreAllRows []outboxQuarantineRestoreResult
+	if err := json.Unmarshal(restoreAllDry.Bytes(), &restoreAllRows); err != nil {
+		t.Fatalf("decode job outbox quarantine restore all dry-run: %v\n%s", err, restoreAllDry.String())
+	}
+	if len(restoreAllRows) != 1 || restoreAllRows[0].ID != "outbox-job-quarantine-restore" || restoreAllRows[0].Action != "would_restore" || !restoreAllRows[0].DryRun {
+		t.Fatalf("restore all rows = %+v", restoreAllRows)
+	}
+
+	restore := runRootForOutboxTest(t, "job", "outbox", "quarantine", "restore", "squ-905", restorePath, "--repo", root, "--json")
+	var restoreRow outboxQuarantineRestoreResult
+	if err := json.Unmarshal(restore.Bytes(), &restoreRow); err != nil {
+		t.Fatalf("decode job outbox quarantine restore: %v\n%s", err, restore.String())
+	}
+	if restoreRow.ID != "outbox-job-quarantine-restore" || restoreRow.Action != "restored" {
+		t.Fatalf("restore row = %+v", restoreRow)
+	}
+	if _, err := daemon.ReadOutboxItem(teamDir, "outbox-job-quarantine-restore"); err != nil {
+		t.Fatalf("restored job outbox item is not readable: %v", err)
+	}
+
+	dropAllDry := runRootForOutboxTest(t, "job", "outbox", "quarantine", "drop", "squ-905", "--repo", root, "--all", "--state", daemon.OutboxStateFailed, "--dry-run", "--json")
+	var dropAllRows []outboxQuarantineDropResult
+	if err := json.Unmarshal(dropAllDry.Bytes(), &dropAllRows); err != nil {
+		t.Fatalf("decode job outbox quarantine drop all dry-run: %v\n%s", err, dropAllDry.String())
+	}
+	if len(dropAllRows) != 1 || dropAllRows[0].ID != "outbox-job-quarantine-instance" || dropAllRows[0].Action != "would_drop" {
+		t.Fatalf("drop all rows = %+v", dropAllRows)
+	}
+
+	drop := runRootForOutboxTest(t, "job", "outbox", "quarantine", "drop", "squ-905", instancePath, "--repo", root, "--json")
+	var dropRows []outboxQuarantineDropResult
+	if err := json.Unmarshal(drop.Bytes(), &dropRows); err != nil {
+		t.Fatalf("decode job outbox quarantine drop: %v\n%s", err, drop.String())
+	}
+	if len(dropRows) != 1 || dropRows[0].ID != "outbox-job-quarantine-instance" || !dropRows[0].Dropped {
+		t.Fatalf("drop rows = %+v", dropRows)
+	}
+
+	_, stderr, err := runRootForOutboxTestErr(t, "job", "outbox", "quarantine", "show", "squ-905", otherPath, "--repo", root)
+	if err == nil {
+		t.Fatalf("out-of-job quarantined show succeeded")
+	}
+	if !strings.Contains(stderr.String(), `quarantined outbox file "quarantine/20260627T193000.000000000Z/failed/outbox-job-quarantine-other.json" is not owned by job "squ-905"`) {
+		t.Fatalf("out-of-job quarantine error = %q", stderr.String())
+	}
+}
+
 func writeCLIOutboxItem(t *testing.T, teamDir string, item *daemon.OutboxItem) {
 	t.Helper()
 	if err := daemon.WriteOutboxItem(teamDir, item); err != nil {
