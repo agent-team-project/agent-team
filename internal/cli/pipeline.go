@@ -1054,6 +1054,7 @@ func newPipelineQueueQuarantineCmd() *cobra.Command {
 		jobs         []string
 		restorable   bool
 		unrestorable bool
+		all          bool
 		sortBy       string
 		limit        int
 		jsonOut      bool
@@ -1061,10 +1062,19 @@ func newPipelineQueueQuarantineCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "quarantine <pipeline>",
-		Short: "List quarantined queue files scoped to one pipeline.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "quarantine [<pipeline>|--all]",
+		Short: "List pipeline-owned quarantined queue files.",
+		Long:  "List quarantined queue files owned by one pipeline. With no pipeline, all pipeline-owned quarantined queue files are listed. Show, restore, and drop still require an explicit pipeline.",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: pass at most one pipeline name.")
+				return exitErr(2)
+			}
 			if restorable && unrestorable {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: --restorable and --unrestorable cannot be combined.")
 				return exitErr(2)
@@ -1091,7 +1101,15 @@ func newPipelineQueueQuarantineCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			items, err := collectPipelineQueueQuarantineItems(teamDir, args[0], filters)
+			pipelineName := ""
+			if len(args) == 1 && !all {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if len(args) == 1 && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: pipeline name is required.")
+				return exitErr(2)
+			}
+			items, err := collectPipelineQueueQuarantineItems(teamDir, pipelineName, filters)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: %v\n", err)
 				return exitErr(1)
@@ -1107,6 +1125,7 @@ func newPipelineQueueQuarantineCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Filter by job id or ticket; repeat or comma-separate values.")
 	cmd.Flags().BoolVar(&restorable, "restorable", false, "Only show quarantined files that can be restored.")
 	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "Only show quarantined files that cannot be restored.")
+	cmd.Flags().BoolVar(&all, "all", false, "List quarantined queue files across all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().StringVar(&sortBy, "sort", "path", queueQuarantineSortFlagHelp)
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline-owned quarantined queue files as JSON.")

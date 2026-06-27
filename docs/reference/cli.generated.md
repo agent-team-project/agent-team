@@ -3613,7 +3613,7 @@ Subcommands:
 
 - `agent-team pipeline queue drop` - Drop pipeline-owned queue items.
 - `agent-team pipeline queue prune` - Prune pipeline-owned queue items.
-- `agent-team pipeline queue quarantine` - List quarantined queue files scoped to one pipeline.
+- `agent-team pipeline queue quarantine` - List pipeline-owned quarantined queue files.
 - `agent-team pipeline queue retry` - Retry pipeline-owned queue items.
 - `agent-team pipeline queue show` - Show one queue item owned by one pipeline.
 
@@ -3672,15 +3672,18 @@ Flags:
 
 ## `agent-team pipeline queue quarantine`
 
-List quarantined queue files scoped to one pipeline.
+List pipeline-owned quarantined queue files.
+
+List quarantined queue files owned by one pipeline. With no pipeline, all pipeline-owned quarantined queue files are listed. Show, restore, and drop still require an explicit pipeline.
 
 ```text
-agent-team pipeline queue quarantine <pipeline> [flags]
+agent-team pipeline queue quarantine [<pipeline>|--all] [flags]
 ```
 
 Flags:
 
 ```text
+      --all                  List quarantined queue files across all pipelines. This is the default when no pipeline is passed.
       --event-type strings   Filter by event type; repeat or comma-separate values.
       --format string        Render each pipeline-owned quarantined queue file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.
       --job strings          Filter by job id or ticket; repeat or comma-separate values.

@@ -6123,6 +6123,15 @@ target = "worker"
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
+		{
+			ID:        "adhoc-902",
+			Ticket:    "ADHOC-902",
+			Target:    "worker",
+			Instance:  "worker-adhoc-902",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
 	} {
 		if err := job.Write(teamDir, j); err != nil {
 			t.Fatalf("write job %s: %v", j.ID, err)
@@ -6169,6 +6178,18 @@ target = "worker"
 		UpdatedAt:      now.Add(-3 * time.Hour),
 		DeadLetteredAt: now.Add(-3 * time.Hour),
 	})
+	writeQuarantinedQueueItem(t, teamDir, stamp, daemon.QueueStateDead, &daemon.QueueItem{
+		ID:             "q-adhoc-quarantined",
+		EventType:      "agent.dispatch",
+		Instance:       "worker",
+		InstanceID:     "worker-adhoc-902",
+		Payload:        map[string]any{"job_id": "adhoc-902", "ticket": "ADHOC-902", "target": "worker"},
+		Attempts:       daemon.MaxQueueAttempts,
+		LastError:      "adhoc",
+		QueuedAt:       now.Add(-4 * time.Hour),
+		UpdatedAt:      now.Add(-3 * time.Hour),
+		DeadLetteredAt: now.Add(-3 * time.Hour),
+	})
 	restorePath := filepath.Join("quarantine", stamp, daemon.QueueStatePending, "q-pipeline-quarantined.json")
 	unrestorablePath := filepath.Join("quarantine", stamp, daemon.QueueStateDead, "q-pipeline-unrestorable.json")
 	foreignPath := filepath.Join("quarantine", stamp, daemon.QueueStateDead, "q-foreign-quarantined.json")
@@ -6187,6 +6208,34 @@ target = "worker"
 	}
 	if got := queueQuarantineItemIDs(listed); got != "q-pipeline-quarantined,q-pipeline-quarantined-extra,q-pipeline-unrestorable" {
 		t.Fatalf("listed pipeline quarantined items = %s\nbody=%s", got, listOut.String())
+	}
+
+	allList := NewRootCmd()
+	allListOut, allListErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allList.SetOut(allListOut)
+	allList.SetErr(allListErr)
+	allList.SetArgs([]string{"pipeline", "queue", "quarantine", "--repo", root, "--sort", "id", "--json"})
+	if err := allList.Execute(); err != nil {
+		t.Fatalf("pipeline queue quarantine all list: %v\nstderr=%s", err, allListErr.String())
+	}
+	listed = nil
+	if err := json.Unmarshal(allListOut.Bytes(), &listed); err != nil {
+		t.Fatalf("decode pipeline quarantine all list: %v\nbody=%s", err, allListOut.String())
+	}
+	if got := queueQuarantineItemIDs(listed); got != "q-foreign-quarantined,q-pipeline-quarantined,q-pipeline-quarantined-extra,q-pipeline-unrestorable" {
+		t.Fatalf("listed all pipeline quarantined items = %s\nbody=%s", got, allListOut.String())
+	}
+
+	allRestorable := NewRootCmd()
+	allRestorableOut, allRestorableErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allRestorable.SetOut(allRestorableOut)
+	allRestorable.SetErr(allRestorableErr)
+	allRestorable.SetArgs([]string{"pipeline", "queue", "quarantine", "--all", "--repo", root, "--restorable", "--sort", "id", "--format", "{{.ID}} {{.Job}}"})
+	if err := allRestorable.Execute(); err != nil {
+		t.Fatalf("pipeline queue quarantine --all restorable: %v\nstderr=%s", err, allRestorableErr.String())
+	}
+	if got, want := allRestorableOut.String(), "q-foreign-quarantined ops-902\nq-pipeline-quarantined squ-902\nq-pipeline-quarantined-extra squ-903\n"; got != want {
+		t.Fatalf("pipeline quarantine --all restorable = %q, want %q", got, want)
 	}
 
 	listSorted := NewRootCmd()
@@ -6351,6 +6400,30 @@ target = "worker"
 	}
 	if !strings.Contains(dropForeignErr.String(), `not owned by pipeline "ticket_to_pr"`) {
 		t.Fatalf("foreign drop stderr = %q", dropForeignErr.String())
+	}
+
+	invalidMany := NewRootCmd()
+	invalidManyOut, invalidManyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidMany.SetOut(invalidManyOut)
+	invalidMany.SetErr(invalidManyErr)
+	invalidMany.SetArgs([]string{"pipeline", "queue", "quarantine", "ticket_to_pr", "ops_review", "--repo", root})
+	if err := invalidMany.Execute(); err == nil {
+		t.Fatalf("pipeline queue quarantine accepted multiple pipeline names: stdout=%s", invalidManyOut.String())
+	}
+	if !strings.Contains(invalidManyErr.String(), "pass at most one pipeline name") {
+		t.Fatalf("multiple pipeline error = %q", invalidManyErr.String())
+	}
+
+	invalidAll := NewRootCmd()
+	invalidAllOut, invalidAllErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidAll.SetOut(invalidAllOut)
+	invalidAll.SetErr(invalidAllErr)
+	invalidAll.SetArgs([]string{"pipeline", "queue", "quarantine", "ticket_to_pr", "--all", "--repo", root})
+	if err := invalidAll.Execute(); err == nil {
+		t.Fatalf("pipeline queue quarantine accepted --all with pipeline: stdout=%s", invalidAllOut.String())
+	}
+	if !strings.Contains(invalidAllErr.String(), "--all cannot be combined with a pipeline argument") {
+		t.Fatalf("--all conflict error = %q", invalidAllErr.String())
 	}
 
 	if _, err := os.Stat(filepath.Join(daemon.QueueRoot(daemon.DaemonRoot(teamDir)), unrestorablePath)); err != nil {
