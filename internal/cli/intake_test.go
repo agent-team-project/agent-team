@@ -2718,6 +2718,47 @@ func TestIntakeSchedulePublishesScheduleEvent(t *testing.T) {
 	}
 }
 
+func TestIntakeScheduleWaitsForPipelineJob(t *testing.T) {
+	target, _, cleanup := setupIntakePipelineRepo(t)
+	defer cleanup()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"intake", "schedule", "nightly",
+		"--target", target,
+		"--payload", `{"ticket":"SQU-620"}`,
+		"--wait",
+		"--wait-next-state", "queued",
+		"--wait-step", "triage",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake schedule wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var result intakePublishResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode intake schedule wait json: %v\nbody=%s", err, out.String())
+	}
+	if len(result.WaitedJobs) != 1 || result.WaitedJobs[0].ID != "squ-620" || result.WaitedJobs[0].Status != job.StatusQueued || result.WaitedJobs[0].NextState != "queued" || result.WaitedJobs[0].NextStep != "triage" {
+		t.Fatalf("waited jobs = %+v", result.WaitedJobs)
+	}
+	if result.Outcome == nil || len(result.Outcome.Outcomes) != 1 || result.Outcome.Outcomes[0].JobID != "squ-620" || result.Outcome.Outcomes[0].Pipeline != "nightly" || result.Outcome.Outcomes[0].Step != "triage" {
+		t.Fatalf("outcome metadata = %+v", result.Outcome)
+	}
+	j, err := job.Read(filepath.Join(target, ".agent_team"), "squ-620")
+	if err != nil {
+		t.Fatalf("read schedule-created job: %v", err)
+	}
+	if j.Pipeline != "nightly" || j.Status != job.StatusQueued || len(j.Steps) != 1 || j.Steps[0].Status != job.StatusQueued {
+		t.Fatalf("schedule-created job = %+v", j)
+	}
+}
+
 func TestIntakeScheduleDryRunText(t *testing.T) {
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -2842,6 +2883,55 @@ func TestIntakeSchedulePreviewTriggersRequiresDryRun(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--preview-triggers requires --dry-run") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestIntakeScheduleWaitFlagValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "wait with dry-run",
+			args: []string{"intake", "schedule", "nightly", "--dry-run", "--wait"},
+			want: "--wait cannot be combined with --dry-run",
+		},
+		{
+			name: "wait next-state without wait",
+			args: []string{"intake", "schedule", "nightly", "--wait-next-state", "running"},
+			want: "wait-related flags require --wait",
+		},
+		{
+			name: "fail-on-failed without wait",
+			args: []string{"intake", "schedule", "nightly", "--fail-on-failed"},
+			want: "wait-related flags require --wait",
+		},
+		{
+			name: "invalid wait next-state",
+			args: []string{"intake", "schedule", "nightly", "--wait", "--wait-next-state", "missing"},
+			want: "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all",
+		},
+		{
+			name: "invalid wait interval",
+			args: []string{"intake", "schedule", "nightly", "--wait", "--wait-interval", "-1s"},
+			want: "--wait-interval must be >= 0",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err == nil {
+				t.Fatalf("intake schedule wait validation succeeded: stdout=%s", out.String())
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 

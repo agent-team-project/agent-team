@@ -26,6 +26,7 @@ agent-team schedule fire --dry-run --preview-triggers
 agent-team schedule fire --wait --wait-next-state queued --wait-step triage --wait-timeout 30s
 agent-team schedule run nightly --dry-run --preview-triggers
 agent-team schedule run nightly --payload '{"ticket":"SQU-610"}' --wait --wait-next-state queued --wait-step triage --wait-timeout 30s
+agent-team intake schedule nightly --payload '{"ticket":"SQU-611"}' --wait --wait-next-state queued --wait-step triage --wait-timeout 30s
 ```
 
 When a schedule routes into a pipeline, `--wait` can block on the durable jobs the schedule event creates or updates. Use `--wait-next-state` with `--wait-step` for stage-aware handoff; unstarted persistent targets commonly leave the step `queued`, while live runtime handoffs can reach `running`.

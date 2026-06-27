@@ -412,7 +412,7 @@ func newScheduleRunCmd() *cobra.Command {
 				}
 				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, nil, nil, nil, triggerPreview)
 			}
-			return publishScheduleEvent(cmd, repo, ev, wait, waitFilters, waitTimeout, waitInterval, failOnFailed, jsonOut, tmpl)
+			return publishScheduleEvent(cmd, repo, ev, "agent-team schedule run", wait, waitFilters, waitTimeout, waitInterval, failOnFailed, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -912,24 +912,24 @@ func summariseScheduleFireOutcomes(outcomes []daemon.EventOutcome) string {
 	return strings.Join(parts, ",")
 }
 
-func publishScheduleEvent(cmd *cobra.Command, target string, ev *intake.Event, wait bool, waitFilters jobWaitFilters, waitTimeout, waitInterval time.Duration, failOnFailed bool, jsonOut bool, tmpl *template.Template) error {
+func publishScheduleEvent(cmd *cobra.Command, target string, ev *intake.Event, prefix string, wait bool, waitFilters jobWaitFilters, waitTimeout, waitInterval time.Duration, failOnFailed bool, jsonOut bool, tmpl *template.Template) error {
 	teamDir, err := resolveTeamDir(cmd, target)
 	if err != nil {
 		return err
 	}
 	dc, err := newDaemonClient(teamDir)
 	if err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team schedule run: daemon is not running — start it first with `agent-team daemon start`.")
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: daemon is not running — start it first with `agent-team daemon start`.\n", prefix)
 		return exitErr(2)
 	}
 	res, err := dc.PublishEvent(ev.Type, ev.Payload)
 	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team schedule run: %v\n", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", prefix, err)
 		return exitErr(1)
 	}
 	var waited []scheduleWaitJob
 	if wait {
-		waited, err = waitForScheduleOutcomeJobs(cmd, teamDir, eventResponseJobIDs(res), waitFilters, waitTimeout, waitInterval, "agent-team schedule run")
+		waited, err = waitForScheduleOutcomeJobs(cmd, teamDir, eventResponseJobIDs(res), waitFilters, waitTimeout, waitInterval, prefix)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return nil

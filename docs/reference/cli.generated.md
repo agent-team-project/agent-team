@@ -1618,13 +1618,21 @@ agent-team intake schedule <name> [flags]
 Flags:
 
 ```text
-      --dry-run               Normalize and print the event without publishing to the daemon.
-      --format string         Render the intake result with a Go template, e.g. '{{.Event.Type}}'.
-      --json                  Emit normalized event and daemon outcome as JSON.
-      --payload string        Additional JSON object merged into the schedule payload.
-      --payload-file string   Read additional schedule payload JSON from a file, or '-' for stdin.
-      --preview-triggers      With --dry-run, include local topology instance and pipeline matches.
-      --target string         Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --dry-run                   Normalize and print the event without publishing to the daemon.
+      --fail-on-failed            With --wait, exit 1 if any schedule-created job resolves to failed.
+      --format string             Render the intake result with a Go template, e.g. '{{.Event.Type}}'.
+      --json                      Emit normalized event and daemon outcome as JSON.
+      --payload string            Additional JSON object merged into the schedule payload.
+      --payload-file string       Read additional schedule payload JSON from a file, or '-' for stdin.
+      --preview-triggers          With --dry-run, include local topology instance and pipeline matches.
+      --target string             Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --wait                      After the schedule publishes pipeline jobs, wait for those jobs to reach a lifecycle status, event, or next-step state.
+      --wait-event strings        With --wait, last event to wait for, e.g. pipeline_step, advance_dispatched, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration    Polling interval with --wait. (default 500ms)
+      --wait-next-state strings   With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --wait-status strings       With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-step string          With --wait, pipeline step id that must be the current next step for every schedule-created job.
+      --wait-timeout duration     Maximum time to wait with --wait (0 = no timeout).
 ```
 
 Inherited Flags:

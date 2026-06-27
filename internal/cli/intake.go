@@ -247,6 +247,14 @@ func newIntakeScheduleCmd() *cobra.Command {
 		payloadFile   string
 		dryRun        bool
 		previewRoutes bool
+		wait          bool
+		waitStatuses  []string
+		waitEvents    []string
+		waitNextState []string
+		waitStep      string
+		waitTimeout   time.Duration
+		waitInterval  time.Duration
+		failOnFailed  bool
 		jsonOut       bool
 		format        string
 	)
@@ -268,6 +276,30 @@ func newIntakeScheduleCmd() *cobra.Command {
 			if previewRoutes && !dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake schedule: --preview-triggers requires --dry-run.")
 				return exitErr(2)
+			}
+			if waitInterval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake schedule: --wait-interval must be >= 0.")
+				return exitErr(2)
+			}
+			if waitTimeout < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake schedule: --wait-timeout must be >= 0.")
+				return exitErr(2)
+			}
+			if wait && dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake schedule: --wait cannot be combined with --dry-run.")
+				return exitErr(2)
+			}
+			if !wait && (cmd.Flags().Changed("wait-status") || cmd.Flags().Changed("wait-event") || cmd.Flags().Changed("wait-next-state") || cmd.Flags().Changed("wait-step") || cmd.Flags().Changed("wait-timeout") || cmd.Flags().Changed("wait-interval") || cmd.Flags().Changed("fail-on-failed")) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake schedule: wait-related flags require --wait.")
+				return exitErr(2)
+			}
+			waitFilters := jobWaitFilters{}
+			if wait {
+				waitFilters, err = parseJobCommandWaitFilters(cmd, waitStatuses, waitEvents, waitNextState, waitStep)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake schedule: %v\n", err)
+					return exitErr(2)
+				}
 			}
 			override, label, err := optionalPayloadInput(payload, payloadFile)
 			if err != nil {
@@ -299,7 +331,7 @@ func newIntakeScheduleCmd() *cobra.Command {
 				}
 				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, nil, nil, nil, triggerPreview)
 			}
-			return publishIntakeEvent(cmd, target, ev, jsonOut, tmpl)
+			return publishScheduleEvent(cmd, target, ev, "agent-team intake schedule", wait, waitFilters, waitTimeout, waitInterval, failOnFailed, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
@@ -307,6 +339,14 @@ func newIntakeScheduleCmd() *cobra.Command {
 	cmd.Flags().StringVar(&payloadFile, "payload-file", "", "Read additional schedule payload JSON from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Normalize and print the event without publishing to the daemon.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "After the schedule publishes pipeline jobs, wait for those jobs to reach a lifecycle status, event, or next-step state.")
+	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&waitEvents, "wait-event", nil, "With --wait, last event to wait for, e.g. pipeline_step, advance_dispatched, closed, or pipeline_done. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&waitNextState, "wait-next-state", nil, "With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&waitStep, "wait-step", "", "With --wait, pipeline step id that must be the current next step for every schedule-created job.")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
+	cmd.Flags().DurationVar(&waitInterval, "wait-interval", 500*time.Millisecond, "Polling interval with --wait.")
+	cmd.Flags().BoolVar(&failOnFailed, "fail-on-failed", false, "With --wait, exit 1 if any schedule-created job resolves to failed.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit normalized event and daemon outcome as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the intake result with a Go template, e.g. '{{.Event.Type}}'.")
 	return cmd
