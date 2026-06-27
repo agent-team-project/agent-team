@@ -21,6 +21,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 		format   string
 		limit    int
 		sortBy   string
+		summary  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "diff <before.json> <after.json>",
@@ -33,13 +34,25 @@ func newSnapshotDiffCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot diff: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
+			if format != "" && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot diff: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot diff: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			if summary && limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot diff: --summary cannot be combined with --limit.")
 				return exitErr(2)
 			}
 			sortMode, err := parseSnapshotDiffSort(sortBy)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team snapshot diff: %v\n", err)
+				return exitErr(2)
+			}
+			if summary && sortMode != snapshotDiffSortSection {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot diff: --summary cannot be combined with --sort.")
 				return exitErr(2)
 			}
 			formatTemplate, err := parseSnapshotDiffFormat(format)
@@ -57,8 +70,12 @@ func newSnapshotDiffCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team snapshot diff: %v\n", err)
 				return exitErr(1)
 			}
-			sortSnapshotDiffResult(result, sortMode)
-			limitSnapshotDiffResult(result, limit)
+			if summary {
+				summarizeSnapshotDiffResult(result)
+			} else {
+				sortSnapshotDiffResult(result, sortMode)
+				limitSnapshotDiffResult(result, limit)
+			}
 			if jsonOut {
 				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(result); err != nil {
 					return err
@@ -82,6 +99,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "", "Render the diff result with a Go template, e.g. '{{.Summary.TotalChanges}} {{len .Changes}}'.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit emitted change detail rows after summarizing all changes; 0 means all.")
 	cmd.Flags().StringVar(&sortBy, "sort", "section", "Sort emitted change detail rows by section, action, or id before applying --limit.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Only emit metadata and summary counters; suppress change detail rows.")
 	return cmd
 }
 
@@ -378,6 +396,7 @@ type snapshotDiffSummary struct {
 	OmittedChanges  int                  `json:"omitted_changes,omitempty"`
 	DetailLimit     int                  `json:"detail_limit,omitempty"`
 	DetailSort      string               `json:"detail_sort,omitempty"`
+	SummaryOnly     bool                 `json:"summary_only,omitempty"`
 	Provenance      snapshotDiffCounters `json:"provenance"`
 	Git             snapshotDiffCounters `json:"git"`
 	Runtime         snapshotDiffCounters `json:"runtime"`
@@ -588,6 +607,21 @@ func snapshotDiffChangeLess(left, right snapshotDiffChange) bool {
 		return left.Before < right.Before
 	}
 	return left.After < right.After
+}
+
+func summarizeSnapshotDiffResult(result *snapshotDiffResult) {
+	if result == nil {
+		return
+	}
+	total := result.Summary.TotalChanges
+	if total == 0 {
+		total = len(result.Changes)
+		result.Summary.TotalChanges = total
+	}
+	result.Summary.SummaryOnly = true
+	result.Summary.ShownChanges = 0
+	result.Summary.OmittedChanges = total
+	result.Changes = nil
 }
 
 func limitSnapshotDiffResult(result *snapshotDiffResult, limit int) {
@@ -1609,6 +1643,10 @@ func renderSnapshotDiff(w io.Writer, result *snapshotDiffResult) {
 	renderSnapshotDiffCounterLine(w, "events", result.Summary.Events)
 	renderSnapshotDiffCounterLine(w, "advance", result.Summary.Advance)
 	renderSnapshotDiffCounterLine(w, "section_errors", result.Summary.SectionErrors)
+	if result.Summary.SummaryOnly {
+		fmt.Fprintf(w, "details: summary only (omitted=%d)\n", result.Summary.OmittedChanges)
+		return
+	}
 	if len(result.Changes) == 0 {
 		if result.Summary.OmittedChanges > 0 {
 			fmt.Fprintf(w, "details: none shown (omitted=%d limit=%d)\n", result.Summary.OmittedChanges, result.Summary.DetailLimit)

@@ -728,6 +728,37 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		t.Fatalf("snapshot diff --format output = %q, want %q", got, want)
 	}
 
+	summaryJSON := NewRootCmd()
+	summaryJSONOut, summaryJSONErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryJSON.SetOut(summaryJSONOut)
+	summaryJSON.SetErr(summaryJSONErr)
+	summaryJSON.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--summary", "--json"})
+	if err := summaryJSON.Execute(); err != nil {
+		t.Fatalf("snapshot diff --summary json: %v\nstderr=%s", err, summaryJSONErr.String())
+	}
+	var summaryResult snapshotDiffResult
+	if err := json.Unmarshal(summaryJSONOut.Bytes(), &summaryResult); err != nil {
+		t.Fatalf("decode summary snapshot diff json: %v\nbody=%s", err, summaryJSONOut.String())
+	}
+	if len(summaryResult.Changes) != 0 || !summaryResult.Summary.SummaryOnly || summaryResult.Summary.OmittedChanges != result.Summary.TotalChanges || summaryResult.Summary.TotalChanges != result.Summary.TotalChanges {
+		t.Fatalf("summary diff result = %+v changes=%d total=%d", summaryResult.Summary, len(summaryResult.Changes), result.Summary.TotalChanges)
+	}
+	if summaryResult.Summary.Jobs.Added != result.Summary.Jobs.Added || summaryResult.Summary.Queue.Changed != result.Summary.Queue.Changed {
+		t.Fatalf("summary diff counters changed: %+v vs %+v", summaryResult.Summary, result.Summary)
+	}
+
+	summaryText := NewRootCmd()
+	summaryTextOut, summaryTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryText.SetOut(summaryTextOut)
+	summaryText.SetErr(summaryTextErr)
+	summaryText.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--summary"})
+	if err := summaryText.Execute(); err != nil {
+		t.Fatalf("snapshot diff --summary text: %v\nstderr=%s", err, summaryTextErr.String())
+	}
+	if !strings.Contains(summaryTextOut.String(), "details: summary only (omitted=") || strings.Contains(summaryTextOut.String(), "SECTION\tID") || strings.Contains(summaryTextOut.String(), "squ-801") {
+		t.Fatalf("summary text output unexpected:\n%s", summaryTextOut.String())
+	}
+
 	limitedJSON := NewRootCmd()
 	limitedJSONOut, limitedJSONErr := &bytes.Buffer{}, &bytes.Buffer{}
 	limitedJSON.SetOut(limitedJSONOut)
@@ -1062,6 +1093,42 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	}
 	if !strings.Contains(invalidSortErr.String(), "--sort must be section, action, or id") {
 		t.Fatalf("invalid sort stderr = %q", invalidSortErr.String())
+	}
+
+	invalidSummaryLimit := NewRootCmd()
+	invalidSummaryLimitOut, invalidSummaryLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSummaryLimit.SetOut(invalidSummaryLimitOut)
+	invalidSummaryLimit.SetErr(invalidSummaryLimitErr)
+	invalidSummaryLimit.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--summary", "--limit", "1"})
+	if err := invalidSummaryLimit.Execute(); err == nil {
+		t.Fatalf("snapshot diff summary with limit succeeded")
+	}
+	if !strings.Contains(invalidSummaryLimitErr.String(), "--summary cannot be combined with --limit") {
+		t.Fatalf("invalid summary/limit stderr = %q", invalidSummaryLimitErr.String())
+	}
+
+	invalidSummarySort := NewRootCmd()
+	invalidSummarySortOut, invalidSummarySortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSummarySort.SetOut(invalidSummarySortOut)
+	invalidSummarySort.SetErr(invalidSummarySortErr)
+	invalidSummarySort.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--summary", "--sort", "action"})
+	if err := invalidSummarySort.Execute(); err == nil {
+		t.Fatalf("snapshot diff summary with sort succeeded")
+	}
+	if !strings.Contains(invalidSummarySortErr.String(), "--summary cannot be combined with --sort") {
+		t.Fatalf("invalid summary/sort stderr = %q", invalidSummarySortErr.String())
+	}
+
+	invalidSummaryFormat := NewRootCmd()
+	invalidSummaryFormatOut, invalidSummaryFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSummaryFormat.SetOut(invalidSummaryFormatOut)
+	invalidSummaryFormat.SetErr(invalidSummaryFormatErr)
+	invalidSummaryFormat.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--summary", "--format", "{{.Summary.TotalChanges}}"})
+	if err := invalidSummaryFormat.Execute(); err == nil {
+		t.Fatalf("snapshot diff summary with format succeeded")
+	}
+	if !strings.Contains(invalidSummaryFormatErr.String(), "--format cannot be combined with --summary") {
+		t.Fatalf("invalid summary/format stderr = %q", invalidSummaryFormatErr.String())
 	}
 }
 
