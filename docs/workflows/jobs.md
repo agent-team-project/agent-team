@@ -147,6 +147,7 @@ Human output includes:
 - pipeline steps
 - active queue entries
 - quarantined queue files owned by the job
+- active and quarantined outbox events owned by the job
 - status-file previews
 - action hints
 - recent events when requested
@@ -196,8 +197,9 @@ agent-team job snapshot squ-42 --no-redact --json
 
 Snapshots include the durable job file, job audit events, daemon lifecycle rows,
 inbox summaries for the job or step owner instances, queue ownership,
-quarantined queue files, runtime metadata, state-file status, and paths for raw
-logs and Codex last-message sidecars. Log content is omitted by default; add
+quarantined queue files, outbox ownership including quarantine, runtime metadata,
+state-file status, and paths for raw logs and Codex last-message sidecars. Log
+content is omitted by default; add
 `--tail 100` to include the last 100 log lines in JSON output, or `--tail -1`
 to include the full log. Queue payload secrets and latest inbox bodies are
 redacted by default; use `--no-redact` only for local debugging.
@@ -387,6 +389,7 @@ agent-team job triage
 agent-team job triage --min-severity warning
 agent-team job triage --reason queue_dead
 agent-team job triage --reason queue_quarantined
+agent-team job triage --reason outbox_quarantined
 agent-team job triage --json
 ```
 
@@ -399,6 +402,7 @@ Triage reports:
 - running jobs without instances
 - dead queue entries
 - quarantined queue files
+- quarantined outbox files
 - failed or blocked pipeline steps
 - cleanup-ready terminal jobs
 - ready pipeline steps
@@ -411,6 +415,8 @@ agent-team job retry squ-42 --dispatch
 agent-team job queue retry squ-42 --all --sort attempts --limit 10
 agent-team job queue quarantine squ-42
 agent-team job queue quarantine restore squ-42 --all --sort attempts --limit 10 --dry-run
+agent-team job outbox quarantine squ-42
+agent-team job outbox quarantine restore squ-42 --all --sort path --limit 10 --dry-run
 agent-team job unblock squ-42 <answer...>
 agent-team job adopt squ-42 --pid <pid> --dry-run
 agent-team job timeout squ-42 --dry-run

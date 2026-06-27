@@ -319,7 +319,7 @@ Team health includes:
 
 - daemon readiness
 - team-owned queue dead letters
-- team-owned queue quarantine
+- team-owned queue and outbox quarantine
 - job attention
 - pipeline failures
 - schedule state

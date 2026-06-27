@@ -820,7 +820,7 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 			}
 			for _, action := range issue.Actions {
 				action = overviewIssueAction(action)
-				if issue.Code == "outbox_quarantined" && overviewOutboxQuarantinePrimaryAction(action) {
+				if out != nil && out.OutboxQuarantine.Quarantined > 0 && overviewOutboxQuarantinePrimaryAction(action) {
 					continue
 				}
 				add(action, overviewIssueActionSource(action, issue.Code), issue.Code)

@@ -6167,6 +6167,11 @@ func collectPipelineTriage(teamDir, pipeline string, now time.Time, staleAfter t
 		return jobTriageSnapshot{}, err
 	}
 	pipelineQuarantine := queueQuarantineItemsForJobs(quarantineItems, jobs)
+	outboxQuarantineItems, err := listOutboxQuarantine(teamDir)
+	if err != nil {
+		return jobTriageSnapshot{}, err
+	}
+	pipelineOutboxQuarantine := outboxQuarantineItemsForJobs(outboxQuarantineItems, jobs)
 	snapshot, err := collectJobTriage(teamDir, now, staleAfter)
 	if err != nil {
 		return jobTriageSnapshot{}, err
@@ -6174,6 +6179,7 @@ func collectPipelineTriage(teamDir, pipeline string, now time.Time, staleAfter t
 	snapshot.Summary = summarizeJobsWithRuntime(teamDir, jobs)
 	snapshot.Queue = summarizeQueueItems(pipelineQueue, now)
 	applyQueueQuarantineSummary(&snapshot.Queue, pipelineQuarantine)
+	snapshot.OutboxQuarantine = summarizeOutboxQuarantineItems(pipelineOutboxQuarantine)
 	snapshot.Attention = scopePipelineTriageActions(pipeline, filterJobTriageItemsByJobIDs(snapshot.Attention, ownedIDs))
 	if pipeline == "" {
 		snapshot.Attention = scopePipelineTriageActionsByOwner(snapshot.Attention)

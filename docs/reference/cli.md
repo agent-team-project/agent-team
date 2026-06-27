@@ -117,7 +117,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job cancel <job-id>` | Fail a job as cancelled, optionally stopping its owner |
 | `agent-team job timeout <job-id> or --all` | Mark stale running job steps or stale step-less running jobs failed; add `--pipeline` or `--target-agent` with `--all` to scope a sweep |
 | `agent-team job cleanup <job-id>` | Remove job-owned worktree/branch after merge, optionally verifying the PR with `gh` |
-| `agent-team job triage` | Find jobs needing attention |
+| `agent-team job triage` | Find jobs needing attention, including queue/outbox quarantine recovery hints |
 | `agent-team job ready` | List or watch next pipeline steps; filter by `--step`, sort by `--sort`, and cap rows with `--limit` |
 | `agent-team job advance <job-id>` | Advance a pipeline step; add `--wait --wait-next-state`/`--wait-step` for stage-aware handoff |
 | `agent-team job reconcile github` | Reconcile GitHub PR payloads into jobs; add `--advance --wait --wait-next-state`/`--wait-step` for PR-gate handoff |
@@ -209,7 +209,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline doctor --all` | Validate workflows; add `--strict-runtime` to fail on unavailable step runtime defaults |
 | `agent-team pipeline run <pipeline> <ticket>` | Create pipeline job; `--dispatch` accepts workspace/runtime overrides and `--wait-next-state`/`--wait-step` can block for the first stage handoff |
 | `agent-team pipeline status` | Summarize or watch pipeline jobs plus owned queue/quarantine/outbox counts; sort rows and cap output with `--limit` |
-| `agent-team pipeline triage [<pipeline>]` | Show pipeline-owned jobs needing attention, including queue/quarantine and ready-step recovery hints |
+| `agent-team pipeline triage [<pipeline>]` | Show pipeline-owned jobs needing attention, including queue/outbox quarantine and ready-step recovery hints |
 | `agent-team pipeline explain <pipeline>` | Expand or watch pipeline jobs as per-step readiness, blockers, gates, and actions; sort and cap large histories with `--sort` and `--limit`, or add `--step` to focus one stage |
 | `agent-team pipeline snapshot <pipeline>` | Capture one pipeline's status, provenance, explained jobs, inboxes, queue/outbox ownership including quarantine, dry-run advance previews, and formatted summary fields |
 | `agent-team pipeline next` | Print or watch recommended pipeline actions |

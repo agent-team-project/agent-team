@@ -6220,38 +6220,44 @@ type jobSummary struct {
 }
 
 type jobTriageSnapshot struct {
-	CheckedAt      time.Time                  `json:"checked_at"`
-	Summary        jobSummary                 `json:"summary"`
-	Queue          queueSummary               `json:"queue"`
-	StatusPreviews []jobStatusReconcileResult `json:"status_previews,omitempty"`
-	Attention      []jobTriageItem            `json:"attention"`
-	ReadySteps     []jobReadyRow              `json:"ready_steps,omitempty"`
+	CheckedAt        time.Time                  `json:"checked_at"`
+	Summary          jobSummary                 `json:"summary"`
+	Queue            queueSummary               `json:"queue"`
+	OutboxQuarantine outboxQuarantineSummary    `json:"outbox_quarantine"`
+	StatusPreviews   []jobStatusReconcileResult `json:"status_previews,omitempty"`
+	Attention        []jobTriageItem            `json:"attention"`
+	ReadySteps       []jobReadyRow              `json:"ready_steps,omitempty"`
 }
 
 type jobTriageItem struct {
-	JobID                          string     `json:"job_id"`
-	Ticket                         string     `json:"ticket"`
-	Status                         job.Status `json:"status"`
-	Severity                       string     `json:"severity"`
-	Reasons                        []string   `json:"reasons"`
-	Actions                        []string   `json:"actions,omitempty"`
-	Message                        string     `json:"message,omitempty"`
-	Target                         string     `json:"target,omitempty"`
-	Instance                       string     `json:"instance,omitempty"`
-	Pipeline                       string     `json:"pipeline,omitempty"`
-	UpdatedAt                      time.Time  `json:"updated_at"`
-	StepID                         string     `json:"step_id,omitempty"`
-	StepState                      string     `json:"step_state,omitempty"`
-	StepTarget                     string     `json:"step_target,omitempty"`
-	QueuePending                   int        `json:"queue_pending,omitempty"`
-	QueueDead                      int        `json:"queue_dead,omitempty"`
-	QueueDelayed                   int        `json:"queue_delayed,omitempty"`
-	QueueIDs                       []string   `json:"queue_ids,omitempty"`
-	QueueQuarantined               int        `json:"queue_quarantined,omitempty"`
-	QueueQuarantineRestorable      int        `json:"queue_quarantine_restorable,omitempty"`
-	QueueQuarantineUnrestorable    int        `json:"queue_quarantine_unrestorable,omitempty"`
-	QueueQuarantinePaths           []string   `json:"queue_quarantine_paths,omitempty"`
-	QueueQuarantineRestorablePaths []string   `json:"queue_quarantine_restorable_paths,omitempty"`
+	JobID                           string     `json:"job_id"`
+	Ticket                          string     `json:"ticket"`
+	Status                          job.Status `json:"status"`
+	Severity                        string     `json:"severity"`
+	Reasons                         []string   `json:"reasons"`
+	Actions                         []string   `json:"actions,omitempty"`
+	Message                         string     `json:"message,omitempty"`
+	Target                          string     `json:"target,omitempty"`
+	Instance                        string     `json:"instance,omitempty"`
+	Pipeline                        string     `json:"pipeline,omitempty"`
+	UpdatedAt                       time.Time  `json:"updated_at"`
+	StepID                          string     `json:"step_id,omitempty"`
+	StepState                       string     `json:"step_state,omitempty"`
+	StepTarget                      string     `json:"step_target,omitempty"`
+	QueuePending                    int        `json:"queue_pending,omitempty"`
+	QueueDead                       int        `json:"queue_dead,omitempty"`
+	QueueDelayed                    int        `json:"queue_delayed,omitempty"`
+	QueueIDs                        []string   `json:"queue_ids,omitempty"`
+	QueueQuarantined                int        `json:"queue_quarantined,omitempty"`
+	QueueQuarantineRestorable       int        `json:"queue_quarantine_restorable,omitempty"`
+	QueueQuarantineUnrestorable     int        `json:"queue_quarantine_unrestorable,omitempty"`
+	QueueQuarantinePaths            []string   `json:"queue_quarantine_paths,omitempty"`
+	QueueQuarantineRestorablePaths  []string   `json:"queue_quarantine_restorable_paths,omitempty"`
+	OutboxQuarantined               int        `json:"outbox_quarantined,omitempty"`
+	OutboxQuarantineRestorable      int        `json:"outbox_quarantine_restorable,omitempty"`
+	OutboxQuarantineUnrestorable    int        `json:"outbox_quarantine_unrestorable,omitempty"`
+	OutboxQuarantinePaths           []string   `json:"outbox_quarantine_paths,omitempty"`
+	OutboxQuarantineRestorablePaths []string   `json:"outbox_quarantine_restorable_paths,omitempty"`
 }
 
 type jobTriageQueueStats struct {
@@ -6259,6 +6265,14 @@ type jobTriageQueueStats struct {
 	Dead                      int
 	Delayed                   int
 	IDs                       []string
+	Quarantined               int
+	QuarantineRestorable      int
+	QuarantineUnrestorable    int
+	QuarantinePaths           []string
+	QuarantineRestorablePaths []string
+}
+
+type jobTriageOutboxQuarantineStats struct {
 	Quarantined               int
 	QuarantineRestorable      int
 	QuarantineUnrestorable    int
@@ -6677,11 +6691,16 @@ func collectJobTriage(teamDir string, now time.Time, staleAfter time.Duration) (
 	if err != nil {
 		return jobTriageSnapshot{}, err
 	}
+	outboxQuarantineItems, err := listOutboxQuarantine(teamDir)
+	if err != nil {
+		return jobTriageSnapshot{}, err
+	}
 	queueByJob := queueStatsByJob(jobs, queueItems, now)
 	addQueueQuarantineStatsByJob(queueByJob, jobs, quarantineItems)
+	outboxQuarantineByJob := outboxQuarantineStatsByJob(jobs, outboxQuarantineItems)
 	attention := make([]jobTriageItem, 0, len(jobs))
 	for _, j := range jobs {
-		if item, ok := triageJob(j, inspectNextJobStep(j), queueByJob[j.ID], now, staleAfter); ok {
+		if item, ok := triageJob(j, inspectNextJobStep(j), queueByJob[j.ID], outboxQuarantineByJob[j.ID], now, staleAfter); ok {
 			attention = append(attention, item)
 		}
 	}
@@ -6698,13 +6717,15 @@ func collectJobTriage(teamDir string, now time.Time, staleAfter time.Duration) (
 	readySteps = filterJobReadyRowsByAdvanceable(readySteps)
 	queueSummary := summarizeQueueItems(queueItems, now)
 	applyQueueQuarantineSummary(&queueSummary, quarantineItems)
+	outboxQuarantineSummary := summarizeOutboxQuarantineItems(outboxQuarantineItems)
 	return jobTriageSnapshot{
-		CheckedAt:      now,
-		Summary:        summarizeJobs(jobs),
-		Queue:          queueSummary,
-		StatusPreviews: statusPreviews,
-		Attention:      attention,
-		ReadySteps:     readySteps,
+		CheckedAt:        now,
+		Summary:          summarizeJobs(jobs),
+		Queue:            queueSummary,
+		OutboxQuarantine: outboxQuarantineSummary,
+		StatusPreviews:   statusPreviews,
+		Attention:        attention,
+		ReadySteps:       readySteps,
 	}, nil
 }
 
@@ -6805,25 +6826,63 @@ func addQueueQuarantineItemToStats(stats *jobTriageQueueStats, item queueQuarant
 	}
 }
 
-func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, now time.Time, staleAfter time.Duration) (jobTriageItem, bool) {
+func outboxQuarantineStatsByJob(jobs []*job.Job, items []outboxQuarantineItem) map[string]jobTriageOutboxQuarantineStats {
+	out := make(map[string]jobTriageOutboxQuarantineStats, len(jobs))
+	for _, j := range jobs {
+		var stats jobTriageOutboxQuarantineStats
+		for _, item := range items {
+			if !outboxQuarantineItemMatchesJob(item, j) {
+				continue
+			}
+			addOutboxQuarantineItemToTriageStats(&stats, item)
+		}
+		if stats.Quarantined > 0 {
+			sort.Strings(stats.QuarantinePaths)
+			sort.Strings(stats.QuarantineRestorablePaths)
+			out[j.ID] = stats
+		}
+	}
+	return out
+}
+
+func addOutboxQuarantineItemToTriageStats(stats *jobTriageOutboxQuarantineStats, item outboxQuarantineItem) {
+	if stats == nil {
+		return
+	}
+	stats.Quarantined++
+	stats.QuarantinePaths = append(stats.QuarantinePaths, item.Path)
+	if item.Restorable {
+		stats.QuarantineRestorable++
+		stats.QuarantineRestorablePaths = append(stats.QuarantineRestorablePaths, item.Path)
+	} else {
+		stats.QuarantineUnrestorable++
+	}
+}
+
+func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, outboxQuarantineStats jobTriageOutboxQuarantineStats, now time.Time, staleAfter time.Duration) (jobTriageItem, bool) {
 	item := jobTriageItem{
-		JobID:                          j.ID,
-		Ticket:                         j.Ticket,
-		Status:                         j.Status,
-		Severity:                       "info",
-		Target:                         j.Target,
-		Instance:                       j.Instance,
-		Pipeline:                       j.Pipeline,
-		UpdatedAt:                      j.UpdatedAt,
-		QueuePending:                   queueStats.Pending,
-		QueueDead:                      queueStats.Dead,
-		QueueDelayed:                   queueStats.Delayed,
-		QueueIDs:                       append([]string(nil), queueStats.IDs...),
-		QueueQuarantined:               queueStats.Quarantined,
-		QueueQuarantineRestorable:      queueStats.QuarantineRestorable,
-		QueueQuarantineUnrestorable:    queueStats.QuarantineUnrestorable,
-		QueueQuarantinePaths:           append([]string(nil), queueStats.QuarantinePaths...),
-		QueueQuarantineRestorablePaths: append([]string(nil), queueStats.QuarantineRestorablePaths...),
+		JobID:                           j.ID,
+		Ticket:                          j.Ticket,
+		Status:                          j.Status,
+		Severity:                        "info",
+		Target:                          j.Target,
+		Instance:                        j.Instance,
+		Pipeline:                        j.Pipeline,
+		UpdatedAt:                       j.UpdatedAt,
+		QueuePending:                    queueStats.Pending,
+		QueueDead:                       queueStats.Dead,
+		QueueDelayed:                    queueStats.Delayed,
+		QueueIDs:                        append([]string(nil), queueStats.IDs...),
+		QueueQuarantined:                queueStats.Quarantined,
+		QueueQuarantineRestorable:       queueStats.QuarantineRestorable,
+		QueueQuarantineUnrestorable:     queueStats.QuarantineUnrestorable,
+		QueueQuarantinePaths:            append([]string(nil), queueStats.QuarantinePaths...),
+		QueueQuarantineRestorablePaths:  append([]string(nil), queueStats.QuarantineRestorablePaths...),
+		OutboxQuarantined:               outboxQuarantineStats.Quarantined,
+		OutboxQuarantineRestorable:      outboxQuarantineStats.QuarantineRestorable,
+		OutboxQuarantineUnrestorable:    outboxQuarantineStats.QuarantineUnrestorable,
+		OutboxQuarantinePaths:           append([]string(nil), outboxQuarantineStats.QuarantinePaths...),
+		OutboxQuarantineRestorablePaths: append([]string(nil), outboxQuarantineStats.QuarantineRestorablePaths...),
 	}
 	if next.Step != nil {
 		item.StepID = next.Step.ID
@@ -6858,7 +6917,7 @@ func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, n
 			addTriageReason("stale_running", "warning")
 		}
 	case job.StatusQueued:
-		if staleAfter > 0 && !j.UpdatedAt.IsZero() && j.UpdatedAt.Before(now.Add(-staleAfter)) && queueStats.Pending == 0 && queueStats.Dead == 0 && queueStats.Quarantined == 0 {
+		if staleAfter > 0 && !j.UpdatedAt.IsZero() && j.UpdatedAt.Before(now.Add(-staleAfter)) && queueStats.Pending == 0 && queueStats.Dead == 0 && queueStats.Quarantined == 0 && outboxQuarantineStats.Quarantined == 0 {
 			addTriageReason("stale_queued", "warning")
 		}
 	}
@@ -6867,6 +6926,9 @@ func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, n
 	}
 	if queueStats.Quarantined > 0 {
 		addTriageReason("queue_quarantined", "warning")
+	}
+	if outboxQuarantineStats.Quarantined > 0 {
+		addTriageReason("outbox_quarantined", "warning")
 	}
 	switch next.State {
 	case "failed":
@@ -6964,6 +7026,9 @@ func renderJobTriage(w io.Writer, snapshot jobTriageSnapshot, jsonOut bool, tmpl
 	}
 	renderJobSummary(w, snapshot.Summary)
 	renderQueueSummary(w, snapshot.Queue)
+	if snapshot.OutboxQuarantine.Quarantined > 0 {
+		fmt.Fprintln(w, outboxQuarantineSummaryLine(snapshot.OutboxQuarantine))
+	}
 	if len(snapshot.StatusPreviews) > 0 {
 		fmt.Fprintf(w, "job status: previews=%d changes=%d blocked=%d\n",
 			len(snapshot.StatusPreviews),
@@ -7046,6 +7111,17 @@ func actionsForJobTriageItem(item jobTriageItem) []string {
 			add(fmt.Sprintf("agent-team job queue quarantine drop %s --all --unrestorable --limit %d --dry-run", item.JobID, queueRecoveryHintLimit))
 		}
 	}
+	if stringSliceContains(item.Reasons, "outbox_quarantined") {
+		add(fmt.Sprintf("agent-team job outbox quarantine %s", item.JobID))
+		if item.OutboxQuarantineRestorable == 1 && len(item.OutboxQuarantineRestorablePaths) == 1 {
+			add(fmt.Sprintf("agent-team job outbox quarantine restore %s %s --dry-run", item.JobID, item.OutboxQuarantineRestorablePaths[0]))
+		} else if item.OutboxQuarantineRestorable > 1 {
+			add(fmt.Sprintf("agent-team job outbox quarantine restore %s --all --limit %d --dry-run", item.JobID, queueRecoveryHintLimit))
+		}
+		if item.OutboxQuarantineUnrestorable > 0 {
+			add(fmt.Sprintf("agent-team job outbox quarantine drop %s --all --unrestorable --limit %d --dry-run", item.JobID, queueRecoveryHintLimit))
+		}
+	}
 	if stringSliceContains(item.Reasons, "failed") || stringSliceContains(item.Reasons, "failed_step") {
 		add(fmt.Sprintf("agent-team job retry %s --dispatch", item.JobID))
 	}
@@ -7111,6 +7187,11 @@ func jobTriageQueueSummary(item jobTriageItem) string {
 		parts = append(parts, fmt.Sprintf("quarantined=%d", item.QueueQuarantined))
 		parts = append(parts, fmt.Sprintf("restorable=%d", item.QueueQuarantineRestorable))
 		parts = append(parts, fmt.Sprintf("unrestorable=%d", item.QueueQuarantineUnrestorable))
+	}
+	if item.OutboxQuarantined > 0 {
+		parts = append(parts, fmt.Sprintf("outbox_quarantined=%d", item.OutboxQuarantined))
+		parts = append(parts, fmt.Sprintf("outbox_restorable=%d", item.OutboxQuarantineRestorable))
+		parts = append(parts, fmt.Sprintf("outbox_unrestorable=%d", item.OutboxQuarantineUnrestorable))
 	}
 	if len(parts) == 0 {
 		return "-"
@@ -11431,11 +11512,15 @@ func renderJobShowResult(w io.Writer, teamDir string, j *job.Job, jsonOut bool, 
 	if err != nil {
 		return err
 	}
+	outboxQuarantineItems, err := collectJobOutboxQuarantineItems(teamDir, j, outboxListFilters{})
+	if err != nil {
+		return err
+	}
 	statusPreviews, err := statusPreviewsForJob(teamDir, j)
 	if err != nil {
 		return err
 	}
-	renderJobDetailWithRuntime(w, teamDir, j, queueItems, outboxItems, statusPreviews, quarantineItems)
+	renderJobDetailWithRuntime(w, teamDir, j, queueItems, outboxItems, statusPreviews, quarantineItems, outboxQuarantineItems)
 	if includeEvents {
 		events, err := job.ListEvents(teamDir, j.ID)
 		if err != nil {
@@ -11619,11 +11704,11 @@ func renderJobStatusReconcileResults(w io.Writer, results []jobStatusReconcileRe
 }
 
 func renderJobDetail(w io.Writer, j *job.Job) {
-	renderJobDetailWithRuntime(w, "", j, nil, nil, nil, nil)
+	renderJobDetailWithRuntime(w, "", j, nil, nil, nil, nil, nil)
 }
 
 func renderJobDetailWithQueue(w io.Writer, j *job.Job, queueItems []*daemon.QueueItem) {
-	renderJobDetailWithRuntime(w, "", j, queueItems, nil, nil, nil)
+	renderJobDetailWithRuntime(w, "", j, queueItems, nil, nil, nil, nil)
 }
 
 func renderJobRecentEvents(w io.Writer, events []job.Event) {
@@ -11631,8 +11716,8 @@ func renderJobRecentEvents(w io.Writer, events []job.Event) {
 	renderJobEventTable(w, events, true)
 }
 
-func renderJobDetailWithRuntime(w io.Writer, teamDir string, j *job.Job, queueItems []*daemon.QueueItem, outboxItems []*daemon.OutboxItem, statusPreviews []jobStatusReconcileResult, quarantineItems []queueQuarantineItem) {
-	actions := jobDetailActions(j, teamDir, queueItems, outboxItems, statusPreviews, quarantineItems, time.Now().UTC())
+func renderJobDetailWithRuntime(w io.Writer, teamDir string, j *job.Job, queueItems []*daemon.QueueItem, outboxItems []*daemon.OutboxItem, statusPreviews []jobStatusReconcileResult, quarantineItems []queueQuarantineItem, outboxQuarantineItems []outboxQuarantineItem) {
+	actions := jobDetailActions(j, teamDir, queueItems, outboxItems, statusPreviews, quarantineItems, outboxQuarantineItems, time.Now().UTC())
 	runtimeMeta := jobRuntimeMetadataForDetail(teamDir, j)
 	fmt.Fprintf(w, "ID:          %s\n", j.ID)
 	fmt.Fprintf(w, "Status:      %s\n", j.Status)
@@ -11776,6 +11861,19 @@ func renderJobDetailWithRuntime(w io.Writer, teamDir string, j *job.Job, queueIt
 				emptyDash(item.LastError))
 		}
 	}
+	if len(outboxQuarantineItems) > 0 {
+		fmt.Fprintln(w, "Outbox Quarantine:")
+		for _, item := range outboxQuarantineItems {
+			fmt.Fprintf(w, "  %s  state=%s id=%s type=%s source=%s restorable=%s problem=%s\n",
+				item.Path,
+				emptyDash(item.State),
+				emptyDash(item.ID),
+				emptyDash(item.Type),
+				emptyDash(item.Source),
+				yesNo(item.Restorable),
+				emptyDash(item.Problem))
+		}
+	}
 	if len(statusPreviews) > 0 {
 		fmt.Fprintln(w, "Status Preview:")
 		for _, preview := range statusPreviews {
@@ -11832,7 +11930,7 @@ func jobRuntimeMetadataForDetail(teamDir string, j *job.Job) map[string]*daemon.
 	return out
 }
 
-func jobDetailActions(j *job.Job, teamDir string, queueItems []*daemon.QueueItem, outboxItems []*daemon.OutboxItem, statusPreviews []jobStatusReconcileResult, quarantineItems []queueQuarantineItem, now time.Time) []string {
+func jobDetailActions(j *job.Job, teamDir string, queueItems []*daemon.QueueItem, outboxItems []*daemon.OutboxItem, statusPreviews []jobStatusReconcileResult, quarantineItems []queueQuarantineItem, outboxQuarantineItems []outboxQuarantineItem, now time.Time) []string {
 	if j == nil {
 		return nil
 	}
@@ -11866,7 +11964,13 @@ func jobDetailActions(j *job.Job, teamDir string, queueItems []*daemon.QueueItem
 	sort.Strings(stats.IDs)
 	sort.Strings(stats.QuarantinePaths)
 	sort.Strings(stats.QuarantineRestorablePaths)
-	if triage, ok := triageJob(j, inspectNextJobStep(j), stats, now, 0); ok {
+	var outboxQuarantineStats jobTriageOutboxQuarantineStats
+	for _, item := range outboxQuarantineItems {
+		addOutboxQuarantineItemToTriageStats(&outboxQuarantineStats, item)
+	}
+	sort.Strings(outboxQuarantineStats.QuarantinePaths)
+	sort.Strings(outboxQuarantineStats.QuarantineRestorablePaths)
+	if triage, ok := triageJob(j, inspectNextJobStep(j), stats, outboxQuarantineStats, now, 0); ok {
 		for _, action := range triage.Actions {
 			add(action)
 		}

@@ -1217,6 +1217,25 @@ func TestJobShowIncludesQueueItems(t *testing.T) {
 		QueuedAt:  now.Add(-30 * time.Minute),
 		UpdatedAt: now.Add(-30 * time.Minute),
 	})
+	outboxQuarantinePath := filepath.Join("quarantine", stamp, daemon.OutboxStatePending, "outbox-job-show-quarantined.json")
+	writeQuarantinedOutboxFile(t, teamDir, stamp, daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-job-show-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": "squ-109", "ticket": "SQU-109", "target": "worker"},
+		CreatedAt: now.Add(-25 * time.Minute),
+		UpdatedAt: now.Add(-25 * time.Minute),
+	})
+	writeQuarantinedOutboxFile(t, teamDir, stamp, daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-job-show-other-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": "squ-999", "ticket": "SQU-999", "target": "worker"},
+		CreatedAt: now.Add(-24 * time.Minute),
+		UpdatedAt: now.Add(-24 * time.Minute),
+	})
 	writeCLIOutboxItem(t, teamDir, &daemon.OutboxItem{
 		ID:        "outbox-job-show-failed",
 		State:     daemon.OutboxStateFailed,
@@ -1269,10 +1288,16 @@ func TestJobShowIncludesQueueItems(t *testing.T) {
 		"error=daemon unavailable",
 		"outbox-job-show-pending",
 		"state=pending",
+		"Outbox Quarantine:",
+		outboxQuarantinePath,
+		"outbox-job-show-quarantined",
+		"restorable=yes",
 		"Actions:",
 		"agent-team job queue retry squ-109 q-job-show",
 		"agent-team job queue quarantine squ-109",
 		fmt.Sprintf("agent-team job queue quarantine restore squ-109 %s --dry-run", quarantinePath),
+		"agent-team job outbox quarantine squ-109",
+		fmt.Sprintf("agent-team job outbox quarantine restore squ-109 %s --dry-run", outboxQuarantinePath),
 		"agent-team job outbox retry squ-109 outbox-job-show-failed",
 		"agent-team job outbox drop squ-109 outbox-job-show-failed --dry-run",
 		"agent-team job outbox squ-109 --state pending",
@@ -1287,6 +1312,9 @@ func TestJobShowIncludesQueueItems(t *testing.T) {
 	}
 	if strings.Contains(showOut.String(), "outbox-job-show-other") {
 		t.Fatalf("job show leaked unrelated outbox item:\n%s", showOut.String())
+	}
+	if strings.Contains(showOut.String(), "outbox-job-show-other-quarantined") {
+		t.Fatalf("job show leaked unrelated quarantined outbox item:\n%s", showOut.String())
 	}
 
 	showJSON := NewRootCmd()
@@ -2717,6 +2745,22 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		QueuedAt:  now.Add(-2 * time.Hour),
 		UpdatedAt: now.Add(-2 * time.Hour),
 	})
+	outboxQuarantined := mustNewJob(t, "SQU-209", "worker")
+	outboxQuarantined.Instance = "worker-squ-209"
+	if err := job.Write(teamDir, outboxQuarantined); err != nil {
+		t.Fatalf("write outbox quarantined job: %v", err)
+	}
+	outboxQuarantineStamp := "20260619T030405.000000000Z"
+	outboxQuarantinePath := filepath.Join("quarantine", outboxQuarantineStamp, daemon.OutboxStatePending, "outbox-triage-quarantined.json")
+	writeQuarantinedOutboxFile(t, teamDir, outboxQuarantineStamp, daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-triage-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": "squ-209", "ticket": "SQU-209", "target": "worker"},
+		CreatedAt: now.Add(-2 * time.Hour),
+		UpdatedAt: now.Add(-2 * time.Hour),
+	})
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -2727,9 +2771,10 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		t.Fatalf("job triage: %v\nstderr=%s", err, stderr.String())
 	}
 	for _, want := range []string{
-		"jobs: total=8",
+		"jobs: total=9",
 		"queue: total=1 pending=0 dead=1",
 		"quarantined=1 restorable=1 unrestorable=0",
+		"outbox quarantine: quarantined=1 restorable=1 unrestorable=0",
 		"Attention:",
 		"squ-201",
 		"failed",
@@ -2759,6 +2804,11 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		"queue_quarantined",
 		"agent-team job queue quarantine squ-207",
 		fmt.Sprintf("agent-team job queue quarantine restore squ-207 %s --dry-run", quarantinePath),
+		"squ-209",
+		"outbox_quarantined",
+		"outbox_quarantined=1,outbox_restorable=1,outbox_unrestorable=0",
+		"agent-team job outbox quarantine squ-209",
+		fmt.Sprintf("agent-team job outbox quarantine restore squ-209 %s --dry-run", outboxQuarantinePath),
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("job triage missing %q:\n%s", want, out.String())
@@ -2777,7 +2827,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	if err := json.Unmarshal(jsonOut.Bytes(), &snapshot); err != nil {
 		t.Fatalf("decode triage json: %v\nbody=%s", err, jsonOut.String())
 	}
-	if snapshot.Summary.Total != 8 || snapshot.Queue.Dead != 1 || snapshot.Queue.Quarantined != 1 || snapshot.Queue.QuarantineRestorable != 1 || len(snapshot.Attention) != 6 || len(snapshot.ReadySteps) != 2 {
+	if snapshot.Summary.Total != 9 || snapshot.Queue.Dead != 1 || snapshot.Queue.Quarantined != 1 || snapshot.Queue.QuarantineRestorable != 1 || snapshot.OutboxQuarantine.Quarantined != 1 || snapshot.OutboxQuarantine.Restorable != 1 || len(snapshot.Attention) != 7 || len(snapshot.ReadySteps) != 2 {
 		t.Fatalf("triage snapshot = %+v", snapshot)
 	}
 	reasons := map[string][]string{}
@@ -2813,6 +2863,12 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	if !containsString(actions["squ-207"], "agent-team job queue quarantine squ-207") || !containsString(actions["squ-207"], fmt.Sprintf("agent-team job queue quarantine restore squ-207 %s --dry-run", quarantinePath)) {
 		t.Fatalf("squ-207 actions = %v", actions["squ-207"])
 	}
+	if !containsString(reasons["squ-209"], "outbox_quarantined") {
+		t.Fatalf("squ-209 reasons = %v", reasons["squ-209"])
+	}
+	if !containsString(actions["squ-209"], "agent-team job outbox quarantine squ-209") || !containsString(actions["squ-209"], fmt.Sprintf("agent-team job outbox quarantine restore squ-209 %s --dry-run", outboxQuarantinePath)) {
+		t.Fatalf("squ-209 actions = %v", actions["squ-209"])
+	}
 	readyByID := map[string]jobReadyRow{}
 	for _, row := range snapshot.ReadySteps {
 		readyByID[row.JobID] = row
@@ -2833,7 +2889,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	if err := formatCmd.Execute(); err != nil {
 		t.Fatalf("job triage format: %v\nstderr=%s", err, formatErr.String())
 	}
-	if got, want := formatOut.String(), "8 1 6 2\n"; got != want {
+	if got, want := formatOut.String(), "9 1 7 2\n"; got != want {
 		t.Fatalf("job triage format = %q, want %q", got, want)
 	}
 
@@ -2879,6 +2935,22 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	}
 	if len(quarantineReasonSnapshot.Attention) != 1 || quarantineReasonSnapshot.Attention[0].JobID != "squ-207" {
 		t.Fatalf("quarantine reason triage attention = %+v", quarantineReasonSnapshot.Attention)
+	}
+
+	outboxQuarantineReasonCmd := NewRootCmd()
+	outboxQuarantineReasonOut, outboxQuarantineReasonErr := &bytes.Buffer{}, &bytes.Buffer{}
+	outboxQuarantineReasonCmd.SetOut(outboxQuarantineReasonOut)
+	outboxQuarantineReasonCmd.SetErr(outboxQuarantineReasonErr)
+	outboxQuarantineReasonCmd.SetArgs([]string{"job", "triage", "--repo", tmp, "--stale-after", "24h", "--reason", "outbox_quarantined", "--json"})
+	if err := outboxQuarantineReasonCmd.Execute(); err != nil {
+		t.Fatalf("job triage outbox quarantine reason: %v\nstderr=%s", err, outboxQuarantineReasonErr.String())
+	}
+	var outboxQuarantineReasonSnapshot jobTriageSnapshot
+	if err := json.Unmarshal(outboxQuarantineReasonOut.Bytes(), &outboxQuarantineReasonSnapshot); err != nil {
+		t.Fatalf("decode outbox quarantine reason triage json: %v\nbody=%s", err, outboxQuarantineReasonOut.String())
+	}
+	if len(outboxQuarantineReasonSnapshot.Attention) != 1 || outboxQuarantineReasonSnapshot.Attention[0].JobID != "squ-209" {
+		t.Fatalf("outbox quarantine reason triage attention = %+v", outboxQuarantineReasonSnapshot.Attention)
 	}
 
 	cleanupReasonCmd := NewRootCmd()

@@ -6803,6 +6803,7 @@ func addTeamJobHealth(result *healthResult, teamDir string, top *topology.Topolo
 	}
 	triage.Summary = summarizeJobsWithRuntime(teamDir, ownedJobs)
 	triage.Queue = result.Queue
+	triage.OutboxQuarantine = result.OutboxQuarantine
 	triage.Attention = filterJobTriageItemsByJobIDs(triage.Attention, ownedIDs)
 	triage.ReadySteps = filterJobReadyRowsByJobIDs(triage.ReadySteps, ownedIDs)
 	triage.StatusPreviews = filterJobStatusPreviewsByJobIDs(triage.StatusPreviews, ownedIDs)
@@ -7302,6 +7303,11 @@ func collectTeamTriage(teamDir, name string, now time.Time, staleAfter time.Dura
 		return jobTriageSnapshot{}, err
 	}
 	teamQuarantine := teamQueueQuarantineItems(top, team, ownedJobs, quarantineItems)
+	outboxQuarantineItems, err := listOutboxQuarantine(teamDir)
+	if err != nil {
+		return jobTriageSnapshot{}, err
+	}
+	teamOutboxQuarantine := teamOutboxQuarantineItems(top, team, ownedJobs, outboxQuarantineItems)
 	snapshot, err := collectJobTriage(teamDir, now, staleAfter)
 	if err != nil {
 		return jobTriageSnapshot{}, err
@@ -7309,6 +7315,7 @@ func collectTeamTriage(teamDir, name string, now time.Time, staleAfter time.Dura
 	snapshot.Summary = summarizeJobsWithRuntime(teamDir, ownedJobs)
 	snapshot.Queue = summarizeQueueItems(teamQueue, now)
 	applyQueueQuarantineSummary(&snapshot.Queue, teamQuarantine)
+	snapshot.OutboxQuarantine = summarizeOutboxQuarantineItems(teamOutboxQuarantine)
 	snapshot.Attention = scopeTeamTriageActions(team.Name, filterJobTriageItemsByJobIDs(snapshot.Attention, ownedIDs))
 	snapshot.ReadySteps = filterJobReadyRowsByJobIDs(snapshot.ReadySteps, ownedIDs)
 	snapshot.StatusPreviews = filterJobStatusPreviewsByJobIDs(snapshot.StatusPreviews, ownedIDs)

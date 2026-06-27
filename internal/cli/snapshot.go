@@ -392,6 +392,11 @@ func collectTeamSnapshot(teamDir, repoRoot, name string, opts snapshotOptions) (
 		triage.Summary = summarizeJobs(ownedJobs)
 		triage.Queue = summarizeQueueItems(teamQueue, now)
 		applyQueueQuarantineSummary(&triage.Queue, teamQuarantine)
+		if quarantine, err := listOutboxQuarantine(teamDir); err != nil {
+			out.addError("job_triage_outbox_quarantine", err)
+		} else {
+			triage.OutboxQuarantine = summarizeOutboxQuarantineItems(teamOutboxQuarantineItems(top, team, ownedJobs, quarantine))
+		}
 		triage.Attention = filterJobTriageItemsByJobIDs(triage.Attention, ownedJobIDs)
 		triage.ReadySteps = filterJobReadyRowsByJobIDs(triage.ReadySteps, ownedJobIDs)
 		triage.StatusPreviews = filterJobStatusPreviewsByJobIDs(triage.StatusPreviews, ownedJobIDs)
