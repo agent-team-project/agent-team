@@ -189,6 +189,47 @@ func TestRuntimeProbeSkipDoctorWarningsDoNotFail(t *testing.T) {
 	}
 }
 
+func TestRuntimeProbeCommands(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "codex")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "codex" {
+			t.Fatalf("look path bin = %q, want codex", bin)
+		}
+		return "/opt/homebrew/bin/codex", nil
+	})
+	withRuntimeProbeRunCommand(t, func(ctx context.Context, binary string, args ...string) runtimeProbeCommandResult {
+		t.Fatalf("codex doctor should be skipped")
+		return runtimeProbeCommandResult{}
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"runtime", "probe", "--target", tmp, "--skip-doctor", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime probe commands: %v\nstderr=%s", err, stderr.String())
+	}
+	want := strings.Join([]string{
+		"agent-team daemon start",
+		"agent-team run manager --runtime codex --prompt \"probe\" --last-message",
+		"agent-team runtime --json",
+		"agent-team runtime probe --runtime codex --exec --timeout 2m",
+		"agent-team runtime probe --runtime codex --start-daemon --daemon-http-addr 127.0.0.1:0 --exec-http-check --timeout 2m",
+		"codex doctor --summary",
+		"",
+	}, "\n")
+	if got := out.String(); got != want {
+		t.Fatalf("runtime probe commands = %q, want %q", got, want)
+	}
+	if strings.Contains(out.String(), "runtime probe:") || strings.Contains(out.String(), "actions:") {
+		t.Fatalf("runtime probe commands included prose:\n%s", out.String())
+	}
+}
+
 func TestRuntimeProbeFormat(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "codex")
 	t.Setenv(runtimebin.EnvBinary, "")
@@ -222,24 +263,48 @@ func TestRuntimeProbeFormat(t *testing.T) {
 }
 
 func TestRuntimeProbeFormatValidation(t *testing.T) {
-	cmd := NewRootCmd()
-	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"runtime", "probe", "--format", "{{.OK}}", "--json"})
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatalf("runtime probe accepted --format with --json")
-	}
-	var ec ExitCode
-	if !errors.As(err, &ec) || int(ec) != 2 {
-		t.Fatalf("error = %v, want exit 2", err)
-	}
-	if !strings.Contains(stderr.String(), "--format cannot be combined with --json") {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
-	if out.Len() != 0 {
-		t.Fatalf("stdout = %q", out.String())
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "format with json",
+			args: []string{"runtime", "probe", "--format", "{{.OK}}", "--json"},
+			want: "--format cannot be combined with --json",
+		},
+		{
+			name: "commands with json",
+			args: []string{"runtime", "probe", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "commands with format",
+			args: []string{"runtime", "probe", "--commands", "--format", "{{.OK}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("runtime probe accepted invalid output flags")
+			}
+			var ec ExitCode
+			if !errors.As(err, &ec) || int(ec) != 2 {
+				t.Fatalf("error = %v, want exit 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("stdout = %q", out.String())
+			}
+		})
 	}
 }
 

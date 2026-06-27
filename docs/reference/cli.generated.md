@@ -6411,6 +6411,7 @@ Aliases: `check`, `doctor`
 Flags:
 
 ```text
+      --commands                   Print recommended follow-up commands, one per line.
       --daemon-http-addr string    With --start-daemon, also expose agent-teamd on this loopback HTTP address, e.g. 127.0.0.1:0.
       --daemon-interval duration   Polling interval for --wait-daemon. (default 200ms)
       --exec                       Run a minimal runtime-native execution probe. Currently supports Codex one-shot execution.

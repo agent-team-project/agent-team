@@ -39,7 +39,7 @@ as the output directory instead.
 | `agent-team runtime unset` | Remove the repo default runtime profile from `.agent_team/config.toml` |
 | `agent-team runtime profile` | Explicit profile view, with `show` as a shorter alias |
 | `agent-team runtime ls` | List supported runtime profiles, availability, and capabilities |
-| `agent-team runtime probe` | Probe runtime selection, daemon readiness, Codex doctor health, optional Codex exec readiness, Codex socket reachability with `--exec-socket-check`, loopback HTTP reachability with `--exec-http-check`, and write diagnostics with `--output`; aliases: `doctor`, `check` |
+| `agent-team runtime probe` | Probe runtime selection, daemon readiness, Codex doctor health, optional Codex exec readiness, Codex socket reachability with `--exec-socket-check`, loopback HTTP reachability with `--exec-http-check`, print follow-up commands with `--commands`, and write diagnostics with `--output`; aliases: `doctor`, `check` |
 | `agent-team adopt <instance>` | Adopt a live external runtime process into daemon metadata and return follow-up actions; add `--commands` for one follow-up command per line; `runtime adopt` remains available |
 | `agent-team resume-plan` | Show resume, attach, and log fallback commands from daemon metadata; filter by `--step`, `--action`, `--runtime-stale`, or `--unhealthy`, sort/limit large recovery lists, print one command per line with `--commands`, or summarize with `--summary`; `runtime resume-plan` remains available |
 

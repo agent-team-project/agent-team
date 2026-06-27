@@ -30,6 +30,7 @@ Use `runtime probe` when you need a dispatch preflight rather than a static prof
 agent-team runtime probe
 agent-team runtime probe --runtime codex
 agent-team runtime probe --runtime codex --json
+agent-team runtime probe --runtime codex --commands
 agent-team runtime probe --runtime codex --skip-doctor
 agent-team runtime probe --runtime codex --require-daemon
 agent-team runtime probe --runtime codex --require-daemon --wait-daemon --timeout 10s
@@ -44,10 +45,12 @@ agent-team runtime probe --runtime codex --exec --timeout 2m --output runtime-pr
 The probe combines the selected runtime profile, daemon readiness, daemon socket
 path, and action hints. For Codex it also runs `codex doctor --json` with a
 timeout, so provider reachability, auth, MCP, and sandbox failures are visible
-before jobs or pipelines queue work against a runtime that cannot start. By
-default, a stopped daemon is a warning because direct runs can still work; add
-`--require-daemon` when the preflight is for daemon-backed dispatch, mailbox, or
-channel flows and should fail until `agent-teamd` is ready. Add `--wait-daemon`
+before jobs or pipelines queue work against a runtime that cannot start. Text
+output includes a concise action list by default; add `--commands` when scripts
+need only those recommended follow-up commands, one per line, while preserving
+the probe exit code. A stopped daemon is a warning because direct runs can still
+work; add `--require-daemon` when the preflight is for daemon-backed dispatch,
+mailbox, or channel flows and should fail until `agent-teamd` is ready. Add `--wait-daemon`
 to poll readiness first; `--timeout` bounds both that wait and runtime-native
 diagnostics. Add `--start-daemon` when the preflight should start the detached
 repo daemon if it is not ready; without that flag the probe remains read-only.
