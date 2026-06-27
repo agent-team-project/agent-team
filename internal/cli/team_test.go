@@ -6915,6 +6915,18 @@ instances = ["other"]
 		}
 	}
 
+	showCommands := NewRootCmd()
+	showCommandsOut, showCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showCommands.SetOut(showCommandsOut)
+	showCommands.SetErr(showCommandsErr)
+	showCommands.SetArgs([]string{"team", "queue", "show", "delivery", "q-team-claude", "--repo", root, "--commands"})
+	if err := showCommands.Execute(); err != nil {
+		t.Fatalf("team queue show --commands: %v\nstderr=%s", err, showCommandsErr.String())
+	}
+	if got, want := showCommandsOut.String(), "agent-team team queue retry delivery q-team-claude\nagent-team team queue drop delivery q-team-claude\n"; got != want {
+		t.Fatalf("team queue show --commands = %q, want %q", got, want)
+	}
+
 	showOther := NewRootCmd()
 	showOtherOut, showOtherErr := &bytes.Buffer{}, &bytes.Buffer{}
 	showOther.SetOut(showOtherOut)
@@ -7857,6 +7869,16 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 			name: "drop invalid format",
 			args: []string{"team", "queue", "drop", "delivery", "--format", "{{"},
 			want: "invalid --format template",
+		},
+		{
+			name: "show commands with json",
+			args: []string{"team", "queue", "show", "delivery", "q-team-claude", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "show commands with format",
+			args: []string{"team", "queue", "show", "delivery", "q-team-claude", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
 		},
 		{
 			name: "quarantine format with json",

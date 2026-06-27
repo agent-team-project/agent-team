@@ -7383,6 +7383,30 @@ target = "worker"
 		t.Fatalf("pipeline queue show format = %q, want %q", got, want)
 	}
 
+	showCommands := NewRootCmd()
+	showCommandsOut, showCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showCommands.SetOut(showCommandsOut)
+	showCommands.SetErr(showCommandsErr)
+	showCommands.SetArgs([]string{"pipeline", "queue", "show", "ticket_to_pr", "q-pipeline-dead", "--repo", root, "--commands"})
+	if err := showCommands.Execute(); err != nil {
+		t.Fatalf("pipeline queue show --commands: %v\nstderr=%s", err, showCommandsErr.String())
+	}
+	if got, want := showCommandsOut.String(), "agent-team pipeline queue retry ticket_to_pr q-pipeline-dead\nagent-team pipeline queue drop ticket_to_pr q-pipeline-dead\n"; got != want {
+		t.Fatalf("pipeline queue show --commands = %q, want %q", got, want)
+	}
+
+	showCommandsJSON := NewRootCmd()
+	showCommandsJSONOut, showCommandsJSONErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showCommandsJSON.SetOut(showCommandsJSONOut)
+	showCommandsJSON.SetErr(showCommandsJSONErr)
+	showCommandsJSON.SetArgs([]string{"pipeline", "queue", "show", "ticket_to_pr", "q-pipeline-dead", "--repo", root, "--commands", "--json"})
+	if err := showCommandsJSON.Execute(); err == nil {
+		t.Fatalf("pipeline queue show --commands --json succeeded: stdout=%s", showCommandsJSONOut.String())
+	}
+	if !strings.Contains(showCommandsJSONErr.String(), "--commands cannot be combined with --json") {
+		t.Fatalf("pipeline queue show --commands --json stderr = %q", showCommandsJSONErr.String())
+	}
+
 	foreign := NewRootCmd()
 	foreignOut, foreignErr := &bytes.Buffer{}, &bytes.Buffer{}
 	foreign.SetOut(foreignOut)

@@ -140,9 +140,10 @@ func newQueueLsCmd() *cobra.Command {
 
 func newQueueShowCmd() *cobra.Command {
 	var (
-		target  string
-		jsonOut bool
-		format  string
+		target   string
+		jsonOut  bool
+		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -154,6 +155,14 @@ func newQueueShowCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue show: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue show: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue show: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			tmpl, err := parseQueueFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue show: %v\n", err)
@@ -163,11 +172,15 @@ func newQueueShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if commands {
+				return renderQueueItemCommands(cmd.OutOrStdout(), item, nil)
+			}
 			return renderQueueItemResult(cmd.OutOrStdout(), item, jsonOut, tmpl, queueRuntimeMap(teamDir))
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the queue item as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
@@ -1633,6 +1646,10 @@ func renderQueueItemResultWithActions(w io.Writer, item *daemon.QueueItem, jsonO
 	return nil
 }
 
+func renderQueueItemCommands(w io.Writer, item *daemon.QueueItem, actions queueActionResolver) error {
+	return renderActionCommands(w, commandActionsOnly(queueItemResolvedActions(item, time.Now().UTC(), actions)))
+}
+
 func renderQueueItemTemplate(w io.Writer, item *daemon.QueueItem, tmpl *template.Template) error {
 	if err := tmpl.Execute(w, item); err != nil {
 		return err
@@ -1658,10 +1675,7 @@ func renderQueueTableWithActions(w io.Writer, items []*daemon.QueueItem, runtime
 	fmt.Fprintln(tw, "ID\tSTATE\tINSTANCE\tINSTANCE_ID\tRUNTIME\tATTEMPTS\tNEXT_RETRY\tACTION\tLAST_ERROR")
 	now := time.Now().UTC()
 	for _, item := range items {
-		itemActions := queueItemActions(item, now)
-		if actions != nil {
-			itemActions = actions(item, now)
-		}
+		itemActions := queueItemResolvedActions(item, now, actions)
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
 			item.ID, item.State, item.Instance, item.InstanceID, queueItemRuntimeLabel(item, runtimeByInstance), item.Attempts, queueTime(item.NextRetry), emptyDash(strings.Join(itemActions, "; ")), emptyDash(item.LastError))
 	}
@@ -1727,10 +1741,7 @@ func renderQueueDetailWithActions(w io.Writer, item *daemon.QueueItem, runtimeBy
 		fmt.Fprintf(w, "Dead:        %s\n", item.DeadLetteredAt.Format(time.RFC3339))
 	}
 	now := time.Now().UTC()
-	itemActions := queueItemActions(item, now)
-	if actions != nil {
-		itemActions = actions(item, now)
-	}
+	itemActions := queueItemResolvedActions(item, now, actions)
 	if len(itemActions) > 0 {
 		fmt.Fprintln(w, "Actions:")
 		for _, action := range itemActions {
@@ -1741,6 +1752,14 @@ func renderQueueDetailWithActions(w io.Writer, item *daemon.QueueItem, runtimeBy
 		body, _ := json.MarshalIndent(item.Payload, "", "  ")
 		fmt.Fprintf(w, "Payload:\n%s\n", string(body))
 	}
+}
+
+func queueItemResolvedActions(item *daemon.QueueItem, now time.Time, actions queueActionResolver) []string {
+	itemActions := queueItemActions(item, now)
+	if actions != nil {
+		itemActions = actions(item, now)
+	}
+	return itemActions
 }
 
 func queueItemActions(item *daemon.QueueItem, now time.Time) []string {

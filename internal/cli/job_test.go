@@ -1869,6 +1869,18 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 		}
 	}
 
+	showCommands := NewRootCmd()
+	showCommandsOut, showCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showCommands.SetOut(showCommandsOut)
+	showCommands.SetErr(showCommandsErr)
+	showCommands.SetArgs([]string{"job", "queue", "show", "SQU-120", "q-job-dead", "--repo", tmp, "--commands"})
+	if err := showCommands.Execute(); err != nil {
+		t.Fatalf("job queue show --commands: %v\nstderr=%s", err, showCommandsErr.String())
+	}
+	if got, want := showCommandsOut.String(), "agent-team job queue retry squ-120 q-job-dead\nagent-team job queue drop squ-120 q-job-dead\n"; got != want {
+		t.Fatalf("job queue show --commands = %q, want %q", got, want)
+	}
+
 	showReady := NewRootCmd()
 	showReadyOut, showReadyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	showReady.SetOut(showReadyOut)
@@ -1881,6 +1893,18 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 		if !strings.Contains(showReadyOut.String(), want) {
 			t.Fatalf("job queue show ready missing %q:\n%s", want, showReadyOut.String())
 		}
+	}
+
+	showReadyCommands := NewRootCmd()
+	showReadyCommandsOut, showReadyCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showReadyCommands.SetOut(showReadyCommandsOut)
+	showReadyCommands.SetErr(showReadyCommandsErr)
+	showReadyCommands.SetArgs([]string{"job", "queue", "show", "SQU-120", "q-job-ready", "--repo", tmp, "--commands"})
+	if err := showReadyCommands.Execute(); err != nil {
+		t.Fatalf("job queue show ready --commands: %v\nstderr=%s", err, showReadyCommandsErr.String())
+	}
+	if got, want := showReadyCommandsOut.String(), "agent-team queue drain\nagent-team job queue drop squ-120 q-job-ready\n"; got != want {
+		t.Fatalf("job queue show ready --commands = %q, want %q", got, want)
 	}
 
 	showOther := NewRootCmd()
@@ -2882,6 +2906,16 @@ func TestJobQueueRejectsFormatCombinations(t *testing.T) {
 			name: "invalid format",
 			args: []string{"job", "queue", "SQU-120", "--format", "{{"},
 			want: "invalid --format template",
+		},
+		{
+			name: "show commands with json",
+			args: []string{"job", "queue", "show", "SQU-120", "q-job-dead", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "show commands with format",
+			args: []string{"job", "queue", "show", "SQU-120", "q-job-dead", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
 		},
 		{
 			name: "invalid state",

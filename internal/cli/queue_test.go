@@ -141,6 +141,18 @@ func TestQueueCommandListShowDropLocal(t *testing.T) {
 		}
 	}
 
+	showCommands := NewRootCmd()
+	showCommandsOut, showCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showCommands.SetOut(showCommandsOut)
+	showCommands.SetErr(showCommandsErr)
+	showCommands.SetArgs([]string{"queue", "show", "q-local", "--target", tmp, "--commands"})
+	if err := showCommands.Execute(); err != nil {
+		t.Fatalf("queue show --commands: %v\nstderr=%s", err, showCommandsErr.String())
+	}
+	if got, want := showCommandsOut.String(), "agent-team queue retry q-local\nagent-team queue drop q-local\n"; got != want {
+		t.Fatalf("queue show --commands = %q, want %q", got, want)
+	}
+
 	show := NewRootCmd()
 	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
 	show.SetOut(showOut)
@@ -424,6 +436,8 @@ func TestQueueDoctorFormatValidation(t *testing.T) {
 		{[]string{"queue", "doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
 		{[]string{"queue", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
 		{[]string{"queue", "doctor", "--format", "{{"}, "invalid --format template"},
+		{[]string{"queue", "show", "q-local", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"queue", "show", "q-local", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
 		{[]string{"queue", "drop", "--format", "{{.ID}}", "--json"}, "--format cannot be combined"},
 		{[]string{"queue", "drop", "--format", "{{"}, "invalid --format template"},
 		{[]string{"queue", "retry", "--format", "{{.ID}}", "--json"}, "--format cannot be combined"},

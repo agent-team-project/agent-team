@@ -1083,9 +1083,10 @@ func newPipelineQueueCmd() *cobra.Command {
 
 func newPipelineQueueShowCmd() *cobra.Command {
 	var (
-		repo    string
-		jsonOut bool
-		format  string
+		repo     string
+		jsonOut  bool
+		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1095,6 +1096,14 @@ func newPipelineQueueShowCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue show: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue show: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue show: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			tmpl, err := parseQueueFormat(format)
@@ -1110,11 +1119,16 @@ func newPipelineQueueShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return renderQueueItemResultWithActions(cmd.OutOrStdout(), item, jsonOut, tmpl, pipelineQueueActionResolver(args[0]), queueRuntimeMap(teamDir))
+			actions := pipelineQueueActionResolver(args[0])
+			if commands {
+				return renderQueueItemCommands(cmd.OutOrStdout(), item, actions)
+			}
+			return renderQueueItemResultWithActions(cmd.OutOrStdout(), item, jsonOut, tmpl, actions, queueRuntimeMap(teamDir))
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the queue item as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }

@@ -2907,6 +2907,7 @@ agent-team job queue show <job-id> <id> [flags]
 Flags:
 
 ```text
+      --commands        Print only recommended follow-up commands.
       --format string   Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the queue item as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -5054,6 +5055,7 @@ agent-team pipeline queue show <pipeline> <id> [flags]
 Flags:
 
 ```text
+      --commands        Print only recommended follow-up commands.
       --format string   Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the queue item as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -6054,6 +6056,7 @@ agent-team queue show <id> [flags]
 Flags:
 
 ```text
+      --commands        Print only recommended follow-up commands.
       --format string   Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the queue item as JSON.
       --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
@@ -8174,6 +8177,7 @@ agent-team team queue show <team> <id> [flags]
 Flags:
 
 ```text
+      --commands        Print only recommended follow-up commands.
       --format string   Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the queue item as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
