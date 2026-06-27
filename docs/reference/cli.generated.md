@@ -2544,6 +2544,7 @@ agent-team job outbox show <job-id> <id> [flags]
 Flags:
 
 ```text
+      --commands        Print only recommended follow-up commands.
       --format string   Render the job-owned outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the job-owned outbox item as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -4039,6 +4040,7 @@ agent-team outbox show <id> [flags]
 Flags:
 
 ```text
+      --commands        Print recommended follow-up commands, one per line.
       --format string   Render the outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the outbox item as JSON.
       --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
@@ -4784,6 +4786,7 @@ agent-team pipeline outbox show <pipeline> <id> [flags]
 Flags:
 
 ```text
+      --commands        Print only recommended follow-up commands.
       --format string   Render the pipeline-owned outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the pipeline-owned outbox item as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -7832,6 +7835,7 @@ agent-team team outbox show <team> <id> [flags]
 Flags:
 
 ```text
+      --commands        Print only recommended follow-up commands.
       --format string   Render the team-owned outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the team-owned outbox item as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")

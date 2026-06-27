@@ -149,9 +149,10 @@ func newOutboxLsCmd() *cobra.Command {
 
 func newOutboxShowCmd() *cobra.Command {
 	var (
-		target  string
-		jsonOut bool
-		format  string
+		target   string
+		jsonOut  bool
+		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -161,6 +162,14 @@ func newOutboxShowCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox show: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox show: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox show: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			tmpl, err := parseOutboxFormat(format)
@@ -176,11 +185,15 @@ func newOutboxShowCmd() *cobra.Command {
 			if err != nil {
 				return outboxReadError(args[0], err)
 			}
+			if commands {
+				return renderOutboxItemCommands(cmd.OutOrStdout(), item, nil)
+			}
 			return renderOutboxItemResult(cmd.OutOrStdout(), item, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the outbox item as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
@@ -984,6 +997,12 @@ func renderOutboxItemsTable(w io.Writer, items []*daemon.OutboxItem) error {
 }
 
 func renderOutboxItemResult(w io.Writer, item *daemon.OutboxItem, jsonOut bool, tmpl *template.Template) error {
+	return renderOutboxItemResultWithActions(w, item, jsonOut, tmpl, nil)
+}
+
+type outboxActionResolver func(*daemon.OutboxItem) []string
+
+func renderOutboxItemResultWithActions(w io.Writer, item *daemon.OutboxItem, jsonOut bool, tmpl *template.Template, actions outboxActionResolver) error {
 	if item == nil {
 		item = &daemon.OutboxItem{}
 	}
@@ -1011,6 +1030,13 @@ func renderOutboxItemResult(w io.Writer, item *daemon.OutboxItem, jsonOut bool, 
 		fmt.Fprintf(w, "Failed:      %s\n", outboxTime(item.FailedAt))
 	}
 	fmt.Fprintf(w, "Last error:  %s\n", emptyDash(item.LastError))
+	itemActions := outboxItemResolvedActions(item, actions)
+	if len(itemActions) > 0 {
+		fmt.Fprintln(w, "Actions:")
+		for _, action := range itemActions {
+			fmt.Fprintf(w, "  %s\n", action)
+		}
+	}
 	body, err := json.MarshalIndent(item.Payload, "", "  ")
 	if err != nil {
 		return err
@@ -1018,6 +1044,98 @@ func renderOutboxItemResult(w io.Writer, item *daemon.OutboxItem, jsonOut bool, 
 	fmt.Fprintln(w, "Payload:")
 	fmt.Fprintln(w, string(body))
 	return nil
+}
+
+func renderOutboxItemCommands(w io.Writer, item *daemon.OutboxItem, actions outboxActionResolver) error {
+	return renderActionCommands(w, commandActionsOnly(outboxItemResolvedActions(item, actions)))
+}
+
+func outboxItemResolvedActions(item *daemon.OutboxItem, actions outboxActionResolver) []string {
+	if actions != nil {
+		return actions(item)
+	}
+	return outboxItemActions(item)
+}
+
+func outboxItemActions(item *daemon.OutboxItem) []string {
+	if item == nil {
+		return nil
+	}
+	if id := normalizeOutboxJob(outboxItemJob(item)); id != "" {
+		return jobOutboxItemActions(id, item)
+	}
+	switch item.State {
+	case daemon.OutboxStateFailed:
+		return []string{
+			fmt.Sprintf("agent-team outbox retry %s", item.ID),
+			fmt.Sprintf("agent-team outbox drop %s --dry-run", item.ID),
+		}
+	case daemon.OutboxStatePending:
+		return []string{
+			"agent-team outbox ls --state pending",
+			"agent-team outbox drain --dry-run",
+		}
+	default:
+		return nil
+	}
+}
+
+func jobOutboxActionResolver(jobID string) outboxActionResolver {
+	return func(item *daemon.OutboxItem) []string {
+		return jobOutboxItemActions(jobID, item)
+	}
+}
+
+func pipelineOutboxActionResolver(pipeline string) outboxActionResolver {
+	return func(item *daemon.OutboxItem) []string {
+		if item == nil {
+			return nil
+		}
+		name := strings.TrimSpace(pipeline)
+		if name == "" {
+			return nil
+		}
+		switch item.State {
+		case daemon.OutboxStateFailed:
+			return []string{
+				fmt.Sprintf("agent-team pipeline outbox retry %s %s", name, item.ID),
+				fmt.Sprintf("agent-team pipeline outbox drop %s %s --dry-run", name, item.ID),
+			}
+		case daemon.OutboxStatePending:
+			return []string{
+				fmt.Sprintf("agent-team pipeline outbox %s --state pending", name),
+				"agent-team outbox drain --dry-run",
+			}
+		default:
+			return nil
+		}
+	}
+}
+
+func teamOutboxActionResolver(team string) outboxActionResolver {
+	return func(item *daemon.OutboxItem) []string {
+		if item == nil {
+			return nil
+		}
+		name := strings.TrimSpace(team)
+		if name == "" {
+			return nil
+		}
+		switch item.State {
+		case daemon.OutboxStateFailed:
+			return []string{
+				fmt.Sprintf("agent-team team outbox retry %s %s", name, item.ID),
+				fmt.Sprintf("agent-team team outbox drop %s %s --dry-run", name, item.ID),
+			}
+		case daemon.OutboxStatePending:
+			return []string{
+				fmt.Sprintf("agent-team team outbox %s --state pending", name),
+				"agent-team outbox drain --dry-run",
+			}
+		default:
+			return nil
+		}
+	}
 }
 
 func renderOutboxDrainCommandResult(w io.Writer, result *daemon.OutboxDrainResult, jsonOut bool, tmpl *template.Template) error {

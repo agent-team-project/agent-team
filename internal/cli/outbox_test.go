@@ -63,6 +63,23 @@ func TestOutboxListShowRetryDrop(t *testing.T) {
 		t.Fatalf("shown item = %+v", shownItem)
 	}
 
+	showText := runRootForOutboxTest(t, "outbox", "show", "--target", target, "outbox-b")
+	for _, want := range []string{
+		"Actions:",
+		"agent-team job outbox retry squ-502 outbox-b",
+		"agent-team job outbox drop squ-502 outbox-b --dry-run",
+		"Payload:",
+	} {
+		if !strings.Contains(showText.String(), want) {
+			t.Fatalf("outbox show text missing %q:\n%s", want, showText.String())
+		}
+	}
+
+	showCommands := runRootForOutboxTest(t, "outbox", "show", "--target", target, "outbox-b", "--commands")
+	if got, want := showCommands.String(), "agent-team job outbox retry squ-502 outbox-b\nagent-team job outbox drop squ-502 outbox-b --dry-run\n"; got != want {
+		t.Fatalf("outbox show --commands = %q, want %q", got, want)
+	}
+
 	retry := runRootForOutboxTest(t, "outbox", "retry", "--target", target, "outbox-b", "--json")
 	var retryRows []outboxActionResult
 	if err := json.Unmarshal(retry.Bytes(), &retryRows); err != nil {
@@ -516,6 +533,14 @@ func TestOutboxDoctorFormatValidation(t *testing.T) {
 		{[]string{"outbox", "doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
 		{[]string{"outbox", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
 		{[]string{"outbox", "doctor", "--format", "{{"}, "invalid --format template"},
+		{[]string{"outbox", "show", "outbox-b", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"outbox", "show", "outbox-b", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"job", "outbox", "show", "squ-1", "outbox-b", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"job", "outbox", "show", "squ-1", "outbox-b", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"pipeline", "outbox", "show", "ticket_to_pr", "outbox-b", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"pipeline", "outbox", "show", "ticket_to_pr", "outbox-b", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"team", "outbox", "show", "delivery", "outbox-b", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"team", "outbox", "show", "delivery", "outbox-b", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
 	}
 	for _, tc := range cases {
 		out, stderr, err := runRootForOutboxTestErr(t, tc.args...)
@@ -992,6 +1017,11 @@ instances = ["other"]
 		t.Fatalf("shown team outbox item = %+v", shownItem)
 	}
 
+	showCommands := runRootForOutboxTest(t, "team", "outbox", "show", "delivery", "outbox-delivery-failed", "--repo", root, "--commands")
+	if got, want := showCommands.String(), "agent-team team outbox retry delivery outbox-delivery-failed\nagent-team team outbox drop delivery outbox-delivery-failed --dry-run\n"; got != want {
+		t.Fatalf("team outbox show --commands = %q, want %q", got, want)
+	}
+
 	retry := runRootForOutboxTest(t, "team", "outbox", "retry", "delivery", "outbox-delivery-failed", "--repo", root, "--dry-run", "--json")
 	var retryRows []outboxActionResult
 	if err := json.Unmarshal(retry.Bytes(), &retryRows); err != nil {
@@ -1360,6 +1390,11 @@ target = "worker"
 		t.Fatalf("shown pipeline outbox item = %+v", shownItem)
 	}
 
+	showCommands := runRootForOutboxTest(t, "pipeline", "outbox", "show", "ticket_to_pr", "outbox-ticket-failed", "--repo", root, "--commands")
+	if got, want := showCommands.String(), "agent-team pipeline outbox retry ticket_to_pr outbox-ticket-failed\nagent-team pipeline outbox drop ticket_to_pr outbox-ticket-failed --dry-run\n"; got != want {
+		t.Fatalf("pipeline outbox show --commands = %q, want %q", got, want)
+	}
+
 	retry := runRootForOutboxTest(t, "pipeline", "outbox", "retry", "ticket_to_pr", "outbox-ticket-failed", "--repo", root, "--dry-run", "--json")
 	var retryRows []outboxActionResult
 	if err := json.Unmarshal(retry.Bytes(), &retryRows); err != nil {
@@ -1688,6 +1723,11 @@ func TestJobOutboxScopesItemsAndActions(t *testing.T) {
 	}
 	if shownItem.ID != "outbox-job-failed" || shownItem.LastError != "route missing" {
 		t.Fatalf("shown job outbox item = %+v", shownItem)
+	}
+
+	showCommands := runRootForOutboxTest(t, "job", "outbox", "show", "squ-903", "outbox-job-failed", "--repo", root, "--commands")
+	if got, want := showCommands.String(), "agent-team job outbox retry squ-903 outbox-job-failed\nagent-team job outbox drop squ-903 outbox-job-failed --dry-run\n"; got != want {
+		t.Fatalf("job outbox show --commands = %q, want %q", got, want)
 	}
 
 	retry := runRootForOutboxTest(t, "job", "outbox", "retry", "squ-903", "outbox-job-failed", "--repo", root, "--dry-run", "--json")

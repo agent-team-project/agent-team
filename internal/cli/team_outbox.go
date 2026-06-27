@@ -113,9 +113,10 @@ func newTeamOutboxCmd() *cobra.Command {
 
 func newTeamOutboxShowCmd() *cobra.Command {
 	var (
-		repo    string
-		jsonOut bool
-		format  string
+		repo     string
+		jsonOut  bool
+		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -125,6 +126,14 @@ func newTeamOutboxShowCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team outbox show: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team outbox show: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team outbox show: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			tmpl, err := parseOutboxFormat(format)
@@ -140,11 +149,16 @@ func newTeamOutboxShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return renderOutboxItemResult(cmd.OutOrStdout(), item, jsonOut, tmpl)
+			actions := teamOutboxActionResolver(args[0])
+			if commands {
+				return renderOutboxItemCommands(cmd.OutOrStdout(), item, actions)
+			}
+			return renderOutboxItemResultWithActions(cmd.OutOrStdout(), item, jsonOut, tmpl, actions)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the team-owned outbox item as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the team-owned outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
