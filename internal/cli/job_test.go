@@ -6547,6 +6547,21 @@ func TestJobAttachDryRunUnsupportedCodexShowsJobFallbacks(t *testing.T) {
 			t.Fatalf("job attach dry-run missing %q:\n%s", want, body)
 		}
 	}
+
+	aliasCmd := NewRootCmd()
+	aliasOut, aliasErr := &bytes.Buffer{}, &bytes.Buffer{}
+	aliasCmd.SetOut(aliasOut)
+	aliasCmd.SetErr(aliasErr)
+	aliasCmd.SetArgs([]string{"job", "exec", "SQU-57", "--repo", env.target, "--dry-run"})
+	if err := aliasCmd.Execute(); err != nil {
+		t.Fatalf("job exec codex dry-run alias: %v\nstderr=%s", err, aliasErr.String())
+	}
+	if cap.called {
+		t.Fatal("execClaudeAttach should not run during unsupported dry-run alias")
+	}
+	if !strings.Contains(aliasOut.String(), "command:              codex resume codex-job-session") {
+		t.Fatalf("job exec alias dry-run missing resume command:\n%s", aliasOut.String())
+	}
 }
 
 func TestJobAttachDryRunStepShowsStepFallbacks(t *testing.T) {

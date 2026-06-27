@@ -1922,6 +1922,8 @@ Attach to the instance recorded on a durable job. By default this opens the owni
 agent-team job attach <job-id> [flags]
 ```
 
+Aliases: `exec`
+
 Flags:
 
 ```text

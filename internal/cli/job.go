@@ -2819,8 +2819,9 @@ func newJobAttachCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "attach <job-id>",
-		Short: "Attach to a job's owning instance.",
+		Use:     "attach <job-id>",
+		Aliases: []string{"exec"},
+		Short:   "Attach to a job's owning instance.",
 		Long: "Attach to the instance recorded on a durable job. By default this opens " +
 			"the owning instance with the normal interactive attach flow. Passing log " +
 			"options such as --tail, --no-follow, --since, or --grep follows the daemon-captured log stream instead.",
