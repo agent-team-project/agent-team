@@ -360,7 +360,7 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		Events: []snapshotDiffEvent{
 			{ID: "ev-1", Action: "start", Instance: "worker-squ-801", Agent: "worker", Job: "squ-801", Status: "running"},
 		},
-		Status: &pipelineStatusRow{
+		Status: &snapshotDiffStatus{
 			Pipeline:     "ticket_to_pr",
 			Jobs:         2,
 			ReadySteps:   1,
@@ -461,7 +461,7 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 			{ID: "ev-1", Action: "exit", Instance: "worker-squ-801", Agent: "worker", Job: "squ-801", Status: "exited", ExitCode: &exitCode},
 			{ID: "ev-2", Action: "queued", Instance: "manager", Agent: "manager", Job: "squ-803", Status: "running"},
 		},
-		Status: &pipelineStatusRow{
+		Status: &snapshotDiffStatus{
 			Pipeline:     "ticket_to_pr",
 			Jobs:         2,
 			ReadySteps:   0,
@@ -815,6 +815,202 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	}
 }
 
+func TestSnapshotDiffCommandReportsJobSnapshotChanges(t *testing.T) {
+	tmp := t.TempDir()
+	beforePath := filepath.Join(tmp, "job-before.json")
+	afterPath := filepath.Join(tmp, "job-after.json")
+	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	exitCode := 0
+	before := jobSnapshotResult{
+		Version:    Version,
+		CapturedAt: now.Format(time.RFC3339),
+		Repo:       "/repo",
+		Provenance: newSnapshotProvenance("agent-team job snapshot", "job", "squ-160", snapshotProvenanceOptions{
+			Events:   intValuePtr(-1),
+			Tail:     intValuePtr(0),
+			Redacted: true,
+		}),
+		Job: &job.Job{
+			ID:        "squ-160",
+			Ticket:    "SQU-160",
+			Target:    "worker",
+			Instance:  "worker-squ-160",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-time.Hour),
+			UpdatedAt: now,
+			Steps: []job.Step{{
+				ID:       "implement",
+				Target:   "worker",
+				Instance: "worker-squ-160",
+				Status:   job.StatusRunning,
+			}},
+		},
+		Instance: "worker-squ-160",
+		Runtime: &inspectRuntimeJSON{
+			Lifecycle: "running",
+			Agent:     "worker",
+			Runtime:   "codex",
+			Job:       "squ-160",
+			PID:       1234,
+		},
+		State:  &jobSnapshotState{Path: "state/worker-squ-160", Exists: true},
+		Status: &inspectStatusJSON{Phase: "working", Description: "implementing", Stale: false},
+		Queue: []*daemon.QueueItem{{
+			ID:        "q-160",
+			State:     daemon.QueueStatePending,
+			EventType: "agent.dispatch",
+		}},
+		Inbox: []inboxSummaryRow{{
+			Instance: "worker-squ-160",
+			Total:    1,
+			Unread:   1,
+			LatestID: "msg-160",
+		}},
+		Actions: []string{
+			"agent-team inbox show worker-squ-160 --unread",
+			"agent-team inspect worker-squ-160",
+		},
+		JobEvents: []job.Event{{
+			TS:     now.Add(-time.Hour),
+			JobID:  "squ-160",
+			Type:   "created",
+			Status: job.StatusQueued,
+			Actor:  "test",
+		}},
+		LifecycleEvents: []daemon.LifecycleEvent{{
+			ID:       "dispatch-160",
+			TS:       now.Add(-30 * time.Minute),
+			Action:   "dispatch",
+			Instance: "worker-squ-160",
+			Agent:    "worker",
+			Job:      "squ-160",
+			Status:   daemon.StatusRunning,
+		}},
+	}
+	after := before
+	after.CapturedAt = now.Add(5 * time.Minute).Format(time.RFC3339)
+	after.Job = &job.Job{
+		ID:         "squ-160",
+		Ticket:     "SQU-160",
+		Target:     "worker",
+		Instance:   "worker-squ-160",
+		Pipeline:   "ticket_to_pr",
+		Status:     job.StatusDone,
+		LastEvent:  "instance_exited",
+		LastStatus: "done",
+		CreatedAt:  now.Add(-time.Hour),
+		UpdatedAt:  now.Add(5 * time.Minute),
+		Steps: []job.Step{{
+			ID:         "implement",
+			Target:     "worker",
+			Instance:   "worker-squ-160",
+			Status:     job.StatusDone,
+			FinishedAt: now.Add(5 * time.Minute),
+		}},
+	}
+	after.Runtime = &inspectRuntimeJSON{
+		Lifecycle: "exited",
+		Agent:     "worker",
+		Runtime:   "codex",
+		Job:       "squ-160",
+		PID:       1234,
+		ExitCode:  &exitCode,
+	}
+	after.Status = &inspectStatusJSON{Phase: "done", Description: "complete", Stale: false}
+	after.Queue = []*daemon.QueueItem{{
+		ID:        "q-160",
+		State:     daemon.QueueStateDead,
+		EventType: "agent.dispatch",
+	}}
+	after.Inbox = nil
+	after.Actions = []string{
+		"agent-team inspect worker-squ-160",
+		"agent-team job logs squ-160 --last-message",
+	}
+	after.JobEvents = append(after.JobEvents, job.Event{
+		TS:      now.Add(5 * time.Minute),
+		JobID:   "squ-160",
+		Type:    "instance_exited",
+		Status:  job.StatusDone,
+		Actor:   "daemon",
+		Message: "done",
+	})
+	after.LifecycleEvents = append(after.LifecycleEvents, daemon.LifecycleEvent{
+		ID:       "exit-160",
+		TS:       now.Add(5 * time.Minute),
+		Action:   "exit",
+		Instance: "worker-squ-160",
+		Agent:    "worker",
+		Job:      "squ-160",
+		Status:   daemon.StatusExited,
+		ExitCode: &exitCode,
+	})
+	writeSnapshotDiffJSON(t, beforePath, before)
+	writeSnapshotDiffJSON(t, afterPath, after)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job snapshot diff: %v\nstderr=%s", err, stderr.String())
+	}
+	var result snapshotDiffResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode job snapshot diff: %v\nbody=%s", err, out.String())
+	}
+	if result.Before.Kind != "job" || result.Before.Scope != "squ-160" || result.After.Kind != "job" || result.After.Scope != "squ-160" {
+		t.Fatalf("job snapshot diff metadata = %+v -> %+v", result.Before, result.After)
+	}
+	if result.Summary.Jobs.Changed != 3 {
+		t.Fatalf("job snapshot job counters = %+v", result.Summary.Jobs)
+	}
+	if result.Summary.Runtime.Added != 1 || result.Summary.Runtime.Changed != 1 {
+		t.Fatalf("job snapshot runtime counters = %+v", result.Summary.Runtime)
+	}
+	if result.Summary.Queue.Changed != 1 {
+		t.Fatalf("job snapshot queue counters = %+v", result.Summary.Queue)
+	}
+	if result.Summary.Inbox.Removed != 1 {
+		t.Fatalf("job snapshot inbox counters = %+v", result.Summary.Inbox)
+	}
+	if result.Summary.Next.Added != 1 || result.Summary.Next.Removed != 1 {
+		t.Fatalf("job snapshot next counters = %+v", result.Summary.Next)
+	}
+	if result.Summary.Events.Added != 2 {
+		t.Fatalf("job snapshot event counters = %+v", result.Summary.Events)
+	}
+	if !hasSnapshotDiffChange(result.Changes, "jobs", "squ-160", "changed") ||
+		!hasSnapshotDiffChange(result.Changes, "jobs", "squ-160/status", "changed") ||
+		!hasSnapshotDiffChange(result.Changes, "runtime", "lifecycle", "changed") ||
+		!hasSnapshotDiffChange(result.Changes, "runtime", "exit_code", "added") ||
+		!hasSnapshotDiffChange(result.Changes, "queue", "q-160", "changed") ||
+		!hasSnapshotDiffChange(result.Changes, "inbox", "worker-squ-160", "removed") ||
+		!hasSnapshotDiffChange(result.Changes, "next", "action/agent-team inbox show worker-squ-160 --unread", "removed") ||
+		!hasSnapshotDiffChange(result.Changes, "next", "action/agent-team job logs squ-160 --last-message", "added") ||
+		!hasSnapshotDiffChange(result.Changes, "events", "lifecycle/exit-160", "added") {
+		t.Fatalf("missing expected job snapshot changes: %+v", result.Changes)
+	}
+
+	nextOnly := NewRootCmd()
+	nextOnlyOut, nextOnlyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	nextOnly.SetOut(nextOnlyOut)
+	nextOnly.SetErr(nextOnlyErr)
+	nextOnly.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "next", "--json"})
+	if err := nextOnly.Execute(); err != nil {
+		t.Fatalf("job snapshot next diff: %v\nstderr=%s", err, nextOnlyErr.String())
+	}
+	var nextOnlyResult snapshotDiffResult
+	if err := json.Unmarshal(nextOnlyOut.Bytes(), &nextOnlyResult); err != nil {
+		t.Fatalf("decode job snapshot next diff: %v\nbody=%s", err, nextOnlyOut.String())
+	}
+	if nextOnlyResult.Summary.TotalChanges != 2 || nextOnlyResult.Summary.Next.Added != 1 || nextOnlyResult.Summary.Next.Removed != 1 || nextOnlyResult.Summary.Jobs.Changed != 0 {
+		t.Fatalf("job snapshot next-only summary = %+v", nextOnlyResult.Summary)
+	}
+}
+
 func TestSnapshotIncludesGitMetadata(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -851,6 +1047,11 @@ func TestSnapshotIncludesGitMetadata(t *testing.T) {
 }
 
 func writeSnapshotDiffInput(t *testing.T, path string, input snapshotDiffInput) {
+	t.Helper()
+	writeSnapshotDiffJSON(t, path, input)
+}
+
+func writeSnapshotDiffJSON(t *testing.T, path string, input any) {
 	t.Helper()
 	body, err := json.MarshalIndent(input, "", "  ")
 	if err != nil {

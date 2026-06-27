@@ -5787,7 +5787,7 @@ Subcommands:
 
 Compare two saved diagnostic snapshots.
 
-Compare two saved global, team, or pipeline diagnostic snapshot JSON files and summarize provenance, git, runtime, health, plan, next-action, instance, job, inbox, queue, schedule, intake, event, pipeline, ready-advance, and section-error changes.
+Compare two saved global, team, pipeline, or job diagnostic snapshot JSON files and summarize provenance, git, runtime, health, plan, next-action, instance, job, inbox, queue, schedule, intake, event, pipeline, ready-advance, and section-error changes.
 
 ```text
 agent-team snapshot diff <before.json> <after.json> [flags]

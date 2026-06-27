@@ -21,7 +21,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "diff <before.json> <after.json>",
 		Short: "Compare two saved diagnostic snapshots.",
-		Long: "Compare two saved global, team, or pipeline diagnostic snapshot JSON files and summarize " +
+		Long: "Compare two saved global, team, pipeline, or job diagnostic snapshot JSON files and summarize " +
 			"provenance, git, runtime, health, plan, next-action, instance, job, inbox, queue, schedule, intake, event, pipeline, ready-advance, and section-error changes.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -64,8 +64,15 @@ type snapshotDiffInput struct {
 	Health           *healthResult                 `json:"health,omitempty"`
 	Plan             *planResult                   `json:"plan,omitempty"`
 	Next             *nextActionResult             `json:"next,omitempty"`
+	Actions          []string                      `json:"actions,omitempty"`
 	Team             *teamInfo                     `json:"team,omitempty"`
 	Pipeline         string                        `json:"pipeline,omitempty"`
+	Job              *snapshotDiffDetailedJob      `json:"job,omitempty"`
+	Instance         string                        `json:"instance,omitempty"`
+	State            *jobSnapshotState             `json:"state,omitempty"`
+	Status           *snapshotDiffStatus           `json:"status,omitempty"`
+	Log              *jobSnapshotFile              `json:"log,omitempty"`
+	LastMessage      *jobSnapshotFile              `json:"last_message,omitempty"`
 	Instances        []snapshotDiffInstance        `json:"instances,omitempty"`
 	Jobs             []snapshotDiffJob             `json:"jobs,omitempty"`
 	Inbox            []snapshotDiffInbox           `json:"inbox,omitempty"`
@@ -76,11 +83,125 @@ type snapshotDiffInput struct {
 	Intake           []snapshotDiffIntake          `json:"intake,omitempty"`
 	IntakeDuplicates []snapshotDiffIntakeDuplicate `json:"intake_duplicates,omitempty"`
 	Events           []snapshotDiffEvent           `json:"events,omitempty"`
+	JobEvents        []snapshotDiffJobEvent        `json:"job_events,omitempty"`
+	LifecycleEvents  []snapshotDiffEvent           `json:"lifecycle_events,omitempty"`
 	PipelineStatus   []pipelineStatusRow           `json:"pipeline_status,omitempty"`
-	Status           *pipelineStatusRow            `json:"status,omitempty"`
 	PipelineAdvance  []snapshotDiffAdvance         `json:"pipeline_advance_preview,omitempty"`
 	AdvancePreview   []snapshotDiffAdvance         `json:"advance_preview,omitempty"`
 	SectionErrors    map[string]string             `json:"section_errors,omitempty"`
+}
+
+type snapshotDiffDetailedJob struct {
+	ID         string
+	Ticket     string
+	TicketURL  string
+	Target     string
+	Instance   string
+	Pipeline   string
+	Status     string
+	Held       bool
+	HoldReason string
+	Branch     string
+	Worktree   string
+	PR         string
+	LastEvent  string
+	LastStatus string
+	Steps      []snapshotDiffDetailedJobStep
+}
+
+type snapshotDiffDetailedJobStep struct {
+	ID          string
+	Target      string
+	Workspace   string
+	Runtime     string
+	RuntimeBin  string
+	Status      string
+	Instance    string
+	Gate        string
+	Optional    bool
+	Attempts    int
+	MaxAttempts int
+	Skipped     bool
+	SkipReason  string
+}
+
+type snapshotDiffStatus struct {
+	Pipeline           string               `json:"pipeline,omitempty"`
+	Jobs               int                  `json:"jobs,omitempty"`
+	ReadySteps         int                  `json:"ready_steps,omitempty"`
+	QueuedSteps        int                  `json:"queued_steps,omitempty"`
+	RunningSteps       int                  `json:"running_steps,omitempty"`
+	BlockedSteps       int                  `json:"blocked_steps,omitempty"`
+	ManualGates        int                  `json:"manual_gates,omitempty"`
+	FailedSteps        int                  `json:"failed_steps,omitempty"`
+	DoneSteps          int                  `json:"done_steps,omitempty"`
+	Phase              string               `json:"phase,omitempty"`
+	Description        string               `json:"description,omitempty"`
+	Since              string               `json:"since,omitempty"`
+	LastAction         string               `json:"last_action,omitempty"`
+	Stale              bool                 `json:"stale,omitempty"`
+	Work               *inspectWorkJSON     `json:"work,omitempty"`
+	Blocking           *inspectBlockingJSON `json:"blocking,omitempty"`
+	ParallelReadySteps int                  `json:"parallel_ready_steps,omitempty"`
+	StaleRunningSteps  int                  `json:"stale_running_steps,omitempty"`
+	HeldSteps          int                  `json:"held_steps,omitempty"`
+	QueuePending       int                  `json:"queue_pending,omitempty"`
+	QueueDead          int                  `json:"queue_dead,omitempty"`
+	QueueQuarantined   int                  `json:"queue_quarantined,omitempty"`
+	QueueRestorable    int                  `json:"queue_restorable,omitempty"`
+	QueueUnrestorable  int                  `json:"queue_unrestorable,omitempty"`
+	Actions            []string             `json:"actions,omitempty"`
+}
+
+func (s *snapshotDiffStatus) pipelineRow(fallbackPipeline string) (pipelineStatusRow, bool) {
+	if s == nil {
+		return pipelineStatusRow{}, false
+	}
+	pipeline := strings.TrimSpace(s.Pipeline)
+	if pipeline == "" {
+		pipeline = strings.TrimSpace(fallbackPipeline)
+	}
+	if pipeline == "" {
+		return pipelineStatusRow{}, false
+	}
+	if s.Jobs == 0 &&
+		s.ReadySteps == 0 &&
+		s.QueuedSteps == 0 &&
+		s.RunningSteps == 0 &&
+		s.BlockedSteps == 0 &&
+		s.ManualGates == 0 &&
+		s.FailedSteps == 0 &&
+		s.DoneSteps == 0 &&
+		s.ParallelReadySteps == 0 &&
+		s.StaleRunningSteps == 0 &&
+		s.HeldSteps == 0 &&
+		s.QueuePending == 0 &&
+		s.QueueDead == 0 &&
+		s.QueueQuarantined == 0 &&
+		s.QueueRestorable == 0 &&
+		s.QueueUnrestorable == 0 {
+		return pipelineStatusRow{}, false
+	}
+	return pipelineStatusRow{
+		Pipeline:           pipeline,
+		Jobs:               s.Jobs,
+		ReadySteps:         s.ReadySteps,
+		ParallelReadySteps: s.ParallelReadySteps,
+		QueuedSteps:        s.QueuedSteps,
+		RunningSteps:       s.RunningSteps,
+		StaleRunningSteps:  s.StaleRunningSteps,
+		BlockedSteps:       s.BlockedSteps,
+		ManualGates:        s.ManualGates,
+		FailedSteps:        s.FailedSteps,
+		HeldSteps:          s.HeldSteps,
+		DoneSteps:          s.DoneSteps,
+		QueuePending:       s.QueuePending,
+		QueueDead:          s.QueueDead,
+		QueueQuarantined:   s.QueueQuarantined,
+		QueueRestorable:    s.QueueRestorable,
+		QueueUnrestorable:  s.QueueUnrestorable,
+		Actions:            s.Actions,
+	}, true
 }
 
 type snapshotDiffJob struct {
@@ -176,6 +297,17 @@ type snapshotDiffEvent struct {
 	Status   string `json:"status,omitempty"`
 	Message  string `json:"message,omitempty"`
 	ExitCode *int   `json:"exit_code,omitempty"`
+}
+
+type snapshotDiffJobEvent struct {
+	TS       string            `json:"ts,omitempty"`
+	JobID    string            `json:"job_id,omitempty"`
+	Type     string            `json:"type,omitempty"`
+	Status   string            `json:"status,omitempty"`
+	Instance string            `json:"instance,omitempty"`
+	Message  string            `json:"message,omitempty"`
+	Actor    string            `json:"actor,omitempty"`
+	Data     map[string]string `json:"data,omitempty"`
 }
 
 type snapshotDiffAdvance struct {
@@ -409,7 +541,7 @@ func snapshotDiffComparableFromInput(path string, input snapshotDiffInput) snaps
 		Runtime:         snapshotDiffRuntimeMap(input.Runtime),
 		Health:          snapshotDiffHealthMap(input.Health),
 		Plan:            snapshotDiffPlanMap(input.Plan),
-		Next:            snapshotDiffNextMap(input.Next),
+		Next:            snapshotDiffNextMap(input.Next, input.Actions),
 		Instances:       map[string]string{},
 		Jobs:            map[string]string{},
 		Pipelines:       map[string]string{},
@@ -440,6 +572,7 @@ func snapshotDiffComparableFromInput(path string, input snapshotDiffInput) snaps
 		}
 		out.Jobs[id] = compactSnapshotDiffValue(j.Status, j.Pipeline, j.Target, j.Instance)
 	}
+	addSnapshotDiffJobSnapshot(out.Jobs, input)
 	for _, inbox := range input.Inbox {
 		id := strings.TrimSpace(inbox.Instance)
 		if id == "" {
@@ -496,24 +629,19 @@ func snapshotDiffComparableFromInput(path string, input snapshotDiffInput) snaps
 		addSnapshotDiffIntakeDuplicate(out.Intake, duplicate)
 	}
 	for _, ev := range input.Events {
-		id := strings.TrimSpace(ev.ID)
-		if id == "" {
-			id = compactSnapshotDiffValue(ev.TS, ev.Action, ev.Instance, ev.Job)
-		}
-		if id == "" || id == "-" {
-			continue
-		}
-		exitCode := ""
-		if ev.ExitCode != nil {
-			exitCode = fmt.Sprintf("exit_code=%d", *ev.ExitCode)
-		}
-		out.Events[id] = compactSnapshotDiffValue(ev.Action, ev.Instance, ev.Agent, ev.Job, ev.Ticket, ev.Status, ev.Branch, ev.PR, exitCode, ev.Message)
+		addSnapshotDiffLifecycleEvent(out.Events, "", ev)
+	}
+	for _, ev := range input.LifecycleEvents {
+		addSnapshotDiffLifecycleEvent(out.Events, "lifecycle/", ev)
+	}
+	for _, ev := range input.JobEvents {
+		addSnapshotDiffJobEvent(out.Events, ev)
 	}
 	for _, row := range input.PipelineStatus {
 		addSnapshotDiffPipelineMetrics(out.Pipelines, row, input.Pipeline)
 	}
-	if input.Status != nil {
-		addSnapshotDiffPipelineMetrics(out.Pipelines, *input.Status, input.Pipeline)
+	if row, ok := input.Status.pipelineRow(input.Pipeline); ok {
+		addSnapshotDiffPipelineMetrics(out.Pipelines, row, input.Pipeline)
 	}
 	for _, advance := range input.PipelineAdvance {
 		addSnapshotDiffAdvance(out.Advance, advance)
@@ -590,34 +718,37 @@ func snapshotDiffPlanMap(plan *planResult) map[string]string {
 	return out
 }
 
-func snapshotDiffNextMap(next *nextActionResult) map[string]string {
+func snapshotDiffNextMap(next *nextActionResult, actions []string) map[string]string {
 	out := map[string]string{}
-	if next == nil {
+	if next == nil && len(actions) == 0 {
 		return out
 	}
-	setSnapshotDiffBool(out, "ok", next.OK)
-	if state := strings.TrimSpace(next.State); state != "" {
-		out["state"] = state
-	}
-	if next.Team != nil {
-		if team := strings.TrimSpace(next.Team.Name); team != "" {
-			out["team"] = team
-		}
-	}
-	setSnapshotDiffInt(out, "total_actions", next.TotalActions)
-	setSnapshotDiffInt(out, "hidden_actions", next.HiddenActions)
 	detailsByCommand := map[string]operatorActionHint{}
-	for _, detail := range next.ActionDetails {
-		command := strings.TrimSpace(detail.Command)
-		if command == "" {
-			continue
+	if next != nil {
+		setSnapshotDiffBool(out, "ok", next.OK)
+		if state := strings.TrimSpace(next.State); state != "" {
+			out["state"] = state
 		}
-		if _, exists := detailsByCommand[command]; !exists {
-			detailsByCommand[command] = detail
+		if next.Team != nil {
+			if team := strings.TrimSpace(next.Team.Name); team != "" {
+				out["team"] = team
+			}
+		}
+		setSnapshotDiffInt(out, "total_actions", next.TotalActions)
+		setSnapshotDiffInt(out, "hidden_actions", next.HiddenActions)
+		actions = append(actions, next.Actions...)
+		for _, detail := range next.ActionDetails {
+			command := strings.TrimSpace(detail.Command)
+			if command == "" {
+				continue
+			}
+			if _, exists := detailsByCommand[command]; !exists {
+				detailsByCommand[command] = detail
+			}
 		}
 	}
 	seen := map[string]bool{}
-	for _, action := range next.Actions {
+	for _, action := range actions {
 		command := strings.TrimSpace(action)
 		if command == "" || seen[command] {
 			continue
@@ -633,6 +764,101 @@ func snapshotDiffNextMap(next *nextActionResult) map[string]string {
 		out["action/"+command] = compactSnapshotDiffValue(detail.Source, detail.Reason, detail.Team)
 	}
 	return out
+}
+
+func addSnapshotDiffJobSnapshot(out map[string]string, input snapshotDiffInput) {
+	if input.Job == nil {
+		return
+	}
+	j := input.Job
+	id := strings.TrimSpace(j.ID)
+	if id == "" {
+		id = strings.TrimSpace(j.Ticket)
+	}
+	if id == "" {
+		return
+	}
+	out[id] = compactSnapshotDiffValue(
+		j.Status,
+		j.Pipeline,
+		j.Target,
+		j.Instance,
+		j.Ticket,
+		j.Branch,
+		j.Worktree,
+		j.PR,
+		boolSnapshotDiffValue("held", j.Held),
+		j.HoldReason,
+		j.LastEvent,
+		j.LastStatus,
+	)
+	for _, step := range j.Steps {
+		stepID := strings.TrimSpace(step.ID)
+		if stepID == "" {
+			continue
+		}
+		out[id+"/step/"+stepID] = compactSnapshotDiffValue(
+			step.Status,
+			step.Target,
+			step.Instance,
+			step.Workspace,
+			step.Runtime,
+			step.RuntimeBin,
+			step.Gate,
+			boolSnapshotDiffValue("optional", step.Optional),
+			intSnapshotDiffValue("attempts", step.Attempts),
+			intSnapshotDiffValue("max_attempts", step.MaxAttempts),
+			boolSnapshotDiffValue("skipped", step.Skipped),
+			step.SkipReason,
+		)
+	}
+	if instance := strings.TrimSpace(input.Instance); instance != "" && instance != strings.TrimSpace(j.Instance) {
+		out[id+"/snapshot.instance"] = instance
+	}
+	if input.State != nil {
+		out[id+"/state"] = compactSnapshotDiffValue(
+			boolSnapshotDiffValue("exists", input.State.Exists),
+			input.State.Path,
+		)
+	}
+	if input.Status != nil {
+		status := input.Status
+		work := ""
+		if status.Work != nil {
+			work = compactSnapshotDiffValue(status.Work.Job, status.Work.Ticket, status.Work.Branch, status.Work.PR)
+		}
+		blocking := ""
+		if status.Blocking != nil {
+			blocking = compactSnapshotDiffValue(status.Blocking.Reason, status.Blocking.AskTo)
+		}
+		out[id+"/status"] = compactSnapshotDiffValue(
+			status.Phase,
+			status.Description,
+			status.Since,
+			status.LastAction,
+			boolSnapshotDiffValue("stale", status.Stale),
+			work,
+			blocking,
+		)
+	}
+	addSnapshotDiffJobSnapshotFile(out, id+"/log", input.Log)
+	addSnapshotDiffJobSnapshotFile(out, id+"/last_message", input.LastMessage)
+}
+
+func addSnapshotDiffJobSnapshotFile(out map[string]string, key string, file *jobSnapshotFile) {
+	if file == nil {
+		return
+	}
+	size := ""
+	if file.Size != 0 {
+		size = fmt.Sprintf("size=%d", file.Size)
+	}
+	out[key] = compactSnapshotDiffValue(
+		boolSnapshotDiffValue("exists", file.Exists),
+		size,
+		file.ModTime,
+		file.Path,
+	)
 }
 
 func addSnapshotDiffPSSummary(out map[string]string, prefix string, summary psSummaryJSON) {
@@ -719,8 +945,17 @@ func snapshotDiffRuntimeMap(runtime *runtimeInfo) map[string]string {
 	if value := strings.TrimSpace(runtime.Runtime); value != "" {
 		out["runtime"] = value
 	}
+	if value := strings.TrimSpace(runtime.Lifecycle); value != "" {
+		out["lifecycle"] = value
+	}
+	if value := strings.TrimSpace(runtime.Agent); value != "" {
+		out["agent"] = value
+	}
 	if value := strings.TrimSpace(runtime.Binary); value != "" {
 		out["binary"] = value
+	}
+	if value := strings.TrimSpace(runtime.RuntimeBinary); value != "" {
+		out["runtime_binary"] = value
 	}
 	if value := strings.TrimSpace(runtime.Path); value != "" {
 		out["path"] = value
@@ -734,15 +969,75 @@ func snapshotDiffRuntimeMap(runtime *runtimeInfo) map[string]string {
 	if value := strings.TrimSpace(runtime.ConfigPath); value != "" {
 		out["config_path"] = value
 	}
-	out["selected"] = fmt.Sprintf("%t", runtime.Selected)
-	out["available"] = fmt.Sprintf("%t", runtime.Available)
-	out["direct_run"] = fmt.Sprintf("%t", runtime.DirectRun)
-	out["daemon_dispatch"] = fmt.Sprintf("%t", runtime.DaemonDispatch)
-	out["direct_resume"] = fmt.Sprintf("%t", runtime.DirectResume)
-	out["managed_resume"] = fmt.Sprintf("%t", runtime.ManagedResume)
-	out["resume"] = fmt.Sprintf("%t", runtime.Resume)
-	out["subagents"] = fmt.Sprintf("%t", runtime.Subagents)
+	if value := strings.TrimSpace(runtime.Job); value != "" {
+		out["job"] = value
+	}
+	if value := strings.TrimSpace(runtime.Ticket); value != "" {
+		out["ticket"] = value
+	}
+	if value := strings.TrimSpace(runtime.Branch); value != "" {
+		out["branch"] = value
+	}
+	if value := strings.TrimSpace(runtime.PR); value != "" {
+		out["pr"] = value
+	}
+	if runtime.PID != 0 {
+		out["pid"] = fmt.Sprintf("%d", runtime.PID)
+	}
+	if value := strings.TrimSpace(runtime.Workspace); value != "" {
+		out["workspace"] = value
+	}
+	if value := strings.TrimSpace(runtime.SessionID); value != "" {
+		out["session_id"] = value
+	}
+	if value := strings.TrimSpace(runtime.StartedAt); value != "" {
+		out["started_at"] = value
+	}
+	if value := strings.TrimSpace(runtime.StoppedAt); value != "" {
+		out["stopped_at"] = value
+	}
+	if value := strings.TrimSpace(runtime.ExitedAt); value != "" {
+		out["exited_at"] = value
+	}
+	if runtime.ExitCode != nil {
+		out["exit_code"] = fmt.Sprintf("%d", *runtime.ExitCode)
+	}
+	if value := strings.TrimSpace(runtime.LogPath); value != "" {
+		out["log_path"] = value
+	}
+	if runtime.Adopted {
+		out["adopted"] = "true"
+	}
+	if snapshotDiffRuntimeHasProfile(runtime) {
+		out["selected"] = fmt.Sprintf("%t", runtime.Selected)
+		out["available"] = fmt.Sprintf("%t", runtime.Available)
+		out["direct_run"] = fmt.Sprintf("%t", runtime.DirectRun)
+		out["daemon_dispatch"] = fmt.Sprintf("%t", runtime.DaemonDispatch)
+		out["direct_resume"] = fmt.Sprintf("%t", runtime.DirectResume)
+		out["managed_resume"] = fmt.Sprintf("%t", runtime.ManagedResume)
+		out["resume"] = fmt.Sprintf("%t", runtime.Resume)
+		out["subagents"] = fmt.Sprintf("%t", runtime.Subagents)
+	}
 	return out
+}
+
+func snapshotDiffRuntimeHasProfile(runtime *runtimeInfo) bool {
+	if runtime == nil {
+		return false
+	}
+	return runtime.Selected ||
+		runtime.Available ||
+		runtime.DirectRun ||
+		runtime.DaemonDispatch ||
+		runtime.DirectResume ||
+		runtime.ManagedResume ||
+		runtime.Resume ||
+		runtime.Subagents ||
+		strings.TrimSpace(runtime.Binary) != "" ||
+		strings.TrimSpace(runtime.Path) != "" ||
+		strings.TrimSpace(runtime.EnvRuntime) != "" ||
+		strings.TrimSpace(runtime.EnvBinary) != "" ||
+		strings.TrimSpace(runtime.ConfigPath) != ""
 }
 
 func snapshotDiffGitMap(git *snapshotGitInfo) map[string]string {
@@ -797,6 +1092,16 @@ func snapshotDiffProvenanceMap(provenance *snapshotProvenance) map[string]string
 }
 
 func snapshotDiffScope(input snapshotDiffInput) (string, string) {
+	if input.Provenance != nil && input.Provenance.Scope == "job" {
+		if subject := strings.TrimSpace(input.Provenance.Subject); subject != "" {
+			return subject, "job"
+		}
+	}
+	if input.Job != nil {
+		if id := strings.TrimSpace(input.Job.ID); id != "" {
+			return id, "job"
+		}
+	}
 	if strings.TrimSpace(input.Pipeline) != "" {
 		return strings.TrimSpace(input.Pipeline), "pipeline"
 	}
@@ -865,6 +1170,37 @@ func addSnapshotDiffAdvance(out map[string]string, advance snapshotDiffAdvance) 
 	out[id] = compactSnapshotDiffValue(advance.Action, advance.Pipeline, advance.Target, advance.StepStatus)
 }
 
+func addSnapshotDiffLifecycleEvent(out map[string]string, prefix string, ev snapshotDiffEvent) {
+	id := strings.TrimSpace(ev.ID)
+	if id == "" {
+		id = compactSnapshotDiffValue(ev.TS, ev.Action, ev.Instance, ev.Job)
+	}
+	if id == "" || id == "-" {
+		return
+	}
+	exitCode := ""
+	if ev.ExitCode != nil {
+		exitCode = fmt.Sprintf("exit_code=%d", *ev.ExitCode)
+	}
+	out[prefix+id] = compactSnapshotDiffValue(ev.Action, ev.Instance, ev.Agent, ev.Job, ev.Ticket, ev.Status, ev.Branch, ev.PR, exitCode, ev.Message)
+}
+
+func addSnapshotDiffJobEvent(out map[string]string, ev snapshotDiffJobEvent) {
+	id := compactSnapshotDiffValue(ev.TS, ev.Type, ev.Actor, ev.Instance)
+	if id == "" || id == "-" {
+		return
+	}
+	out["job/"+id] = compactSnapshotDiffValue(
+		ev.JobID,
+		ev.Type,
+		ev.Status,
+		ev.Instance,
+		ev.Actor,
+		ev.Message,
+		snapshotDiffStringMapValue(ev.Data),
+	)
+}
+
 func addSnapshotDiffIntakeDuplicate(out map[string]string, duplicate snapshotDiffIntakeDuplicate) {
 	provider := strings.ToLower(strings.TrimSpace(duplicate.Provider))
 	requestID := strings.TrimSpace(duplicate.RequestID)
@@ -888,6 +1224,28 @@ func intSnapshotDiffValue(name string, value int) string {
 		return ""
 	}
 	return fmt.Sprintf("%s=%d", name, value)
+}
+
+func snapshotDiffStringMapValue(values map[string]string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		value := strings.TrimSpace(values[key])
+		if value == "" {
+			continue
+		}
+		parts = append(parts, key+"="+value)
+	}
+	return strings.Join(parts, ",")
 }
 
 func compactSnapshotDiffValue(parts ...string) string {

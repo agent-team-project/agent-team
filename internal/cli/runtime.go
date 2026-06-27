@@ -248,8 +248,11 @@ type runtimeUnsetResult struct {
 
 type runtimeInfo struct {
 	Runtime        string   `json:"runtime"`
+	Lifecycle      string   `json:"lifecycle,omitempty"`
+	Agent          string   `json:"agent,omitempty"`
 	Selected       bool     `json:"selected,omitempty"`
 	Binary         string   `json:"binary"`
+	RuntimeBinary  string   `json:"runtime_binary,omitempty"`
 	Path           string   `json:"path,omitempty"`
 	Available      bool     `json:"available"`
 	DirectRun      bool     `json:"direct_run"`
@@ -261,6 +264,19 @@ type runtimeInfo struct {
 	EnvRuntime     string   `json:"env_runtime,omitempty"`
 	EnvBinary      string   `json:"env_binary,omitempty"`
 	ConfigPath     string   `json:"config_path,omitempty"`
+	Job            string   `json:"job,omitempty"`
+	Ticket         string   `json:"ticket,omitempty"`
+	Branch         string   `json:"branch,omitempty"`
+	PR             string   `json:"pr,omitempty"`
+	PID            int      `json:"pid,omitempty"`
+	Workspace      string   `json:"workspace,omitempty"`
+	SessionID      string   `json:"session_id,omitempty"`
+	StartedAt      string   `json:"started_at,omitempty"`
+	StoppedAt      string   `json:"stopped_at,omitempty"`
+	ExitedAt       string   `json:"exited_at,omitempty"`
+	ExitCode       *int     `json:"exit_code,omitempty"`
+	LogPath        string   `json:"log_path,omitempty"`
+	Adopted        bool     `json:"adopted,omitempty"`
 	Notes          []string `json:"notes,omitempty"`
 }
 
