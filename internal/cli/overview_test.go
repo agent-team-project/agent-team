@@ -325,6 +325,51 @@ func TestOverviewReportsRuntimeResumePlanActions(t *testing.T) {
 	}
 }
 
+func TestOverviewReportsPipelineRuntimeResumePlanActions(t *testing.T) {
+	root := writeOverviewPipelineRuntimeFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview pipeline runtime json: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview pipeline runtime: %v\nbody=%s", err, out.String())
+	}
+	if overview.Runtime.Crashed != 2 || strings.Join(overview.Runtime.CrashedPipelines, ",") != "ops_review,ticket_to_pr" {
+		t.Fatalf("pipeline runtime summary = %+v", overview.Runtime)
+	}
+	if !stringSliceContains(overview.Actions, "agent-team pipeline resume-plan --all --status crashed") {
+		t.Fatalf("actions missing all-pipeline runtime resume plan: %+v", overview.Actions)
+	}
+	if stringSliceContains(overview.Actions, "agent-team resume-plan --status crashed") {
+		t.Fatalf("actions should prefer pipeline runtime resume plan: %+v", overview.Actions)
+	}
+	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team pipeline resume-plan --all --status crashed"); !ok || detail.Source != "runtime" || detail.Reason != "crashed=2" {
+		t.Fatalf("pipeline runtime action detail = %+v ok=%v", detail, ok)
+	}
+
+	next := NewRootCmd()
+	nextOut, nextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	next.SetOut(nextOut)
+	next.SetErr(nextErr)
+	next.SetArgs([]string{"next", "--target", root, "--source", "runtime", "--json"})
+	if err := next.Execute(); err != nil {
+		t.Fatalf("next pipeline runtime json: %v\nstderr=%s", err, nextErr.String())
+	}
+	var result nextActionResult
+	if err := json.Unmarshal(nextOut.Bytes(), &result); err != nil {
+		t.Fatalf("decode next pipeline runtime: %v\nbody=%s", err, nextOut.String())
+	}
+	if len(result.Actions) != 1 || result.Actions[0] != "agent-team pipeline resume-plan --all --status crashed" {
+		t.Fatalf("pipeline runtime next = %+v", result)
+	}
+}
+
 func TestOverviewReportsStaleRuntimeResumePlanActions(t *testing.T) {
 	root := writeOverviewRuntimeFixture(t)
 	teamDir := filepath.Join(root, ".agent_team")
@@ -396,6 +441,55 @@ func TestOverviewReportsStaleRuntimeResumePlanActions(t *testing.T) {
 	}
 	if detail, ok := findOperatorActionHint(teamOverview.ActionDetails, "agent-team team resume-plan delivery --runtime-stale"); !ok || detail.Team != "delivery" || detail.Source != "runtime" || detail.Reason != "stale=1" {
 		t.Fatalf("team stale runtime action detail = %+v ok=%v", detail, ok)
+	}
+}
+
+func TestOverviewReportsPipelineStaleRuntimeResumePlanActions(t *testing.T) {
+	root := writeOverviewPipelineStaleRuntimeFixture(t)
+	oldPIDLiveCheck := daemon.PidLiveCheck
+	daemon.PidLiveCheck = func(pid int) bool {
+		return pid != 4242
+	}
+	t.Cleanup(func() {
+		daemon.PidLiveCheck = oldPIDLiveCheck
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview pipeline stale runtime json: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview pipeline stale runtime: %v\nbody=%s", err, out.String())
+	}
+	if overview.Runtime.StaleRunning != 2 || strings.Join(overview.Runtime.StalePipelines, ",") != "ticket_to_pr" {
+		t.Fatalf("pipeline stale runtime summary = %+v", overview.Runtime)
+	}
+	if !stringSliceContains(overview.Actions, "agent-team pipeline resume-plan ticket_to_pr --runtime-stale") {
+		t.Fatalf("actions missing pipeline stale runtime resume plan: %+v", overview.Actions)
+	}
+	if stringSliceContains(overview.Actions, "agent-team resume-plan --runtime-stale") {
+		t.Fatalf("actions should prefer pipeline stale runtime resume plan: %+v", overview.Actions)
+	}
+
+	next := NewRootCmd()
+	nextOut, nextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	next.SetOut(nextOut)
+	next.SetErr(nextErr)
+	next.SetArgs([]string{"next", "--target", root, "--source", "runtime", "--reason", "stale", "--json"})
+	if err := next.Execute(); err != nil {
+		t.Fatalf("next pipeline stale runtime json: %v\nstderr=%s", err, nextErr.String())
+	}
+	var result nextActionResult
+	if err := json.Unmarshal(nextOut.Bytes(), &result); err != nil {
+		t.Fatalf("decode next pipeline stale runtime: %v\nbody=%s", err, nextOut.String())
+	}
+	if len(result.Actions) != 1 || result.Actions[0] != "agent-team pipeline resume-plan ticket_to_pr --runtime-stale" {
+		t.Fatalf("pipeline stale runtime next = %+v", result)
 	}
 }
 
@@ -1293,6 +1387,122 @@ instances = ["manager", "worker"]
 	} {
 		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
 			t.Fatalf("WriteMetadata %s: %v", meta.Instance, err)
+		}
+	}
+	return root
+}
+
+func writeOverviewPipelineRuntimeFixture(t *testing.T) string {
+	t.Helper()
+	root := writeOverviewPipelineRuntimeBase(t)
+	teamDir := filepath.Join(root, ".agent_team")
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "worker-squ-910", Job: "squ-910", Agent: "worker", Status: daemon.StatusCrashed, Runtime: "codex", StartedAt: now.Add(-2 * time.Hour), ExitedAt: now.Add(-time.Hour)},
+		{Instance: "worker-ops-910", Job: "ops-910", Agent: "worker", Status: daemon.StatusCrashed, Runtime: "codex", StartedAt: now.Add(-90 * time.Minute), ExitedAt: now.Add(-30 * time.Minute)},
+		{Instance: "adhoc-runtime", Agent: "worker", Status: daemon.StatusExited, Runtime: "codex", StartedAt: now.Add(-80 * time.Minute), ExitedAt: now.Add(-20 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("WriteMetadata %s: %v", meta.Instance, err)
+		}
+	}
+	return root
+}
+
+func writeOverviewPipelineStaleRuntimeFixture(t *testing.T) string {
+	t.Helper()
+	root := writeOverviewPipelineRuntimeBase(t)
+	teamDir := filepath.Join(root, ".agent_team")
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "worker-squ-910", Job: "squ-910", Agent: "worker", Status: daemon.StatusRunning, Runtime: "codex", RuntimeBinary: "codex", PID: 4242, StartedAt: now.Add(-2 * time.Hour)},
+		{Instance: "reviewer-squ-911", Job: "squ-911", Agent: "manager", Status: daemon.StatusRunning, Runtime: "claude", RuntimeBinary: "claude", PID: 4242, StartedAt: now.Add(-90 * time.Minute)},
+		{Instance: "adhoc-runtime", Agent: "worker", Status: daemon.StatusExited, Runtime: "codex", StartedAt: now.Add(-80 * time.Minute), ExitedAt: now.Add(-20 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("WriteMetadata %s: %v", meta.Instance, err)
+		}
+	}
+	return root
+}
+
+func writeOverviewPipelineRuntimeBase(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	instances := `
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+after = ["implement"]
+
+[pipelines.ops_review]
+trigger.event = "ops.created"
+
+[[pipelines.ops_review.steps]]
+id = "audit"
+target = "worker"
+`
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(instances), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-910",
+			Ticket:    "SQU-910",
+			Target:    "worker",
+			Kickoff:   "pipeline runtime",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-910",
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-910", StartedAt: now.Add(-2 * time.Hour)},
+			},
+		},
+		{
+			ID:        "squ-911",
+			Ticket:    "SQU-911",
+			Target:    "worker",
+			Kickoff:   "pipeline review runtime",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-911",
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "review", Target: "manager", Status: job.StatusRunning, Instance: "reviewer-squ-911", StartedAt: now.Add(-90 * time.Minute)},
+			},
+		},
+		{
+			ID:        "ops-910",
+			Ticket:    "OPS-910",
+			Target:    "worker",
+			Kickoff:   "ops pipeline runtime",
+			Pipeline:  "ops_review",
+			Status:    job.StatusRunning,
+			Instance:  "worker-ops-910",
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "audit", Target: "worker", Status: job.StatusRunning, Instance: "worker-ops-910", StartedAt: now.Add(-90 * time.Minute)},
+			},
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write %s: %v", j.ID, err)
 		}
 	}
 	return root

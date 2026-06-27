@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	jobstore "github.com/jamesaud/agent-team/internal/job"
 	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
 )
@@ -199,6 +200,10 @@ type overviewRuntimeSummary struct {
 	StaleRunning     int      `json:"stale_running,omitempty"`
 	CrashedInstances []string `json:"crashed_instances,omitempty"`
 	StaleInstances   []string `json:"stale_instances,omitempty"`
+	CrashedPipelines []string `json:"crashed_pipelines,omitempty"`
+	StalePipelines   []string `json:"stale_pipelines,omitempty"`
+	crashedUnscoped  int
+	staleUnscoped    int
 }
 
 type overviewInboxSummary struct {
@@ -483,7 +488,11 @@ func collectOverviewRuntime(teamDir string) (overviewRuntimeSummary, error) {
 	if err != nil {
 		return overviewRuntimeSummary{}, err
 	}
-	return overviewRuntimeFromMetadata(metas), nil
+	jobs, err := jobstore.List(teamDir)
+	if err != nil {
+		return overviewRuntimeSummary{}, err
+	}
+	return overviewRuntimeFromMetadata(metas, jobs), nil
 }
 
 func collectOverviewRuntimeForTeam(teamDir string, top *topology.Topology, team *topology.Team) (overviewRuntimeSummary, error) {
@@ -491,11 +500,16 @@ func collectOverviewRuntimeForTeam(teamDir string, top *topology.Topology, team 
 	if err != nil {
 		return overviewRuntimeSummary{}, err
 	}
-	return overviewRuntimeFromMetadata(teamMetadata(top, team, metas)), nil
+	jobs, err := jobstore.List(teamDir)
+	if err != nil {
+		return overviewRuntimeSummary{}, err
+	}
+	return overviewRuntimeFromMetadata(teamMetadata(top, team, metas), jobs), nil
 }
 
-func overviewRuntimeFromMetadata(metas []*daemon.Metadata) overviewRuntimeSummary {
+func overviewRuntimeFromMetadata(metas []*daemon.Metadata, jobs []*jobstore.Job) overviewRuntimeSummary {
 	out := overviewRuntimeSummary{}
+	jobByInstance := overviewRuntimeJobByInstance(metas, jobs)
 	for _, meta := range metas {
 		if meta == nil {
 			continue
@@ -513,6 +527,7 @@ func overviewRuntimeFromMetadata(metas []*daemon.Metadata) overviewRuntimeSummar
 			if strings.TrimSpace(meta.Instance) != "" {
 				out.CrashedInstances = append(out.CrashedInstances, meta.Instance)
 			}
+			overviewRuntimeAddOwnership(&out.CrashedPipelines, &out.crashedUnscoped, jobByInstance[meta.Instance])
 		default:
 			out.Unknown++
 		}
@@ -521,11 +536,54 @@ func overviewRuntimeFromMetadata(metas []*daemon.Metadata) overviewRuntimeSummar
 			if strings.TrimSpace(meta.Instance) != "" {
 				out.StaleInstances = append(out.StaleInstances, meta.Instance)
 			}
+			overviewRuntimeAddOwnership(&out.StalePipelines, &out.staleUnscoped, jobByInstance[meta.Instance])
 		}
 	}
 	sort.Strings(out.CrashedInstances)
 	sort.Strings(out.StaleInstances)
+	sort.Strings(out.CrashedPipelines)
+	sort.Strings(out.StalePipelines)
 	return out
+}
+
+func overviewRuntimeJobByInstance(metas []*daemon.Metadata, jobs []*jobstore.Job) map[string]*jobstore.Job {
+	if len(metas) == 0 || len(jobs) == 0 {
+		return nil
+	}
+	byInstance := map[string]*daemon.Metadata{}
+	for _, meta := range metas {
+		if meta == nil || strings.TrimSpace(meta.Instance) == "" {
+			continue
+		}
+		byInstance[meta.Instance] = meta
+	}
+	out := map[string]*jobstore.Job{}
+	for _, j := range jobs {
+		for _, meta := range metadataForResumePlanJob(metas, byInstance, j) {
+			if meta == nil || strings.TrimSpace(meta.Instance) == "" {
+				continue
+			}
+			if out[meta.Instance] == nil {
+				out[meta.Instance] = j
+			}
+		}
+	}
+	return out
+}
+
+func overviewRuntimeAddOwnership(pipelines *[]string, unscoped *int, j *jobstore.Job) {
+	if j == nil {
+		*unscoped = *unscoped + 1
+		return
+	}
+	pipeline := strings.TrimSpace(j.Pipeline)
+	if pipeline == "" {
+		*unscoped = *unscoped + 1
+		return
+	}
+	if !stringSliceContains(*pipelines, pipeline) {
+		*pipelines = append(*pipelines, pipeline)
+	}
 }
 
 func collectOverviewInbox(teamDir string, top *topology.Topology, team *topology.Team) (overviewInboxSummary, error) {
@@ -656,7 +714,7 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 		add(overviewRuntimeResumePlanAction(out.Runtime, teamName), "runtime", fmt.Sprintf("crashed=%d", out.Runtime.Crashed))
 	}
 	if out.Runtime.StaleRunning > 0 {
-		add(overviewRuntimeStaleResumePlanAction(teamName), "runtime", fmt.Sprintf("stale=%d", out.Runtime.StaleRunning))
+		add(overviewRuntimeStaleResumePlanAction(out.Runtime, teamName), "runtime", fmt.Sprintf("stale=%d", out.Runtime.StaleRunning))
 	}
 	if out.Inbox.Unread > 0 {
 		if teamName != "" {
@@ -970,18 +1028,33 @@ func overviewQueueQuarantineAction(health *healthResult, teamName string) string
 	return "agent-team queue quarantine ls"
 }
 
-func overviewRuntimeResumePlanAction(_ overviewRuntimeSummary, teamName string) string {
+func overviewRuntimeResumePlanAction(summary overviewRuntimeSummary, teamName string) string {
 	if teamName != "" {
 		return fmt.Sprintf("agent-team team resume-plan %s --status crashed", teamName)
 	}
-	return "agent-team resume-plan --status crashed"
+	return overviewRuntimePipelineResumeAction(summary.CrashedPipelines, summary.crashedUnscoped, "--status crashed")
 }
 
-func overviewRuntimeStaleResumePlanAction(teamName string) string {
+func overviewRuntimeStaleResumePlanAction(summary overviewRuntimeSummary, teamName string) string {
 	if teamName != "" {
 		return fmt.Sprintf("agent-team team resume-plan %s --runtime-stale", teamName)
 	}
-	return "agent-team resume-plan --runtime-stale"
+	return overviewRuntimePipelineResumeAction(summary.StalePipelines, summary.staleUnscoped, "--runtime-stale")
+}
+
+func overviewRuntimePipelineResumeAction(pipelines []string, unscoped int, flag string) string {
+	flag = strings.TrimSpace(flag)
+	if unscoped == 0 {
+		switch len(pipelines) {
+		case 1:
+			return fmt.Sprintf("agent-team pipeline resume-plan %s %s", pipelines[0], flag)
+		default:
+			if len(pipelines) > 1 {
+				return fmt.Sprintf("agent-team pipeline resume-plan --all %s", flag)
+			}
+		}
+	}
+	return fmt.Sprintf("agent-team resume-plan %s", flag)
 }
 
 func overviewHasQueueSectionError(out *overviewResult) bool {
