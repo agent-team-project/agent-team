@@ -57,6 +57,9 @@ jobs:
       - name: Local orchestration demo (fake Codex runtime)
         run: python3 scripts/demo/local_orchestration.py bin/agent-team --runtime codex
 
+      - name: Local orchestration demo (fake Claude runtime)
+        run: python3 scripts/demo/local_orchestration.py bin/agent-team --runtime claude
+
       - name: Docker build
         run: docker build -t agent-team:ci .
 
