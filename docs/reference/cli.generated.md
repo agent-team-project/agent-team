@@ -3205,7 +3205,7 @@ Subcommands:
 - `agent-team pipeline logs` - Show daemon-captured logs for one pipeline.
 - `agent-team pipeline ls` - List declared pipelines.
 - `agent-team pipeline next` - Print recommended next actions for pipeline jobs.
-- `agent-team pipeline queue` - List or control queue items scoped to one pipeline.
+- `agent-team pipeline queue` - List or control pipeline-owned queue items.
 - `agent-team pipeline ready` - List ready pipeline jobs.
 - `agent-team pipeline reject` - Reject blocked manual pipeline gates.
 - `agent-team pipeline release` - Release held pipeline jobs so automation can advance them.
@@ -3581,15 +3581,18 @@ Flags:
 
 ## `agent-team pipeline queue`
 
-List or control queue items scoped to one pipeline.
+List or control pipeline-owned queue items.
+
+List active queue items owned by one pipeline. With no pipeline, all pipeline-owned queue items are listed. Queue subcommands still require an explicit pipeline.
 
 ```text
-agent-team pipeline queue <pipeline> [flags]
+agent-team pipeline queue [<pipeline>|--all] [flags]
 ```
 
 Flags:
 
 ```text
+      --all                  List queue items across all pipelines. This is the default when no pipeline is passed.
       --event-type strings   Filter by event type; repeat or comma-separate values.
       --format string        Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --interval duration    Refresh interval for --watch. (default 2s)

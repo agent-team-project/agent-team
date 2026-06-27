@@ -5430,6 +5430,14 @@ target = "worker"
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
+		{
+			ID:        "adhoc-901",
+			Ticket:    "ADHOC-901",
+			Target:    "worker",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
 	} {
 		if err := job.Write(teamDir, j); err != nil {
 			t.Fatalf("write job %s: %v", j.ID, err)
@@ -5473,6 +5481,19 @@ target = "worker"
 			UpdatedAt:      now.Add(-2 * time.Hour),
 			DeadLetteredAt: now.Add(-2 * time.Hour),
 		},
+		{
+			ID:             "q-adhoc-dead",
+			State:          daemon.QueueStateDead,
+			EventType:      "agent.dispatch",
+			Instance:       "worker",
+			InstanceID:     "worker-adhoc-901",
+			Payload:        map[string]any{"job_id": "adhoc-901", "ticket": "ADHOC-901"},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "adhoc",
+			QueuedAt:       now.Add(-3 * time.Hour),
+			UpdatedAt:      now.Add(-2 * time.Hour),
+			DeadLetteredAt: now.Add(-2 * time.Hour),
+		},
 	} {
 		if err := daemon.WriteQueueItem(queueRoot, item); err != nil {
 			t.Fatalf("write queue item %s: %v", item.ID, err)
@@ -5495,6 +5516,40 @@ target = "worker"
 		t.Fatalf("pipeline queue list IDs = %v\nbody=%s", got, listOut.String())
 	}
 
+	allList := NewRootCmd()
+	allListOut, allListErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allList.SetOut(allListOut)
+	allList.SetErr(allListErr)
+	allList.SetArgs([]string{"pipeline", "queue", "--repo", root, "--sort", "id", "--json"})
+	if err := allList.Execute(); err != nil {
+		t.Fatalf("pipeline queue all list: %v\nstderr=%s", err, allListErr.String())
+	}
+	listed = nil
+	if err := json.Unmarshal(allListOut.Bytes(), &listed); err != nil {
+		t.Fatalf("decode pipeline queue all list: %v\nbody=%s", err, allListOut.String())
+	}
+	if got := queueItemIDsForTest(listed); strings.Join(got, ",") != "q-foreign-dead,q-pipeline-dead,q-pipeline-pending" {
+		t.Fatalf("pipeline queue all IDs = %v\nbody=%s", got, allListOut.String())
+	}
+
+	allText := NewRootCmd()
+	allTextOut, allTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allText.SetOut(allTextOut)
+	allText.SetErr(allTextErr)
+	allText.SetArgs([]string{"pipeline", "queue", "--all", "--repo", root, "--sort", "id"})
+	if err := allText.Execute(); err != nil {
+		t.Fatalf("pipeline queue --all text: %v\nstderr=%s", err, allTextErr.String())
+	}
+	for _, want := range []string{
+		"agent-team pipeline queue retry ops_review q-foreign-dead",
+		"agent-team pipeline queue retry ticket_to_pr q-pipeline-dead",
+		"agent-team pipeline queue drop ticket_to_pr q-pipeline-pending",
+	} {
+		if !strings.Contains(allTextOut.String(), want) {
+			t.Fatalf("pipeline queue --all text missing %q:\n%s", want, allTextOut.String())
+		}
+	}
+
 	summary := NewRootCmd()
 	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	summary.SetOut(summaryOut)
@@ -5509,6 +5564,22 @@ target = "worker"
 	}
 	if summarized.Total != 2 || summarized.Dead != 1 || summarized.Pending != 1 {
 		t.Fatalf("pipeline queue summary = %+v", summarized)
+	}
+
+	allSummary := NewRootCmd()
+	allSummaryOut, allSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allSummary.SetOut(allSummaryOut)
+	allSummary.SetErr(allSummaryErr)
+	allSummary.SetArgs([]string{"pipeline", "queue", "--all", "--repo", root, "--summary", "--json"})
+	if err := allSummary.Execute(); err != nil {
+		t.Fatalf("pipeline queue all summary: %v\nstderr=%s", err, allSummaryErr.String())
+	}
+	var allSummarized queueSummary
+	if err := json.Unmarshal(allSummaryOut.Bytes(), &allSummarized); err != nil {
+		t.Fatalf("decode pipeline queue all summary: %v\nbody=%s", err, allSummaryOut.String())
+	}
+	if allSummarized.Total != 3 || allSummarized.Dead != 2 || allSummarized.Pending != 1 {
+		t.Fatalf("pipeline queue all summary = %+v", allSummarized)
 	}
 
 	show := NewRootCmd()
@@ -5583,6 +5654,30 @@ target = "worker"
 	}
 	if _, err := daemon.ReadQueueItem(queueRoot, "q-foreign-dead"); err != nil {
 		t.Fatalf("foreign queue item was removed: %v", err)
+	}
+
+	invalidMany := NewRootCmd()
+	invalidManyOut, invalidManyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidMany.SetOut(invalidManyOut)
+	invalidMany.SetErr(invalidManyErr)
+	invalidMany.SetArgs([]string{"pipeline", "queue", "ticket_to_pr", "ops_review", "--repo", root})
+	if err := invalidMany.Execute(); err == nil {
+		t.Fatalf("pipeline queue accepted multiple pipeline names: stdout=%s", invalidManyOut.String())
+	}
+	if !strings.Contains(invalidManyErr.String(), "pass at most one pipeline name") {
+		t.Fatalf("multiple pipeline error = %q", invalidManyErr.String())
+	}
+
+	invalidAll := NewRootCmd()
+	invalidAllOut, invalidAllErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidAll.SetOut(invalidAllOut)
+	invalidAll.SetErr(invalidAllErr)
+	invalidAll.SetArgs([]string{"pipeline", "queue", "ticket_to_pr", "--all", "--repo", root})
+	if err := invalidAll.Execute(); err == nil {
+		t.Fatalf("pipeline queue accepted --all with pipeline: stdout=%s", invalidAllOut.String())
+	}
+	if !strings.Contains(invalidAllErr.String(), "--all cannot be combined with a pipeline argument") {
+		t.Fatalf("--all conflict error = %q", invalidAllErr.String())
 	}
 }
 

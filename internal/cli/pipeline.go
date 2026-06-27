@@ -899,6 +899,7 @@ func newPipelineQueueCmd() *cobra.Command {
 		jobs        []string
 		runtimes    []string
 		readyOnly   bool
+		all         bool
 		sortBy      string
 		limit       int
 		watch       bool
@@ -910,10 +911,19 @@ func newPipelineQueueCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "queue <pipeline>",
-		Short: "List or control queue items scoped to one pipeline.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "queue [<pipeline>|--all]",
+		Short: "List or control pipeline-owned queue items.",
+		Long:  "List active queue items owned by one pipeline. With no pipeline, all pipeline-owned queue items are listed. Queue subcommands still require an explicit pipeline.",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: pass at most one pipeline name.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -953,18 +963,26 @@ func newPipelineQueueCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			pipelineName := ""
+			if len(args) == 1 && !all {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if len(args) == 1 && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: pipeline name is required.")
+				return exitErr(2)
+			}
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
 				if summary {
-					return runPipelineQueueSummaryWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], filters, jsonOut, interval, !noClear && !jsonOut)
+					return runPipelineQueueSummaryWatch(ctx, cmd.OutOrStdout(), teamDir, pipelineName, filters, jsonOut, interval, !noClear && !jsonOut)
 				}
-				return runPipelineQueueListWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], filters, queueListOptions{Sort: sortMode, Limit: limit}, jsonOut, tmpl, interval, !noClear && !jsonOut)
+				return runPipelineQueueListWatch(ctx, cmd.OutOrStdout(), teamDir, pipelineName, filters, queueListOptions{Sort: sortMode, Limit: limit}, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
 			if summary {
-				return runPipelineQueueSummary(cmd.OutOrStdout(), teamDir, args[0], filters, jsonOut)
+				return runPipelineQueueSummary(cmd.OutOrStdout(), teamDir, pipelineName, filters, jsonOut)
 			}
-			return runPipelineQueueList(cmd.OutOrStdout(), teamDir, args[0], filters, queueListOptions{Sort: sortMode, Limit: limit}, jsonOut, tmpl)
+			return runPipelineQueueList(cmd.OutOrStdout(), teamDir, pipelineName, filters, queueListOptions{Sort: sortMode, Limit: limit}, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -973,6 +991,7 @@ func newPipelineQueueCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Filter by job id or ticket; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Filter by queued dispatch runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&readyOnly, "ready", false, "Only show pending queue items whose next retry is due now.")
+	cmd.Flags().BoolVar(&all, "all", false, "List queue items across all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().StringVar(&sortBy, "sort", "state", "Sort rows by state, id, event, instance, job, runtime, queued, updated, next-retry, or attempts.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the pipeline queue table until interrupted.")
@@ -5387,7 +5406,11 @@ func runPipelineQueueList(w io.Writer, teamDir, pipeline string, filters queueLi
 	if tmpl != nil {
 		return renderQueueItemsFormat(w, items, tmpl)
 	}
-	renderQueueTableWithActions(w, items, runtimeByInstance, pipelineQueueActionResolver(pipeline))
+	actionResolver, err := pipelineQueueActionResolverForScope(teamDir, pipeline)
+	if err != nil {
+		return err
+	}
+	renderQueueTableWithActions(w, items, runtimeByInstance, actionResolver)
 	return nil
 }
 
@@ -5510,6 +5533,28 @@ func pipelineQueueActionResolver(pipeline string) queueActionResolver {
 	return func(item *daemon.QueueItem, now time.Time) []string {
 		return pipelineQueueItemActions(pipeline, item, now)
 	}
+}
+
+func pipelineQueueActionResolverForScope(teamDir, pipeline string) (queueActionResolver, error) {
+	pipeline = strings.TrimSpace(pipeline)
+	if pipeline != "" {
+		return pipelineQueueActionResolver(pipeline), nil
+	}
+	jobs, err := selectedPipelineJobs(teamDir, "")
+	if err != nil {
+		return nil, err
+	}
+	return func(item *daemon.QueueItem, now time.Time) []string {
+		for _, j := range jobs {
+			if j == nil || strings.TrimSpace(j.Pipeline) == "" {
+				continue
+			}
+			if queueItemMatchesJob(item, j) {
+				return pipelineQueueItemActions(j.Pipeline, item, now)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func pipelineQueueItemActions(pipeline string, item *daemon.QueueItem, now time.Time) []string {
