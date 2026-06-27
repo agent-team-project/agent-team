@@ -208,7 +208,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline graph <pipeline>` | Render text, Mermaid, DOT, or JSON step graphs |
 | `agent-team pipeline doctor --all` | Validate workflows; add `--strict-runtime` to fail on unavailable step runtime defaults |
 | `agent-team pipeline run <pipeline> <ticket>` | Create pipeline job; `--dispatch` accepts workspace/runtime overrides and `--wait-next-state`/`--wait-step` can block for the first stage handoff |
-| `agent-team pipeline status` | Summarize or watch pipeline jobs plus owned queue/quarantine/outbox counts; sort rows and cap output with `--limit` |
+| `agent-team pipeline status` | Summarize or watch pipeline jobs plus owned queue/outbox and quarantine counts; sort rows and cap output with `--limit` |
 | `agent-team pipeline triage [<pipeline>]` | Show pipeline-owned jobs needing attention, including queue/outbox quarantine and ready-step recovery hints |
 | `agent-team pipeline explain <pipeline>` | Expand or watch pipeline jobs as per-step readiness, blockers, gates, and actions; sort and cap large histories with `--sort` and `--limit`, or add `--step` to focus one stage |
 | `agent-team pipeline snapshot <pipeline>` | Capture one pipeline's status, provenance, explained jobs, inboxes, queue/outbox ownership including quarantine, dry-run advance previews, and formatted summary fields |
@@ -286,7 +286,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team outbox quarantine restore <team> --all` | Restore matching team-owned restorable quarantined outbox files; filter, sort, and limit batch actions |
 | `agent-team team outbox quarantine drop <team> <path>` | Drop one team-owned quarantined outbox file after inspection |
 | `agent-team team outbox quarantine drop <team> --all` | Drop matching team-owned quarantined outbox files; filter by state, job, restorable state, or age before deleting |
-| `agent-team team pipelines <team>` | List or watch team-owned pipeline status rows with queue/quarantine counts; sort rows and cap output with `--limit` |
+| `agent-team team pipelines <team>` | List or watch team-owned pipeline status rows with queue/outbox and quarantine counts; sort rows and cap output with `--limit` |
 | `agent-team team explain <team>` | Expand or watch team-owned pipeline jobs as per-step diagnostics; sort and cap large histories with `--sort` and `--limit`, or add `--step` to focus one stage |
 | `agent-team team ready <team>` | List or watch scoped ready pipeline steps; filter by `--step`, sort by `--sort`, and cap rows with `--limit` |
 | `agent-team team hold <team>` | Hold matching pipeline jobs owned by a team; add `--for` or `--until` for a deadline |

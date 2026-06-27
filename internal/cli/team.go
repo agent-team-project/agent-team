@@ -4206,7 +4206,7 @@ func newTeamPipelinesCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after sorting; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team pipeline status as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each pipeline with a Go template, e.g. '{{.Pipeline}} {{.ReadySteps}}'.")
-	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, or quarantined.")
+	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined.")
 	return cmd
 }
 
@@ -9657,6 +9657,16 @@ func teamPipelineActions(teamName string, row pipelineStatusRow) []string {
 	if row.QueuePending > 0 {
 		add(teamTickPreviewAction(teamName, false))
 		add(fmt.Sprintf("agent-team team queue %s --state pending", teamName))
+	}
+	if row.OutboxQuarantined > 0 {
+		add(fmt.Sprintf("agent-team team outbox quarantine %s", teamName))
+		if row.OutboxUnrestorable > 0 {
+			add(fmt.Sprintf("agent-team team outbox quarantine %s --unrestorable", teamName))
+		}
+		if row.OutboxRestorable > 0 {
+			add(fmt.Sprintf("agent-team team outbox quarantine %s --restorable", teamName))
+		}
+		add(fmt.Sprintf("agent-team team snapshot %s --json", teamName))
 	}
 	if row.OutboxFailed > 0 {
 		add(fmt.Sprintf("agent-team team outbox %s --state failed", teamName))

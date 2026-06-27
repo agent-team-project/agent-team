@@ -2779,6 +2779,34 @@ pipelines = ["ticket_to_pr"]
 			t.Fatalf("write outbox item %s: %v", item.ID, err)
 		}
 	}
+	writeQuarantinedOutboxFile(t, teamDir, "20260627T170000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-ticket-quarantined-a",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": "squ-920", "target": "worker"},
+		CreatedAt: now.Add(4 * time.Minute),
+		UpdatedAt: now.Add(4 * time.Minute),
+	})
+	writeQuarantinedOutboxFile(t, teamDir, "20260627T170000.000000000Z", daemon.OutboxStateFailed, &daemon.OutboxItem{
+		ID:        "outbox-ticket-quarantined-b",
+		State:     daemon.OutboxStateFailed,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": "squ-920", "target": "worker"},
+		CreatedAt: now.Add(5 * time.Minute),
+		UpdatedAt: now.Add(5 * time.Minute),
+		FailedAt:  now.Add(5 * time.Minute),
+	})
+	writeQuarantinedOutboxFile(t, teamDir, "20260627T170000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-ops-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": "ops-920", "target": "worker"},
+		CreatedAt: now.Add(6 * time.Minute),
+		UpdatedAt: now.Add(6 * time.Minute),
+	})
 
 	status := NewRootCmd()
 	statusOut, statusErr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -2797,10 +2825,13 @@ pipelines = ["ticket_to_pr"]
 		byName[row.Pipeline] = row
 	}
 	ticket := byName["ticket_to_pr"]
-	if ticket.OutboxPending != 1 || ticket.OutboxFailed != 1 || ticket.OutboxProcessed != 1 {
+	if ticket.OutboxPending != 1 || ticket.OutboxFailed != 1 || ticket.OutboxProcessed != 1 || ticket.OutboxQuarantined != 2 || ticket.OutboxRestorable != 2 || ticket.OutboxUnrestorable != 0 {
 		t.Fatalf("ticket outbox status = %+v", ticket)
 	}
 	for _, want := range []string{
+		"agent-team pipeline outbox quarantine ticket_to_pr",
+		"agent-team pipeline outbox quarantine ticket_to_pr --restorable",
+		"agent-team pipeline snapshot ticket_to_pr --json",
 		"agent-team pipeline outbox ticket_to_pr --state failed",
 		"agent-team pipeline outbox ticket_to_pr --state pending",
 	} {
@@ -2809,7 +2840,7 @@ pipelines = ["ticket_to_pr"]
 		}
 	}
 	ops := byName["ops_review"]
-	if ops.OutboxPending != 1 || ops.OutboxFailed != 0 || ops.OutboxProcessed != 0 {
+	if ops.OutboxPending != 1 || ops.OutboxFailed != 0 || ops.OutboxProcessed != 0 || ops.OutboxQuarantined != 1 || ops.OutboxRestorable != 1 || ops.OutboxUnrestorable != 0 {
 		t.Fatalf("ops outbox status = %+v", ops)
 	}
 
@@ -2817,11 +2848,12 @@ pipelines = ["ticket_to_pr"]
 	nextOut, nextErr := &bytes.Buffer{}, &bytes.Buffer{}
 	next.SetOut(nextOut)
 	next.SetErr(nextErr)
-	next.SetArgs([]string{"pipeline", "next", "ticket_to_pr", "--repo", root, "--reason", "outbox_failed,outbox_pending", "--format", "{{.Reason}}|{{.Action}}"})
+	next.SetArgs([]string{"pipeline", "next", "ticket_to_pr", "--repo", root, "--reason", "outbox_quarantined,outbox_failed,outbox_pending", "--format", "{{.Reason}}|{{.Action}}"})
 	if err := next.Execute(); err != nil {
 		t.Fatalf("pipeline next outbox reasons: %v\nstderr=%s", err, nextErr.String())
 	}
 	for _, want := range []string{
+		"outbox_quarantined=2|agent-team pipeline outbox quarantine ticket_to_pr",
 		"outbox_failed=1|agent-team pipeline outbox ticket_to_pr --state failed",
 		"outbox_pending=1|agent-team pipeline outbox ticket_to_pr --state pending",
 	} {
@@ -2834,11 +2866,12 @@ pipelines = ["ticket_to_pr"]
 	teamNextOut, teamNextErr := &bytes.Buffer{}, &bytes.Buffer{}
 	teamNext.SetOut(teamNextOut)
 	teamNext.SetErr(teamNextErr)
-	teamNext.SetArgs([]string{"pipeline", "next", "ticket_to_pr", "--team", "delivery", "--repo", root, "--reason", "outbox_failed,outbox_pending", "--format", "{{.Reason}}|{{.Action}}"})
+	teamNext.SetArgs([]string{"pipeline", "next", "ticket_to_pr", "--team", "delivery", "--repo", root, "--reason", "outbox_quarantined,outbox_failed,outbox_pending", "--format", "{{.Reason}}|{{.Action}}"})
 	if err := teamNext.Execute(); err != nil {
 		t.Fatalf("pipeline next team outbox reasons: %v\nstderr=%s", err, teamNextErr.String())
 	}
 	for _, want := range []string{
+		"outbox_quarantined=2|agent-team team outbox quarantine delivery",
 		"outbox_failed=1|agent-team team outbox delivery --state failed",
 		"outbox_pending=1|agent-team team outbox delivery --state pending",
 	} {
@@ -2851,12 +2884,24 @@ pipelines = ["ticket_to_pr"]
 	sortedOut, sortedErr := &bytes.Buffer{}, &bytes.Buffer{}
 	sorted.SetOut(sortedOut)
 	sorted.SetErr(sortedErr)
-	sorted.SetArgs([]string{"pipeline", "status", "--repo", root, "--sort", "outbox", "--limit", "1", "--format", "{{.Pipeline}} {{.OutboxPending}} {{.OutboxFailed}} {{.OutboxProcessed}}"})
+	sorted.SetArgs([]string{"pipeline", "status", "--repo", root, "--sort", "outbox", "--limit", "1", "--format", "{{.Pipeline}} {{.OutboxPending}} {{.OutboxFailed}} {{.OutboxProcessed}} {{.OutboxQuarantined}}"})
 	if err := sorted.Execute(); err != nil {
 		t.Fatalf("pipeline status sort outbox: %v\nstderr=%s", err, sortedErr.String())
 	}
-	if got, want := strings.TrimSpace(sortedOut.String()), "ticket_to_pr 1 1 1"; got != want {
+	if got, want := strings.TrimSpace(sortedOut.String()), "ticket_to_pr 1 1 1 2"; got != want {
 		t.Fatalf("pipeline status outbox sort = %q, want %q", got, want)
+	}
+
+	sortedQuarantine := NewRootCmd()
+	sortedQuarantineOut, sortedQuarantineErr := &bytes.Buffer{}, &bytes.Buffer{}
+	sortedQuarantine.SetOut(sortedQuarantineOut)
+	sortedQuarantine.SetErr(sortedQuarantineErr)
+	sortedQuarantine.SetArgs([]string{"pipeline", "status", "--repo", root, "--sort", "outbox-quarantined", "--limit", "1", "--format", "{{.Pipeline}} {{.OutboxQuarantined}} {{.OutboxRestorable}} {{.OutboxUnrestorable}}"})
+	if err := sortedQuarantine.Execute(); err != nil {
+		t.Fatalf("pipeline status sort outbox quarantine: %v\nstderr=%s", err, sortedQuarantineErr.String())
+	}
+	if got, want := strings.TrimSpace(sortedQuarantineOut.String()), "ticket_to_pr 2 2 0"; got != want {
+		t.Fatalf("pipeline status outbox quarantine sort = %q, want %q", got, want)
 	}
 
 	text := NewRootCmd()
@@ -2867,7 +2912,7 @@ pipelines = ["ticket_to_pr"]
 	if err := text.Execute(); err != nil {
 		t.Fatalf("pipeline status outbox text: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"OUTBOX", "pending=1,failed=1,processed=1"} {
+	for _, want := range []string{"OUTBOX", "pending=1,failed=1,processed=1,quarantined=2(restorable=2,unrestorable=0)"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("pipeline status outbox text missing %q:\n%s", want, textOut.String())
 		}

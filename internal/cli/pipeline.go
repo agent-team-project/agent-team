@@ -470,7 +470,7 @@ func newPipelineStatusCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after sorting; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline status rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each row with a Go template, e.g. '{{.Pipeline}} {{.Jobs}} {{.ReadySteps}}'.")
-	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, or outbox-processed.")
+	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort rows by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined.")
 	return cmd
 }
 
@@ -757,7 +757,7 @@ func newPipelineNextCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended pipeline actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
-	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort pipelines before selecting actions by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, or outbox-processed.")
+	cmd.Flags().StringVar(&sortBy, "sort", "declared", "Sort pipelines before selecting actions by declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, stale, manual, held, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined.")
 	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit recommended actions as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each action with a Go template, e.g. '{{.Pipeline}} {{.Action}}'.")
@@ -4574,6 +4574,9 @@ type pipelineStatusRow struct {
 	OutboxPending      int      `json:"outbox_pending,omitempty"`
 	OutboxFailed       int      `json:"outbox_failed,omitempty"`
 	OutboxProcessed    int      `json:"outbox_processed,omitempty"`
+	OutboxQuarantined  int      `json:"outbox_quarantined,omitempty"`
+	OutboxRestorable   int      `json:"outbox_restorable,omitempty"`
+	OutboxUnrestorable int      `json:"outbox_unrestorable,omitempty"`
 	Actions            []string `json:"actions,omitempty"`
 }
 
@@ -5371,10 +5374,10 @@ func parsePipelineStatusSort(raw string) (string, error) {
 		return "declared", nil
 	}
 	switch value {
-	case "declared", "pipeline", "steps", "jobs", "queued", "running", "blocked", "done", "failed", "ready", "queued-steps", "running-steps", "stale", "stale-running", "blocked-steps", "manual", "manual-gates", "failed-steps", "held", "done-steps", "none", "no-step", "queue", "queue-pending", "queue-dead", "quarantine", "quarantined", "outbox", "outbox-pending", "outbox-failed", "outbox-processed":
+	case "declared", "pipeline", "steps", "jobs", "queued", "running", "blocked", "done", "failed", "ready", "queued-steps", "running-steps", "stale", "stale-running", "blocked-steps", "manual", "manual-gates", "failed-steps", "held", "done-steps", "none", "no-step", "queue", "queue-pending", "queue-dead", "quarantine", "quarantined", "outbox", "outbox-pending", "outbox-failed", "outbox-processed", "outbox-quarantine", "outbox-quarantined":
 		return value, nil
 	default:
-		return "", fmt.Errorf("--sort must be declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, queued-steps, running-steps, stale, blocked-steps, manual, failed-steps, held, done-steps, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, or outbox-processed")
+		return "", fmt.Errorf("--sort must be declared, pipeline, steps, jobs, queued, running, blocked, done, failed, ready, queued-steps, running-steps, stale, blocked-steps, manual, failed-steps, held, done-steps, none, queue, queue-pending, queue-dead, quarantined, outbox, outbox-pending, outbox-failed, outbox-processed, or outbox-quarantined")
 	}
 }
 
@@ -5451,13 +5454,15 @@ func pipelineStatusSortValue(row pipelineStatusRow, sortMode string) int {
 	case "quarantine", "quarantined":
 		return row.QueueQuarantined
 	case "outbox":
-		return row.OutboxPending + row.OutboxFailed + row.OutboxProcessed
+		return row.OutboxPending + row.OutboxFailed + row.OutboxProcessed + row.OutboxQuarantined
 	case "outbox-pending":
 		return row.OutboxPending
 	case "outbox-failed":
 		return row.OutboxFailed
 	case "outbox-processed":
 		return row.OutboxProcessed
+	case "outbox-quarantine", "outbox-quarantined":
+		return row.OutboxQuarantined
 	default:
 		return 0
 	}
@@ -5791,6 +5796,16 @@ func finalizePipelineStatusRow(row *pipelineStatusRow) {
 		add(pipelineTickPreviewAction(row.Pipeline, false))
 		add(fmt.Sprintf("agent-team pipeline queue %s --state pending", row.Pipeline))
 	}
+	if row.OutboxQuarantined > 0 {
+		add(fmt.Sprintf("agent-team pipeline outbox quarantine %s", row.Pipeline))
+		if row.OutboxUnrestorable > 0 {
+			add(fmt.Sprintf("agent-team pipeline outbox quarantine %s --unrestorable", row.Pipeline))
+		}
+		if row.OutboxRestorable > 0 {
+			add(fmt.Sprintf("agent-team pipeline outbox quarantine %s --restorable", row.Pipeline))
+		}
+		add(fmt.Sprintf("agent-team pipeline snapshot %s --json", row.Pipeline))
+	}
 	if row.OutboxFailed > 0 {
 		add(fmt.Sprintf("agent-team pipeline outbox %s --state failed", row.Pipeline))
 	}
@@ -5834,7 +5849,18 @@ func applyPipelineStatusOutboxRows(teamDir string, rows map[string]*pipelineStat
 	if len(rows) == 0 {
 		return
 	}
-	items, err := daemon.ListOutboxItems(teamDir)
+	if items, err := daemon.ListOutboxItems(teamDir); err == nil {
+		for pipeline, row := range rows {
+			if row == nil {
+				continue
+			}
+			summary := summarizeOutboxItems(outboxItemsForJobs(items, jobsByPipeline[pipeline]))
+			row.OutboxPending = summary.Pending
+			row.OutboxFailed = summary.Failed
+			row.OutboxProcessed = summary.Processed
+		}
+	}
+	quarantine, err := listOutboxQuarantine(teamDir)
 	if err != nil {
 		return
 	}
@@ -5842,10 +5868,10 @@ func applyPipelineStatusOutboxRows(teamDir string, rows map[string]*pipelineStat
 		if row == nil {
 			continue
 		}
-		summary := summarizeOutboxItems(outboxItemsForJobs(items, jobsByPipeline[pipeline]))
-		row.OutboxPending = summary.Pending
-		row.OutboxFailed = summary.Failed
-		row.OutboxProcessed = summary.Processed
+		summary := summarizeOutboxQuarantineItems(outboxQuarantineItemsForJobs(quarantine, jobsByPipeline[pipeline]))
+		row.OutboxQuarantined = summary.Quarantined
+		row.OutboxRestorable = summary.Restorable
+		row.OutboxUnrestorable = summary.Unrestorable
 	}
 }
 
@@ -5941,6 +5967,8 @@ func pipelineNextActionReason(row pipelineStatusRow, action string) string {
 	case strings.Contains(action, " queue retry ") ||
 		strings.Contains(action, " --state dead"):
 		return fmt.Sprintf("queue_dead=%d", row.QueueDead)
+	case strings.Contains(action, " outbox quarantine "):
+		return fmt.Sprintf("outbox_quarantined=%d", row.OutboxQuarantined)
 	case strings.Contains(action, " outbox ") && strings.Contains(action, " --state failed"):
 		return fmt.Sprintf("outbox_failed=%d", row.OutboxFailed)
 	case strings.Contains(action, " outbox ") && strings.Contains(action, " --state pending"):
@@ -5949,6 +5977,8 @@ func pipelineNextActionReason(row pipelineStatusRow, action string) string {
 		return fmt.Sprintf("queue_pending=%d", row.QueuePending)
 	case strings.Contains(action, " snapshot ") && row.QueueQuarantined > 0:
 		return fmt.Sprintf("queue_quarantined=%d", row.QueueQuarantined)
+	case strings.Contains(action, " snapshot ") && row.OutboxQuarantined > 0:
+		return fmt.Sprintf("outbox_quarantined=%d", row.OutboxQuarantined)
 	case strings.Contains(action, " retry "),
 		strings.Contains(action, " --retry-pipelines "),
 		strings.Contains(action, " --state failed"):
@@ -9703,6 +9733,13 @@ func pipelineStatusOutboxSummary(row pipelineStatusRow) string {
 	}
 	if row.OutboxProcessed > 0 {
 		parts = append(parts, fmt.Sprintf("processed=%d", row.OutboxProcessed))
+	}
+	if row.OutboxQuarantined > 0 {
+		part := fmt.Sprintf("quarantined=%d", row.OutboxQuarantined)
+		if row.OutboxRestorable > 0 || row.OutboxUnrestorable > 0 {
+			part = fmt.Sprintf("%s(restorable=%d,unrestorable=%d)", part, row.OutboxRestorable, row.OutboxUnrestorable)
+		}
+		parts = append(parts, part)
 	}
 	if len(parts) == 0 {
 		return "-"
