@@ -3197,12 +3197,12 @@ Subcommands:
 - `agent-team pipeline cancel` - Cancel non-terminal pipeline jobs.
 - `agent-team pipeline cleanup` - Clean up done jobs owned by one pipeline.
 - `agent-team pipeline doctor` - Validate pipeline workflow wiring.
-- `agent-team pipeline events` - Show lifecycle events scoped to one pipeline.
+- `agent-team pipeline events` - Show lifecycle events scoped to pipeline-owned jobs.
 - `agent-team pipeline explain` - Explain pipeline jobs and step blockers.
 - `agent-team pipeline graph` - Render a declared pipeline step graph.
 - `agent-team pipeline hold` - Hold pipeline jobs so automation will not advance them.
 - `agent-team pipeline jobs` - List pipeline jobs.
-- `agent-team pipeline logs` - Show daemon-captured logs for one pipeline.
+- `agent-team pipeline logs` - Show daemon-captured logs for pipeline-owned jobs.
 - `agent-team pipeline ls` - List declared pipelines.
 - `agent-team pipeline next` - Print recommended next actions for pipeline jobs.
 - `agent-team pipeline queue` - List or control pipeline-owned queue items.
@@ -3379,18 +3379,19 @@ Flags:
 
 ## `agent-team pipeline events`
 
-Show lifecycle events scoped to one pipeline.
+Show lifecycle events scoped to pipeline-owned jobs.
 
-Show or follow daemon lifecycle events for daemon-known instances owned by jobs in one declared pipeline.
+Show or follow daemon lifecycle events for daemon-known instances owned by jobs in one declared pipeline, or omit the pipeline/pass --all to inspect every pipeline-owned job.
 
 ```text
-agent-team pipeline events <pipeline> [flags]
+agent-team pipeline events [<pipeline>|--all] [flags]
 ```
 
 Flags:
 
 ```text
       --action strings    Only show events with this action. Can repeat or comma-separate.
+      --all               Show events across all pipelines. This is the default when no pipeline is passed.
   -f, --follow            Keep streaming new lifecycle events.
       --format string     Render each event with a Go template, e.g. '{{.Action}} {{.Instance}} {{.Status}}'.
       --json              Emit raw JSONL events.
@@ -3509,15 +3510,18 @@ Flags:
 
 ## `agent-team pipeline logs`
 
-Show daemon-captured logs for one pipeline.
+Show daemon-captured logs for pipeline-owned jobs.
+
+Show daemon-captured logs for jobs in one declared pipeline, or omit the pipeline/pass --all to inspect every pipeline-owned job.
 
 ```text
-agent-team pipeline logs <pipeline> [flags]
+agent-team pipeline logs [<pipeline>|--all] [flags]
 ```
 
 Flags:
 
 ```text
+      --all               Show logs across all pipelines. This is the default when no pipeline is passed.
       --clean             Hide known Codex runtime diagnostic noise when printing raw pipeline logs.
   -f, --follow            Tail selected pipeline logs.
       --format string     With --list, render each log stream with a Go template, e.g. '{{.Instance}} {{.LogPath}}'.

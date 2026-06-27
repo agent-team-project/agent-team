@@ -4509,6 +4509,16 @@ target = "worker"
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
+		{
+			ID:        "squ-982",
+			Ticket:    "SQU-982",
+			Target:    "worker",
+			Kickoff:   "ad hoc logs",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-982",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
 	} {
 		if err := job.Write(teamDir, j); err != nil {
 			t.Fatalf("write %s: %v", j.ID, err)
@@ -4519,6 +4529,7 @@ target = "worker"
 		{Instance: "manager-squ-980", Job: "squ-980", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(time.Minute)},
 		{Instance: "worker-squ-980", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(2 * time.Minute)},
 		{Instance: "worker-squ-981", Job: "squ-981", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(3 * time.Minute)},
+		{Instance: "worker-squ-982", Job: "squ-982", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(4 * time.Minute)},
 	} {
 		if err := daemon.WriteMetadata(daemonRoot, meta); err != nil {
 			t.Fatalf("write metadata %s: %v", meta.Instance, err)
@@ -4527,9 +4538,11 @@ target = "worker"
 	writeChildLogForTest(t, daemonRoot, "manager-squ-980", "manager first\nmanager latest\n")
 	writeChildLogForTest(t, daemonRoot, "worker-squ-980", "worker first\nworker latest\n")
 	writeChildLogForTest(t, daemonRoot, "worker-squ-981", "foreign first\nforeign latest\n")
+	writeChildLogForTest(t, daemonRoot, "worker-squ-982", "adhoc first\nadhoc latest\n")
 	writeLastMessageForTest(t, teamDir, "manager-squ-980", "manager final")
 	writeLastMessageForTest(t, teamDir, "worker-squ-980", "worker final")
 	writeLastMessageForTest(t, teamDir, "worker-squ-981", "foreign final")
+	writeLastMessageForTest(t, teamDir, "worker-squ-982", "adhoc final")
 
 	list := NewRootCmd()
 	listOut, listErr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -4547,6 +4560,22 @@ target = "worker"
 		t.Fatalf("pipeline log rows = %v", got)
 	}
 
+	allList := NewRootCmd()
+	allListOut, allListErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allList.SetOut(allListOut)
+	allList.SetErr(allListErr)
+	allList.SetArgs([]string{"pipeline", "logs", "--repo", root, "--list", "--json"})
+	if err := allList.Execute(); err != nil {
+		t.Fatalf("pipeline logs all list: %v\nstderr=%s", err, allListErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(allListOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline all logs list: %v\nbody=%s", err, allListOut.String())
+	}
+	if got := logRowInstances(rows); strings.Join(got, ",") != "manager-squ-980,worker-squ-980,worker-squ-981" {
+		t.Fatalf("pipeline all log rows = %v, want every pipeline-owned stream only", got)
+	}
+
 	codexList := NewRootCmd()
 	codexListOut, codexListErr := &bytes.Buffer{}, &bytes.Buffer{}
 	codexList.SetOut(codexListOut)
@@ -4561,6 +4590,18 @@ target = "worker"
 	}
 	if got := logRowInstances(rows); strings.Join(got, ",") != "worker-squ-980" {
 		t.Fatalf("pipeline runtime log rows = %v", got)
+	}
+
+	allCodexList := NewRootCmd()
+	allCodexListOut, allCodexListErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allCodexList.SetOut(allCodexListOut)
+	allCodexList.SetErr(allCodexListErr)
+	allCodexList.SetArgs([]string{"pipeline", "logs", "--all", "--repo", root, "--runtime", "codex", "--list", "--format", "{{.Instance}}"})
+	if err := allCodexList.Execute(); err != nil {
+		t.Fatalf("pipeline logs --all runtime format: %v\nstderr=%s", err, allCodexListErr.String())
+	}
+	if got, want := strings.TrimSpace(allCodexListOut.String()), "worker-squ-980\nworker-squ-981"; got != want {
+		t.Fatalf("pipeline logs --all runtime format = %q, want %q", got, want)
 	}
 
 	logs := NewRootCmd()
@@ -4609,6 +4650,30 @@ target = "worker"
 	}
 	if strings.Contains(lastBody, "foreign final") {
 		t.Fatalf("pipeline last-message leaked unrelated content:\n%s", lastBody)
+	}
+
+	invalidMany := NewRootCmd()
+	invalidManyOut, invalidManyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidMany.SetOut(invalidManyOut)
+	invalidMany.SetErr(invalidManyErr)
+	invalidMany.SetArgs([]string{"pipeline", "logs", "ticket_to_pr", "ops_review", "--repo", root})
+	if err := invalidMany.Execute(); err == nil {
+		t.Fatalf("pipeline logs accepted multiple pipeline names: stdout=%s", invalidManyOut.String())
+	}
+	if !strings.Contains(invalidManyErr.String(), "pass at most one pipeline name") {
+		t.Fatalf("multiple pipeline error = %q", invalidManyErr.String())
+	}
+
+	invalidAll := NewRootCmd()
+	invalidAllOut, invalidAllErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidAll.SetOut(invalidAllOut)
+	invalidAll.SetErr(invalidAllErr)
+	invalidAll.SetArgs([]string{"pipeline", "logs", "ticket_to_pr", "--all", "--repo", root})
+	if err := invalidAll.Execute(); err == nil {
+		t.Fatalf("pipeline logs accepted --all with pipeline: stdout=%s", invalidAllOut.String())
+	}
+	if !strings.Contains(invalidAllErr.String(), "--all cannot be combined with a pipeline argument") {
+		t.Fatalf("--all conflict error = %q", invalidAllErr.String())
 	}
 }
 
@@ -4754,6 +4819,16 @@ target = "worker"
 			CreatedAt: base,
 			UpdatedAt: base,
 		},
+		{
+			ID:        "squ-997",
+			Ticket:    "SQU-997",
+			Target:    "worker",
+			Kickoff:   "ad hoc events",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-997",
+			CreatedAt: base,
+			UpdatedAt: base,
+		},
 	} {
 		if err := job.Write(teamDir, j); err != nil {
 			t.Fatalf("write %s: %v", j.ID, err)
@@ -4764,6 +4839,7 @@ target = "worker"
 		{Instance: "manager-squ-995", Job: "squ-995", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: base},
 		{Instance: "worker-squ-995", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusStopped, PID: os.Getpid(), Workspace: root, StartedAt: base.Add(2 * time.Minute), StoppedAt: base.Add(4 * time.Minute)},
 		{Instance: "worker-squ-996", Job: "squ-996", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusStopped, PID: os.Getpid(), Workspace: root, StartedAt: base.Add(time.Minute), StoppedAt: base.Add(time.Minute)},
+		{Instance: "worker-squ-997", Job: "squ-997", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusStopped, PID: os.Getpid(), Workspace: root, StartedAt: base.Add(3 * time.Minute), StoppedAt: base.Add(3 * time.Minute)},
 	} {
 		if err := daemon.WriteMetadata(daemonRoot, meta); err != nil {
 			t.Fatalf("write metadata %s: %v", meta.Instance, err)
@@ -4773,6 +4849,7 @@ target = "worker"
 		{TS: base, Action: "start", Instance: "manager-squ-995", Agent: "manager", Status: daemon.StatusRunning, Message: "manager up"},
 		{TS: base.Add(time.Minute), Action: "stop", Instance: "worker-squ-996", Agent: "worker", Status: daemon.StatusStopped, Message: "foreign stop"},
 		{TS: base.Add(2 * time.Minute), Action: "dispatch", Instance: "worker-squ-995", Agent: "worker", Status: daemon.StatusRunning, Message: "pipeline worker"},
+		{TS: base.Add(3 * time.Minute), Action: "stop", Instance: "worker-squ-997", Agent: "worker", Status: daemon.StatusStopped, Message: "adhoc stop"},
 		{TS: base.Add(4 * time.Minute), Action: "stop", Instance: "worker-squ-995", Agent: "worker", Status: daemon.StatusStopped, Message: "pipeline done"},
 	} {
 		if err := daemon.AppendLifecycleEvent(daemonRoot, ev); err != nil {
@@ -4794,6 +4871,22 @@ target = "worker"
 	}
 	if strings.Contains(listOut.String(), "foreign stop") {
 		t.Fatalf("pipeline events leaked unrelated event:\n%s", listOut.String())
+	}
+
+	allEvents := NewRootCmd()
+	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allEvents.SetOut(allOut)
+	allEvents.SetErr(allErr)
+	allEvents.SetArgs([]string{"pipeline", "events", "--repo", root, "--json"})
+	if err := allEvents.Execute(); err != nil {
+		t.Fatalf("pipeline events all json: %v\nstderr=%s", err, allErr.String())
+	}
+	events = decodeLifecycleEventJSONL(t, allOut.String())
+	if got := lifecycleEventInstances(events); strings.Join(got, ",") != "manager-squ-995,worker-squ-996,worker-squ-995,worker-squ-995" {
+		t.Fatalf("pipeline all events instances = %v\nbody=%s", got, allOut.String())
+	}
+	if strings.Contains(allOut.String(), "adhoc stop") {
+		t.Fatalf("pipeline all events leaked ad hoc event:\n%s", allOut.String())
 	}
 
 	formatted := NewRootCmd()
@@ -4824,6 +4917,22 @@ target = "worker"
 		t.Fatalf("pipeline events summary = %+v", eventSummary)
 	}
 
+	allSummary := NewRootCmd()
+	allSummaryOut, allSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allSummary.SetOut(allSummaryOut)
+	allSummary.SetErr(allSummaryErr)
+	allSummary.SetArgs([]string{"pipeline", "events", "--all", "--repo", root, "--summary", "--action", "stop", "--json"})
+	if err := allSummary.Execute(); err != nil {
+		t.Fatalf("pipeline events --all summary: %v\nstderr=%s", err, allSummaryErr.String())
+	}
+	var allEventSummary eventSummaryJSON
+	if err := json.Unmarshal(allSummaryOut.Bytes(), &allEventSummary); err != nil {
+		t.Fatalf("decode pipeline events --all summary: %v\nbody=%s", err, allSummaryOut.String())
+	}
+	if allEventSummary.Total != 2 || allEventSummary.Actions["stop"] != 2 || allEventSummary.Instances["worker-squ-995"] != 1 || allEventSummary.Instances["worker-squ-996"] != 1 {
+		t.Fatalf("pipeline events --all summary = %+v", allEventSummary)
+	}
+
 	codex := NewRootCmd()
 	codexOut, codexErr := &bytes.Buffer{}, &bytes.Buffer{}
 	codex.SetOut(codexOut)
@@ -4838,6 +4947,30 @@ target = "worker"
 	}
 	if strings.Contains(codexOut.String(), "manager up") || strings.Contains(codexOut.String(), "foreign stop") {
 		t.Fatalf("pipeline events runtime leaked unrelated event:\n%s", codexOut.String())
+	}
+
+	invalidMany := NewRootCmd()
+	invalidManyOut, invalidManyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidMany.SetOut(invalidManyOut)
+	invalidMany.SetErr(invalidManyErr)
+	invalidMany.SetArgs([]string{"pipeline", "events", "ticket_to_pr", "ops_review", "--repo", root})
+	if err := invalidMany.Execute(); err == nil {
+		t.Fatalf("pipeline events accepted multiple pipeline names: stdout=%s", invalidManyOut.String())
+	}
+	if !strings.Contains(invalidManyErr.String(), "pass at most one pipeline name") {
+		t.Fatalf("multiple pipeline error = %q", invalidManyErr.String())
+	}
+
+	invalidAll := NewRootCmd()
+	invalidAllOut, invalidAllErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidAll.SetOut(invalidAllOut)
+	invalidAll.SetErr(invalidAllErr)
+	invalidAll.SetArgs([]string{"pipeline", "events", "ticket_to_pr", "--all", "--repo", root})
+	if err := invalidAll.Execute(); err == nil {
+		t.Fatalf("pipeline events accepted --all with pipeline: stdout=%s", invalidAllOut.String())
+	}
+	if !strings.Contains(invalidAllErr.String(), "--all cannot be combined with a pipeline argument") {
+		t.Fatalf("--all conflict error = %q", invalidAllErr.String())
 	}
 }
 

@@ -2570,6 +2570,7 @@ func newPipelineLogsCmd() *cobra.Command {
 		unhealthy        bool
 		lastMsg          bool
 		clean            bool
+		all              bool
 		tail             string
 		since            string
 		grep             string
@@ -2577,10 +2578,19 @@ func newPipelineLogsCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "logs <pipeline>",
-		Short: "Show daemon-captured logs for one pipeline.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "logs [<pipeline>|--all]",
+		Short: "Show daemon-captured logs for pipeline-owned jobs.",
+		Long:  "Show daemon-captured logs for jobs in one declared pipeline, or omit the pipeline/pass --all to inspect every pipeline-owned job.",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: pass at most one pipeline name.")
+				return exitErr(2)
+			}
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
 			if latest && last > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: choose one of --latest or --last.")
 				return exitErr(2)
@@ -2685,6 +2695,14 @@ func newPipelineLogsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			pipelineName := ""
+			if len(args) == 1 {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if len(args) == 1 && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline logs: pipeline name is required.")
+				return exitErr(2)
+			}
 			opts := logsOptions{
 				Follow:       follow,
 				Latest:       latest,
@@ -2702,7 +2720,7 @@ func newPipelineLogsCmd() *cobra.Command {
 				LastMessage:  lastMsg,
 				Clean:        clean,
 			}
-			return runPipelineLogs(cmd, teamDir, args[0], opts, listOpts)
+			return runPipelineLogs(cmd, teamDir, pipelineName, opts, listOpts)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -2720,6 +2738,7 @@ func newPipelineLogsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&unhealthy, "unhealthy", false, "Only show logs for crashed, status-stale, or runtime-stale pipeline instances.")
 	cmd.Flags().BoolVar(&lastMsg, "last-message", false, "Show clean final Codex response sidecars instead of raw runtime logs.")
 	cmd.Flags().BoolVar(&clean, "clean", false, "Hide known Codex runtime diagnostic noise when printing raw pipeline logs.")
+	cmd.Flags().BoolVar(&all, "all", false, "Show logs across all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().StringVar(&tail, "tail", "0", "Show only the last N lines before returning or following (0 or all = all).")
 	cmd.Flags().StringVar(&since, "since", "", "Only include log streams modified since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	cmd.Flags().StringVar(&grep, "grep", "", "Only print log lines matching this regular expression. One-shot reads only.")
@@ -2742,15 +2761,24 @@ func newPipelineEventsCmd() *cobra.Command {
 		staleOnly        bool
 		runtimeStaleOnly bool
 		unhealthyOnly    bool
+		all              bool
 		sinceRaw         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "events <pipeline>",
-		Short: "Show lifecycle events scoped to one pipeline.",
-		Long:  "Show or follow daemon lifecycle events for daemon-known instances owned by jobs in one declared pipeline.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "events [<pipeline>|--all]",
+		Short: "Show lifecycle events scoped to pipeline-owned jobs.",
+		Long:  "Show or follow daemon lifecycle events for daemon-known instances owned by jobs in one declared pipeline, or omit the pipeline/pass --all to inspect every pipeline-owned job.",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline events: pass at most one pipeline name.")
+				return exitErr(2)
+			}
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline events: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
 			if tail < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline events: --tail must be >= 0.")
 				return exitErr(2)
@@ -2772,12 +2800,20 @@ func newPipelineEventsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			filters, err := pipelineEventFilters(teamDir, args[0], actionFilters, statusFilters, sinceRaw, time.Now)
+			pipelineName := ""
+			if len(args) == 1 {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if len(args) == 1 && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline events: pipeline name is required.")
+				return exitErr(2)
+			}
+			filters, err := pipelineEventFilters(teamDir, pipelineName, actionFilters, statusFilters, sinceRaw, time.Now)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline events: %v\n", err)
 				return exitErr(2)
 			}
-			filters, err = pipelineEventRuntimeFilter(teamDir, args[0], filters, runtimeFilters)
+			filters, err = pipelineEventRuntimeFilter(teamDir, pipelineName, filters, runtimeFilters)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline events: %v\n", err)
 				return exitErr(2)
@@ -2820,6 +2856,7 @@ func newPipelineEventsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show pipeline events for instances whose status.toml is currently stale or missing.")
 	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show pipeline events for instances whose recorded runtime PID is currently no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show pipeline events for instances that are currently crashed, status-stale, or runtime-stale.")
+	cmd.Flags().BoolVar(&all, "all", false, "Show events across all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().StringVar(&sinceRaw, "since", "", "Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	return cmd
 }
