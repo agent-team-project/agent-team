@@ -2291,15 +2291,16 @@ func newPipelineResumePlanCmd() *cobra.Command {
 		unhealthyOnly bool
 		summary       bool
 		jsonOut       bool
+		all           bool
 		format        string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "resume-plan <pipeline>",
-		Short: "Show runtime resume and fallback commands for one pipeline.",
-		Long: "Show runtime resume and fallback commands for daemon metadata owned by jobs in one declared pipeline. " +
+		Use:   "resume-plan [<pipeline>|--all]",
+		Short: "Show runtime resume and fallback commands for pipeline-owned jobs.",
+		Long: "Show runtime resume and fallback commands for daemon metadata owned by jobs in one declared pipeline, or omit the pipeline/pass --all to inspect every pipeline-owned job. " +
 			"This is the pipeline-scoped form of `agent-team runtime resume-plan`.",
-		Args: cobra.ExactArgs(1),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --format cannot be combined with --json.")
@@ -2309,8 +2310,19 @@ func newPipelineResumePlanCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --summary cannot be combined with --format.")
 				return exitErr(2)
 			}
-			pipelineName := strings.TrimSpace(args[0])
-			if pipelineName == "" {
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: pass at most one pipeline name.")
+				return exitErr(2)
+			}
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			pipelineName := ""
+			if len(args) == 1 {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if len(args) == 1 && pipelineName == "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: pipeline name is required.")
 				return exitErr(2)
 			}
@@ -2356,6 +2368,7 @@ func newPipelineResumePlanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only include crashed or stale running metadata.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching pipeline resume plans by recommended action, runtime, and status.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().BoolVar(&all, "all", false, "Plan runtime recovery across all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.")
 	return cmd
 }

@@ -4125,6 +4125,9 @@ target = "worker"
 			Instance:  "worker-squ-941",
 			CreatedAt: now,
 			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "audit", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-941", StartedAt: now.Add(-20 * time.Minute)},
+			},
 		},
 		{
 			ID:        "squ-942",
@@ -4134,6 +4137,16 @@ target = "worker"
 			Pipeline:  "ticket_to_pr",
 			Status:    job.StatusRunning,
 			Instance:  "worker-squ-942",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "squ-943",
+			Ticket:    "SQU-943",
+			Target:    "worker",
+			Kickoff:   "ad hoc runtime",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-943",
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
@@ -4147,6 +4160,7 @@ target = "worker"
 		{Instance: "manager-squ-940", Job: "squ-940", Agent: "manager", Runtime: "claude", RuntimeBinary: "claude", Status: daemon.StatusCrashed, StartedAt: now.Add(-30 * time.Minute), ExitedAt: now.Add(-5 * time.Minute)},
 		{Instance: "worker-squ-941", Job: "squ-941", Agent: "worker", Runtime: "codex", RuntimeBinary: "codex", Status: daemon.StatusCrashed, StartedAt: now.Add(-20 * time.Minute), ExitedAt: now.Add(-2 * time.Minute)},
 		{Instance: "worker-squ-942", Job: "squ-942", Agent: "worker", Runtime: "claude", RuntimeBinary: "claude", PID: 4242, SessionID: "stale-session", Status: daemon.StatusRunning, StartedAt: now.Add(-15 * time.Minute)},
+		{Instance: "worker-squ-943", Job: "squ-943", Agent: "worker", Runtime: "codex", RuntimeBinary: "codex", Status: daemon.StatusCrashed, StartedAt: now.Add(-10 * time.Minute), ExitedAt: now.Add(-time.Minute)},
 	} {
 		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
 			t.Fatalf("write metadata %s: %v", meta.Instance, err)
@@ -4170,6 +4184,41 @@ target = "worker"
 	}
 	if plans[0].Job != "squ-940" || plans[0].Pipeline != "ticket_to_pr" || plans[0].StepID != "review" || plans[1].Job != "squ-940" || plans[1].Pipeline != "ticket_to_pr" || plans[1].StepID != "implement" || plans[1].JobLogsCommand != "agent-team job logs squ-940 --follow" || plans[1].JobLastMessageCommand != "agent-team job logs squ-940 --last-message" {
 		t.Fatalf("job-scoped commands not populated: %+v", plans)
+	}
+
+	all := NewRootCmd()
+	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
+	all.SetOut(allOut)
+	all.SetErr(allErr)
+	all.SetArgs([]string{"pipeline", "resume-plan", "--repo", root, "--status", "crashed", "--json"})
+	if err := all.Execute(); err != nil {
+		t.Fatalf("pipeline resume-plan all json: %v\nstderr=%s", err, allErr.String())
+	}
+	var allPlans []runtimeResumePlan
+	if err := json.Unmarshal(allOut.Bytes(), &allPlans); err != nil {
+		t.Fatalf("decode pipeline resume-plan all: %v\nbody=%s", err, allOut.String())
+	}
+	if len(allPlans) != 3 || allPlans[0].Instance != "manager-squ-940" || allPlans[1].Instance != "worker-squ-940" || allPlans[2].Instance != "worker-squ-941" {
+		t.Fatalf("all plans = %+v, want only pipeline-owned crashed metadata", allPlans)
+	}
+	if allPlans[2].Job != "squ-941" || allPlans[2].Pipeline != "ops_review" || allPlans[2].StepID != "audit" {
+		t.Fatalf("all-pipeline plan missing foreign pipeline context: %+v", allPlans[2])
+	}
+
+	allSummary := NewRootCmd()
+	allSummaryOut, allSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allSummary.SetOut(allSummaryOut)
+	allSummary.SetErr(allSummaryErr)
+	allSummary.SetArgs([]string{"pipeline", "resume-plan", "--all", "--repo", root, "--status", "crashed", "--summary", "--json"})
+	if err := allSummary.Execute(); err != nil {
+		t.Fatalf("pipeline resume-plan --all summary: %v\nstderr=%s", err, allSummaryErr.String())
+	}
+	var allCounts runtimeResumeSummary
+	if err := json.Unmarshal(allSummaryOut.Bytes(), &allCounts); err != nil {
+		t.Fatalf("decode pipeline resume-plan --all summary: %v\nbody=%s", err, allSummaryOut.String())
+	}
+	if allCounts.Total != 3 || allCounts.Actions["logs"] != 3 || allCounts.Runtimes["claude"] != 1 || allCounts.Runtimes["codex"] != 2 || allCounts.Statuses["crashed"] != 3 {
+		t.Fatalf("pipeline resume-plan --all summary = %+v", allCounts)
 	}
 
 	format := NewRootCmd()
@@ -4226,6 +4275,30 @@ target = "worker"
 		"worker-squ-942 start true",
 	}, "\n"); got != want {
 		t.Fatalf("pipeline unhealthy resume-plan = %q, want %q", got, want)
+	}
+
+	invalidMany := NewRootCmd()
+	invalidManyOut, invalidManyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidMany.SetOut(invalidManyOut)
+	invalidMany.SetErr(invalidManyErr)
+	invalidMany.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "ops_review", "--repo", root})
+	if err := invalidMany.Execute(); err == nil {
+		t.Fatalf("pipeline resume-plan accepted multiple pipeline names: stdout=%s", invalidManyOut.String())
+	}
+	if !strings.Contains(invalidManyErr.String(), "pass at most one pipeline name") {
+		t.Fatalf("multiple pipeline error = %q", invalidManyErr.String())
+	}
+
+	invalidAll := NewRootCmd()
+	invalidAllOut, invalidAllErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidAll.SetOut(invalidAllOut)
+	invalidAll.SetErr(invalidAllErr)
+	invalidAll.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--all", "--repo", root})
+	if err := invalidAll.Execute(); err == nil {
+		t.Fatalf("pipeline resume-plan accepted --all with pipeline: stdout=%s", invalidAllOut.String())
+	}
+	if !strings.Contains(invalidAllErr.String(), "--all cannot be combined with a pipeline argument") {
+		t.Fatalf("--all conflict error = %q", invalidAllErr.String())
 	}
 }
 

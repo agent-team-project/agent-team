@@ -3210,7 +3210,7 @@ Subcommands:
 - `agent-team pipeline reject` - Reject blocked manual pipeline gates.
 - `agent-team pipeline release` - Release held pipeline jobs so automation can advance them.
 - `agent-team pipeline repair` - Recover unhealthy orchestration state for one pipeline.
-- `agent-team pipeline resume-plan` - Show runtime resume and fallback commands for one pipeline.
+- `agent-team pipeline resume-plan` - Show runtime resume and fallback commands for pipeline-owned jobs.
 - `agent-team pipeline retry` - Reset failed pipeline steps for another attempt.
 - `agent-team pipeline run` - Create a durable job from a pipeline declaration.
 - `agent-team pipeline send` - Send a mailbox message to pipeline-owned instances.
@@ -3929,18 +3929,19 @@ Flags:
 
 ## `agent-team pipeline resume-plan`
 
-Show runtime resume and fallback commands for one pipeline.
+Show runtime resume and fallback commands for pipeline-owned jobs.
 
-Show runtime resume and fallback commands for daemon metadata owned by jobs in one declared pipeline. This is the pipeline-scoped form of `agent-team runtime resume-plan`.
+Show runtime resume and fallback commands for daemon metadata owned by jobs in one declared pipeline, or omit the pipeline/pass --all to inspect every pipeline-owned job. This is the pipeline-scoped form of `agent-team runtime resume-plan`.
 
 ```text
-agent-team pipeline resume-plan <pipeline> [flags]
+agent-team pipeline resume-plan [<pipeline>|--all] [flags]
 ```
 
 Flags:
 
 ```text
       --action strings    Only include plans whose recommended action is start, attach, resume, or logs. Can repeat or comma-separate.
+      --all               Plan runtime recovery across all pipelines. This is the default when no pipeline is passed.
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --json              Emit machine-readable JSON.
       --repo string       Repo root containing .agent_team. (default "<repo>")
