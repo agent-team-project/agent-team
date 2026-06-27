@@ -178,7 +178,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team queue drop --all` | Drop matching entries; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
 | `agent-team queue prune` | Age-prune entries; filter and limit prune candidates with `--runtime`, `--ready`, and `--limit` |
 | `agent-team queue doctor` | Validate queue files |
-| `agent-team queue quarantine ls` | List quarantined queue files; sort rows with `--sort` and cap output with `--limit` |
+| `agent-team queue quarantine ls` | List or summarize quarantined queue files; sort rows with `--sort` and cap output with `--limit` |
 | `agent-team queue quarantine show <path>` | Inspect quarantined queue file |
 | `agent-team queue quarantine restore <path>` | Restore one preserved file |
 | `agent-team queue quarantine drop <path>` | Drop one preserved file |
@@ -194,7 +194,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team outbox show <id>` | Inspect one outbox event and its payload |
 | `agent-team outbox drain` | Ask the daemon to publish pending outbox events through topology; `--dry-run` previews locally if the daemon is down |
 | `agent-team outbox doctor` | Validate persisted outbox files without relying on normal listing paths; `--quarantine --dry-run` previews isolating malformed active files |
-| `agent-team outbox quarantine ls` | List quarantined outbox files; filter by state, type, source, job, or restorable state and sort/cap rows |
+| `agent-team outbox quarantine ls` | List or summarize quarantined outbox files; filter by state, type, source, job, or restorable state and sort/cap rows |
 | `agent-team outbox quarantine show <path>` | Inspect one quarantined outbox file and its payload when parseable |
 | `agent-team outbox quarantine restore <path>` | Restore one validated quarantined outbox file to the active outbox |
 | `agent-team outbox quarantine restore --all` | Restore matching restorable quarantined outbox files; filter, sort, and limit batch actions |

@@ -135,6 +135,7 @@ func newOutboxQuarantineLsCmd() *cobra.Command {
 		unrestorable bool
 		sortBy       string
 		limit        int
+		summary      bool
 		jsonOut      bool
 		format       string
 	)
@@ -150,6 +151,14 @@ func newOutboxQuarantineLsCmd() *cobra.Command {
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox quarantine ls: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			if summary && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox quarantine ls: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if summary && (cmd.Flags().Changed("sort") || limit > 0) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox quarantine ls: --sort and --limit cannot be combined with --summary.")
 				return exitErr(2)
 			}
 			sortMode, err := parseOutboxQuarantineSort(sortBy)
@@ -177,6 +186,9 @@ func newOutboxQuarantineLsCmd() *cobra.Command {
 			}
 			items = filterOutboxQuarantineItems(items, filters)
 			items = filterOutboxQuarantineRestorable(items, restorable, unrestorable)
+			if summary {
+				return renderOutboxQuarantineSummary(cmd.OutOrStdout(), summarizeOutboxQuarantineItems(items), jsonOut)
+			}
 			items = prepareOutboxQuarantineItems(items, sortMode, limit)
 			return renderOutboxQuarantineList(cmd.OutOrStdout(), items, jsonOut, formatTemplate)
 		},
@@ -190,6 +202,7 @@ func newOutboxQuarantineLsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "Only show quarantined files that cannot be restored.")
 	cmd.Flags().StringVar(&sortBy, "sort", "path", outboxQuarantineSortFlagHelp)
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate quarantined outbox-file counts instead of rows.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit quarantined outbox files as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each quarantined outbox file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.")
 	return cmd
@@ -942,6 +955,14 @@ func renderOutboxQuarantineList(w io.Writer, items []outboxQuarantineItem, jsonO
 			emptyDash(item.Problem))
 	}
 	return tw.Flush()
+}
+
+func renderOutboxQuarantineSummary(w io.Writer, summary outboxQuarantineSummary, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(summary)
+	}
+	fmt.Fprintln(w, outboxQuarantineSummaryLine(summary))
+	return nil
 }
 
 func outboxQuarantineRestorableText(restorable bool) string {

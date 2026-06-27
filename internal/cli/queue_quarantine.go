@@ -40,6 +40,53 @@ type queueQuarantineItem struct {
 	Problem     string    `json:"problem,omitempty"`
 }
 
+type queueQuarantineSummary struct {
+	Quarantined  int            `json:"quarantined"`
+	Restorable   int            `json:"restorable,omitempty"`
+	Unrestorable int            `json:"unrestorable,omitempty"`
+	States       map[string]int `json:"states,omitempty"`
+	Events       map[string]int `json:"events,omitempty"`
+	Instances    map[string]int `json:"instances,omitempty"`
+	Jobs         map[string]int `json:"jobs,omitempty"`
+}
+
+func summarizeQueueQuarantineItems(items []queueQuarantineItem) queueQuarantineSummary {
+	summary := queueQuarantineSummary{
+		States:    map[string]int{},
+		Events:    map[string]int{},
+		Instances: map[string]int{},
+		Jobs:      map[string]int{},
+	}
+	for _, item := range items {
+		summary.Quarantined++
+		if item.Restorable {
+			summary.Restorable++
+		} else {
+			summary.Unrestorable++
+		}
+		if strings.TrimSpace(item.State) != "" {
+			summary.States[item.State]++
+		}
+		if strings.TrimSpace(item.EventType) != "" {
+			summary.Events[item.EventType]++
+		}
+		if strings.TrimSpace(item.Instance) != "" {
+			summary.Instances[item.Instance]++
+		}
+		if jobID := job.NormalizeID(item.Job); jobID != "" {
+			summary.Jobs[jobID]++
+		}
+	}
+	return summary
+}
+
+func queueQuarantineSummaryLine(summary queueQuarantineSummary) string {
+	return fmt.Sprintf("queue quarantine: quarantined=%d restorable=%d unrestorable=%d",
+		summary.Quarantined,
+		summary.Restorable,
+		summary.Unrestorable)
+}
+
 type queueQuarantineRestoreResult struct {
 	Path        string `json:"path"`
 	Destination string `json:"destination"`
@@ -92,6 +139,7 @@ func newQueueQuarantineLsCmd() *cobra.Command {
 		unrestorable bool
 		sortBy       string
 		limit        int
+		summary      bool
 		jsonOut      bool
 		format       string
 	)
@@ -107,6 +155,14 @@ func newQueueQuarantineLsCmd() *cobra.Command {
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine ls: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			if summary && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine ls: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if summary && (cmd.Flags().Changed("sort") || limit > 0) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue quarantine ls: --sort and --limit cannot be combined with --summary.")
 				return exitErr(2)
 			}
 			sortMode, err := parseQueueQuarantineSort(sortBy)
@@ -134,6 +190,9 @@ func newQueueQuarantineLsCmd() *cobra.Command {
 			}
 			items = filterQueueQuarantineItems(items, filters)
 			items = filterQueueQuarantineRestorable(items, restorable, unrestorable)
+			if summary {
+				return renderQueueQuarantineSummary(cmd.OutOrStdout(), summarizeQueueQuarantineItems(items), jsonOut)
+			}
 			items = prepareQueueQuarantineItems(items, sortMode, limit)
 			return renderQueueQuarantineList(cmd.OutOrStdout(), items, jsonOut, formatTemplate)
 		},
@@ -147,6 +206,7 @@ func newQueueQuarantineLsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&unrestorable, "unrestorable", false, "Only show quarantined files that cannot be restored.")
 	cmd.Flags().StringVar(&sortBy, "sort", "path", queueQuarantineSortFlagHelp)
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate quarantined queue-file counts instead of rows.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit quarantined queue files as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each quarantined queue file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.")
 	return cmd
@@ -914,6 +974,14 @@ func renderQueueQuarantineList(w io.Writer, items []queueQuarantineItem, jsonOut
 			emptyDash(item.Problem))
 	}
 	return tw.Flush()
+}
+
+func renderQueueQuarantineSummary(w io.Writer, summary queueQuarantineSummary, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(summary)
+	}
+	fmt.Fprintln(w, queueQuarantineSummaryLine(summary))
+	return nil
 }
 
 func queueQuarantineRestorableText(restorable bool) string {

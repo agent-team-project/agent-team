@@ -140,12 +140,17 @@ Quarantined queue files are preserved under:
 List:
 
 ```sh
+agent-team queue quarantine ls --summary --json
 agent-team queue quarantine ls
 agent-team queue quarantine ls --job SQU-42
 agent-team queue quarantine ls --restorable
 agent-team queue quarantine ls --unrestorable
 agent-team queue quarantine ls --sort attempts --limit 10
 ```
+
+Use `queue quarantine ls --summary` when automation only needs preserved-file
+counts. Filters such as `--job`, `--restorable`, and `--unrestorable` narrow the
+summary before counting.
 
 Inspect:
 
@@ -220,11 +225,15 @@ Preserved outbox files live under:
 Use global quarantine commands when triaging the whole repo:
 
 ```sh
+agent-team outbox quarantine ls --summary --json
 agent-team outbox quarantine ls --job SQU-42 --restorable
 agent-team outbox quarantine show quarantine/<timestamp>/failed/<id>.json
 agent-team outbox quarantine restore <path> --dry-run
 agent-team outbox quarantine drop --all --unrestorable --dry-run
 ```
+
+Use `outbox quarantine ls --summary` for compact preserved outbox counts before
+listing individual rows.
 
 When one durable job owns the files, prefer the scoped command before restoring or dropping:
 

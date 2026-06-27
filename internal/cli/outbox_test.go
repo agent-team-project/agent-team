@@ -532,6 +532,31 @@ func TestOutboxQuarantineListShowRestoreDrop(t *testing.T) {
 		t.Fatalf("outbox quarantine list = %+v", listed)
 	}
 
+	summaryOut := runRootForOutboxTest(t, "outbox", "quarantine", "ls", "--target", target, "--summary", "--json")
+	var summary outboxQuarantineSummary
+	if err := json.Unmarshal(summaryOut.Bytes(), &summary); err != nil {
+		t.Fatalf("decode outbox quarantine summary: %v\n%s", err, summaryOut.String())
+	}
+	if summary.Quarantined != 3 || summary.Restorable != 2 || summary.Unrestorable != 1 {
+		t.Fatalf("outbox quarantine summary = %+v", summary)
+	}
+	if summary.States[daemon.OutboxStatePending] != 1 || summary.States[daemon.OutboxStateFailed] != 1 || summary.States[daemon.OutboxStateProcessed] != 1 || summary.Jobs["squ-710"] != 1 {
+		t.Fatalf("outbox quarantine summary buckets = %+v", summary)
+	}
+
+	summaryText := runRootForOutboxTest(t, "outbox", "quarantine", "ls", "--target", target, "--job", "SQU-710", "--summary")
+	if got, want := summaryText.String(), "outbox quarantine: quarantined=1 restorable=1 unrestorable=0\n"; got != want {
+		t.Fatalf("outbox quarantine summary text = %q, want %q", got, want)
+	}
+
+	invalidSummaryOut, invalidSummaryErr, err := runRootForOutboxTestErr(t, "outbox", "quarantine", "ls", "--target", target, "--summary", "--limit", "1")
+	if err == nil {
+		t.Fatalf("outbox quarantine summary accepted --limit; stdout=%s stderr=%s", invalidSummaryOut.String(), invalidSummaryErr.String())
+	}
+	if !strings.Contains(invalidSummaryErr.String(), "--sort and --limit cannot be combined with --summary") {
+		t.Fatalf("outbox quarantine summary invalid stderr = %q", invalidSummaryErr.String())
+	}
+
 	filtered := runRootForOutboxTest(t, "outbox", "quarantine", "ls", "--target", target, "--job", "SQU-710", "--restorable", "--format", "{{.ID}} {{.Restorable}}")
 	if got, want := strings.TrimSpace(filtered.String()), "outbox-restorable true"; got != want {
 		t.Fatalf("outbox quarantine filtered output = %q, want %q", got, want)

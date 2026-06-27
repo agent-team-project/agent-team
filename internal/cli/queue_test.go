@@ -647,6 +647,49 @@ func TestQueueQuarantineListAndRestore(t *testing.T) {
 		t.Fatalf("queue summary text =\n%s", summaryTextOut.String())
 	}
 
+	quarantineSummaryCmd := NewRootCmd()
+	quarantineSummaryOut, quarantineSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	quarantineSummaryCmd.SetOut(quarantineSummaryOut)
+	quarantineSummaryCmd.SetErr(quarantineSummaryErr)
+	quarantineSummaryCmd.SetArgs([]string{"queue", "quarantine", "ls", "--target", tmp, "--summary", "--json"})
+	if err := quarantineSummaryCmd.Execute(); err != nil {
+		t.Fatalf("queue quarantine ls summary json: %v\nstderr=%s", err, quarantineSummaryErr.String())
+	}
+	var quarantineSummary queueQuarantineSummary
+	if err := json.Unmarshal(quarantineSummaryOut.Bytes(), &quarantineSummary); err != nil {
+		t.Fatalf("decode queue quarantine summary: %v\nbody=%s", err, quarantineSummaryOut.String())
+	}
+	if quarantineSummary.Quarantined != 2 || quarantineSummary.Restorable != 1 || quarantineSummary.Unrestorable != 1 {
+		t.Fatalf("queue quarantine summary = %+v", quarantineSummary)
+	}
+	if quarantineSummary.States[daemon.QueueStatePending] != 2 || quarantineSummary.Events["agent.dispatch"] != 1 || quarantineSummary.Instances["worker"] != 1 || quarantineSummary.Jobs["squ-132"] != 1 {
+		t.Fatalf("queue quarantine summary buckets = %+v", quarantineSummary)
+	}
+
+	quarantineSummaryText := NewRootCmd()
+	quarantineSummaryTextOut, quarantineSummaryTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	quarantineSummaryText.SetOut(quarantineSummaryTextOut)
+	quarantineSummaryText.SetErr(quarantineSummaryTextErr)
+	quarantineSummaryText.SetArgs([]string{"queue", "quarantine", "ls", "--target", tmp, "--restorable", "--summary"})
+	if err := quarantineSummaryText.Execute(); err != nil {
+		t.Fatalf("queue quarantine ls restorable summary text: %v\nstderr=%s", err, quarantineSummaryTextErr.String())
+	}
+	if got, want := quarantineSummaryTextOut.String(), "queue quarantine: quarantined=1 restorable=1 unrestorable=0\n"; got != want {
+		t.Fatalf("queue quarantine summary text = %q, want %q", got, want)
+	}
+
+	invalidSummary := NewRootCmd()
+	invalidSummaryOut, invalidSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSummary.SetOut(invalidSummaryOut)
+	invalidSummary.SetErr(invalidSummaryErr)
+	invalidSummary.SetArgs([]string{"queue", "quarantine", "ls", "--target", tmp, "--summary", "--limit", "1"})
+	if err := invalidSummary.Execute(); err == nil {
+		t.Fatalf("queue quarantine ls summary accepted --limit; stdout=%s stderr=%s", invalidSummaryOut.String(), invalidSummaryErr.String())
+	}
+	if !strings.Contains(invalidSummaryErr.String(), "--sort and --limit cannot be combined with --summary") {
+		t.Fatalf("queue quarantine summary invalid stderr = %q", invalidSummaryErr.String())
+	}
+
 	filtered := NewRootCmd()
 	filteredOut, filteredErr := &bytes.Buffer{}, &bytes.Buffer{}
 	filtered.SetOut(filteredOut)
@@ -1139,6 +1182,11 @@ func TestQueueQuarantineFormatValidation(t *testing.T) {
 			name: "list invalid template",
 			args: []string{"queue", "quarantine", "ls", "--format", "{{.ID"},
 			want: "invalid --format template",
+		},
+		{
+			name: "list summary format conflict",
+			args: []string{"queue", "quarantine", "ls", "--summary", "--format", "{{.ID}}"},
+			want: "--format cannot be combined with --summary",
 		},
 		{
 			name: "show json conflict",
