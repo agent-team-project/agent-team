@@ -728,6 +728,53 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		t.Fatalf("snapshot diff --format output = %q, want %q", got, want)
 	}
 
+	limitedJSON := NewRootCmd()
+	limitedJSONOut, limitedJSONErr := &bytes.Buffer{}, &bytes.Buffer{}
+	limitedJSON.SetOut(limitedJSONOut)
+	limitedJSON.SetErr(limitedJSONErr)
+	limitedJSON.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--limit", "3", "--json"})
+	if err := limitedJSON.Execute(); err != nil {
+		t.Fatalf("snapshot diff --limit json: %v\nstderr=%s", err, limitedJSONErr.String())
+	}
+	var limitedResult snapshotDiffResult
+	if err := json.Unmarshal(limitedJSONOut.Bytes(), &limitedResult); err != nil {
+		t.Fatalf("decode limited snapshot diff json: %v\nbody=%s", err, limitedJSONOut.String())
+	}
+	if len(limitedResult.Changes) != 3 || limitedResult.Summary.DetailLimit != 3 || limitedResult.Summary.ShownChanges != 3 || limitedResult.Summary.OmittedChanges != result.Summary.TotalChanges-3 || limitedResult.Summary.TotalChanges != result.Summary.TotalChanges {
+		t.Fatalf("limited diff summary = %+v changes=%d total=%d", limitedResult.Summary, len(limitedResult.Changes), result.Summary.TotalChanges)
+	}
+	if limitedResult.Summary.Jobs.Added != result.Summary.Jobs.Added || limitedResult.Summary.Pipelines.Changed != result.Summary.Pipelines.Changed {
+		t.Fatalf("limited diff counters changed: %+v vs %+v", limitedResult.Summary, result.Summary)
+	}
+
+	limitedText := NewRootCmd()
+	limitedTextOut, limitedTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	limitedText.SetOut(limitedTextOut)
+	limitedText.SetErr(limitedTextErr)
+	limitedText.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--limit", "2"})
+	if err := limitedText.Execute(); err != nil {
+		t.Fatalf("snapshot diff --limit text: %v\nstderr=%s", err, limitedTextErr.String())
+	}
+	if !strings.Contains(limitedTextOut.String(), "details: showing=2 omitted=") || strings.Contains(limitedTextOut.String(), "ticket_to_pr.ready_steps") {
+		t.Fatalf("limited text output unexpected:\n%s", limitedTextOut.String())
+	}
+
+	limitedFormat := NewRootCmd()
+	limitedFormatOut, limitedFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	limitedFormat.SetOut(limitedFormatOut)
+	limitedFormat.SetErr(limitedFormatErr)
+	limitedFormat.SetArgs([]string{
+		"snapshot", "diff", beforePath, afterPath,
+		"--limit", "2",
+		"--format", "{{.Summary.DetailLimit}}:{{len .Changes}}:{{gt .Summary.OmittedChanges 0}}",
+	})
+	if err := limitedFormat.Execute(); err != nil {
+		t.Fatalf("snapshot diff --limit --format: %v\nstderr=%s", err, limitedFormatErr.String())
+	}
+	if got, want := limitedFormatOut.String(), "2:2:true\n"; got != want {
+		t.Fatalf("snapshot diff --limit --format output = %q, want %q", got, want)
+	}
+
 	changedExit := NewRootCmd()
 	changedExitOut, changedExitErr := &bytes.Buffer{}, &bytes.Buffer{}
 	changedExit.SetOut(changedExitOut)
@@ -958,6 +1005,18 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	}
 	if !strings.Contains(invalidFormatErr.String(), "invalid --format template") {
 		t.Fatalf("invalid format stderr = %q", invalidFormatErr.String())
+	}
+
+	invalidLimit := NewRootCmd()
+	invalidLimitOut, invalidLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidLimit.SetOut(invalidLimitOut)
+	invalidLimit.SetErr(invalidLimitErr)
+	invalidLimit.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--limit", "-1"})
+	if err := invalidLimit.Execute(); err == nil {
+		t.Fatalf("snapshot diff invalid limit succeeded")
+	}
+	if !strings.Contains(invalidLimitErr.String(), "--limit must be >= 0") {
+		t.Fatalf("invalid limit stderr = %q", invalidLimitErr.String())
 	}
 }
 

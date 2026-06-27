@@ -19,6 +19,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 		exitCode bool
 		sections []string
 		format   string
+		limit    int
 	)
 	cmd := &cobra.Command{
 		Use:   "diff <before.json> <after.json>",
@@ -29,6 +30,10 @@ func newSnapshotDiffCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot diff: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot diff: --limit must be >= 0.")
 				return exitErr(2)
 			}
 			formatTemplate, err := parseSnapshotDiffFormat(format)
@@ -46,6 +51,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team snapshot diff: %v\n", err)
 				return exitErr(1)
 			}
+			limitSnapshotDiffResult(result, limit)
 			if jsonOut {
 				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(result); err != nil {
 					return err
@@ -67,6 +73,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&exitCode, "exit-code", false, "Exit with status 1 when snapshots differ.")
 	cmd.Flags().StringSliceVar(&sections, "section", nil, "Only compare sections: provenance, git, runtime, health, plan, triage, next, instances, jobs, pipelines, inbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the diff result with a Go template, e.g. '{{.Summary.TotalChanges}} {{len .Changes}}'.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Limit emitted change detail rows after summarizing all changes; 0 means all.")
 	return cmd
 }
 
@@ -353,6 +360,9 @@ type snapshotDiffMeta struct {
 
 type snapshotDiffSummary struct {
 	TotalChanges    int                  `json:"total_changes"`
+	ShownChanges    int                  `json:"shown_changes,omitempty"`
+	OmittedChanges  int                  `json:"omitted_changes,omitempty"`
+	DetailLimit     int                  `json:"detail_limit,omitempty"`
 	Provenance      snapshotDiffCounters `json:"provenance"`
 	Git             snapshotDiffCounters `json:"git"`
 	Runtime         snapshotDiffCounters `json:"runtime"`
@@ -482,6 +492,25 @@ func diffSnapshotFiles(beforePath, afterPath string, opts snapshotDiffOptions) (
 	}
 	result.Summary.TotalChanges = len(result.Changes)
 	return result, nil
+}
+
+func limitSnapshotDiffResult(result *snapshotDiffResult, limit int) {
+	if result == nil || limit <= 0 {
+		return
+	}
+	total := result.Summary.TotalChanges
+	if total == 0 {
+		total = len(result.Changes)
+		result.Summary.TotalChanges = total
+	}
+	result.Summary.DetailLimit = limit
+	if len(result.Changes) <= limit {
+		result.Summary.ShownChanges = len(result.Changes)
+		return
+	}
+	result.Changes = append([]snapshotDiffChange(nil), result.Changes[:limit]...)
+	result.Summary.ShownChanges = len(result.Changes)
+	result.Summary.OmittedChanges = total - len(result.Changes)
 }
 
 func parseSnapshotDiffSections(values []string) (map[string]bool, error) {
@@ -1485,8 +1514,15 @@ func renderSnapshotDiff(w io.Writer, result *snapshotDiffResult) {
 	renderSnapshotDiffCounterLine(w, "advance", result.Summary.Advance)
 	renderSnapshotDiffCounterLine(w, "section_errors", result.Summary.SectionErrors)
 	if len(result.Changes) == 0 {
-		fmt.Fprintln(w, "details: none")
+		if result.Summary.OmittedChanges > 0 {
+			fmt.Fprintf(w, "details: none shown (omitted=%d limit=%d)\n", result.Summary.OmittedChanges, result.Summary.DetailLimit)
+		} else {
+			fmt.Fprintln(w, "details: none")
+		}
 		return
+	}
+	if result.Summary.OmittedChanges > 0 {
+		fmt.Fprintf(w, "details: showing=%d omitted=%d limit=%d\n", len(result.Changes), result.Summary.OmittedChanges, result.Summary.DetailLimit)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "SECTION\tID\tACTION\tBEFORE\tAFTER")
