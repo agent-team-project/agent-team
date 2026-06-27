@@ -3531,6 +3531,12 @@ func newPipelineRepairCmd() *cobra.Command {
 		retryMessageFile   string
 		retryForce         bool
 		readyTimeout       time.Duration
+		wait               bool
+		waitStatuses       []string
+		waitEvents         []string
+		waitTimeout        time.Duration
+		waitInterval       time.Duration
+		failOnFailed       bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -3548,8 +3554,28 @@ func newPipelineRepairCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --ready-timeout must be >= 0.")
 				return exitErr(2)
 			}
+			if waitInterval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --wait-interval must be >= 0.")
+				return exitErr(2)
+			}
+			if waitTimeout < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --wait-timeout must be >= 0.")
+				return exitErr(2)
+			}
 			if previewRoutes && !dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --preview-routes requires --dry-run.")
+				return exitErr(2)
+			}
+			if wait && dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --wait cannot be combined with --dry-run.")
+				return exitErr(2)
+			}
+			if wait && skipAdvance && !retryPipelines {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --wait requires repair dispatch; remove --skip-advance or add --retry-pipelines.")
+				return exitErr(2)
+			}
+			if !wait && (cmd.Flags().Changed("wait-status") || cmd.Flags().Changed("wait-event") || cmd.Flags().Changed("wait-timeout") || cmd.Flags().Changed("wait-interval") || failOnFailed) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: wait-related flags require --wait.")
 				return exitErr(2)
 			}
 			if retryPipelines && skipDaemon && !dryRun {
@@ -3601,6 +3627,20 @@ func newPipelineRepairCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline repair: %v\n", err)
 				return exitErr(2)
 			}
+			waitEventsSet := map[string]bool{}
+			waitStatusesSet := map[job.Status]bool{}
+			if wait {
+				waitEventsSet = parseJobWaitEvents(waitEvents)
+				waitStatusesSet, err = parseJobWaitStatuses(waitStatuses, !cmd.Flags().Changed("wait-status") && len(waitEventsSet) == 0)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline repair: %v\n", err)
+					return exitErr(2)
+				}
+				if len(waitStatusesSet) == 0 && len(waitEventsSet) == 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: pass at least one non-empty --wait-status or --wait-event.")
+					return exitErr(2)
+				}
+			}
 			resolvedTimeoutMessage, err := optionalMessageBodyWithFlagNames(timeoutMessage, timeoutMessageFile, nil, "--timeout-message", "--timeout-message-file")
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline repair: %v\n", err)
@@ -3640,7 +3680,21 @@ func newPipelineRepairCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline repair: %v\n", err)
 				return exitErr(1)
 			}
-			return renderPipelineRepairResult(cmd.OutOrStdout(), result, jsonOut, tmpl)
+			if wait {
+				if err := waitForPipelineRepairResult(cmd, teamDir, result, waitStatusesSet, waitEventsSet, waitTimeout, waitInterval); err != nil {
+					if err == context.Canceled {
+						return nil
+					}
+					return err
+				}
+			}
+			if err := renderPipelineRepairResult(cmd.OutOrStdout(), result, jsonOut, tmpl); err != nil {
+				return err
+			}
+			if failOnFailed && pipelineRepairResultHasFailed(result) {
+				return exitErr(1)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -3668,6 +3722,12 @@ func newPipelineRepairCmd() *cobra.Command {
 	cmd.Flags().StringVar(&retryMessageFile, "retry-message-file", "", "Read pipeline retry repair audit message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&retryForce, "retry-force", false, "With --retry-pipelines, ignore step max_attempts caps for explicit pipeline repair retry.")
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for implicit daemon readiness (0 = no timeout).")
+	cmd.Flags().BoolVar(&wait, "wait", false, "After repair dispatches retried or ready steps, wait for those jobs to reach a lifecycle status or event.")
+	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&waitEvents, "wait-event", nil, "With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
+	cmd.Flags().DurationVar(&waitInterval, "wait-interval", 500*time.Millisecond, "Polling interval with --wait.")
+	cmd.Flags().BoolVar(&failOnFailed, "fail-on-failed", false, "With --wait, exit 1 if any repaired job resolves to failed.")
 	return cmd
 }
 
@@ -8112,6 +8172,36 @@ func runPipelineRepairAdvanceStep(cmd *cobra.Command, teamDir, pipeline string, 
 		action = "none"
 	}
 	return pipelineRepairAdvanceStep{Action: action, Results: results}
+}
+
+func waitForPipelineRepairResult(cmd *cobra.Command, teamDir string, result *pipelineRepairResult, statuses map[job.Status]bool, events map[string]bool, timeout, interval time.Duration) error {
+	if result == nil {
+		return nil
+	}
+	var err error
+	result.PipelineRetry.Results, err = waitForPipelineRetryResults(cmd, teamDir, result.PipelineRetry.Results, statuses, events, timeout, interval, "agent-team pipeline repair")
+	if err != nil {
+		return err
+	}
+	result.Advance.Results, err = waitForPipelineAdvanceResults(cmd, teamDir, result.Advance.Results, statuses, events, timeout, interval, "agent-team pipeline repair")
+	if err != nil {
+		return err
+	}
+	if !result.DryRun {
+		status, err := collectPipelineStatusRows(teamDir, result.Pipeline)
+		if err != nil {
+			return err
+		}
+		result.StatusAfter = status
+	}
+	return nil
+}
+
+func pipelineRepairResultHasFailed(result *pipelineRepairResult) bool {
+	if result == nil {
+		return false
+	}
+	return pipelineRetryResultsHaveFailed(result.PipelineRetry.Results) || pipelineAdvanceResultsHaveFailed(result.Advance.Results)
 }
 
 func timeoutJobRunningSteps(teamDir string, j *job.Job, stepFilter, targetFilter, message string, limit int, dryRun bool, now time.Time, staleAfter time.Duration) ([]pipelineTimeoutResult, error) {

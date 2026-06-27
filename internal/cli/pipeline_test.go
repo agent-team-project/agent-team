@@ -6827,6 +6827,66 @@ func TestPipelineRepairScopesQueueAndRetry(t *testing.T) {
 	}
 }
 
+func TestPipelineRepairWaitsForRepairedJobs(t *testing.T) {
+	root, mgr, cleanup := setupManualGateApprovalRepo(t, false)
+	defer cleanup()
+	teamDir := filepath.Join(root, ".agent_team")
+	writeFailedRetryJob(t, teamDir, "squ-923")
+	writeReadyAdvanceJob(t, teamDir, "squ-924")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"pipeline", "repair", "ticket_to_pr",
+		"--repo", root,
+		"--workspace", "repo",
+		"--skip-queue",
+		"--retry-pipelines",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline repair --wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var result pipelineRepairResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode pipeline repair wait json: %v\nbody=%s", err, out.String())
+	}
+	if result.Pipeline != "ticket_to_pr" || result.DryRun {
+		t.Fatalf("pipeline repair wait result = %+v", result)
+	}
+	if result.PipelineRetry.Action != "retried" || len(result.PipelineRetry.Results) != 1 {
+		t.Fatalf("pipeline repair retry = %+v", result.PipelineRetry)
+	}
+	retryRow := result.PipelineRetry.Results[0]
+	if retryRow.JobID != "squ-923" || retryRow.Action != "dispatched" || retryRow.Job == nil || retryRow.Job.Status != job.StatusRunning || retryRow.Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("pipeline repair retry row = %+v", retryRow)
+	}
+	if retryRow.Step == nil || retryRow.Step.ID != "implement" || retryRow.Step.Status != job.StatusRunning || retryRow.Step.Instance != "worker-squ-923-implement" {
+		t.Fatalf("pipeline repair retry step = %+v", retryRow.Step)
+	}
+	if result.Advance.Action != "advanced" || len(result.Advance.Results) != 1 {
+		t.Fatalf("pipeline repair advance = %+v", result.Advance)
+	}
+	advanceRow := result.Advance.Results[0]
+	if advanceRow.JobID != "squ-924" || advanceRow.Action != "advanced" || advanceRow.Job == nil || advanceRow.Job.Status != job.StatusRunning || advanceRow.Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("pipeline repair advance row = %+v", advanceRow)
+	}
+	if advanceRow.Step == nil || advanceRow.Step.ID != "implement" || advanceRow.Step.Status != job.StatusRunning || advanceRow.Step.Instance != "worker-squ-924-implement" {
+		t.Fatalf("pipeline repair advance step = %+v", advanceRow.Step)
+	}
+	if len(result.StatusAfter) != 1 || result.StatusAfter[0].Pipeline != "ticket_to_pr" || result.StatusAfter[0].Running != 2 || result.StatusAfter[0].RunningSteps != 2 {
+		t.Fatalf("pipeline repair status after = %+v", result.StatusAfter)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-923-implement")
+	stopAndWaitForTest(t, mgr, "worker-squ-924-implement")
+}
+
 func TestPipelineQueueQuarantineScopesOwnedFiles(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
@@ -8720,7 +8780,12 @@ func TestPipelineRepairValidation(t *testing.T) {
 	}{
 		{[]string{"pipeline", "repair", "ticket_to_pr", "--limit", "-1"}, "--limit must be >= 0"},
 		{[]string{"pipeline", "repair", "ticket_to_pr", "--ready-timeout", "-1s"}, "--ready-timeout must be >= 0"},
+		{[]string{"pipeline", "repair", "ticket_to_pr", "--wait-timeout", "-1s", "--wait"}, "--wait-timeout must be >= 0"},
+		{[]string{"pipeline", "repair", "ticket_to_pr", "--wait-interval", "-1s", "--wait"}, "--wait-interval must be >= 0"},
 		{[]string{"pipeline", "repair", "ticket_to_pr", "--preview-routes"}, "--preview-routes requires --dry-run"},
+		{[]string{"pipeline", "repair", "ticket_to_pr", "--wait", "--dry-run"}, "--wait cannot be combined with --dry-run"},
+		{[]string{"pipeline", "repair", "ticket_to_pr", "--wait", "--skip-advance"}, "--wait requires repair dispatch"},
+		{[]string{"pipeline", "repair", "ticket_to_pr", "--wait-status", "running"}, "wait-related flags require --wait"},
 		{[]string{"pipeline", "repair", "ticket_to_pr", "--retry-pipelines", "--skip-daemon"}, "--retry-pipelines requires daemon access"},
 		{[]string{"pipeline", "repair", "ticket_to_pr", "--timeout-jobs", "--timeout-pipelines"}, "--timeout-jobs cannot be combined with --timeout-pipelines"},
 		{[]string{"pipeline", "repair", "ticket_to_pr", "--timeout-message", "incident"}, "--timeout-message requires --timeout-pipelines or --timeout-jobs"},

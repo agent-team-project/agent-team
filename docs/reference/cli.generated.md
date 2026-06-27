@@ -4079,6 +4079,7 @@ Flags:
 ```text
       --all-ready-steps               Advance every currently ready independent pipeline step during the scoped repair advance.
       --dry-run                       Preview pipeline repair actions without mutating state or starting the daemon.
+      --fail-on-failed                With --wait, exit 1 if any repaired job resolves to failed.
       --format string                 Render the pipeline repair result with a Go template, e.g. '{{.Pipeline}} {{.Queue.Action}}'.
       --json                          Emit machine-readable JSON.
       --limit int                     Retry at most this many pipeline-owned dead-letter queue items or failed pipeline jobs, and advance at most this many ready jobs or ready steps with --all-ready-steps; 0 means no limit.
@@ -4101,6 +4102,11 @@ Flags:
       --timeout-pipelines             Mark stale running pipeline steps failed before retrying failed steps.
       --timeout-step string           With --timeout-jobs or --timeout-pipelines, mark only stale running steps with this id failed.
       --timeout-target-agent string   With --timeout-jobs or --timeout-pipelines, mark only stale work targeting this agent.
+      --wait                          After repair dispatches retried or ready steps, wait for those jobs to reach a lifecycle status or event.
+      --wait-event strings            With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration        Polling interval with --wait. (default 500ms)
+      --wait-status strings           With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-timeout duration         Maximum time to wait with --wait (0 = no timeout).
       --workspace string              Workspace mode for retried or advanced pipeline steps: auto, worktree, or repo. (default "auto")
 ```
 
