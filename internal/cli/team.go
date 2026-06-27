@@ -4048,6 +4048,7 @@ func newTeamExplainCmd() *cobra.Command {
 	var (
 		repo     string
 		limit    int
+		sortBy   string
 		states   []string
 		step     string
 		watch    bool
@@ -4076,9 +4077,13 @@ func newTeamExplainCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team explain: --interval must be >= 0.")
 				return exitErr(2)
 			}
+			sortMode, err := parsePipelineExplainSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team explain: %v\n", err)
+				return exitErr(2)
+			}
 			var stateFilter map[string]bool
 			if cmd.Flags().Changed("state") {
-				var err error
 				stateFilter, err = parseJobNextStateFilter(states, false)
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team explain: %v\n", err)
@@ -4097,9 +4102,9 @@ func newTeamExplainCmd() *cobra.Command {
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
-				return runTeamExplainWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], limit, stateFilter, step, jsonOut, tmpl, interval, !noClear && !jsonOut)
+				return runTeamExplainWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], limit, stateFilter, step, sortMode, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
-			if err := runTeamExplain(cmd.OutOrStdout(), teamDir, args[0], limit, stateFilter, step, jsonOut, tmpl); err != nil {
+			if err := runTeamExplain(cmd.OutOrStdout(), teamDir, args[0], limit, stateFilter, step, sortMode, jsonOut, tmpl); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team explain: %v\n", err)
 				return exitErr(1)
 			}
@@ -4108,6 +4113,7 @@ func newTeamExplainCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit job explanations per team-owned pipeline; 0 means no limit.")
+	cmd.Flags().StringVar(&sortBy, "sort", "updated", "Sort job explanations before applying --limit by job, state, step, target, updated, created, ticket, instance, or label.")
 	cmd.Flags().StringSliceVar(&states, "state", nil, "Only explain jobs whose next-step state matches: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&step, "step", "", "Only include jobs and step details for this pipeline step id.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh team pipeline explanations until interrupted.")
@@ -7647,27 +7653,27 @@ func runTeamPipelinesWatch(ctx context.Context, w io.Writer, teamDir, name, sort
 	}
 }
 
-func collectTeamPipelineExplain(teamDir, name string, limit int, stateFilter map[string]bool, stepFilter string) ([]pipelineExplainRow, error) {
+func collectTeamPipelineExplain(teamDir, name string, limit int, stateFilter map[string]bool, stepFilter string, sortMode string) ([]pipelineExplainRow, error) {
 	_, team, err := loadTopologyTeam(teamDir, name)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := collectPipelineExplainRows(teamDir, "", limit, stateFilter, stepFilter)
+	rows, err := collectPipelineExplainRows(teamDir, "", limit, stateFilter, stepFilter, sortMode)
 	if err != nil {
 		return nil, err
 	}
 	return teamPipelineExplain(team, rows), nil
 }
 
-func runTeamExplain(w io.Writer, teamDir, name string, limit int, stateFilter map[string]bool, stepFilter string, jsonOut bool, tmpl *template.Template) error {
-	rows, err := collectTeamPipelineExplain(teamDir, name, limit, stateFilter, stepFilter)
+func runTeamExplain(w io.Writer, teamDir, name string, limit int, stateFilter map[string]bool, stepFilter string, sortMode string, jsonOut bool, tmpl *template.Template) error {
+	rows, err := collectTeamPipelineExplain(teamDir, name, limit, stateFilter, stepFilter, sortMode)
 	if err != nil {
 		return err
 	}
 	return renderPipelineExplainRows(w, rows, jsonOut, tmpl)
 }
 
-func runTeamExplainWatch(ctx context.Context, w io.Writer, teamDir, name string, limit int, stateFilter map[string]bool, stepFilter string, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+func runTeamExplainWatch(ctx context.Context, w io.Writer, teamDir, name string, limit int, stateFilter map[string]bool, stepFilter string, sortMode string, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
@@ -7679,7 +7685,7 @@ func runTeamExplainWatch(ctx context.Context, w io.Writer, teamDir, name string,
 				return err
 			}
 		}
-		if err := runTeamExplain(w, teamDir, name, limit, stateFilter, stepFilter, jsonOut, tmpl); err != nil {
+		if err := runTeamExplain(w, teamDir, name, limit, stateFilter, stepFilter, sortMode, jsonOut, tmpl); err != nil {
 			return err
 		}
 		select {

@@ -635,6 +635,18 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team explain negative interval stderr = %q", explainIntervalErr.String())
 	}
 
+	explainSort := NewRootCmd()
+	explainSortOut, explainSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainSort.SetOut(explainSortOut)
+	explainSort.SetErr(explainSortErr)
+	explainSort.SetArgs([]string{"team", "explain", "delivery", "--repo", root, "--sort", "priority"})
+	if err := explainSort.Execute(); err == nil {
+		t.Fatalf("team explain invalid sort succeeded")
+	}
+	if !strings.Contains(explainSortErr.String(), "--sort must be job") {
+		t.Fatalf("team explain invalid sort stderr = %q", explainSortErr.String())
+	}
+
 	explainReady := NewRootCmd()
 	explainReadyOut, explainReadyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	explainReady.SetOut(explainReadyOut)
@@ -801,6 +813,36 @@ since = "2026-06-18T12:00:00Z"
 	}
 	if got, want := statusFormatOut.String(), "delivery 3 1\n"; got != want {
 		t.Fatalf("team status format = %q, want %q", got, want)
+	}
+
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-802",
+		Ticket:    "SQU-802",
+		Target:    "worker",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusFailed,
+		CreatedAt: now.Add(-time.Hour),
+		UpdatedAt: now.Add(time.Minute),
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusFailed},
+		},
+	}); err != nil {
+		t.Fatalf("write second team job: %v", err)
+	}
+	explainSorted := NewRootCmd()
+	explainSortedOut, explainSortedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainSorted.SetOut(explainSortedOut)
+	explainSorted.SetErr(explainSortedErr)
+	explainSorted.SetArgs([]string{"team", "explain", "delivery", "--repo", root, "--sort", "state", "--limit", "1", "--json"})
+	if err := explainSorted.Execute(); err != nil {
+		t.Fatalf("team explain sort: %v\nstderr=%s", err, explainSortedErr.String())
+	}
+	var sortedExplainRows []pipelineExplainRow
+	if err := json.Unmarshal(explainSortedOut.Bytes(), &sortedExplainRows); err != nil {
+		t.Fatalf("decode team sorted explain: %v\nbody=%s", err, explainSortedOut.String())
+	}
+	if len(sortedExplainRows) != 1 || sortedExplainRows[0].TotalJobs != 2 || sortedExplainRows[0].ExplainedJobs != 1 || !sortedExplainRows[0].Truncated || len(sortedExplainRows[0].Jobs) != 1 || sortedExplainRows[0].Jobs[0].JobID != "squ-801" || sortedExplainRows[0].Jobs[0].State != "ready" {
+		t.Fatalf("team sorted explain rows = %+v", sortedExplainRows)
 	}
 }
 

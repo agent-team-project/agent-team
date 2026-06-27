@@ -3610,6 +3610,7 @@ Flags:
       --limit int           Limit job explanations per pipeline; 0 means no limit.
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
+      --sort string         Sort job explanations before applying --limit by job, state, step, target, updated, created, ticket, instance, or label. (default "updated")
       --state strings       Only explain jobs whose next-step state matches: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
       --step string         Only include jobs and step details for this pipeline step id.
   -w, --watch               Refresh pipeline explanations until interrupted.
@@ -6291,6 +6292,7 @@ Flags:
       --limit int           Limit job explanations per team-owned pipeline; 0 means no limit.
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
+      --sort string         Sort job explanations before applying --limit by job, state, step, target, updated, created, ticket, instance, or label. (default "updated")
       --state strings       Only explain jobs whose next-step state matches: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
       --step string         Only include jobs and step details for this pipeline step id.
   -w, --watch               Refresh team pipeline explanations until interrupted.

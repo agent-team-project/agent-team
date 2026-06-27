@@ -576,6 +576,7 @@ func newPipelineExplainCmd() *cobra.Command {
 		repo     string
 		all      bool
 		limit    int
+		sortBy   string
 		states   []string
 		step     string
 		watch    bool
@@ -612,9 +613,13 @@ func newPipelineExplainCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline explain: --interval must be >= 0.")
 				return exitErr(2)
 			}
+			sortMode, err := parsePipelineExplainSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline explain: %v\n", err)
+				return exitErr(2)
+			}
 			var stateFilter map[string]bool
 			if cmd.Flags().Changed("state") {
-				var err error
 				stateFilter, err = parseJobNextStateFilter(states, false)
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline explain: %v\n", err)
@@ -641,9 +646,9 @@ func newPipelineExplainCmd() *cobra.Command {
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
-				return runPipelineExplainWatch(ctx, cmd.OutOrStdout(), teamDir, pipelineName, limit, stateFilter, step, jsonOut, tmpl, interval, !noClear && !jsonOut)
+				return runPipelineExplainWatch(ctx, cmd.OutOrStdout(), teamDir, pipelineName, limit, stateFilter, step, sortMode, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
-			if err := runPipelineExplain(cmd.OutOrStdout(), teamDir, pipelineName, limit, stateFilter, step, jsonOut, tmpl); err != nil {
+			if err := runPipelineExplain(cmd.OutOrStdout(), teamDir, pipelineName, limit, stateFilter, step, sortMode, jsonOut, tmpl); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline explain: %v\n", err)
 				return exitErr(1)
 			}
@@ -653,6 +658,7 @@ func newPipelineExplainCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&all, "all", false, "Explain all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit job explanations per pipeline; 0 means no limit.")
+	cmd.Flags().StringVar(&sortBy, "sort", "updated", "Sort job explanations before applying --limit by job, state, step, target, updated, created, ticket, instance, or label.")
 	cmd.Flags().StringSliceVar(&states, "state", nil, "Only explain jobs whose next-step state matches: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&step, "step", "", "Only include jobs and step details for this pipeline step id.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh pipeline explanations until interrupted.")
@@ -5441,7 +5447,12 @@ func pipelineStatusSortValue(row pipelineStatusRow, sortMode string) int {
 	}
 }
 
-func collectPipelineExplainRows(teamDir, pipeline string, limit int, stateFilter map[string]bool, stepFilter string) ([]pipelineExplainRow, error) {
+type pipelineExplainCandidate struct {
+	Job       *job.Job
+	Explained jobExplainResult
+}
+
+func collectPipelineExplainRows(teamDir, pipeline string, limit int, stateFilter map[string]bool, stepFilter string, sortMode string) ([]pipelineExplainRow, error) {
 	statusRows, err := collectPipelineStatusRows(teamDir, pipeline)
 	if err != nil {
 		return nil, err
@@ -5450,7 +5461,6 @@ func collectPipelineExplainRows(teamDir, pipeline string, limit int, stateFilter
 	if err != nil {
 		return nil, err
 	}
-	sortJobs(jobs, "updated")
 	out := make([]pipelineExplainRow, 0, len(statusRows))
 	for _, status := range statusRows {
 		row := pipelineExplainRow{
@@ -5459,6 +5469,7 @@ func collectPipelineExplainRows(teamDir, pipeline string, limit int, stateFilter
 			Status:   status,
 			Actions:  append([]string(nil), status.Actions...),
 		}
+		candidates := []pipelineExplainCandidate{}
 		for _, j := range jobs {
 			if j == nil || strings.TrimSpace(j.Pipeline) != status.Pipeline {
 				continue
@@ -5473,16 +5484,79 @@ func collectPipelineExplainRows(teamDir, pipeline string, limit int, stateFilter
 			if len(stateFilter) > 0 && !stateFilter[explained.State] {
 				continue
 			}
-			if limit > 0 && row.ExplainedJobs >= limit {
-				row.Truncated = true
-				continue
-			}
-			row.Jobs = append(row.Jobs, explained)
-			row.ExplainedJobs++
+			candidates = append(candidates, pipelineExplainCandidate{Job: j, Explained: explained})
+		}
+		sortPipelineExplainCandidates(candidates, sortMode)
+		if limit > 0 && len(candidates) > limit {
+			row.Truncated = true
+			candidates = candidates[:limit]
+		}
+		row.ExplainedJobs = len(candidates)
+		row.Jobs = make([]jobExplainResult, 0, len(candidates))
+		for _, candidate := range candidates {
+			row.Jobs = append(row.Jobs, candidate.Explained)
 		}
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+func parsePipelineExplainSort(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return "updated", nil
+	}
+	switch value {
+	case "job", "state", "step", "target", "updated", "created", "ticket", "instance", "label":
+		return value, nil
+	default:
+		return "", fmt.Errorf("--sort must be job, state, step, target, updated, created, ticket, instance, or label")
+	}
+}
+
+func sortPipelineExplainCandidates(candidates []pipelineExplainCandidate, sortMode string) {
+	sortMode, err := parsePipelineExplainSort(sortMode)
+	if err != nil {
+		sortMode = "updated"
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left, right := candidates[i], candidates[j]
+		switch sortMode {
+		case "state":
+			if rankLeft, rankRight := jobReadyStateSortRank(left.Explained.State), jobReadyStateSortRank(right.Explained.State); rankLeft != rankRight {
+				return rankLeft < rankRight
+			}
+		case "step":
+			if left.Explained.Next.StepID != right.Explained.Next.StepID {
+				return left.Explained.Next.StepID < right.Explained.Next.StepID
+			}
+		case "target":
+			if left.Explained.Next.Target != right.Explained.Next.Target {
+				return left.Explained.Next.Target < right.Explained.Next.Target
+			}
+		case "updated":
+			if left.Job != nil && right.Job != nil && !left.Job.UpdatedAt.Equal(right.Job.UpdatedAt) {
+				return left.Job.UpdatedAt.After(right.Job.UpdatedAt)
+			}
+		case "created":
+			if left.Job != nil && right.Job != nil && !left.Job.CreatedAt.Equal(right.Job.CreatedAt) {
+				return left.Job.CreatedAt.After(right.Job.CreatedAt)
+			}
+		case "ticket":
+			if left.Explained.Ticket != right.Explained.Ticket {
+				return left.Explained.Ticket < right.Explained.Ticket
+			}
+		case "instance":
+			if left.Explained.Next.Instance != right.Explained.Next.Instance {
+				return left.Explained.Next.Instance < right.Explained.Next.Instance
+			}
+		case "label":
+			if left.Explained.Next.Label != right.Explained.Next.Label {
+				return left.Explained.Next.Label < right.Explained.Next.Label
+			}
+		}
+		return left.Explained.JobID < right.Explained.JobID
+	})
 }
 
 func scopePipelineExplainResultActions(pipeline string, explained jobExplainResult) jobExplainResult {
@@ -9714,15 +9788,15 @@ func renderPipelineExplainRows(w io.Writer, rows []pipelineExplainRow, jsonOut b
 	return nil
 }
 
-func runPipelineExplain(w io.Writer, teamDir, pipeline string, limit int, stateFilter map[string]bool, step string, jsonOut bool, tmpl *template.Template) error {
-	rows, err := collectPipelineExplainRows(teamDir, pipeline, limit, stateFilter, step)
+func runPipelineExplain(w io.Writer, teamDir, pipeline string, limit int, stateFilter map[string]bool, step string, sortMode string, jsonOut bool, tmpl *template.Template) error {
+	rows, err := collectPipelineExplainRows(teamDir, pipeline, limit, stateFilter, step, sortMode)
 	if err != nil {
 		return err
 	}
 	return renderPipelineExplainRows(w, rows, jsonOut, tmpl)
 }
 
-func runPipelineExplainWatch(ctx context.Context, w io.Writer, teamDir, pipeline string, limit int, stateFilter map[string]bool, step string, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+func runPipelineExplainWatch(ctx context.Context, w io.Writer, teamDir, pipeline string, limit int, stateFilter map[string]bool, step string, sortMode string, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
@@ -9734,7 +9808,7 @@ func runPipelineExplainWatch(ctx context.Context, w io.Writer, teamDir, pipeline
 				return err
 			}
 		}
-		if err := runPipelineExplain(w, teamDir, pipeline, limit, stateFilter, step, jsonOut, tmpl); err != nil {
+		if err := runPipelineExplain(w, teamDir, pipeline, limit, stateFilter, step, sortMode, jsonOut, tmpl); err != nil {
 			return err
 		}
 		select {

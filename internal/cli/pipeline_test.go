@@ -1338,6 +1338,22 @@ target = "manager"
 		t.Fatalf("limited pipeline explain = %+v", limitedRows)
 	}
 
+	explainSorted := NewRootCmd()
+	explainSortedOut, explainSortedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainSorted.SetOut(explainSortedOut)
+	explainSorted.SetErr(explainSortedErr)
+	explainSorted.SetArgs([]string{"pipeline", "explain", "ticket_to_pr", "--repo", root, "--sort", "state", "--limit", "1", "--json"})
+	if err := explainSorted.Execute(); err != nil {
+		t.Fatalf("pipeline explain sort: %v\nstderr=%s", err, explainSortedErr.String())
+	}
+	var sortedExplainRows []pipelineExplainRow
+	if err := json.Unmarshal(explainSortedOut.Bytes(), &sortedExplainRows); err != nil {
+		t.Fatalf("decode sorted pipeline explain json: %v\nbody=%s", err, explainSortedOut.String())
+	}
+	if len(sortedExplainRows) != 1 || sortedExplainRows[0].ExplainedJobs != 1 || !sortedExplainRows[0].Truncated || len(sortedExplainRows[0].Jobs) != 1 || sortedExplainRows[0].Jobs[0].JobID != "squ-610" || sortedExplainRows[0].Jobs[0].State != "ready" {
+		t.Fatalf("sorted pipeline explain = %+v", sortedExplainRows)
+	}
+
 	explainStep := NewRootCmd()
 	explainStepOut, explainStepErr := &bytes.Buffer{}, &bytes.Buffer{}
 	explainStep.SetOut(explainStepOut)
@@ -1397,6 +1413,18 @@ target = "manager"
 	}
 	if !strings.Contains(explainInvalidIntervalErr.String(), "--interval must be >= 0") {
 		t.Fatalf("invalid interval stderr = %q", explainInvalidIntervalErr.String())
+	}
+
+	explainInvalidSort := NewRootCmd()
+	explainInvalidSortOut, explainInvalidSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explainInvalidSort.SetOut(explainInvalidSortOut)
+	explainInvalidSort.SetErr(explainInvalidSortErr)
+	explainInvalidSort.SetArgs([]string{"pipeline", "explain", "ticket_to_pr", "--repo", root, "--sort", "priority"})
+	if err := explainInvalidSort.Execute(); err == nil {
+		t.Fatalf("pipeline explain invalid sort succeeded")
+	}
+	if !strings.Contains(explainInvalidSortErr.String(), "--sort must be job") {
+		t.Fatalf("invalid sort stderr = %q", explainInvalidSortErr.String())
 	}
 
 	invalid := NewRootCmd()
