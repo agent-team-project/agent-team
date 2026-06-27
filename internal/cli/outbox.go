@@ -218,17 +218,25 @@ func newOutboxDrainCmd() *cobra.Command {
 
 func newOutboxRetryCmd() *cobra.Command {
 	var (
-		target  string
-		jsonOut bool
-		format  string
-		dryRun  bool
+		target      string
+		jsonOut     bool
+		format      string
+		retryAll    bool
+		dryRun      bool
+		stateFilter string
+		types       []string
+		sources     []string
+		jobs        []string
+		sortBy      string
+		limit       int
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:     "retry <id>",
+		Use:     "retry [id]",
 		Aliases: []string{"requeue"},
-		Short:   "Move a processed or failed outbox event back to pending.",
-		Args:    cobra.ExactArgs(1),
+		Short:   "Retry one or more processed or failed outbox events.",
+		Long:    "Move one processed or failed outbox event back to pending by id, or retry a filtered batch with --all. Batch retries default to failed events.",
+		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox retry: --format cannot be combined with --json.")
@@ -237,6 +245,43 @@ func newOutboxRetryCmd() *cobra.Command {
 			tmpl, err := parseOutboxActionFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team outbox retry: %v\n", err)
+				return exitErr(2)
+			}
+			if retryAll {
+				if len(args) != 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox retry: --all cannot be combined with an id.")
+					return exitErr(2)
+				}
+				if limit < 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox retry: --limit must be >= 0.")
+					return exitErr(2)
+				}
+				sortMode, err := parseOutboxSort(sortBy)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team outbox retry: %v\n", err)
+					return exitErr(2)
+				}
+				effectiveState := strings.TrimSpace(stateFilter)
+				if effectiveState == "" {
+					effectiveState = daemon.OutboxStateFailed
+				}
+				filters, err := parseOutboxFilters(effectiveState, types, sources, jobs)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team outbox retry: %v\n", err)
+					return exitErr(2)
+				}
+				teamDir, err := resolveTeamDir(cmd, target)
+				if err != nil {
+					return err
+				}
+				return runOutboxRetryAll(cmd.OutOrStdout(), teamDir, filters, outboxListOptions{Sort: sortMode, Limit: limit}, dryRun, jsonOut, tmpl)
+			}
+			if len(args) != 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox retry: requires one id unless --all is set.")
+				return exitErr(2)
+			}
+			if stateFilter != "" || len(types) > 0 || len(sources) > 0 || len(jobs) > 0 || cmd.Flags().Changed("sort") || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox retry: --state, --type, --source, --job, --sort, and --limit require --all.")
 				return exitErr(2)
 			}
 			teamDir, err := resolveTeamDir(cmd, target)
@@ -251,7 +296,14 @@ func newOutboxRetryCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
+	cmd.Flags().BoolVar(&retryAll, "all", false, "Retry all matching outbox events instead of one id.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the retry without moving the event.")
+	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by outbox state: pending, processed, or failed. Defaults to failed.")
+	cmd.Flags().StringSliceVar(&types, "type", nil, "With --all, filter by event type; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&sources, "source", nil, "With --all, filter by source agent/instance; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
+	cmd.Flags().StringVar(&sortBy, "sort", "state", "With --all, sort matching outbox events before limiting: state, id, type, source, job, created, updated, or error.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, retry at most this many matching outbox events; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	return cmd
@@ -259,16 +311,24 @@ func newOutboxRetryCmd() *cobra.Command {
 
 func newOutboxDropCmd() *cobra.Command {
 	var (
-		target  string
-		jsonOut bool
-		format  string
-		dryRun  bool
+		target      string
+		jsonOut     bool
+		format      string
+		dropAll     bool
+		dryRun      bool
+		stateFilter string
+		types       []string
+		sources     []string
+		jobs        []string
+		sortBy      string
+		limit       int
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "drop <id>",
-		Short: "Remove one outbox event.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "drop [id]",
+		Short: "Drop one or more outbox events.",
+		Long:  "Remove one outbox event by id, or drop a filtered batch with --all. Batch drops default to failed events.",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox drop: --format cannot be combined with --json.")
@@ -277,6 +337,43 @@ func newOutboxDropCmd() *cobra.Command {
 			tmpl, err := parseOutboxActionFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team outbox drop: %v\n", err)
+				return exitErr(2)
+			}
+			if dropAll {
+				if len(args) != 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox drop: --all cannot be combined with an id.")
+					return exitErr(2)
+				}
+				if limit < 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox drop: --limit must be >= 0.")
+					return exitErr(2)
+				}
+				sortMode, err := parseOutboxSort(sortBy)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team outbox drop: %v\n", err)
+					return exitErr(2)
+				}
+				effectiveState := strings.TrimSpace(stateFilter)
+				if effectiveState == "" {
+					effectiveState = daemon.OutboxStateFailed
+				}
+				filters, err := parseOutboxFilters(effectiveState, types, sources, jobs)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team outbox drop: %v\n", err)
+					return exitErr(2)
+				}
+				teamDir, err := resolveTeamDir(cmd, target)
+				if err != nil {
+					return err
+				}
+				return runOutboxDropAll(cmd.OutOrStdout(), teamDir, filters, outboxListOptions{Sort: sortMode, Limit: limit}, dryRun, jsonOut, tmpl)
+			}
+			if len(args) != 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox drop: requires one id unless --all is set.")
+				return exitErr(2)
+			}
+			if stateFilter != "" || len(types) > 0 || len(sources) > 0 || len(jobs) > 0 || cmd.Flags().Changed("sort") || limit > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox drop: --state, --type, --source, --job, --sort, and --limit require --all.")
 				return exitErr(2)
 			}
 			teamDir, err := resolveTeamDir(cmd, target)
@@ -291,7 +388,14 @@ func newOutboxDropCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
+	cmd.Flags().BoolVar(&dropAll, "all", false, "Drop all matching outbox events instead of one id.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the drop without removing the event.")
+	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by outbox state: pending, processed, or failed. Defaults to failed.")
+	cmd.Flags().StringSliceVar(&types, "type", nil, "With --all, filter by event type; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&sources, "source", nil, "With --all, filter by source agent/instance; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
+	cmd.Flags().StringVar(&sortBy, "sort", "state", "With --all, sort matching outbox events before limiting: state, id, type, source, job, created, updated, or error.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, drop at most this many matching outbox events; 0 means no limit.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	return cmd
@@ -409,6 +513,38 @@ func runOutboxListItems(w io.Writer, items []*daemon.OutboxItem, filters outboxL
 		return renderOutboxItemsFormat(w, filtered, tmpl)
 	}
 	return renderOutboxItemsTable(w, filtered)
+}
+
+func runOutboxRetryAll(w io.Writer, teamDir string, filters outboxListFilters, opts outboxListOptions, dryRun, jsonOut bool, tmpl *template.Template) error {
+	matches, err := filteredOutboxActionItems(teamDir, filters, opts)
+	if err != nil {
+		return err
+	}
+	results, err := retryOutboxItemMatches(teamDir, matches, dryRun)
+	if err != nil {
+		return err
+	}
+	return renderOutboxActionResults(w, results, jsonOut, tmpl)
+}
+
+func runOutboxDropAll(w io.Writer, teamDir string, filters outboxListFilters, opts outboxListOptions, dryRun, jsonOut bool, tmpl *template.Template) error {
+	matches, err := filteredOutboxActionItems(teamDir, filters, opts)
+	if err != nil {
+		return err
+	}
+	results, err := dropOutboxItemMatches(teamDir, matches, dryRun)
+	if err != nil {
+		return err
+	}
+	return renderOutboxActionResults(w, results, jsonOut, tmpl)
+}
+
+func filteredOutboxActionItems(teamDir string, filters outboxListFilters, opts outboxListOptions) ([]*daemon.OutboxItem, error) {
+	items, err := daemon.ListOutboxItems(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	return prepareOutboxActionMatches(filterOutboxItems(items, filters), opts), nil
 }
 
 func renderOutboxSummary(w io.Writer, teamDir string, filters outboxListFilters, jsonOut bool) error {

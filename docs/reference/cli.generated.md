@@ -3437,9 +3437,9 @@ Inherited Flags:
 Subcommands:
 
 - `agent-team outbox drain` - Ask the running daemon to publish pending outbox events.
-- `agent-team outbox drop` - Remove one outbox event.
+- `agent-team outbox drop` - Drop one or more outbox events.
 - `agent-team outbox ls` - List sandboxed agent outbox events.
-- `agent-team outbox retry` - Move a processed or failed outbox event back to pending.
+- `agent-team outbox retry` - Retry one or more processed or failed outbox events.
 - `agent-team outbox show` - Show one outbox event.
 
 ## `agent-team outbox drain`
@@ -3467,19 +3467,28 @@ Inherited Flags:
 
 ## `agent-team outbox drop`
 
-Remove one outbox event.
+Drop one or more outbox events.
+
+Remove one outbox event by id, or drop a filtered batch with --all. Batch drops default to failed events.
 
 ```text
-agent-team outbox drop <id> [flags]
+agent-team outbox drop [id] [flags]
 ```
 
 Flags:
 
 ```text
-      --dry-run         Preview the drop without removing the event.
-      --format string   Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
-      --json            Emit machine-readable JSON.
-      --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --all              Drop all matching outbox events instead of one id.
+      --dry-run          Preview the drop without removing the event.
+      --format string    Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.
+      --json             Emit machine-readable JSON.
+      --limit int        With --all, drop at most this many matching outbox events; 0 means no limit.
+      --sort string      With --all, sort matching outbox events before limiting: state, id, type, source, job, created, updated, or error. (default "state")
+      --source strings   With --all, filter by source agent/instance; repeat or comma-separate values.
+      --state string     With --all, filter by outbox state: pending, processed, or failed. Defaults to failed.
+      --target string    Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --type strings     With --all, filter by event type; repeat or comma-separate values.
 ```
 
 Inherited Flags:
@@ -3519,10 +3528,12 @@ Inherited Flags:
 
 ## `agent-team outbox retry`
 
-Move a processed or failed outbox event back to pending.
+Retry one or more processed or failed outbox events.
+
+Move one processed or failed outbox event back to pending by id, or retry a filtered batch with --all. Batch retries default to failed events.
 
 ```text
-agent-team outbox retry <id> [flags]
+agent-team outbox retry [id] [flags]
 ```
 
 Aliases: `requeue`
@@ -3530,10 +3541,17 @@ Aliases: `requeue`
 Flags:
 
 ```text
-      --dry-run         Preview the retry without moving the event.
-      --format string   Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
-      --json            Emit machine-readable JSON.
-      --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --all              Retry all matching outbox events instead of one id.
+      --dry-run          Preview the retry without moving the event.
+      --format string    Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.
+      --json             Emit machine-readable JSON.
+      --limit int        With --all, retry at most this many matching outbox events; 0 means no limit.
+      --sort string      With --all, sort matching outbox events before limiting: state, id, type, source, job, created, updated, or error. (default "state")
+      --source strings   With --all, filter by source agent/instance; repeat or comma-separate values.
+      --state string     With --all, filter by outbox state: pending, processed, or failed. Defaults to failed.
+      --target string    Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --type strings     With --all, filter by event type; repeat or comma-separate values.
 ```
 
 Inherited Flags:

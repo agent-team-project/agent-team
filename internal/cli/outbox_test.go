@@ -88,6 +88,77 @@ func TestOutboxListShowRetryDrop(t *testing.T) {
 	if _, err := daemon.ReadOutboxItem(teamDir, "outbox-a"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("outbox-a should be removed, err=%v", err)
 	}
+
+	writeCLIOutboxItem(t, teamDir, &daemon.OutboxItem{
+		ID:        "outbox-c",
+		State:     daemon.OutboxStateFailed,
+		Type:      "agent.dispatch",
+		Payload:   map[string]any{"job_id": "squ-503", "ticket": "SQU-503", "target": "worker"},
+		Source:    "manager",
+		LastError: "missing worker route",
+		CreatedAt: now.Add(2 * time.Minute),
+		UpdatedAt: now.Add(2 * time.Minute),
+	})
+	writeCLIOutboxItem(t, teamDir, &daemon.OutboxItem{
+		ID:        "outbox-d",
+		State:     daemon.OutboxStateFailed,
+		Type:      "agent.dispatch",
+		Payload:   map[string]any{"job_id": "squ-504", "ticket": "SQU-504", "target": "worker"},
+		Source:    "manager",
+		LastError: "stale event",
+		CreatedAt: now.Add(3 * time.Minute),
+		UpdatedAt: now.Add(3 * time.Minute),
+	})
+	writeCLIOutboxItem(t, teamDir, &daemon.OutboxItem{
+		ID:        "outbox-e",
+		State:     daemon.OutboxStateProcessed,
+		Type:      "agent.dispatch",
+		Payload:   map[string]any{"job_id": "squ-505", "ticket": "SQU-505", "target": "worker"},
+		Source:    "worker",
+		CreatedAt: now.Add(4 * time.Minute),
+		UpdatedAt: now.Add(4 * time.Minute),
+	})
+
+	retryAll := runRootForOutboxTest(t, "outbox", "retry", "--target", target, "--all", "--source", "manager", "--sort", "id", "--limit", "1", "--json")
+	var retryAllRows []outboxActionResult
+	if err := json.Unmarshal(retryAll.Bytes(), &retryAllRows); err != nil {
+		t.Fatalf("decode retry all: %v\n%s", err, retryAll.String())
+	}
+	if len(retryAllRows) != 1 || retryAllRows[0].ID != "outbox-c" || retryAllRows[0].Action != "retried" {
+		t.Fatalf("retry all rows = %+v", retryAllRows)
+	}
+	retriedAll, err := daemon.ReadOutboxItem(teamDir, "outbox-c")
+	if err != nil || retriedAll.State != daemon.OutboxStatePending || retriedAll.LastError != "" {
+		t.Fatalf("retry all item=%+v err=%v", retriedAll, err)
+	}
+	processed, err := daemon.ReadOutboxItem(teamDir, "outbox-e")
+	if err != nil || processed.State != daemon.OutboxStateProcessed {
+		t.Fatalf("retry all changed processed item=%+v err=%v", processed, err)
+	}
+
+	dropAllDryRun := runRootForOutboxTest(t, "outbox", "drop", "--target", target, "--all", "--state", "failed", "--job", "SQU-504", "--sort", "id", "--dry-run", "--json")
+	var dropAllDryRunRows []outboxActionResult
+	if err := json.Unmarshal(dropAllDryRun.Bytes(), &dropAllDryRunRows); err != nil {
+		t.Fatalf("decode drop all dry-run: %v\n%s", err, dropAllDryRun.String())
+	}
+	if len(dropAllDryRunRows) != 1 || dropAllDryRunRows[0].ID != "outbox-d" || dropAllDryRunRows[0].Action != "would_drop" || !dropAllDryRunRows[0].DryRun {
+		t.Fatalf("drop all dry-run rows = %+v", dropAllDryRunRows)
+	}
+	if _, err := daemon.ReadOutboxItem(teamDir, "outbox-d"); err != nil {
+		t.Fatalf("dry-run removed outbox-d: %v", err)
+	}
+
+	dropAll := runRootForOutboxTest(t, "outbox", "drop", "--target", target, "--all", "--state", "failed", "--job", "SQU-504", "--sort", "id", "--json")
+	var dropAllRows []outboxActionResult
+	if err := json.Unmarshal(dropAll.Bytes(), &dropAllRows); err != nil {
+		t.Fatalf("decode drop all: %v\n%s", err, dropAll.String())
+	}
+	if len(dropAllRows) != 1 || dropAllRows[0].ID != "outbox-d" || dropAllRows[0].Action != "dropped" {
+		t.Fatalf("drop all rows = %+v", dropAllRows)
+	}
+	if _, err := daemon.ReadOutboxItem(teamDir, "outbox-d"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("outbox-d should be removed, err=%v", err)
+	}
 }
 
 func TestOutboxDrainDryRunOffline(t *testing.T) {
