@@ -8530,6 +8530,49 @@ instances = ["other"]
 	stopAndWaitForTest(t, mgr, "worker-drain-delivery")
 }
 
+func TestTeamDrainWaitsForAdvancedJobs(t *testing.T) {
+	root, mgr, cleanup := setupManualGateApprovalRepo(t, true)
+	defer cleanup()
+	teamDir := filepath.Join(root, ".agent_team")
+	writeReadyAdvanceJob(t, teamDir, "squ-303")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"team", "drain", "delivery",
+		"--repo", root,
+		"--workspace", "repo",
+		"--skip-schedules",
+		"--skip-drain",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--interval", "0s",
+		"--max-cycles", "3",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team drain --wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var result teamTickUntilIdleResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode team drain wait json: %v\nbody=%s", err, out.String())
+	}
+	if result.Team.Name != "delivery" || !result.Idle || result.HitLimit || result.CyclesRun != 2 || len(result.Cycles) != 2 {
+		t.Fatalf("team drain wait result = %+v", result)
+	}
+	if len(result.Cycles[0].Tick.Advance) != 1 || result.Cycles[0].Tick.Advance[0].Action != "advanced" || result.Cycles[0].Tick.Advance[0].Job == nil || result.Cycles[0].Tick.Advance[0].Job.Status != job.StatusRunning || result.Cycles[0].Tick.Advance[0].Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("team drain wait advance = %+v", result.Cycles[0].Tick.Advance)
+	}
+	if result.Cycles[0].Tick.Advance[0].Step == nil || result.Cycles[0].Tick.Advance[0].Step.ID != "implement" || result.Cycles[0].Tick.Advance[0].Step.Status != job.StatusRunning || result.Cycles[0].Tick.Advance[0].Step.Instance != "worker-squ-303-implement" {
+		t.Fatalf("team drain wait step = %+v", result.Cycles[0].Tick.Advance[0].Step)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-303-implement")
+}
+
 func TestTeamTickRejectsInvalidLoopFlags(t *testing.T) {
 	cases := []struct {
 		name string
@@ -8591,6 +8634,50 @@ func TestTeamTickRejectsInvalidLoopFlags(t *testing.T) {
 			cmd.SetArgs(tc.args)
 			if err := cmd.Execute(); err == nil {
 				t.Fatalf("team tick %s succeeded", tc.name)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestTeamDrainRejectsInvalidFlags(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "negative wait timeout",
+			args: []string{"team", "drain", "delivery", "--wait", "--wait-timeout", "-1s"},
+			want: "--wait-timeout must be >= 0",
+		},
+		{
+			name: "negative wait interval",
+			args: []string{"team", "drain", "delivery", "--wait", "--wait-interval", "-1s"},
+			want: "--wait-interval must be >= 0",
+		},
+		{
+			name: "wait skip advance",
+			args: []string{"team", "drain", "delivery", "--wait", "--skip-advance"},
+			want: "--wait requires pipeline advancement",
+		},
+		{
+			name: "wait flag without wait",
+			args: []string{"team", "drain", "delivery", "--wait-status", "running"},
+			want: "wait-related flags require --wait",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			stderr := &bytes.Buffer{}
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err == nil {
+				t.Fatalf("team drain %s succeeded", tc.name)
 			}
 			if !strings.Contains(stderr.String(), tc.want) {
 				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)

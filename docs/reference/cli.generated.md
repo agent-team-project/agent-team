@@ -849,20 +849,26 @@ agent-team drain [flags]
 Flags:
 
 ```text
-      --all-ready-steps      Advance every currently ready independent pipeline step in each drain cycle.
-      --format string        Render the drain result with a Go template, e.g. '{{.CyclesRun}} {{.Idle}}'.
-      --interval duration    Delay between drain cycles. (default 2s)
-      --json                 Emit machine-readable JSON.
-      --limit int            Advance at most this many ready pipeline jobs per cycle, or ready steps with --all-ready-steps; 0 means no limit.
-      --max-cycles int       Stop after this many cycles if work keeps appearing. (default 20)
-      --runtime string       Runtime profile for advanced step dispatches (claude or codex). Overrides env and repo config.
-      --runtime-bin string   Runtime binary for advanced step dispatches. Overrides env and repo config.
-      --skip-advance         Skip pipeline advancement.
-      --skip-drain           Skip queue draining.
-      --skip-reconcile       Skip daemon metadata and job status reconciliation.
-      --skip-schedules       Skip firing due schedules.
-      --target string        Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
-      --workspace string     Workspace mode for advanced pipeline steps: auto, worktree, or repo. (default "auto")
+      --all-ready-steps          Advance every currently ready independent pipeline step in each drain cycle.
+      --fail-on-failed           With --wait, exit 1 if any drain-advanced job resolves to failed.
+      --format string            Render the drain result with a Go template, e.g. '{{.CyclesRun}} {{.Idle}}'.
+      --interval duration        Delay between drain cycles. (default 2s)
+      --json                     Emit machine-readable JSON.
+      --limit int                Advance at most this many ready pipeline jobs per cycle, or ready steps with --all-ready-steps; 0 means no limit.
+      --max-cycles int           Stop after this many cycles if work keeps appearing. (default 20)
+      --runtime string           Runtime profile for advanced step dispatches (claude or codex). Overrides env and repo config.
+      --runtime-bin string       Runtime binary for advanced step dispatches. Overrides env and repo config.
+      --skip-advance             Skip pipeline advancement.
+      --skip-drain               Skip queue draining.
+      --skip-reconcile           Skip daemon metadata and job status reconciliation.
+      --skip-schedules           Skip firing due schedules.
+      --target string            Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --wait                     After drain reaches idle, wait for jobs advanced during drain cycles to reach a lifecycle status or event.
+      --wait-event strings       With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration   Polling interval with --wait. (default 500ms)
+      --wait-status strings      With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-timeout duration    Maximum time to wait with --wait (0 = no timeout).
+      --workspace string         Workspace mode for advanced pipeline steps: auto, worktree, or repo. (default "auto")
 ```
 
 Inherited Flags:
@@ -6137,19 +6143,25 @@ agent-team team drain <team> [flags]
 Flags:
 
 ```text
-      --all-ready-steps      Advance every currently ready independent team pipeline step in each drain cycle.
-      --format string        Render the drain result with a Go template, e.g. '{{.Team.Name}} {{.CyclesRun}} {{.Idle}}'.
-      --interval duration    Delay between drain cycles. (default 2s)
-      --json                 Emit machine-readable JSON.
-      --limit int            Advance at most this many ready pipeline jobs per cycle, or ready steps with --all-ready-steps; 0 means no limit.
-      --max-cycles int       Stop after this many cycles if work keeps appearing. (default 20)
-      --repo string          Repo root containing .agent_team. (default "<repo>")
-      --runtime string       Runtime profile for advanced step dispatches (claude or codex). Overrides env and repo config.
-      --runtime-bin string   Runtime binary for advanced step dispatches. Overrides env and repo config.
-      --skip-advance         Skip pipeline advancement work.
-      --skip-drain           Skip queue drain work.
-      --skip-schedules       Skip due schedule work.
-      --workspace string     Workspace mode for advanced pipeline steps: auto, worktree, or repo. (default "auto")
+      --all-ready-steps          Advance every currently ready independent team pipeline step in each drain cycle.
+      --fail-on-failed           With --wait, exit 1 if any team drain-advanced job resolves to failed.
+      --format string            Render the drain result with a Go template, e.g. '{{.Team.Name}} {{.CyclesRun}} {{.Idle}}'.
+      --interval duration        Delay between drain cycles. (default 2s)
+      --json                     Emit machine-readable JSON.
+      --limit int                Advance at most this many ready pipeline jobs per cycle, or ready steps with --all-ready-steps; 0 means no limit.
+      --max-cycles int           Stop after this many cycles if work keeps appearing. (default 20)
+      --repo string              Repo root containing .agent_team. (default "<repo>")
+      --runtime string           Runtime profile for advanced step dispatches (claude or codex). Overrides env and repo config.
+      --runtime-bin string       Runtime binary for advanced step dispatches. Overrides env and repo config.
+      --skip-advance             Skip pipeline advancement work.
+      --skip-drain               Skip queue drain work.
+      --skip-schedules           Skip due schedule work.
+      --wait                     After team drain reaches idle, wait for jobs advanced during team drain cycles to reach a lifecycle status or event.
+      --wait-event strings       With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration   Polling interval with --wait. (default 500ms)
+      --wait-status strings      With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-timeout duration    Maximum time to wait with --wait (0 = no timeout).
+      --workspace string         Workspace mode for advanced pipeline steps: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team team events`

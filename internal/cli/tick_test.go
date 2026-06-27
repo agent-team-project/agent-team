@@ -587,6 +587,67 @@ func TestDrainRunsUntilIdle(t *testing.T) {
 	stopAndWaitForTest(t, mgr, "worker-drain")
 }
 
+func TestDrainWaitsForAdvancedJobs(t *testing.T) {
+	target, mgr, cleanup := setupDispatchCommandRepo(t)
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-427",
+		Ticket:    "SQU-427",
+		Target:    "worker",
+		Kickoff:   "SQU-427: implement",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "triage", Target: "manager", Status: job.StatusDone, Instance: "manager", StartedAt: now, FinishedAt: now},
+			{ID: "implement", Target: "worker", Status: job.StatusBlocked, After: []string{"triage"}},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write ready job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"drain",
+		"--target", target,
+		"--workspace", "repo",
+		"--skip-reconcile",
+		"--skip-schedules",
+		"--skip-drain",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--interval", "0s",
+		"--max-cycles", "3",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("drain --wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var result tickUntilIdleResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode drain wait json: %v\nbody=%s", err, out.String())
+	}
+	if !result.Idle || result.HitLimit || result.CyclesRun != 2 || len(result.Cycles) != 2 {
+		t.Fatalf("drain wait result = %+v", result)
+	}
+	if len(result.Cycles[0].Advance) != 1 || result.Cycles[0].Advance[0].Action != "advanced" || result.Cycles[0].Advance[0].Job == nil || result.Cycles[0].Advance[0].Job.Status != job.StatusRunning || result.Cycles[0].Advance[0].Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("drain wait advance = %+v", result.Cycles[0].Advance)
+	}
+	if result.Cycles[0].Advance[0].Step == nil || result.Cycles[0].Advance[0].Step.ID != "implement" || result.Cycles[0].Advance[0].Step.Status != job.StatusRunning || result.Cycles[0].Advance[0].Step.Instance != "worker-squ-427-implement" {
+		t.Fatalf("drain wait step = %+v", result.Cycles[0].Advance[0].Step)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-427-implement")
+}
+
 func TestTickUntilIdleRejectsDryRun(t *testing.T) {
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -620,8 +681,12 @@ func TestDrainRejectsInvalidFlags(t *testing.T) {
 		want string
 	}{
 		{name: "negative interval", args: []string{"drain", "--interval", "-1s"}, want: "--interval must be >= 0"},
+		{name: "negative wait interval", args: []string{"drain", "--wait", "--wait-interval", "-1s"}, want: "--wait-interval must be >= 0"},
+		{name: "negative wait timeout", args: []string{"drain", "--wait", "--wait-timeout", "-1s"}, want: "--wait-timeout must be >= 0"},
 		{name: "zero max cycles", args: []string{"drain", "--max-cycles", "0"}, want: "--max-cycles must be > 0"},
 		{name: "format with json", args: []string{"drain", "--format", "{{.CyclesRun}}", "--json"}, want: "--format cannot be combined with --json"},
+		{name: "wait skip advance", args: []string{"drain", "--wait", "--skip-advance"}, want: "--wait requires pipeline advancement"},
+		{name: "wait flag without wait", args: []string{"drain", "--wait-status", "running"}, want: "wait-related flags require --wait"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

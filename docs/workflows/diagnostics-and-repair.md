@@ -198,8 +198,10 @@ agent-team tick --wait --wait-status running --wait-timeout 30s
 agent-team team tick delivery --wait --wait-status running --wait-timeout 30s
 agent-team repair --until-idle
 agent-team drain --all-ready-steps --runtime codex
+agent-team drain --wait --wait-status running --wait-timeout 30s
 agent-team team repair delivery --dry-run --jobs
 agent-team team repair delivery --retry-pipelines --wait --wait-status running --wait-timeout 30s
+agent-team team drain delivery --wait --wait-status running --wait-timeout 30s
 ```
 
 Repair can:
@@ -214,6 +216,9 @@ Repair can:
 `--dry-run` should be the first step.
 Use `drain` when a script should keep running global maintenance cycles until
 the daemon has no immediate schedule, queue, or pipeline work left.
+Add `--wait --wait-status running` when it should then wait for jobs advanced
+during those drain cycles to have live owners. Use `team drain <team> --wait
+--wait-status running` for the same bounded handoff inside one declared team.
 Use `tick --wait --wait-status running` for one foreground maintenance cycle
 that should block until any pipeline jobs advanced by that cycle have live
 owners. Use `team tick <team> --wait --wait-status running` when that bounded
