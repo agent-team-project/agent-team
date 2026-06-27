@@ -95,9 +95,11 @@ If daemon metadata says a job-owned instance crashed, it also suggests
 `agent-team job resume-plan <job-id> --status crashed`; add
 `--unhealthy` for both crashed and stale recorded running PIDs, or
 `--action resume`/`--action logs` to narrow the recovery path.
-Use `agent-team job stats <job-id>` when you need CPU and memory usage for the
-job's daemon-known runtimes; add `--step <id>` for one pipeline stage, `--all`
-to include stopped or crashed metadata, or `--summary --json` for scripts.
+Use `agent-team job ps <job-id>` when you need the lifecycle table for every
+job-owned runtime before attaching, messaging, or stopping work; add
+`--step <id>` for one pipeline stage. Use `agent-team job stats <job-id>` when
+you need CPU and memory usage; add `--all` to include stopped or crashed
+metadata, or `--summary --json` for scripts.
 
 ## Waiting For Jobs
 
@@ -194,13 +196,15 @@ state from blocked back to running when appropriate.
 ```sh
 agent-team job send squ-42 "Please continue with the new API constraint"
 agent-team job send squ-42 --message-file notes.md
+agent-team job ps squ-42 --runtime codex
+agent-team job ps squ-42 --step review --status running
 agent-team job stats squ-42 --runtime codex
 agent-team job stats squ-42 --step review --all
 ```
 
 `job send` targets the current instance. For pipeline jobs with distinct stage
-owners, `job stats` shows every job-owned runtime by default while `--step`
-focuses one stage.
+owners, `job ps` and `job stats` show every job-owned runtime by default while
+`--step` focuses one stage.
 
 ## Recording Notes
 

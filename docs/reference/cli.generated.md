@@ -1767,6 +1767,7 @@ Subcommands:
 - `agent-team job next` - Show the next pipeline step for a job without dispatching it.
 - `agent-team job note` - Append an operator note to a job&#39;s audit history.
 - `agent-team job prune` - Remove terminal job files and their event logs.
+- `agent-team job ps` - List instances owned by one job.
 - `agent-team job queue` - List queue items owned by one job.
 - `agent-team job ready` - List pipeline jobs with ready or selected next-step states.
 - `agent-team job reconcile` - Reconcile external runtime state back into jobs.
@@ -2237,6 +2238,41 @@ Flags:
       --json             Emit removal results as JSON.
       --repo string      Repo root containing .agent_team. (default "<repo>")
       --status strings   Terminal status to prune: done, failed, or terminal. Can repeat or comma-separate.
+```
+
+## `agent-team job ps`
+
+List instances owned by one job.
+
+List daemon-aware instance rows owned by one durable job. Pipeline jobs can own several stage instances; pass --step to focus one stage.
+
+```text
+agent-team job ps <job-id> [flags]
+```
+
+Flags:
+
+```text
+      --agent strings       Only show job-owned instances for this agent. Can repeat or comma-separate.
+  -a, --all                 Show all visible job-owned instances. Accepted for Docker compatibility; this is already the default.
+      --format string       Render each row with a Go template, e.g. '{{.Instance}} {{.Status}}'.
+      --interval duration   Refresh interval for --watch. (default 2s)
+      --json                Emit JSON. With --watch, writes one JSON array per refresh.
+  -n, --last int            Show only the N most recently started job-owned instances after other filters (0 = all).
+  -l, --latest              Show only the most recently started job-owned instance after other filters.
+      --no-clear            With --watch, append snapshots instead of redrawing the terminal.
+      --phase strings       Only show job-owned work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
+  -q, --quiet               Only print matching job-owned instance names.
+      --repo string         Repo root containing .agent_team. (default "<repo>")
+      --runtime strings     Only show job-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
+      --runtime-stale       Only show job-owned running instances whose recorded runtime PID is no longer live.
+      --sort string         Sort rows by name, status, agent, phase, stale, runtime-stale, unhealthy, started, stopped, or exited. (default "name")
+      --stale               Only show job-owned instances whose status.toml is stale.
+      --status strings      Only show job-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
+      --step string         List this pipeline step's owning instance.
+      --summary             Show lifecycle counts instead of job instance rows.
+      --unhealthy           Only show crashed, status-stale, or runtime-stale job-owned instances.
+  -w, --watch               Refresh job instance rows until interrupted.
 ```
 
 ## `agent-team job queue`

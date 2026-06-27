@@ -5346,6 +5346,143 @@ func TestJobWaitFailOnFailed(t *testing.T) {
 	}
 }
 
+func TestJobPsScopesRowsAndSteps(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-119",
+		Ticket:    "SQU-119",
+		Target:    "manager",
+		Instance:  "manager-squ-119",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-119-implement", StartedAt: now.Add(-30 * time.Minute)},
+			{ID: "review", Target: "manager", Status: job.StatusBlocked, Instance: "reviewer-squ-119-review", StartedAt: now.Add(-20 * time.Minute)},
+		},
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager-squ-119", Job: "squ-119", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp, StartedAt: now.Add(-40 * time.Minute)},
+		{Instance: "worker-squ-119-implement", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp, StartedAt: now.Add(-30 * time.Minute)},
+		{Instance: "reviewer-squ-119-review", Agent: "manager", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusStopped, PID: os.Getpid(), Workspace: tmp, StartedAt: now.Add(-20 * time.Minute), StoppedAt: now.Add(-10 * time.Minute)},
+		{Instance: "sidecar-squ-119", Job: "squ-119", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp, StartedAt: now.Add(-15 * time.Minute)},
+		{Instance: "worker-squ-121", Job: "squ-121", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: tmp, StartedAt: now.Add(-5 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	allRows := NewRootCmd()
+	allRowsOut, allRowsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allRows.SetOut(allRowsOut)
+	allRows.SetErr(allRowsErr)
+	allRows.SetArgs([]string{"job", "ps", "SQU-119", "--repo", tmp, "--json"})
+	if err := allRows.Execute(); err != nil {
+		t.Fatalf("job ps json: %v\nstderr=%s", err, allRowsErr.String())
+	}
+	var rows []psJSONRow
+	if err := json.Unmarshal(allRowsOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode job ps: %v\nbody=%s", err, allRowsOut.String())
+	}
+	if got := psJSONRowNames(rows); strings.Join(got, ",") != "manager-squ-119,reviewer-squ-119-review,sidecar-squ-119,worker-squ-119-implement" {
+		t.Fatalf("job ps rows = %v", got)
+	}
+
+	running := NewRootCmd()
+	runningOut, runningErr := &bytes.Buffer{}, &bytes.Buffer{}
+	running.SetOut(runningOut)
+	running.SetErr(runningErr)
+	running.SetArgs([]string{"job", "ps", "SQU-119", "--repo", tmp, "--status", "running", "--json"})
+	if err := running.Execute(); err != nil {
+		t.Fatalf("job ps running: %v\nstderr=%s", err, runningErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(runningOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode job ps running: %v\nbody=%s", err, runningOut.String())
+	}
+	if got := psJSONRowNames(rows); strings.Join(got, ",") != "manager-squ-119,sidecar-squ-119,worker-squ-119-implement" {
+		t.Fatalf("job ps running rows = %v", got)
+	}
+
+	codex := NewRootCmd()
+	codexOut, codexErr := &bytes.Buffer{}, &bytes.Buffer{}
+	codex.SetOut(codexOut)
+	codex.SetErr(codexErr)
+	codex.SetArgs([]string{"job", "ps", "SQU-119", "--repo", tmp, "--runtime", "codex", "--format", "{{.Instance}}"})
+	if err := codex.Execute(); err != nil {
+		t.Fatalf("job ps runtime format: %v\nstderr=%s", err, codexErr.String())
+	}
+	if got, want := strings.TrimSpace(codexOut.String()), "reviewer-squ-119-review\nsidecar-squ-119\nworker-squ-119-implement"; got != want {
+		t.Fatalf("job ps runtime format = %q, want %q", got, want)
+	}
+
+	step := NewRootCmd()
+	stepOut, stepErr := &bytes.Buffer{}, &bytes.Buffer{}
+	step.SetOut(stepOut)
+	step.SetErr(stepErr)
+	step.SetArgs([]string{"job", "ps", "SQU-119", "--repo", tmp, "--step", "review", "--json"})
+	if err := step.Execute(); err != nil {
+		t.Fatalf("job ps step: %v\nstderr=%s", err, stepErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(stepOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode job ps step: %v\nbody=%s", err, stepOut.String())
+	}
+	if got := psJSONRowNames(rows); strings.Join(got, ",") != "reviewer-squ-119-review" {
+		t.Fatalf("job ps step rows = %v", got)
+	}
+	if rows[0].Status != string(daemon.StatusStopped) {
+		t.Fatalf("job ps step status = %+v", rows[0])
+	}
+
+	quiet := NewRootCmd()
+	quietOut, quietErr := &bytes.Buffer{}, &bytes.Buffer{}
+	quiet.SetOut(quietOut)
+	quiet.SetErr(quietErr)
+	quiet.SetArgs([]string{"job", "ps", "SQU-119", "--repo", tmp, "--quiet", "--runtime", "codex", "--status", "running"})
+	if err := quiet.Execute(); err != nil {
+		t.Fatalf("job ps quiet: %v\nstderr=%s", err, quietErr.String())
+	}
+	if got, want := strings.TrimSpace(quietOut.String()), "sidecar-squ-119\nworker-squ-119-implement"; got != want {
+		t.Fatalf("job ps quiet = %q, want %q", got, want)
+	}
+
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"job", "ps", "SQU-119", "--repo", tmp, "--summary", "--json"})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("job ps summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var counts psSummaryJSON
+	if err := json.Unmarshal(summaryOut.Bytes(), &counts); err != nil {
+		t.Fatalf("decode job ps summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if counts.Total != 4 || counts.Running != 3 || counts.Stopped != 1 {
+		t.Fatalf("job ps summary = %+v", counts)
+	}
+
+	invalidStep := NewRootCmd()
+	invalidStep.SetOut(&bytes.Buffer{})
+	invalidStepErr := &bytes.Buffer{}
+	invalidStep.SetErr(invalidStepErr)
+	invalidStep.SetArgs([]string{"job", "ps", "SQU-119", "--repo", tmp, "--step", "deploy"})
+	if err := invalidStep.Execute(); err == nil {
+		t.Fatal("job ps accepted unknown step")
+	}
+	if !strings.Contains(invalidStepErr.String(), `step "deploy" not found`) {
+		t.Fatalf("unknown step error = %q", invalidStepErr.String())
+	}
+}
+
 func TestJobStatsScopesRowsAndSteps(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

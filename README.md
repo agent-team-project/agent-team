@@ -265,6 +265,7 @@ agent-team job step <job-id> <step-id> [--status done|failed|blocked|running|que
 agent-team job send <job-id> [message...] [--message "..."] [--message-file <path|->] [--step <id>] [--from cli] [--allow-missing] [--dry-run] [--format '{{.ID}}'] [--json]
 agent-team job unblock <job-id> [answer...] [--message "..."] [--message-file <path|->] [--step <id>] [--status running|queued] [--dry-run] [--json]
 agent-team job resume-plan <job-id> [--step <id>] [--status crashed] [--runtime codex] [--action resume|logs] [--runtime-stale|--unhealthy] [--summary] [--format '{{.RecommendedCommand}}'] [--json]
+agent-team job ps <job-id> [--step <id>] [-w] [-q] [--runtime codex] [--status running] [--summary] [--format '{{.Instance}} {{.Status}}'] [--json]
 agent-team job stats <job-id> [--step <id>] [-w] [-a] [--runtime codex] [--status crashed] [--summary] [--format '{{.Instance}} {{.CPUPercent}}'] [--json]
 agent-team job cleanup <job-id>|--all [--dry-run|--merged] [--force-branch] [--verify-pr] [--format '{{.Total}} {{.Cleaned}}'] [--json]
 agent-team job hold <job-id>|--all [reason...] [--message "..."] [--message-file <path|->] [--state ready|failed|all] [--for 2h|--until <rfc3339>] [--limit N] [--dry-run] [--format '{{.JobID}} {{.Action}}'] [--json]
