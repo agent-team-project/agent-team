@@ -213,7 +213,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team run <team> <ticket>` | Create a team-owned job; `--dispatch` accepts workspace/runtime overrides and `--wait` blocks for the created job |
 | `agent-team team jobs <team>` | Scoped job list, summary, or watch view; filter held state, mixed-runtime ownership, and cap output with `--limit` |
 | `agent-team team tick <team>` | Scoped maintenance cycle; use `--workspace` and `--runtime` for advanced steps |
-| `agent-team team repair <team>` | Scoped repair loop, including stale-work timeout with `--timeout-jobs`; failed-step retry accepts pipeline/step filters, `--retry-force`, and workspace/runtime overrides |
+| `agent-team team repair <team>` | Scoped repair loop, including stale-work timeout with `--timeout-jobs`; failed-step retry accepts pipeline/step filters, `--retry-force`, workspace/runtime overrides, and `--wait` bounded handoff |
 | `agent-team team queue <team>` | Scoped queue list; filter queued dispatches with `--runtime`, sort rows with `--sort`, and cap output with `--limit` |
 | `agent-team team queue show <team> <id>` | Inspect one active queue item owned by a team |
 | `agent-team team queue retry <team> --all` | Retry matching team-owned entries; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
@@ -268,7 +268,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team watch` | Continuous monitor |
 | `agent-team snapshot` | Redacted diagnostic artifact |
 | `agent-team snapshot diff <before.json> <after.json>` | Compare saved diagnostic artifacts, including instances, jobs, inboxes, queue, schedules, intake, events, and pipeline state |
-| `agent-team repair` | Start/reconcile/timeout/retry/tick recovery loop; timeout repair accepts filters, and failed-step retry accepts pipeline/step filters, `--retry-force`, and runtime overrides |
+| `agent-team repair` | Start/reconcile/timeout/retry/tick recovery loop; timeout repair accepts filters, and failed-step retry accepts pipeline/step filters, `--retry-force`, runtime overrides, and `--wait` bounded handoff |
 
 ## Communication
 

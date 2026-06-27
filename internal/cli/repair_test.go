@@ -586,6 +586,63 @@ func TestRepairRetryPipelinesDispatchesAndAudits(t *testing.T) {
 	stopAndWaitForTest(t, mgr, "worker-squ-124-implement")
 }
 
+func TestRepairWaitsForRepairedJobs(t *testing.T) {
+	root, mgr, cleanup := setupManualGateApprovalRepo(t, false)
+	defer cleanup()
+	teamDir := filepath.Join(root, ".agent_team")
+	writeFailedRetryJob(t, teamDir, "squ-125")
+	writeReadyAdvanceJob(t, teamDir, "squ-126")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"repair",
+		"--target", root,
+		"--workspace", "repo",
+		"--skip-queue",
+		"--retry-pipelines",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("repair --wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var result repairResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode repair wait json: %v\nbody=%s", err, out.String())
+	}
+	if result.PipelineRetry.Action != "retried" || len(result.PipelineRetry.Results) != 1 {
+		t.Fatalf("repair retry = %+v", result.PipelineRetry)
+	}
+	retryRow := result.PipelineRetry.Results[0]
+	if retryRow.JobID != "squ-125" || retryRow.Action != "dispatched" || retryRow.Job == nil || retryRow.Job.Status != job.StatusRunning || retryRow.Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("repair retry row = %+v", retryRow)
+	}
+	if retryRow.Step == nil || retryRow.Step.ID != "implement" || retryRow.Step.Status != job.StatusRunning || retryRow.Step.Instance != "worker-squ-125-implement" {
+		t.Fatalf("repair retry step = %+v", retryRow.Step)
+	}
+	if result.Tick.Action != "tick" || result.Tick.Result == nil || len(result.Tick.Result.Advance) != 1 {
+		t.Fatalf("repair tick = %+v", result.Tick)
+	}
+	advanceRow := result.Tick.Result.Advance[0]
+	if advanceRow.JobID != "squ-126" || advanceRow.Action != "advanced" || advanceRow.Job == nil || advanceRow.Job.Status != job.StatusRunning || advanceRow.Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("repair advance row = %+v", advanceRow)
+	}
+	if advanceRow.Step == nil || advanceRow.Step.ID != "implement" || advanceRow.Step.Status != job.StatusRunning || advanceRow.Step.Instance != "worker-squ-126-implement" {
+		t.Fatalf("repair advance step = %+v", advanceRow.Step)
+	}
+	if result.HealthAfter == nil {
+		t.Fatal("repair wait did not refresh health after")
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-125-implement")
+	stopAndWaitForTest(t, mgr, "worker-squ-126-implement")
+}
+
 func TestRepairTimeoutPipelinesMarksStaleRunningSteps(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
@@ -1181,6 +1238,31 @@ func TestRepairRejectsInvalidFlagCombinations(t *testing.T) {
 			name: "retry force without retry pipelines",
 			args: []string{"repair", "--retry-force"},
 			want: "--retry-force requires --retry-pipelines",
+		},
+		{
+			name: "wait timeout negative",
+			args: []string{"repair", "--wait", "--wait-timeout", "-1s"},
+			want: "--wait-timeout must be >= 0",
+		},
+		{
+			name: "wait interval negative",
+			args: []string{"repair", "--wait", "--wait-interval", "-1s"},
+			want: "--wait-interval must be >= 0",
+		},
+		{
+			name: "wait with dry run",
+			args: []string{"repair", "--wait", "--dry-run"},
+			want: "--wait cannot be combined with --dry-run",
+		},
+		{
+			name: "wait without dispatch",
+			args: []string{"repair", "--wait", "--skip-tick"},
+			want: "--wait requires repair dispatch",
+		},
+		{
+			name: "wait status without wait",
+			args: []string{"repair", "--wait-status", "running"},
+			want: "wait-related flags require --wait",
 		},
 		{
 			name: "timeout jobs with timeout pipelines",

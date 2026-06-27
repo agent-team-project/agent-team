@@ -190,6 +190,7 @@ agent-team repair --timeout-pipelines --timeout-target-agent worker --dry-run
 agent-team pipeline repair ticket_to_pr --retry-pipelines --dry-run --preview-routes
 agent-team pipeline repair ticket_to_pr --retry-pipelines --wait --wait-status running --wait-timeout 30s
 agent-team repair --retry-pipelines --dry-run --preview-routes
+agent-team repair --retry-pipelines --wait --wait-status running --wait-timeout 30s
 agent-team repair --retry-pipelines --runtime codex --dry-run --preview-routes
 agent-team repair --retry-pipelines --retry-step review --dry-run --preview-routes
 agent-team repair --retry-pipelines --retry-force --retry-message "override after fixing dependency"
@@ -198,6 +199,7 @@ agent-team team tick delivery --wait --wait-status running --wait-timeout 30s
 agent-team repair --until-idle
 agent-team drain --all-ready-steps --runtime codex
 agent-team team repair delivery --dry-run --jobs
+agent-team team repair delivery --retry-pipelines --wait --wait-status running --wait-timeout 30s
 ```
 
 Repair can:
@@ -227,8 +229,11 @@ agent role.
 Use `--retry-step <id>` with `--retry-pipelines` when a broad repair pass should target only one failed stage, such as rerunning review jobs after fixing a reviewer prompt. Add `--retry-force` only when capped steps should be retried after the underlying external issue has been fixed.
 Use `pipeline repair <pipeline> --retry-pipelines --wait --wait-status running`
 when a scoped repair should block until every retried or newly advanced job has
-a live owner. The wait applies to the repair's dispatched retry rows and final
-ready-step advance rows.
+a live owner. Use `repair --retry-pipelines --wait --wait-status running` for
+the same bounded handoff across workflows, or `team repair <team>
+--retry-pipelines --wait --wait-status running` to keep it inside one declared
+team. The wait applies to dispatched retry rows and final ready-step advance
+rows.
 Add `--runtime codex` or `--runtime-bin <path>` when repair retry or final tick advancement should use a one-off runtime override instead of the repo default.
 
 ## Recovery Rules of Thumb

@@ -36,6 +36,30 @@ func TestReconcile_LiveProcessStaysRunning(t *testing.T) {
 	}
 }
 
+func TestReconcile_PreservesReaperForManagerSpawnedProcess(t *testing.T) {
+	root := t.TempDir()
+	fake := newFakeSpawner(2 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	meta, err := m.Dispatch(DispatchInput{
+		Agent:     "worker",
+		Name:      "worker-squ-1",
+		Prompt:    "hello",
+		Workspace: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if err := Reconcile(root, m); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if _, err := m.Stop(meta.Instance); err != nil {
+		t.Fatalf("stop after reconcile: %v", err)
+	}
+	if err := m.WaitForReaper(meta.Instance, 10*time.Second); err != nil {
+		t.Fatalf("wait reaper after reconcile: %v", err)
+	}
+}
+
 func TestReconcile_DeadProcessMarkedExited(t *testing.T) {
 	root := t.TempDir()
 	// Pick a PID that's almost certainly not in use. PID 1 (init) is alive

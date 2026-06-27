@@ -98,7 +98,22 @@ func Reconcile(daemonRoot string, m *InstanceManager) error {
 		if err != nil {
 			continue
 		}
+		if existing := m.instances[fresh.Instance]; existing != nil && sameTrackedIncarnation(existing, fresh) {
+			meta := *fresh
+			existing.meta = &meta
+			continue
+		}
 		m.instances[fresh.Instance] = &tracked{meta: fresh}
 	}
 	return nil
+}
+
+func sameTrackedIncarnation(existing *tracked, fresh *Metadata) bool {
+	if existing == nil || existing.meta == nil || existing.reaped == nil || fresh == nil {
+		return false
+	}
+	if existing.meta.Instance != fresh.Instance || existing.meta.PID != fresh.PID {
+		return false
+	}
+	return existing.meta.StartedAt.Equal(fresh.StartedAt)
 }

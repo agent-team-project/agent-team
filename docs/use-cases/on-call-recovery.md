@@ -55,13 +55,14 @@ agent-team queue retry --all --sort attempts --limit 10 --dry-run
 agent-team pipeline ready --state failed
 agent-team pipeline repair ticket_to_pr --retry-pipelines --dry-run --preview-routes
 agent-team repair --retry-pipelines --dry-run --preview-routes
+agent-team repair --retry-pipelines --wait --wait-status running --wait-timeout 30s
 agent-team repair --retry-pipelines --retry-pipeline ticket_to_pr --dry-run --preview-routes
 agent-team repair --retry-pipelines --retry-step review --dry-run --preview-routes
 agent-team repair --retry-pipelines --retry-message "retry after fixing credentials"
 agent-team repair --retry-pipelines --retry-force --retry-message "override after fixing credentials"
 ```
 
-Use `pipeline repair <pipeline> --retry-pipelines` when a fixed issue only affects one workflow, `--retry-pipeline <name>` for the same scoping in global repair, and `--retry-step <id>` when it only affects one stage. Add `--retry-force` only when an operator intentionally wants to override a step `max_attempts` cap after fixing the underlying cause. For one owned area, use `agent-team team repair <team> --retry-pipelines --dry-run --preview-routes`.
+Use `pipeline repair <pipeline> --retry-pipelines` when a fixed issue only affects one workflow, `--retry-pipeline <name>` for the same scoping in global repair, and `--retry-step <id>` when it only affects one stage. Add `--wait --wait-status running` when the repair should block until retried and newly advanced jobs have live owners. Add `--retry-force` only when an operator intentionally wants to override a step `max_attempts` cap after fixing the underlying cause. For one owned area, use `agent-team team repair <team> --retry-pipelines --dry-run --preview-routes`, then rerun with `--wait --wait-status running` for the bounded handoff.
 
 ## If Queue Files Are Quarantined
 

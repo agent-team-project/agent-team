@@ -8856,6 +8856,66 @@ instances = ["other"]
 	}
 }
 
+func TestTeamRepairWaitsForRepairedJobs(t *testing.T) {
+	root, mgr, cleanup := setupManualGateApprovalRepo(t, true)
+	defer cleanup()
+	teamDir := filepath.Join(root, ".agent_team")
+	writeFailedRetryJob(t, teamDir, "squ-301")
+	writeReadyAdvanceJob(t, teamDir, "squ-302")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"team", "repair", "delivery",
+		"--repo", root,
+		"--workspace", "repo",
+		"--skip-queue",
+		"--retry-pipelines",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team repair --wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var result teamRepairResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode team repair wait json: %v\nbody=%s", err, out.String())
+	}
+	if result.Team.Name != "delivery" {
+		t.Fatalf("team repair wait team = %+v", result.Team)
+	}
+	if result.PipelineRetry.Action != "retried" || len(result.PipelineRetry.Results) != 1 {
+		t.Fatalf("team repair retry = %+v", result.PipelineRetry)
+	}
+	retryRow := result.PipelineRetry.Results[0]
+	if retryRow.JobID != "squ-301" || retryRow.Action != "dispatched" || retryRow.Job == nil || retryRow.Job.Status != job.StatusRunning || retryRow.Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("team repair retry row = %+v", retryRow)
+	}
+	if retryRow.Step == nil || retryRow.Step.ID != "implement" || retryRow.Step.Status != job.StatusRunning || retryRow.Step.Instance != "worker-squ-301-implement" {
+		t.Fatalf("team repair retry step = %+v", retryRow.Step)
+	}
+	if result.Tick.Action != "tick" || result.Tick.Result == nil || len(result.Tick.Result.Tick.Advance) != 1 {
+		t.Fatalf("team repair tick = %+v", result.Tick)
+	}
+	advanceRow := result.Tick.Result.Tick.Advance[0]
+	if advanceRow.JobID != "squ-302" || advanceRow.Action != "advanced" || advanceRow.Job == nil || advanceRow.Job.Status != job.StatusRunning || advanceRow.Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("team repair advance row = %+v", advanceRow)
+	}
+	if advanceRow.Step == nil || advanceRow.Step.ID != "implement" || advanceRow.Step.Status != job.StatusRunning || advanceRow.Step.Instance != "worker-squ-302-implement" {
+		t.Fatalf("team repair advance step = %+v", advanceRow.Step)
+	}
+	if result.HealthAfter == nil {
+		t.Fatal("team repair wait did not refresh health after")
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-301-implement")
+	stopAndWaitForTest(t, mgr, "worker-squ-302-implement")
+}
+
 func TestTeamRepairRejectsInvalidFormatFlags(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -8901,6 +8961,31 @@ func TestTeamRepairRejectsInvalidFormatFlags(t *testing.T) {
 			name: "retry force without retry pipelines",
 			args: []string{"team", "repair", "delivery", "--retry-force"},
 			want: "--retry-force requires --retry-pipelines",
+		},
+		{
+			name: "wait timeout negative",
+			args: []string{"team", "repair", "delivery", "--wait", "--wait-timeout", "-1s"},
+			want: "--wait-timeout must be >= 0",
+		},
+		{
+			name: "wait interval negative",
+			args: []string{"team", "repair", "delivery", "--wait", "--wait-interval", "-1s"},
+			want: "--wait-interval must be >= 0",
+		},
+		{
+			name: "wait with dry run",
+			args: []string{"team", "repair", "delivery", "--wait", "--dry-run"},
+			want: "--wait cannot be combined with --dry-run",
+		},
+		{
+			name: "wait without dispatch",
+			args: []string{"team", "repair", "delivery", "--wait", "--skip-tick"},
+			want: "--wait requires repair dispatch",
+		},
+		{
+			name: "wait status without wait",
+			args: []string{"team", "repair", "delivery", "--wait-status", "running"},
+			want: "wait-related flags require --wait",
 		},
 		{
 			name: "timeout jobs with timeout pipelines",

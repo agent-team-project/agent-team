@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/spf13/cobra"
 )
 
@@ -48,6 +49,12 @@ func newRepairCmd() *cobra.Command {
 		readyTimeout       time.Duration
 		interval           time.Duration
 		maxCycles          int
+		wait               bool
+		waitStatuses       []string
+		waitEvents         []string
+		waitTimeout        time.Duration
+		waitInterval       time.Duration
+		failOnFailed       bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -69,6 +76,14 @@ func newRepairCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --interval must be >= 0.")
 				return exitErr(2)
 			}
+			if waitInterval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --wait-interval must be >= 0.")
+				return exitErr(2)
+			}
+			if waitTimeout < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --wait-timeout must be >= 0.")
+				return exitErr(2)
+			}
 			if maxCycles <= 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --max-cycles must be > 0.")
 				return exitErr(2)
@@ -81,12 +96,24 @@ func newRepairCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --until-idle cannot be combined with --dry-run.")
 				return exitErr(2)
 			}
+			if wait && dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --wait cannot be combined with --dry-run.")
+				return exitErr(2)
+			}
 			if previewRoutes && !dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --preview-routes requires --dry-run.")
 				return exitErr(2)
 			}
 			if untilIdle && skipTick {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --until-idle cannot be combined with --skip-tick.")
+				return exitErr(2)
+			}
+			if wait && skipTick && !retryPipelines {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --wait requires repair dispatch; remove --skip-tick or add --retry-pipelines.")
+				return exitErr(2)
+			}
+			if !wait && (cmd.Flags().Changed("wait-status") || cmd.Flags().Changed("wait-event") || cmd.Flags().Changed("wait-timeout") || cmd.Flags().Changed("wait-interval") || failOnFailed) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: wait-related flags require --wait.")
 				return exitErr(2)
 			}
 			if retryPipelines && skipDaemon && !dryRun {
@@ -146,6 +173,20 @@ func newRepairCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team repair: %v\n", err)
 				return exitErr(2)
 			}
+			waitEventsSet := map[string]bool{}
+			waitStatusesSet := map[job.Status]bool{}
+			if wait {
+				waitEventsSet = parseJobWaitEvents(waitEvents)
+				waitStatusesSet, err = parseJobWaitStatuses(waitStatuses, !cmd.Flags().Changed("wait-status") && len(waitEventsSet) == 0)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team repair: %v\n", err)
+					return exitErr(2)
+				}
+				if len(waitStatusesSet) == 0 && len(waitEventsSet) == 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: pass at least one non-empty --wait-status or --wait-event.")
+					return exitErr(2)
+				}
+			}
 			resolvedTimeoutMessage, err := optionalMessageBodyWithFlagNames(timeoutMessage, timeoutMessageFile, nil, "--timeout-message", "--timeout-message-file")
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team repair: %v\n", err)
@@ -192,7 +233,21 @@ func newRepairCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team repair: %v\n", err)
 				return exitErr(1)
 			}
-			return renderRepairResult(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
+			if wait {
+				if err := waitForRepairResult(cmd, teamDir, result, waitStatusesSet, waitEventsSet, waitTimeout, waitInterval, includeJobs); err != nil {
+					if err == context.Canceled {
+						return nil
+					}
+					return err
+				}
+			}
+			if err := renderRepairResult(cmd.OutOrStdout(), result, jsonOut, formatTemplate); err != nil {
+				return err
+			}
+			if failOnFailed && repairResultHasFailed(result) {
+				return exitErr(1)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
@@ -226,6 +281,12 @@ func newRepairCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for implicit daemon readiness (0 = no timeout).")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Delay between --until-idle maintenance cycles.")
 	cmd.Flags().IntVar(&maxCycles, "max-cycles", 20, "With --until-idle, stop after this many cycles if work keeps appearing.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "After repair dispatches retried or ready steps, wait for those jobs to reach a lifecycle status or event.")
+	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&waitEvents, "wait-event", nil, "With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
+	cmd.Flags().DurationVar(&waitInterval, "wait-interval", 500*time.Millisecond, "Polling interval with --wait.")
+	cmd.Flags().BoolVar(&failOnFailed, "fail-on-failed", false, "With --wait, exit 1 if any repaired job resolves to failed.")
 	return cmd
 }
 
@@ -409,6 +470,68 @@ func runRepair(cmd *cobra.Command, target, teamDir string, opts repairOptions) (
 		result.HealthAfter = health
 	}
 	return result, nil
+}
+
+func waitForRepairResult(cmd *cobra.Command, teamDir string, result *repairResult, statuses map[job.Status]bool, events map[string]bool, timeout, interval time.Duration, includeJobs bool) error {
+	if result == nil {
+		return nil
+	}
+	var err error
+	result.PipelineRetry.Results, err = waitForPipelineRetryResults(cmd, teamDir, result.PipelineRetry.Results, statuses, events, timeout, interval, "agent-team repair")
+	if err != nil {
+		return err
+	}
+	if err := waitForTickResultAdvanceRows(cmd, teamDir, result.Tick.Result, statuses, events, timeout, interval, "agent-team repair"); err != nil {
+		return err
+	}
+	if result.Tick.UntilIdle != nil {
+		for _, cycle := range result.Tick.UntilIdle.Cycles {
+			if err := waitForTickResultAdvanceRows(cmd, teamDir, cycle, statuses, events, timeout, interval, "agent-team repair"); err != nil {
+				return err
+			}
+		}
+	}
+	if !result.DryRun {
+		health, err := collectRepairHealth(teamDir, repairOptions{IncludeJobs: includeJobs})
+		if err != nil {
+			return err
+		}
+		result.HealthAfter = health
+	}
+	return nil
+}
+
+func waitForTickResultAdvanceRows(cmd *cobra.Command, teamDir string, result *tickResult, statuses map[job.Status]bool, events map[string]bool, timeout, interval time.Duration, prefix string) error {
+	if result == nil {
+		return nil
+	}
+	var err error
+	result.Advance, err = waitForPipelineAdvanceResults(cmd, teamDir, result.Advance, statuses, events, timeout, interval, prefix)
+	return err
+}
+
+func repairResultHasFailed(result *repairResult) bool {
+	if result == nil {
+		return false
+	}
+	if pipelineRetryResultsHaveFailed(result.PipelineRetry.Results) || tickResultAdvanceRowsHaveFailed(result.Tick.Result) {
+		return true
+	}
+	if result.Tick.UntilIdle != nil {
+		for _, cycle := range result.Tick.UntilIdle.Cycles {
+			if tickResultAdvanceRowsHaveFailed(cycle) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func tickResultAdvanceRowsHaveFailed(result *tickResult) bool {
+	if result == nil {
+		return false
+	}
+	return pipelineAdvanceResultsHaveFailed(result.Advance)
 }
 
 func collectRepairHealth(teamDir string, opts repairOptions) (*healthResult, error) {

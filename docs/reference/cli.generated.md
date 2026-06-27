@@ -4978,6 +4978,7 @@ Flags:
 ```text
       --all-ready-steps               Advance every currently ready independent pipeline step during the repair tick.
       --dry-run                       Preview repair actions without mutating state or starting the daemon.
+      --fail-on-failed                With --wait, exit 1 if any repaired job resolves to failed.
       --format string                 Render the repair result with a Go template, e.g. '{{.DryRun}} {{.Queue.Action}}'.
       --interval duration             Delay between --until-idle maintenance cycles. (default 2s)
       --jobs                          Include durable job triage and status-file previews in health snapshots.
@@ -5006,6 +5007,11 @@ Flags:
       --timeout-step string           With --timeout-jobs or --timeout-pipelines, mark only stale running steps with this id failed.
       --timeout-target-agent string   With --timeout-jobs or --timeout-pipelines, mark only stale work targeting this agent.
       --until-idle                    Run maintenance ticks until no immediate queue, schedule, or pipeline work remains.
+      --wait                          After repair dispatches retried or ready steps, wait for those jobs to reach a lifecycle status or event.
+      --wait-event strings            With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration        Polling interval with --wait. (default 500ms)
+      --wait-status strings           With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-timeout duration         Maximum time to wait with --wait (0 = no timeout).
       --workspace string              Workspace mode for retried or advanced pipeline steps: auto, worktree, or repo. (default "auto")
 ```
 
@@ -6834,6 +6840,7 @@ Flags:
 ```text
       --all-ready-steps               Advance every currently ready independent team pipeline step during the scoped repair tick.
       --dry-run                       Preview team repair actions without mutating state or starting the daemon.
+      --fail-on-failed                With --wait, exit 1 if any team-repaired job resolves to failed.
       --format string                 Render the team repair result with a Go template, e.g. '{{.Team.Name}} {{.Queue.Action}}'.
       --interval duration             Delay between --until-idle scoped team tick cycles. (default 2s)
       --jobs                          Include team-owned durable job and pipeline health.
@@ -6862,6 +6869,11 @@ Flags:
       --timeout-step string           With --timeout-jobs or --timeout-pipelines, mark only stale running team steps with this id failed.
       --timeout-target-agent string   With --timeout-jobs or --timeout-pipelines, mark only stale team work targeting this agent.
       --until-idle                    Run scoped team ticks until no immediate team queue, schedule, or pipeline work remains.
+      --wait                          After team repair dispatches retried or ready steps, wait for those jobs to reach a lifecycle status or event.
+      --wait-event strings            With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration        Polling interval with --wait. (default 500ms)
+      --wait-status strings           With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-timeout duration         Maximum time to wait with --wait (0 = no timeout).
       --workspace string              Workspace mode for retried or advanced team pipeline steps: auto, worktree, or repo. (default "auto")
 ```
 
