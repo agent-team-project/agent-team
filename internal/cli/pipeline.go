@@ -745,6 +745,7 @@ func newPipelineWaitCmd() *cobra.Command {
 		jobFilters   []string
 		statuses     []string
 		events       []string
+		all          bool
 		timeout      time.Duration
 		interval     time.Duration
 		failOnFailed bool
@@ -754,12 +755,20 @@ func newPipelineWaitCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "wait <pipeline>",
+		Use:   "wait [<pipeline>|--all]",
 		Short: "Wait for pipeline jobs to reach a lifecycle status or event.",
-		Long: "Wait for every selected job in one pipeline to reach one of the requested lifecycle statuses and/or last events. " +
+		Long: "Wait for every selected pipeline-owned job to reach one of the requested lifecycle statuses and/or last events. " +
 			"By default this waits for terminal statuses: done or failed. When --event is set without --status, any status is accepted.",
-		Args: cobra.ExactArgs(1),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if all && len(args) > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline wait: --all cannot be combined with a pipeline argument.")
+				return exitErr(2)
+			}
+			if len(args) > 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline wait: pass at most one pipeline name.")
+				return exitErr(2)
+			}
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline wait: --interval must be >= 0.")
 				return exitErr(2)
@@ -795,7 +804,18 @@ func newPipelineWaitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			pipelineName := strings.TrimSpace(args[0])
+			pipelineName := ""
+			if len(args) == 1 && !all {
+				pipelineName = strings.TrimSpace(args[0])
+			}
+			if len(args) == 1 && pipelineName == "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline wait: pipeline name is required.")
+				return exitErr(2)
+			}
+			waitLabel := pipelineName
+			if waitLabel == "" {
+				waitLabel = "all pipelines"
+			}
 			jobs, err := selectedPipelineJobs(teamDir, pipelineName)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline wait: %v\n", err)
@@ -827,7 +847,7 @@ func newPipelineWaitCmd() *cobra.Command {
 				if timeoutErr, ok := err.(*pipelineWaitTimeoutError); ok {
 					if !quiet {
 						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline wait: timed out waiting for %s to reach %s: %s\n",
-							pipelineName, jobWaitConditionList(waitStatuses, waitEvents), pipelineWaitPendingSummary(timeoutErr.Pending))
+							waitLabel, jobWaitConditionList(waitStatuses, waitEvents), pipelineWaitPendingSummary(timeoutErr.Pending))
 					}
 					return exitErr(1)
 				}
@@ -861,6 +881,7 @@ func newPipelineWaitCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&jobFilters, "job", nil, "Only wait for these pipeline-owned job ids. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&statuses, "status", nil, "Status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&events, "event", nil, "Last event to wait for, e.g. closed, adopted, or pipeline_done. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&all, "all", false, "Wait for jobs across all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait (0 = no timeout).")
 	cmd.Flags().DurationVar(&interval, "interval", 500*time.Millisecond, "Polling interval.")
 	cmd.Flags().BoolVar(&failOnFailed, "fail-on-failed", false, "Exit 1 if any selected job resolves to failed.")

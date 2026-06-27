@@ -5100,6 +5100,14 @@ target = "worker"
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
+		{
+			ID:        "adhoc-801",
+			Ticket:    "ADHOC-801",
+			Target:    "worker",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
 	} {
 		if err := job.Write(teamDir, j); err != nil {
 			t.Fatalf("write job %s: %v", j.ID, err)
@@ -5158,6 +5166,42 @@ target = "worker"
 		t.Fatalf("pipeline wait jobs = %+v", got)
 	}
 
+	allCmd := NewRootCmd()
+	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allCmd.SetOut(allOut)
+	allCmd.SetErr(allErr)
+	allCmd.SetArgs([]string{"pipeline", "wait", "--repo", root, "--timeout", "2s", "--interval", "10ms", "--json"})
+	if err := allCmd.Execute(); err != nil {
+		t.Fatalf("pipeline wait all default: %v\nstderr=%s", err, allErr.String())
+	}
+	got = nil
+	if err := json.Unmarshal(allOut.Bytes(), &got); err != nil {
+		t.Fatalf("decode pipeline wait all json: %v\nbody=%s", err, allOut.String())
+	}
+	allStatuses := map[string]job.Status{}
+	for _, j := range got {
+		allStatuses[j.ID] = j.Status
+	}
+	if len(got) != 3 ||
+		allStatuses["squ-801"] != job.StatusDone ||
+		allStatuses["squ-802"] != job.StatusFailed ||
+		allStatuses["ops-801"] != job.StatusDone ||
+		allStatuses["adhoc-801"] != "" {
+		t.Fatalf("pipeline wait all jobs = %+v", got)
+	}
+
+	explicitAll := NewRootCmd()
+	explicitAllOut, explicitAllErr := &bytes.Buffer{}, &bytes.Buffer{}
+	explicitAll.SetOut(explicitAllOut)
+	explicitAll.SetErr(explicitAllErr)
+	explicitAll.SetArgs([]string{"pipeline", "wait", "--all", "--repo", root, "--job", "ops-801", "--status", "done", "--format", "{{.ID}} {{.Status}}"})
+	if err := explicitAll.Execute(); err != nil {
+		t.Fatalf("pipeline wait --all format: %v\nstderr=%s", err, explicitAllErr.String())
+	}
+	if got, want := explicitAllOut.String(), "ops-801 done\n"; got != want {
+		t.Fatalf("pipeline wait --all format = %q, want %q", got, want)
+	}
+
 	formatted := NewRootCmd()
 	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	formatted.SetOut(formatOut)
@@ -5211,6 +5255,18 @@ target = "worker"
 	}
 	if !strings.Contains(stderr.String(), "timed out waiting for ticket_to_pr") || !strings.Contains(stderr.String(), "squ-803=running event=dispatched") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+
+	allCmd := NewRootCmd()
+	allOut, allErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allCmd.SetOut(allOut)
+	allCmd.SetErr(allErr)
+	allCmd.SetArgs([]string{"pipeline", "wait", "--repo", root, "--timeout", "1ms", "--interval", "10ms"})
+	if err := allCmd.Execute(); err == nil {
+		t.Fatalf("pipeline wait all succeeded unexpectedly")
+	}
+	if !strings.Contains(allErr.String(), "timed out waiting for all pipelines") || !strings.Contains(allErr.String(), "squ-803=running event=dispatched") {
+		t.Fatalf("all stderr = %q", allErr.String())
 	}
 }
 
@@ -5298,6 +5354,16 @@ target = "worker"
 			name: "missing job",
 			args: []string{"pipeline", "wait", "ticket_to_pr", "--repo", root, "--job", "squ-missing"},
 			want: "job(s) not owned by pipeline: squ-missing",
+		},
+		{
+			name: "all with pipeline",
+			args: []string{"pipeline", "wait", "ticket_to_pr", "--all", "--repo", root},
+			want: "--all cannot be combined with a pipeline argument",
+		},
+		{
+			name: "multiple pipelines",
+			args: []string{"pipeline", "wait", "ticket_to_pr", "ops_review", "--repo", root},
+			want: "pass at most one pipeline name",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

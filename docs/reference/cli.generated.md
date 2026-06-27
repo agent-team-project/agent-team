@@ -4195,15 +4195,16 @@ Flags:
 
 Wait for pipeline jobs to reach a lifecycle status or event.
 
-Wait for every selected job in one pipeline to reach one of the requested lifecycle statuses and/or last events. By default this waits for terminal statuses: done or failed. When --event is set without --status, any status is accepted.
+Wait for every selected pipeline-owned job to reach one of the requested lifecycle statuses and/or last events. By default this waits for terminal statuses: done or failed. When --event is set without --status, any status is accepted.
 
 ```text
-agent-team pipeline wait <pipeline> [flags]
+agent-team pipeline wait [<pipeline>|--all] [flags]
 ```
 
 Flags:
 
 ```text
+      --all                 Wait for jobs across all pipelines. This is the default when no pipeline is passed.
       --event strings       Last event to wait for, e.g. closed, adopted, or pipeline_done. Can repeat or comma-separate.
       --fail-on-failed      Exit 1 if any selected job resolves to failed.
       --format string       Render each final job with a Go template, e.g. '{{.ID}} {{.Status}}'.
