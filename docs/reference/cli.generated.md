@@ -2686,7 +2686,7 @@ Flags:
 
 Reopen a durable job for another attempt.
 
-Reopen a durable job by resetting its lifecycle status to queued or blocked. Running jobs are refused unless --force is set. Pass --dispatch to immediately send the reopened job to its target.
+Reopen a durable job by resetting its lifecycle status to queued or blocked. Running jobs are refused unless --force is set. Pass --dispatch to immediately send the reopened job to its target, and --wait to block until the retried job reaches a status or event.
 
 ```text
 agent-team job reopen <job-id> [flags]
@@ -2697,18 +2697,24 @@ Aliases: `retry`
 Flags:
 
 ```text
-      --dispatch             Dispatch the reopened job immediately using the running daemon.
-      --dry-run              Preview the reopened job and optional dispatch without writing job or daemon state.
-  -f, --force                Allow reopening a job currently marked running.
-      --format string        Render the updated job or dry-run preview with a Go template.
-      --json                 Emit the updated job or dry-run preview as JSON.
-      --message string       Status message recorded on the job.
-      --repo string          Repo root containing .agent_team. (default "<repo>")
-      --runtime string       Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
-      --runtime-bin string   Runtime binary for --dispatch. Overrides env and repo config.
-      --source string        Source instance for --dispatch (default: AGENT_TEAM_INSTANCE or cli).
-      --status string        Reopened status: queued or blocked. (default "queued")
-      --workspace string     Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
+      --dispatch                 Dispatch the reopened job immediately using the running daemon.
+      --dry-run                  Preview the reopened job and optional dispatch without writing job or daemon state.
+      --fail-on-failed           With --wait, exit 1 if the job resolves to failed.
+  -f, --force                    Allow reopening a job currently marked running.
+      --format string            Render the updated job or dry-run preview with a Go template.
+      --json                     Emit the updated job or dry-run preview as JSON.
+      --message string           Status message recorded on the job.
+      --repo string              Repo root containing .agent_team. (default "<repo>")
+      --runtime string           Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
+      --runtime-bin string       Runtime binary for --dispatch. Overrides env and repo config.
+      --source string            Source instance for --dispatch (default: AGENT_TEAM_INSTANCE or cli).
+      --status string            Reopened status: queued or blocked. (default "queued")
+      --wait                     After reopening or dispatching, wait for the job to reach a lifecycle status or event.
+      --wait-event strings       With --wait, last event to wait for, e.g. dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration   Polling interval with --wait. (default 500ms)
+      --wait-status strings      With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-timeout duration    Maximum time to wait with --wait (0 = no timeout).
+      --workspace string         Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team job resume-plan`

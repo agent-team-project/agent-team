@@ -4111,18 +4111,24 @@ func releaseJobs(teamDir, message string, limit int, expiredOnly bool, dryRun bo
 
 func newJobReopenCmd() *cobra.Command {
 	var (
-		repo        string
-		status      string
-		message     string
-		force       bool
-		dispatchNow bool
-		source      string
-		workspace   string
-		runtimeKind string
-		runtimeBin  string
-		dryRun      bool
-		jsonOut     bool
-		format      string
+		repo         string
+		status       string
+		message      string
+		force        bool
+		dispatchNow  bool
+		source       string
+		workspace    string
+		runtimeKind  string
+		runtimeBin   string
+		dryRun       bool
+		wait         bool
+		waitStatuses []string
+		waitEvents   []string
+		waitTimeout  time.Duration
+		waitInterval time.Duration
+		failOnFailed bool
+		jsonOut      bool
+		format       string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -4130,11 +4136,28 @@ func newJobReopenCmd() *cobra.Command {
 		Aliases: []string{"retry"},
 		Short:   "Reopen a durable job for another attempt.",
 		Long: "Reopen a durable job by resetting its lifecycle status to queued or blocked. " +
-			"Running jobs are refused unless --force is set. Pass --dispatch to immediately send the reopened job to its target.",
+			"Running jobs are refused unless --force is set. Pass --dispatch to immediately send the reopened job to its target, " +
+			"and --wait to block until the retried job reaches a status or event.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reopen: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if waitInterval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reopen: --wait-interval must be >= 0.")
+				return exitErr(2)
+			}
+			if waitTimeout < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reopen: --wait-timeout must be >= 0.")
+				return exitErr(2)
+			}
+			if dryRun && wait {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reopen: --wait cannot be combined with --dry-run.")
+				return exitErr(2)
+			}
+			if !wait && (cmd.Flags().Changed("wait-status") || cmd.Flags().Changed("wait-event") || cmd.Flags().Changed("wait-timeout") || cmd.Flags().Changed("wait-interval") || failOnFailed) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reopen: wait-related flags require --wait.")
 				return exitErr(2)
 			}
 			nextStatus, err := parseJobReopenStatus(status)
@@ -4146,6 +4169,20 @@ func newJobReopenCmd() *cobra.Command {
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reopen: %v\n", err)
 				return exitErr(2)
+			}
+			waitEventsSet := map[string]bool{}
+			waitStatusesSet := map[job.Status]bool{}
+			if wait {
+				waitEventsSet = parseJobWaitEvents(waitEvents)
+				waitStatusesSet, err = parseJobWaitStatuses(waitStatuses, !cmd.Flags().Changed("wait-status") && len(waitEventsSet) == 0)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reopen: %v\n", err)
+					return exitErr(2)
+				}
+				if len(waitStatusesSet) == 0 && len(waitEventsSet) == 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reopen: pass at least one non-empty --wait-status or --wait-event.")
+					return exitErr(2)
+				}
 			}
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
 			if err != nil {
@@ -4211,29 +4248,98 @@ func newJobReopenCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
+					if wait {
+						waited, err := waitForJobCommand(cmd, teamDir, res.Job.ID, waitStatusesSet, waitEventsSet, waitTimeout, waitInterval, "agent-team job reopen")
+						if err != nil {
+							if err == context.Canceled {
+								return nil
+							}
+							return err
+						}
+						refreshJobAdvanceResultAfterWait(res, waited)
+					}
 					if jsonOut {
-						return json.NewEncoder(cmd.OutOrStdout()).Encode(res)
+						if err := json.NewEncoder(cmd.OutOrStdout()).Encode(res); err != nil {
+							return err
+						}
+						if failOnFailed && res.Job.Status == job.StatusFailed {
+							return exitErr(1)
+						}
+						return nil
 					}
 					if tmpl != nil {
-						return renderJobTemplate(cmd.OutOrStdout(), res.Job, tmpl)
+						if err := renderJobTemplate(cmd.OutOrStdout(), res.Job, tmpl); err != nil {
+							return err
+						}
+						if failOnFailed && res.Job.Status == job.StatusFailed {
+							return exitErr(1)
+						}
+						return nil
 					}
-					return renderJobAdvanceResult(cmd.OutOrStdout(), res)
+					if err := renderJobAdvanceResult(cmd.OutOrStdout(), res); err != nil {
+						return err
+					}
+					if failOnFailed && res.Job.Status == job.StatusFailed {
+						return exitErr(1)
+					}
+					return nil
 				}
 				res, requestedName, err := dispatchJobWithPrefix(cmd, teamDir, j, source, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin}, "agent-team job reopen")
 				if err != nil {
 					return err
 				}
+				if wait {
+					waited, err := waitForJobCommand(cmd, teamDir, res.Job.ID, waitStatusesSet, waitEventsSet, waitTimeout, waitInterval, "agent-team job reopen")
+					if err != nil {
+						if err == context.Canceled {
+							return nil
+						}
+						return err
+					}
+					res.Job = waited
+				}
 				if jsonOut {
-					return json.NewEncoder(cmd.OutOrStdout()).Encode(res)
+					if err := json.NewEncoder(cmd.OutOrStdout()).Encode(res); err != nil {
+						return err
+					}
+					if failOnFailed && res.Job.Status == job.StatusFailed {
+						return exitErr(1)
+					}
+					return nil
 				}
 				if tmpl != nil {
-					return renderJobTemplate(cmd.OutOrStdout(), res.Job, tmpl)
+					if err := renderJobTemplate(cmd.OutOrStdout(), res.Job, tmpl); err != nil {
+						return err
+					}
+					if failOnFailed && res.Job.Status == job.StatusFailed {
+						return exitErr(1)
+					}
+					return nil
 				}
 				renderDispatchOutcome(cmd.OutOrStdout(), res.Job.Target, requestedName, res.Event)
 				fmt.Fprintf(cmd.OutOrStdout(), "Job: %s status=%s instance=%s\n", res.Job.ID, res.Job.Status, res.Job.Instance)
+				if failOnFailed && res.Job.Status == job.StatusFailed {
+					return exitErr(1)
+				}
 				return nil
 			}
-			return renderJobResult(cmd.OutOrStdout(), j, jsonOut, tmpl)
+			if wait {
+				waited, err := waitForJobCommand(cmd, teamDir, j.ID, waitStatusesSet, waitEventsSet, waitTimeout, waitInterval, "agent-team job reopen")
+				if err != nil {
+					if err == context.Canceled {
+						return nil
+					}
+					return err
+				}
+				j = waited
+			}
+			if err := renderJobResult(cmd.OutOrStdout(), j, jsonOut, tmpl); err != nil {
+				return err
+			}
+			if failOnFailed && j.Status == job.StatusFailed {
+				return exitErr(1)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -4246,6 +4352,12 @@ func newJobReopenCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile for --dispatch (claude or codex). Overrides env and repo config.")
 	cmd.Flags().StringVar(&runtimeBin, "runtime-bin", "", "Runtime binary for --dispatch. Overrides env and repo config.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the reopened job and optional dispatch without writing job or daemon state.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "After reopening or dispatching, wait for the job to reach a lifecycle status or event.")
+	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&waitEvents, "wait-event", nil, "With --wait, last event to wait for, e.g. dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
+	cmd.Flags().DurationVar(&waitInterval, "wait-interval", 500*time.Millisecond, "Polling interval with --wait.")
+	cmd.Flags().BoolVar(&failOnFailed, "fail-on-failed", false, "With --wait, exit 1 if the job resolves to failed.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job or dry-run preview as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or dry-run preview with a Go template.")
 	return cmd

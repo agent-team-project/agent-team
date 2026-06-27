@@ -248,11 +248,14 @@ context, or external decisions that should remain attached to the job. Use
 ```sh
 agent-team job retry squ-42 --dry-run --dispatch
 agent-team job retry squ-42 --dispatch
+agent-team job retry squ-42 --dispatch --wait --wait-status running --wait-timeout 30s
 ```
 
 For normal jobs this reopens the job and can dispatch a fresh attempt.
 
-For pipeline jobs it resets the first failed step whose dependencies are satisfied, then advances work.
+For pipeline jobs it resets the first failed step whose dependencies are
+satisfied, then advances work. Add `--wait` when recovery automation should
+block until the retried job reaches a lifecycle status or event.
 
 ## Timing Out Stale Jobs
 

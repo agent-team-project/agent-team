@@ -5010,6 +5010,156 @@ func TestJobRetryDispatchesReopenedJob(t *testing.T) {
 	stopAndWaitForTest(t, mgr, "worker-squ-80")
 }
 
+func TestJobRetryDispatchWaitsForRequestedStatus(t *testing.T) {
+	target, mgr, cleanup := setupDispatchCommandRepo(t)
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+	now := time.Now().UTC()
+	failed := &job.Job{
+		ID:         "squ-82",
+		Ticket:     "SQU-82",
+		Target:     "worker",
+		Kickoff:    "retry failed worker",
+		Status:     job.StatusFailed,
+		LastEvent:  "dispatch_failed",
+		LastStatus: "spawn failed",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if err := job.Write(teamDir, failed); err != nil {
+		t.Fatalf("write failed job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"job", "retry", "SQU-82",
+		"--repo", target,
+		"--dispatch",
+		"--workspace", "repo",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job retry --dispatch --wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var result jobDispatchResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode retry dispatch wait json: %v\nbody=%s", err, out.String())
+	}
+	if result.Job == nil || result.Job.Status != job.StatusRunning || result.Job.Instance != "worker-squ-82" || result.Job.LastEvent != "dispatched" {
+		t.Fatalf("result = %+v", result)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-82")
+}
+
+func TestJobRetryDispatchWaitsForPipelineEvent(t *testing.T) {
+	target, _, cleanup := setupIntakePipelineRepo(t)
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:         "squ-83",
+		Ticket:     "SQU-83",
+		Target:     "manager",
+		Kickoff:    "retry failed review",
+		Pipeline:   "ticket_triage",
+		Status:     job.StatusFailed,
+		LastEvent:  "step_failed",
+		LastStatus: "review failed",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		Steps: []job.Step{
+			{ID: "triage", Target: "manager", Status: job.StatusDone, Instance: "manager", StartedAt: now.Add(-3 * time.Hour), FinishedAt: now.Add(-2 * time.Hour)},
+			{ID: "review", Target: "manager", Status: job.StatusFailed, Instance: "manager-old", After: []string{"triage"}, StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write failed pipeline job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"job", "retry", "SQU-83",
+		"--repo", target,
+		"--dispatch",
+		"--workspace", "repo",
+		"--wait",
+		"--wait-event", "advance_queued",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job retry pipeline --dispatch --wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var result jobAdvanceResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode retry pipeline wait json: %v\nbody=%s", err, out.String())
+	}
+	if result.Job == nil || result.Job.Status != job.StatusQueued || result.Job.LastEvent != "advance_queued" {
+		t.Fatalf("waited pipeline job = %+v", result.Job)
+	}
+	if result.Step == nil || result.Step.ID != "review" || result.Step.Status != job.StatusQueued || result.Step.Instance != "manager" {
+		t.Fatalf("waited pipeline step = %+v", result.Step)
+	}
+}
+
+func TestJobRetryDispatchWaitTimesOutForEvent(t *testing.T) {
+	target, mgr, cleanup := setupDispatchCommandRepo(t)
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+	now := time.Now().UTC()
+	failed := &job.Job{
+		ID:         "squ-84",
+		Ticket:     "SQU-84",
+		Target:     "worker",
+		Kickoff:    "retry failed worker",
+		Status:     job.StatusFailed,
+		LastEvent:  "dispatch_failed",
+		LastStatus: "spawn failed",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if err := job.Write(teamDir, failed); err != nil {
+		t.Fatalf("write failed job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"job", "retry", "SQU-84",
+		"--repo", target,
+		"--dispatch",
+		"--workspace", "repo",
+		"--wait",
+		"--wait-event", "closed",
+		"--wait-timeout", "1ms",
+		"--wait-interval", "10ms",
+	})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("job retry --dispatch --wait succeeded unexpectedly")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("retry wait timeout wrote stdout=%q", out.String())
+	}
+	if !strings.Contains(stderr.String(), "timed out waiting for squ-84 to reach event=closed") ||
+		!strings.Contains(stderr.String(), "current=running event=dispatched") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-84")
+}
+
 func TestJobRetryDispatchResetsFailedPipelineStep(t *testing.T) {
 	target, _, cleanup := setupIntakePipelineRepo(t)
 	defer cleanup()
