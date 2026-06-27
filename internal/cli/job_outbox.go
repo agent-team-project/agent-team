@@ -358,8 +358,7 @@ func filteredOutboxItemsForJob(teamDir string, j *job.Job, filters outboxListFil
 		return nil, err
 	}
 	filtered := filterOutboxItems(items, filters)
-	sortOutboxItems(filtered, opts.Sort)
-	return limitOutboxItems(filtered, opts.Limit), nil
+	return prepareOutboxActionMatches(filtered, opts), nil
 }
 
 func outboxItemsForJob(teamDir string, j *job.Job) ([]*daemon.OutboxItem, error) {
@@ -414,4 +413,9 @@ func dropOutboxItemMatches(teamDir string, items []*daemon.OutboxItem, dryRun bo
 		results = append(results, result)
 	}
 	return results, nil
+}
+
+func prepareOutboxActionMatches(items []*daemon.OutboxItem, opts outboxListOptions) []*daemon.OutboxItem {
+	sortOutboxItems(items, opts.Sort)
+	return limitOutboxItems(items, opts.Limit)
 }

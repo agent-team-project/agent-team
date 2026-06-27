@@ -280,6 +280,28 @@ instances = ["other"]
 		t.Fatalf("dry-run drop removed item: %v", err)
 	}
 
+	retryAll := runRootForOutboxTest(t, "team", "outbox", "retry", "delivery", "--repo", root, "--all", "--sort", "id", "--json")
+	var retryAllRows []outboxActionResult
+	if err := json.Unmarshal(retryAll.Bytes(), &retryAllRows); err != nil {
+		t.Fatalf("decode team outbox retry all: %v\n%s", err, retryAll.String())
+	}
+	if len(retryAllRows) != 1 || retryAllRows[0].ID != "outbox-delivery-failed" || retryAllRows[0].Action != "retried" {
+		t.Fatalf("team retry all rows = %+v", retryAllRows)
+	}
+	retriedTeamItem, err := daemon.ReadOutboxItem(teamDir, "outbox-delivery-failed")
+	if err != nil || retriedTeamItem.State != daemon.OutboxStatePending {
+		t.Fatalf("team retry all changed item=%+v err=%v", retriedTeamItem, err)
+	}
+
+	dropAll := runRootForOutboxTest(t, "team", "outbox", "drop", "delivery", "--repo", root, "--all", "--state", "pending", "--job", "SQU-901", "--sort", "id", "--limit", "1", "--dry-run", "--json")
+	var dropAllRows []outboxActionResult
+	if err := json.Unmarshal(dropAll.Bytes(), &dropAllRows); err != nil {
+		t.Fatalf("decode team outbox drop all dry-run: %v\n%s", err, dropAll.String())
+	}
+	if len(dropAllRows) != 1 || dropAllRows[0].ID != "outbox-delivery-failed" || dropAllRows[0].Action != "would_drop" || !dropAllRows[0].DryRun {
+		t.Fatalf("team drop all rows = %+v", dropAllRows)
+	}
+
 	_, stderr, err := runRootForOutboxTestErr(t, "team", "outbox", "show", "delivery", "outbox-platform-pending", "--repo", root)
 	if err == nil {
 		t.Fatalf("out-of-team show succeeded")
@@ -429,6 +451,28 @@ target = "worker"
 	}
 	if _, err := daemon.ReadOutboxItem(teamDir, "outbox-ticket-pending"); err != nil {
 		t.Fatalf("dry-run drop removed item: %v", err)
+	}
+
+	retryAll := runRootForOutboxTest(t, "pipeline", "outbox", "retry", "ticket_to_pr", "--repo", root, "--all", "--sort", "id", "--json")
+	var retryAllRows []outboxActionResult
+	if err := json.Unmarshal(retryAll.Bytes(), &retryAllRows); err != nil {
+		t.Fatalf("decode pipeline outbox retry all: %v\n%s", err, retryAll.String())
+	}
+	if len(retryAllRows) != 1 || retryAllRows[0].ID != "outbox-ticket-failed" || retryAllRows[0].Action != "retried" {
+		t.Fatalf("pipeline retry all rows = %+v", retryAllRows)
+	}
+	retriedPipelineItem, err := daemon.ReadOutboxItem(teamDir, "outbox-ticket-failed")
+	if err != nil || retriedPipelineItem.State != daemon.OutboxStatePending {
+		t.Fatalf("pipeline retry all changed item=%+v err=%v", retriedPipelineItem, err)
+	}
+
+	dropAll := runRootForOutboxTest(t, "pipeline", "outbox", "drop", "ticket_to_pr", "--repo", root, "--all", "--state", "pending", "--job", "SQU-902", "--sort", "id", "--limit", "1", "--dry-run", "--json")
+	var dropAllRows []outboxActionResult
+	if err := json.Unmarshal(dropAll.Bytes(), &dropAllRows); err != nil {
+		t.Fatalf("decode pipeline outbox drop all dry-run: %v\n%s", err, dropAll.String())
+	}
+	if len(dropAllRows) != 1 || dropAllRows[0].ID != "outbox-ticket-failed" || dropAllRows[0].Action != "would_drop" || !dropAllRows[0].DryRun {
+		t.Fatalf("pipeline drop all rows = %+v", dropAllRows)
 	}
 
 	_, stderr, err := runRootForOutboxTestErr(t, "pipeline", "outbox", "show", "ticket_to_pr", "outbox-ops-pending", "--repo", root)

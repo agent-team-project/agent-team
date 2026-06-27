@@ -4091,33 +4091,44 @@ Flags:
 
 Subcommands:
 
-- `agent-team pipeline outbox drop` - Remove one pipeline-owned outbox event.
-- `agent-team pipeline outbox retry` - Move one pipeline-owned processed or failed outbox event back to pending.
+- `agent-team pipeline outbox drop` - Drop outbox events owned by one pipeline.
+- `agent-team pipeline outbox retry` - Retry outbox events owned by one pipeline.
 - `agent-team pipeline outbox show` - Show one outbox event owned by one pipeline.
 
 ## `agent-team pipeline outbox drop`
 
-Remove one pipeline-owned outbox event.
+Drop outbox events owned by one pipeline.
+
+Remove one pipeline-owned outbox event by id, or drop a filtered pipeline-owned batch with --all. Batch drops default to failed events.
 
 ```text
-agent-team pipeline outbox drop <pipeline> <id> [flags]
+agent-team pipeline outbox drop <pipeline> [id] [flags]
 ```
 
 Flags:
 
 ```text
-      --dry-run         Preview the drop without removing the event.
-      --format string   Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
-      --json            Emit machine-readable JSON.
-      --repo string     Repo root containing .agent_team. (default "<repo>")
+      --all              Drop all matching pipeline-owned outbox events instead of one id.
+      --dry-run          Preview the drop without removing the event.
+      --format string    Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.
+      --json             Emit machine-readable JSON.
+      --limit int        With --all, drop at most this many matching outbox events; 0 means no limit.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --sort string      With --all, sort matching outbox events before limiting: state, id, type, source, job, created, updated, or error. (default "state")
+      --source strings   With --all, filter by source agent/instance; repeat or comma-separate values.
+      --state string     With --all, filter by outbox state: pending, processed, or failed. Defaults to failed.
+      --type strings     With --all, filter by event type; repeat or comma-separate values.
 ```
 
 ## `agent-team pipeline outbox retry`
 
-Move one pipeline-owned processed or failed outbox event back to pending.
+Retry outbox events owned by one pipeline.
+
+Move one pipeline-owned processed or failed outbox event back to pending by id, or retry a filtered pipeline-owned batch with --all. Batch retries default to failed events.
 
 ```text
-agent-team pipeline outbox retry <pipeline> <id> [flags]
+agent-team pipeline outbox retry <pipeline> [id] [flags]
 ```
 
 Aliases: `requeue`
@@ -4125,10 +4136,17 @@ Aliases: `requeue`
 Flags:
 
 ```text
-      --dry-run         Preview the retry without moving the event.
-      --format string   Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
-      --json            Emit machine-readable JSON.
-      --repo string     Repo root containing .agent_team. (default "<repo>")
+      --all              Retry all matching pipeline-owned outbox events instead of one id.
+      --dry-run          Preview the retry without moving the event.
+      --format string    Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.
+      --json             Emit machine-readable JSON.
+      --limit int        With --all, retry at most this many matching outbox events; 0 means no limit.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --sort string      With --all, sort matching outbox events before limiting: state, id, type, source, job, created, updated, or error. (default "state")
+      --source strings   With --all, filter by source agent/instance; repeat or comma-separate values.
+      --state string     With --all, filter by outbox state: pending, processed, or failed. Defaults to failed.
+      --type strings     With --all, filter by event type; repeat or comma-separate values.
 ```
 
 ## `agent-team pipeline outbox show`
@@ -6961,33 +6979,44 @@ Flags:
 
 Subcommands:
 
-- `agent-team team outbox drop` - Remove one team-owned outbox event.
-- `agent-team team outbox retry` - Move one team-owned processed or failed outbox event back to pending.
+- `agent-team team outbox drop` - Drop outbox events owned by one team.
+- `agent-team team outbox retry` - Retry outbox events owned by one team.
 - `agent-team team outbox show` - Show one outbox event owned by one team.
 
 ## `agent-team team outbox drop`
 
-Remove one team-owned outbox event.
+Drop outbox events owned by one team.
+
+Remove one team-owned outbox event by id, or drop a filtered team-owned batch with --all. Batch drops default to failed events.
 
 ```text
-agent-team team outbox drop <team> <id> [flags]
+agent-team team outbox drop <team> [id] [flags]
 ```
 
 Flags:
 
 ```text
-      --dry-run         Preview the drop without removing the event.
-      --format string   Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
-      --json            Emit machine-readable JSON.
-      --repo string     Repo root containing .agent_team. (default "<repo>")
+      --all              Drop all matching team-owned outbox events instead of one id.
+      --dry-run          Preview the drop without removing the event.
+      --format string    Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.
+      --json             Emit machine-readable JSON.
+      --limit int        With --all, drop at most this many matching outbox events; 0 means no limit.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --sort string      With --all, sort matching outbox events before limiting: state, id, type, source, job, created, updated, or error. (default "state")
+      --source strings   With --all, filter by source agent/instance; repeat or comma-separate values.
+      --state string     With --all, filter by outbox state: pending, processed, or failed. Defaults to failed.
+      --type strings     With --all, filter by event type; repeat or comma-separate values.
 ```
 
 ## `agent-team team outbox retry`
 
-Move one team-owned processed or failed outbox event back to pending.
+Retry outbox events owned by one team.
+
+Move one team-owned processed or failed outbox event back to pending by id, or retry a filtered team-owned batch with --all. Batch retries default to failed events.
 
 ```text
-agent-team team outbox retry <team> <id> [flags]
+agent-team team outbox retry <team> [id] [flags]
 ```
 
 Aliases: `requeue`
@@ -6995,10 +7024,17 @@ Aliases: `requeue`
 Flags:
 
 ```text
-      --dry-run         Preview the retry without moving the event.
-      --format string   Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
-      --json            Emit machine-readable JSON.
-      --repo string     Repo root containing .agent_team. (default "<repo>")
+      --all              Retry all matching team-owned outbox events instead of one id.
+      --dry-run          Preview the retry without moving the event.
+      --format string    Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.
+      --json             Emit machine-readable JSON.
+      --limit int        With --all, retry at most this many matching outbox events; 0 means no limit.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --sort string      With --all, sort matching outbox events before limiting: state, id, type, source, job, created, updated, or error. (default "state")
+      --source strings   With --all, filter by source agent/instance; repeat or comma-separate values.
+      --state string     With --all, filter by outbox state: pending, processed, or failed. Defaults to failed.
+      --type strings     With --all, filter by event type; repeat or comma-separate values.
 ```
 
 ## `agent-team team outbox show`

@@ -216,6 +216,8 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline cleanup <pipeline>` | Scoped job cleanup for done jobs in one pipeline |
 | `agent-team pipeline queue [<pipeline>]` | List active or quarantined queue items owned by one or all pipelines; subcommands inspect, retry, drop, prune, or recover items owned by one pipeline |
 | `agent-team pipeline outbox [<pipeline>]` | List outbox events owned by one or all pipelines; subcommands inspect, retry, or drop events owned by one pipeline |
+| `agent-team pipeline outbox retry <pipeline> --all` | Retry matching pipeline-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--job`, `--sort`, and `--limit` |
+| `agent-team pipeline outbox drop <pipeline> --all` | Drop matching pipeline-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--job`, `--sort`, and `--limit` |
 | `agent-team pipeline timeout <pipeline>` | Mark stale running steps failed; add `--target-agent` to scope by role |
 | `agent-team pipeline retry <pipeline>` | Retry failed steps, honoring step `max_attempts` caps; add `--dispatch --wait-next-state`/`--wait-step` for stage-aware recovery handoff |
 | `agent-team pipeline tick <pipeline>` | Run or preview one scoped queue drain and ready-step advance cycle for one pipeline; add `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |
@@ -250,7 +252,9 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team outbox <team>` | Scoped outbox list or summary; filter by state, type, source, or job and sort/cap rows |
 | `agent-team team outbox show <team> <id>` | Inspect one outbox event owned by a team |
 | `agent-team team outbox retry <team> <id>` | Move one team-owned failed or processed outbox event back to pending |
+| `agent-team team outbox retry <team> --all` | Retry matching team-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--job`, `--sort`, and `--limit` |
 | `agent-team team outbox drop <team> <id>` | Remove one inspected team-owned outbox event |
+| `agent-team team outbox drop <team> --all` | Drop matching team-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--job`, `--sort`, and `--limit` |
 | `agent-team team pipelines <team>` | List or watch team-owned pipeline status rows with queue/quarantine counts; sort rows and cap output with `--limit` |
 | `agent-team team explain <team>` | Expand or watch team-owned pipeline jobs as per-step diagnostics; sort and cap large histories with `--sort` and `--limit`, or add `--step` to focus one stage |
 | `agent-team team ready <team>` | List or watch scoped ready pipeline steps; filter by `--step`, sort by `--sort`, and cap rows with `--limit` |
