@@ -110,12 +110,16 @@ agent-team health
 agent-team health --jobs
 agent-team health --strict-topology
 agent-team health --json
+agent-team health --jobs --commands
 agent-team team health delivery --jobs
 ```
 
 Health exits nonzero when unhealthy in one-shot mode.
 
 With `--jobs`, stuck or failed jobs can make health fail. This is useful in CI or operator dashboards.
+
+Add `--commands` when a script needs only the issue remediation commands, one
+per line, while preserving the same healthy/unhealthy exit code.
 
 Health also reports job, queue, and outbox quarantine inventory as warning issues with scoped recovery actions when ownership resolves to one job, pipeline, or team.
 
@@ -294,6 +298,7 @@ Add `--runtime codex` or `--runtime-bin <path>` when repair retry or final tick 
 | Unsure what is wrong | `agent-team overview` |
 | Need exact next commands | `agent-team next --commands` |
 | CI wants pass/fail | `agent-team health --jobs` |
+| CI wants remediation commands | `agent-team health --jobs --commands` |
 | Need only unhealthy instance rows | `agent-team ps --unhealthy --json` |
 | Need only stale recorded runtime PIDs | `agent-team ps --runtime-stale --json` |
 | Need handoff artifact | `agent-team snapshot --output diagnostics.json` |

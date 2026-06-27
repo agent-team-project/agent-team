@@ -10466,6 +10466,27 @@ pipelines = ["ticket_to_pr"]
 		t.Fatalf("team health text included unrelated job:\n%s", textOut.String())
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "health", "delivery", "--repo", root, "--jobs", "--commands"})
+	if err := commands.Execute(); err == nil {
+		t.Fatal("team health commands unexpectedly succeeded")
+	} else if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("team health commands err = %v, want exit 1\nstderr=%s", err, commandsErr.String())
+	}
+	for _, want := range []string{"agent-team team queue retry delivery --all --job squ-901 --sort attempts --limit 10", "agent-team team retry delivery --dry-run --dispatch --preview-routes", "agent-team team queue quarantine delivery --restorable", "agent-team team outbox quarantine delivery --restorable"} {
+		if !strings.Contains(commandsOut.String(), want) {
+			t.Fatalf("team health commands missing %q:\n%s", want, commandsOut.String())
+		}
+	}
+	for _, unwanted := range []string{"Team:", "health:", "oth-1", "agent-team queue retry --all --sort attempts --limit 10"} {
+		if strings.Contains(commandsOut.String(), unwanted) {
+			t.Fatalf("team health commands included %q:\n%s", unwanted, commandsOut.String())
+		}
+	}
+
 	defaultHealth := NewRootCmd()
 	defaultOut, defaultErr := &bytes.Buffer{}, &bytes.Buffer{}
 	defaultHealth.SetOut(defaultOut)
@@ -10611,6 +10632,9 @@ func TestTeamHealthOutputValidation(t *testing.T) {
 		want string
 	}{
 		{[]string{"team", "health", "delivery", "--quiet", "--json"}, "choose one of --quiet or --json"},
+		{[]string{"team", "health", "delivery", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"team", "health", "delivery", "--commands", "--format", "{{.Team.Name}}"}, "--commands cannot be combined with --format"},
+		{[]string{"team", "health", "delivery", "--commands", "--quiet"}, "--commands cannot be combined with --quiet"},
 		{[]string{"team", "health", "delivery", "--format", "{{.Team.Name}}", "--json"}, "--format cannot be combined"},
 		{[]string{"team", "health", "delivery", "--format", "{{.Team.Name}}", "--quiet"}, "--format cannot be combined"},
 		{[]string{"team", "health", "delivery", "--format", "{{"}, "invalid --format template"},

@@ -5451,6 +5451,7 @@ func newTeamHealthCmd() *cobra.Command {
 		quiet            bool
 		jsonOut          bool
 		format           string
+		commands         bool
 		runtimeFilters   []string
 		runtimeStaleOnly bool
 	)
@@ -5462,6 +5463,18 @@ func newTeamHealthCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if quiet && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team health: choose one of --quiet or --json.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team health: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team health: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && quiet {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team health: --commands cannot be combined with --quiet.")
 				return exitErr(2)
 			}
 			if format != "" && (quiet || jsonOut) {
@@ -5489,7 +5502,7 @@ func newTeamHealthCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			if !quiet {
-				if err := renderTeamHealth(cmd.OutOrStdout(), snapshot, jsonOut, tmpl); err != nil {
+				if err := renderTeamHealth(cmd.OutOrStdout(), snapshot, jsonOut, tmpl, commands); err != nil {
 					return err
 				}
 			}
@@ -5503,6 +5516,7 @@ func newTeamHealthCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&includeJobs, "jobs", false, "Include team-owned job and pipeline health.")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team health as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print issue remediation commands, one per line.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only check team-owned daemon-known instances for this runtime: claude or codex. Daemon, queue, and job health remain team-scoped. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only check team-owned running instances whose recorded runtime PID is no longer live. Daemon, queue, and job health remain team-scoped.")
 	cmd.Flags().StringVar(&format, "format", "", "Render team health with a Go template, e.g. '{{.Team.Name}} {{.Health.Healthy}}'.")
@@ -10114,9 +10128,15 @@ func renderTeamStatusFormat(w io.Writer, snapshot *teamStatusSnapshot, tmpl *tem
 	return err
 }
 
-func renderTeamHealth(w io.Writer, snapshot *teamHealthSnapshot, jsonOut bool, tmpl *template.Template) error {
+func renderTeamHealth(w io.Writer, snapshot *teamHealthSnapshot, jsonOut bool, tmpl *template.Template, commands bool) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(snapshot)
+	}
+	if commands {
+		if snapshot == nil {
+			return nil
+		}
+		return renderHealthCommands(w, snapshot.Health)
 	}
 	if tmpl != nil {
 		return renderTeamHealthFormat(w, snapshot, tmpl)

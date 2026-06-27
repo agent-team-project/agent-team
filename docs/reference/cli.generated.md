@@ -980,6 +980,7 @@ Flags:
 
 ```text
       --agent strings       Only check declared and daemon-known instances for this agent. Daemon health remains global. Can repeat or comma-separate.
+      --commands            Print issue remediation commands, one per line.
       --format string       Render the health result with a Go template, e.g. '{{.Healthy}} {{.Summary.Running}}'.
       --instance strings    Only check instances with this name. Daemon health remains global. Can repeat or comma-separate.
       --interval duration   Refresh interval for --watch or --wait. (default 2s)
@@ -7408,6 +7409,7 @@ agent-team team health <team> [flags]
 Flags:
 
 ```text
+      --commands          Print issue remediation commands, one per line.
       --format string     Render team health with a Go template, e.g. '{{.Team.Name}} {{.Health.Healthy}}'.
       --jobs              Include team-owned job and pipeline health.
       --json              Emit team health as JSON.

@@ -620,6 +620,19 @@ func TestHealthCommandReportsDeadQueueItems(t *testing.T) {
 			t.Fatalf("health text missing %q:\n%s", want, textOut.String())
 		}
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"health", "--target", tmp, "--commands"})
+	err = commands.Execute()
+	if !errors.As(err, &code) || code != 1 {
+		t.Fatalf("health commands err = %v, want exit 1\nstderr=%s", err, commandsErr.String())
+	}
+	if got, want := commandsOut.String(), "agent-team sync --dry-run\nagent-team queue retry --all --sort attempts --limit 10\nagent-team repair --skip-tick\n"; got != want {
+		t.Fatalf("health commands = %q, want %q", got, want)
+	}
 }
 
 func TestHealthCommandReportsJobScopedQueueDeadLetterAction(t *testing.T) {
@@ -1846,6 +1859,11 @@ func TestHealthQuietRejectsOutputConflicts(t *testing.T) {
 	}{
 		{[]string{"health", "--quiet", "--json"}, "--quiet"},
 		{[]string{"health", "--quiet", "--watch"}, "--quiet"},
+		{[]string{"health", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"health", "--commands", "--format", "{{.Healthy}}"}, "--commands cannot be combined with --format"},
+		{[]string{"health", "--commands", "--quiet"}, "--commands cannot be combined with --quiet"},
+		{[]string{"health", "--commands", "--watch"}, "--commands cannot be combined with --watch"},
+		{[]string{"health", "--commands", "--wait"}, "--commands cannot be combined with --wait"},
 		{[]string{"health", "--format", "{{.Healthy}}", "--json"}, "--format cannot be combined"},
 		{[]string{"health", "--format", "{{.Healthy}}", "--quiet"}, "--format cannot be combined"},
 		{[]string{"health", "--format", "{{"}, "invalid --format template"},

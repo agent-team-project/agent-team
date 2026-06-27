@@ -322,6 +322,7 @@ This makes diagnostics safer and less noisy.
 
 ```sh
 agent-team team health delivery --jobs
+agent-team team health delivery --jobs --commands
 agent-team team status delivery
 agent-team team monitor delivery --jobs --schedules
 ```
