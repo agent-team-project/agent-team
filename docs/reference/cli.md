@@ -21,7 +21,7 @@ as the output directory instead.
 | `agent-team template run <ref> <agent>` | One-shot init plus run in a temp or target dir |
 | `agent-team upgrade --check|--apply` | Compare current template lock to target or apply clean template changes |
 | `agent-team agent ls` / `agent-team agent show <agent>` | List or inspect runnable agent definitions installed under `.agent_team/agents`; `agents` is a plural alias |
-| `agent-team doctor` | Validate local layout, runtime availability, and workflow runtime defaults |
+| `agent-team doctor` | Validate local layout, durable job files, runtime availability, and workflow runtime defaults |
 | `agent-team docs cli` | Generate or check markdown reference from the live command tree |
 
 ## Runtime and Daemon
@@ -94,6 +94,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job create <ticket>` | Create a durable job; add `--dispatch --wait` for bounded create-and-run automation and `--wait --wait-next-state`/`--wait-step` for pipeline stage handoff |
 | `agent-team job ls` | List jobs; filter held state, hold deadlines, and mixed-runtime ownership; sort rows and cap output with `--limit` |
 | `agent-team job show <job-id>` | Show job detail, runtime metadata, queue, quarantine, outbox, status previews, and actions; `inspect` is an alias |
+| `agent-team job doctor` | Validate durable job TOML files, including filename/id ownership and persisted state invariants |
 | `agent-team job wait <job-id>` | Wait for lifecycle status, last event, or next-step state/stage with `--next-state` and `--step` |
 | `agent-team job next <job-id>` | Show the next pipeline step without dispatching it; add `--state` or `--step` when scripts need a compact assertion |
 | `agent-team job resume-plan <job-id>` | Show runtime resume, attach, and log fallback commands for one job; add `--step` for one pipeline stage, or `--sort`/`--limit` for multi-runtime jobs |

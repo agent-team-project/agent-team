@@ -38,6 +38,139 @@ func queueQuarantineItemIDs(items []queueQuarantineItem) string {
 	return strings.Join(out, ",")
 }
 
+func jobDoctorHasCode(findings []jobDoctorFinding, code string) bool {
+	for _, finding := range findings {
+		if finding.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func TestJobDoctorValidAndFormat(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	j := mustNewJob(t, "SQU-300", "worker")
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	if err := job.AppendEvent(teamDir, &job.Event{JobID: j.ID, Type: "created", Status: job.StatusQueued}); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "doctor", "--repo", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job doctor: %v\nstderr=%s", err, stderr.String())
+	}
+	var result jobDoctorResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode job doctor: %v\nbody=%s", err, out.String())
+	}
+	if !result.OK || result.Summary.Files != 1 || result.Summary.Valid != 1 || result.Summary.Invalid != 0 || result.Summary.Ignored != 1 {
+		t.Fatalf("job doctor result = %+v", result)
+	}
+
+	format := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	format.SetOut(formatOut)
+	format.SetErr(formatErr)
+	format.SetArgs([]string{"job", "doctor", "--repo", tmp, "--format", "{{.OK}} {{.Summary.Valid}} {{.Summary.Ignored}}"})
+	if err := format.Execute(); err != nil {
+		t.Fatalf("job doctor format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if got, want := formatOut.String(), "true 1 1\n"; got != want {
+		t.Fatalf("job doctor format output = %q, want %q", got, want)
+	}
+}
+
+func TestJobDoctorDetectsInvalidFilesAndTopLevelDoctor(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	jobsDir := job.Directory(teamDir)
+	if err := os.MkdirAll(jobsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := job.Write(teamDir, mustNewJob(t, "SQU-299", "worker")); err != nil {
+		t.Fatalf("write valid job: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(jobsDir, "broken.toml"), []byte("id = [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(jobsDir, "squ-300.toml"), []byte(`id = "squ-300"
+ticket = "SQU-300"
+target = "worker"
+status = "paused"
+created_at = 2026-06-18T12:00:00Z
+updated_at = 2026-06-18T12:00:00Z
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(jobsDir, "squ-301.toml"), []byte(`id = "squ-777"
+ticket = "SQU-301"
+target = "worker"
+status = "queued"
+created_at = 2026-06-18T12:00:00Z
+updated_at = 2026-06-18T12:00:00Z
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "doctor", "--repo", tmp, "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("job doctor unexpectedly succeeded")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("job doctor err = %v, want exit 1", err)
+	}
+	var result jobDoctorResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode job doctor: %v\nbody=%s\nstderr=%s", err, out.String(), stderr.String())
+	}
+	if result.OK || result.Summary.Files != 4 || result.Summary.Valid != 1 || result.Summary.Invalid != 3 {
+		t.Fatalf("job doctor result = %+v", result)
+	}
+	for _, want := range []string{"invalid_toml", "invalid_job", "id_mismatch"} {
+		if !jobDoctorHasCode(result.Problems, want) {
+			t.Fatalf("job doctor problems missing %s: %+v", want, result.Problems)
+		}
+	}
+	if !containsString(result.Actions, "agent-team job doctor --json") {
+		t.Fatalf("job doctor actions = %+v", result.Actions)
+	}
+
+	doctor := NewRootCmd()
+	doctorOut, doctorErr := &bytes.Buffer{}, &bytes.Buffer{}
+	doctor.SetOut(doctorOut)
+	doctor.SetErr(doctorErr)
+	doctor.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	err = doctor.Execute()
+	if err == nil {
+		t.Fatal("top-level doctor unexpectedly succeeded")
+	}
+	if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("top-level doctor err = %v, want exit 1", err)
+	}
+	var doctorResult doctorResult
+	if err := json.Unmarshal(doctorOut.Bytes(), &doctorResult); err != nil {
+		t.Fatalf("decode top-level doctor: %v\nbody=%s\nstderr=%s", err, doctorOut.String(), doctorErr.String())
+	}
+	if doctorResult.OK || !containsDoctorMessage(doctorResult.Problems, "jobs:") {
+		t.Fatalf("top-level doctor result = %+v", doctorResult)
+	}
+}
+
 func TestJobCreateListShowClose(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

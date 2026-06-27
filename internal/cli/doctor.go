@@ -34,7 +34,7 @@ func newDoctorCmd() *cobra.Command {
 		Short: "Sanity-check the vendored team.",
 		Long: "Sanity-check the vendored team: .agent_team/ layout, config.toml validity, " +
 			"template provenance, each agent's frontmatter, skill resolution across all agents, " +
-			"pipeline workflow wiring, the selected runtime binary, and whether the companion agent-teamd binary is available for daemon-backed lifecycle commands.",
+			"durable job files, pipeline workflow wiring, the selected runtime binary, and whether the companion agent-teamd binary is available for daemon-backed lifecycle commands.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team doctor: --format cannot be combined with --json.")
@@ -204,6 +204,16 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 				continue
 			}
 			warnings = append(warnings, "team topology: "+warning.Message)
+		}
+	}
+	if jobDoctor, err := collectJobDoctor(teamDir); err != nil {
+		problems = append(problems, fmt.Sprintf("job validation failed: %v", err))
+	} else {
+		for _, problem := range jobDoctor.Problems {
+			problems = append(problems, "jobs: "+problem.Message)
+		}
+		for _, warning := range jobDoctor.Warnings {
+			warnings = append(warnings, "jobs: "+warning.Message)
 		}
 	}
 	if intakeDoctor, err := collectIntakeDoctor(teamDir); err != nil {

@@ -814,7 +814,7 @@ Inherited Flags:
 
 Sanity-check the vendored team.
 
-Sanity-check the vendored team: .agent_team/ layout, config.toml validity, template provenance, each agent&#39;s frontmatter, skill resolution across all agents, pipeline workflow wiring, the selected runtime binary, and whether the companion agent-teamd binary is available for daemon-backed lifecycle commands.
+Sanity-check the vendored team: .agent_team/ layout, config.toml validity, template provenance, each agent&#39;s frontmatter, skill resolution across all agents, durable job files, pipeline workflow wiring, the selected runtime binary, and whether the companion agent-teamd binary is available for daemon-backed lifecycle commands.
 
 ```text
 agent-team doctor [flags]
@@ -1785,6 +1785,7 @@ Subcommands:
 - `agent-team job close` - Close a job as done or failed.
 - `agent-team job create` - Create a durable job for a ticket.
 - `agent-team job dispatch` - Dispatch a job to its target agent.
+- `agent-team job doctor` - Validate durable job files.
 - `agent-team job events` - Show a job&#39;s durable event history.
 - `agent-team job explain` - Explain pipeline step readiness for one job.
 - `agent-team job hold` - Hold a job so pipeline automation will not advance it.
@@ -2095,6 +2096,24 @@ Flags:
       --wait-step string          With --wait, pipeline step id that must be the current next step.
       --wait-timeout duration     Maximum time to wait with --wait (0 = no timeout).
       --workspace string          Workspace mode for spawned children: auto, worktree, or repo. (default "auto")
+```
+
+## `agent-team job doctor`
+
+Validate durable job files.
+
+Validate durable job TOML files under `.agent_team/jobs/` without relying on normal job listing paths.
+
+```text
+agent-team job doctor [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render the job doctor result with a Go template, e.g. '{{.OK}} {{.Summary.Valid}}'.
+      --json            Emit durable job doctor findings as JSON.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
 ```
 
 ## `agent-team job events`
