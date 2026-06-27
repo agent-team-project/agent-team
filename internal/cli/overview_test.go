@@ -225,6 +225,126 @@ func TestOverviewReportsOutboxActions(t *testing.T) {
 	}
 }
 
+func TestTeamOverviewReportsScopedOutboxActions(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.manager]
+agent = "manager"
+
+[instances.worker]
+agent = "worker"
+
+[instances.other]
+agent = "other"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+
+[teams.platform]
+instances = ["other"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 27, 15, 0, 0, 0, time.UTC)
+	for _, item := range []*daemon.OutboxItem{
+		{
+			ID:        "outbox-team-pending",
+			State:     daemon.OutboxStatePending,
+			Type:      "agent.dispatch",
+			Source:    "manager",
+			Payload:   map[string]any{"target": "worker", "ticket": "SQU-910"},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "outbox-team-failed",
+			State:     daemon.OutboxStateFailed,
+			Type:      "agent.dispatch",
+			Source:    "manager",
+			Payload:   map[string]any{"target": "worker", "ticket": "SQU-911"},
+			LastError: "route missing",
+			CreatedAt: now.Add(time.Minute),
+			UpdatedAt: now.Add(time.Minute),
+		},
+		{
+			ID:        "outbox-platform-pending",
+			State:     daemon.OutboxStatePending,
+			Type:      "agent.dispatch",
+			Source:    "manager",
+			Payload:   map[string]any{"target": "other", "ticket": "OTH-910"},
+			CreatedAt: now.Add(2 * time.Minute),
+			UpdatedAt: now.Add(2 * time.Minute),
+		},
+	} {
+		if err := daemon.WriteOutboxItem(teamDir, item); err != nil {
+			t.Fatalf("write outbox item %s: %v", item.ID, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "overview", "delivery", "--repo", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team overview outbox json: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode team overview outbox: %v\nbody=%s", err, out.String())
+	}
+	if overview.Outbox.Total != 2 || overview.Outbox.Pending != 1 || overview.Outbox.Failed != 1 {
+		t.Fatalf("team overview outbox = %+v", overview.Outbox)
+	}
+	for _, want := range []string{
+		"agent-team team outbox delivery --state failed",
+		"agent-team team outbox delivery --state pending",
+	} {
+		if !stringSliceContains(overview.Actions, want) {
+			t.Fatalf("team overview actions missing %q: %+v", want, overview.Actions)
+		}
+	}
+	if stringSliceContains(overview.Actions, "agent-team team drain delivery") {
+		t.Fatalf("team overview should not suggest team drain for outbox-only work: %+v", overview.Actions)
+	}
+	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team team outbox delivery --state failed"); !ok || detail.Team != "delivery" || detail.Source != "outbox" || detail.Reason != "failed=1" {
+		t.Fatalf("team failed outbox detail = %+v, ok=%v", detail, ok)
+	}
+	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team team outbox delivery --state pending"); !ok || detail.Team != "delivery" || detail.Source != "outbox" || detail.Reason != "pending=1" {
+		t.Fatalf("team pending outbox detail = %+v, ok=%v", detail, ok)
+	}
+
+	next := NewRootCmd()
+	nextOut, nextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	next.SetOut(nextOut)
+	next.SetErr(nextErr)
+	next.SetArgs([]string{"team", "next", "delivery", "--repo", root, "--source", "outbox", "--json"})
+	if err := next.Execute(); err != nil {
+		t.Fatalf("team next outbox json: %v\nstderr=%s", err, nextErr.String())
+	}
+	var nextResult nextActionResult
+	if err := json.Unmarshal(nextOut.Bytes(), &nextResult); err != nil {
+		t.Fatalf("decode team next outbox: %v\nbody=%s", err, nextOut.String())
+	}
+	if len(nextResult.Actions) != 2 {
+		t.Fatalf("team next outbox actions = %+v", nextResult)
+	}
+	for _, want := range []string{"agent-team team outbox delivery --state failed", "agent-team team outbox delivery --state pending"} {
+		if !stringSliceContains(nextResult.Actions, want) {
+			t.Fatalf("team next outbox actions missing %q: %+v", want, nextResult.Actions)
+		}
+	}
+	for _, detail := range nextResult.ActionDetails {
+		if detail.Team != "delivery" || detail.Source != "outbox" {
+			t.Fatalf("team next outbox detail = %+v", detail)
+		}
+	}
+}
+
 func TestTeamOverviewScopesUnreadInboxActions(t *testing.T) {
 	root := writeOverviewAttentionFixture(t)
 	teamDir := filepath.Join(root, ".agent_team")

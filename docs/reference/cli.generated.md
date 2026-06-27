@@ -6228,6 +6228,7 @@ Subcommands:
 - `agent-team team ls` - List declared teams.
 - `agent-team team monitor` - Show a combined operator snapshot for one team.
 - `agent-team team next` - Print recommended next actions scoped to one team.
+- `agent-team team outbox` - List or control outbox events scoped to one team.
 - `agent-team team overview` - Show a concise operator overview for one declared team.
 - `agent-team team pipelines` - List pipeline status for one team.
 - `agent-team team plan` - Preview desired lifecycle state for one team.
@@ -6749,6 +6750,87 @@ Flags:
       --sort string          Sort actions before applying --limit by default, source, reason, or command. (default "default")
       --source strings       Only show actions from this source: health, topology, runtime, inbox, outbox, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.
   -w, --watch                Refresh recommended actions until interrupted.
+```
+
+## `agent-team team outbox`
+
+List or control outbox events scoped to one team.
+
+```text
+agent-team team outbox <team> [flags]
+```
+
+Flags:
+
+```text
+      --format string    Render each team-owned outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --job strings      Filter by job id or ticket; repeat or comma-separate values.
+      --json             Emit team-owned outbox rows as JSON.
+      --limit int        Limit rows after filtering and sorting; 0 means no limit.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --sort string      Sort rows by state, id, type, source, job, created, updated, or error. (default "state")
+      --source strings   Filter by source agent/instance; repeat or comma-separate values.
+      --state string     Filter by outbox state: pending, processed, or failed.
+      --summary          Show aggregate outbox counts instead of rows.
+      --type strings     Filter by event type; repeat or comma-separate values.
+```
+
+Subcommands:
+
+- `agent-team team outbox drop` - Remove one team-owned outbox event.
+- `agent-team team outbox retry` - Move one team-owned processed or failed outbox event back to pending.
+- `agent-team team outbox show` - Show one outbox event owned by one team.
+
+## `agent-team team outbox drop`
+
+Remove one team-owned outbox event.
+
+```text
+agent-team team outbox drop <team> <id> [flags]
+```
+
+Flags:
+
+```text
+      --dry-run         Preview the drop without removing the event.
+      --format string   Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --json            Emit machine-readable JSON.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team team outbox retry`
+
+Move one team-owned processed or failed outbox event back to pending.
+
+```text
+agent-team team outbox retry <team> <id> [flags]
+```
+
+Aliases: `requeue`
+
+Flags:
+
+```text
+      --dry-run         Preview the retry without moving the event.
+      --format string   Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --json            Emit machine-readable JSON.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team team outbox show`
+
+Show one outbox event owned by one team.
+
+```text
+agent-team team outbox show <team> <id> [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render the team-owned outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --json            Emit the team-owned outbox item as JSON.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
 ```
 
 ## `agent-team team overview`

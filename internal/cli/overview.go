@@ -385,6 +385,12 @@ func collectTeamOverview(teamDir, name string, now time.Time, scheduleLimit int)
 		out.Inbox = inbox
 	}
 
+	if outbox, err := collectOverviewOutboxForTeam(teamDir, top, team); err != nil {
+		out.addError("outbox", err)
+	} else {
+		out.Outbox = outbox
+	}
+
 	if out.Jobs.Summary.Total == 0 && out.Jobs.Attention == 0 && out.Jobs.ReadySteps == 0 {
 		if triage, err := collectTeamTriageWithPolicy(teamDir, team.Name, now, jobTriageFilters{}); err != nil {
 			out.addError("jobs", err)
@@ -686,6 +692,18 @@ func collectOverviewOutbox(teamDir string) (outboxSummary, error) {
 	return summarizeOutboxItems(items), nil
 }
 
+func collectOverviewOutboxForTeam(teamDir string, top *topology.Topology, team *topology.Team) (outboxSummary, error) {
+	jobs, err := jobstore.List(teamDir)
+	if err != nil {
+		return outboxSummary{}, err
+	}
+	items, err := daemon.ListOutboxItems(teamDir)
+	if err != nil {
+		return outboxSummary{}, err
+	}
+	return summarizeOutboxItems(teamOutboxItems(top, team, teamJobs(top, team, jobs), items)), nil
+}
+
 func overviewActions(out *overviewResult, health *healthResult) []string {
 	return overviewActionCommands(overviewActionHints(out, health))
 }
@@ -778,11 +796,19 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 	if out.Queue.Quarantined > 0 {
 		add(overviewQueueQuarantineAction(health, teamName), "queue", fmt.Sprintf("quarantined=%d", out.Queue.Quarantined))
 	}
-	if teamName == "" && out.Outbox.Failed > 0 {
-		add("agent-team outbox ls --state failed", "outbox", fmt.Sprintf("failed=%d", out.Outbox.Failed))
+	if out.Outbox.Failed > 0 {
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team outbox %s --state failed", teamName), "outbox", fmt.Sprintf("failed=%d", out.Outbox.Failed))
+		} else {
+			add("agent-team outbox ls --state failed", "outbox", fmt.Sprintf("failed=%d", out.Outbox.Failed))
+		}
 	}
-	if teamName == "" && out.Outbox.Pending > 0 {
-		add("agent-team outbox drain --dry-run", "outbox", fmt.Sprintf("pending=%d", out.Outbox.Pending))
+	if out.Outbox.Pending > 0 {
+		if teamName != "" {
+			add(fmt.Sprintf("agent-team team outbox %s --state pending", teamName), "outbox", fmt.Sprintf("pending=%d", out.Outbox.Pending))
+		} else {
+			add("agent-team outbox drain --dry-run", "outbox", fmt.Sprintf("pending=%d", out.Outbox.Pending))
+		}
 	}
 	if out.Jobs.Attention > 0 {
 		if teamName != "" {
@@ -859,11 +885,11 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 			add("agent-team schedule fire --dry-run --preview-triggers", "schedules", fmt.Sprintf("due=%d", out.Schedules.Due))
 		}
 	}
-	if overviewHasDrainableWork(out) {
+	if overviewHasDrainableWorkForScope(out, teamName) {
 		if teamName != "" {
-			add(fmt.Sprintf("agent-team team drain %s", teamName), "overview", overviewDrainableWorkReason(out))
+			add(fmt.Sprintf("agent-team team drain %s", teamName), "overview", overviewDrainableWorkReasonForScope(out, teamName))
 		} else {
-			add("agent-team drain", "overview", overviewDrainableWorkReason(out))
+			add("agent-team drain", "overview", overviewDrainableWorkReasonForScope(out, teamName))
 		}
 	}
 	if teamName == "" && out.Intake.Errors > 0 {
@@ -893,11 +919,19 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 }
 
 func overviewHasDrainableWork(out *overviewResult) bool {
+	return overviewHasDrainableWorkForScope(out, "")
+}
+
+func overviewHasDrainableWorkForScope(out *overviewResult, teamName string) bool {
 	if out == nil {
 		return false
 	}
+	outboxPending := out.Outbox.Pending
+	if strings.TrimSpace(teamName) != "" {
+		outboxPending = 0
+	}
 	return out.Queue.Pending > out.Queue.Delayed ||
-		out.Outbox.Pending > 0 ||
+		outboxPending > 0 ||
 		out.Jobs.StatusChanges > 0 ||
 		out.Jobs.ReadySteps > 0 ||
 		out.Pipelines.ReadySteps > 0 ||
@@ -905,6 +939,10 @@ func overviewHasDrainableWork(out *overviewResult) bool {
 }
 
 func overviewDrainableWorkReason(out *overviewResult) string {
+	return overviewDrainableWorkReasonForScope(out, "")
+}
+
+func overviewDrainableWorkReasonForScope(out *overviewResult, teamName string) string {
 	if out == nil {
 		return "drainable_work"
 	}
@@ -912,7 +950,9 @@ func overviewDrainableWorkReason(out *overviewResult) string {
 	if out.Queue.Pending > out.Queue.Delayed {
 		total += out.Queue.Pending - out.Queue.Delayed
 	}
-	total += out.Outbox.Pending
+	if strings.TrimSpace(teamName) == "" {
+		total += out.Outbox.Pending
+	}
 	total += out.Jobs.StatusChanges
 	total += out.Jobs.ReadySteps
 	total += out.Pipelines.ReadySteps

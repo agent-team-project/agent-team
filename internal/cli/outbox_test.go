@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/job"
 )
 
 func TestOutboxListShowRetryDrop(t *testing.T) {
@@ -149,6 +150,145 @@ func TestOutboxDrainThroughDaemon(t *testing.T) {
 	stopAndWaitForTest(t, mgr, "worker-squ-504")
 }
 
+func TestTeamOutboxScopesItemsAndActions(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[instances.other]
+agent = "other"
+
+[[instances.other.triggers]]
+event = "agent.dispatch"
+match.target = "other"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+
+[teams.platform]
+instances = ["other"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 27, 14, 0, 0, 0, time.UTC)
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-901",
+			Ticket:    "SQU-901",
+			Target:    "worker",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "oth-901",
+			Ticket:    "OTH-901",
+			Target:    "other",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	for _, item := range []*daemon.OutboxItem{
+		{
+			ID:        "outbox-delivery-pending",
+			State:     daemon.OutboxStatePending,
+			Type:      "agent.dispatch",
+			Source:    "manager",
+			Payload:   map[string]any{"job_id": "squ-901", "ticket": "SQU-901", "target": "worker"},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "outbox-delivery-failed",
+			State:     daemon.OutboxStateFailed,
+			Type:      "agent.dispatch",
+			Source:    "manager",
+			Payload:   map[string]any{"job_id": "squ-901", "ticket": "SQU-901", "target": "worker"},
+			LastError: "route missing",
+			CreatedAt: now.Add(time.Minute),
+			UpdatedAt: now.Add(time.Minute),
+		},
+		{
+			ID:        "outbox-platform-pending",
+			State:     daemon.OutboxStatePending,
+			Type:      "agent.dispatch",
+			Source:    "manager",
+			Payload:   map[string]any{"job_id": "oth-901", "ticket": "OTH-901", "target": "other"},
+			CreatedAt: now.Add(2 * time.Minute),
+			UpdatedAt: now.Add(2 * time.Minute),
+		},
+	} {
+		writeCLIOutboxItem(t, teamDir, item)
+	}
+
+	out := runRootForOutboxTest(t, "team", "outbox", "delivery", "--repo", root, "--sort", "id", "--json")
+	var listed []*daemon.OutboxItem
+	if err := json.Unmarshal(out.Bytes(), &listed); err != nil {
+		t.Fatalf("decode team outbox list: %v\n%s", err, out.String())
+	}
+	if len(listed) != 2 || listed[0].ID != "outbox-delivery-failed" || listed[1].ID != "outbox-delivery-pending" {
+		t.Fatalf("team outbox list = %+v", listed)
+	}
+
+	summaryOut := runRootForOutboxTest(t, "team", "outbox", "delivery", "--repo", root, "--summary", "--json")
+	var summary outboxSummary
+	if err := json.Unmarshal(summaryOut.Bytes(), &summary); err != nil {
+		t.Fatalf("decode team outbox summary: %v\n%s", err, summaryOut.String())
+	}
+	if summary.Total != 2 || summary.Pending != 1 || summary.Failed != 1 || summary.Filtered != 2 {
+		t.Fatalf("team outbox summary = %+v", summary)
+	}
+
+	shown := runRootForOutboxTest(t, "team", "outbox", "show", "delivery", "outbox-delivery-failed", "--repo", root, "--json")
+	var shownItem daemon.OutboxItem
+	if err := json.Unmarshal(shown.Bytes(), &shownItem); err != nil {
+		t.Fatalf("decode team outbox show: %v\n%s", err, shown.String())
+	}
+	if shownItem.ID != "outbox-delivery-failed" || shownItem.LastError != "route missing" {
+		t.Fatalf("shown team outbox item = %+v", shownItem)
+	}
+
+	retry := runRootForOutboxTest(t, "team", "outbox", "retry", "delivery", "outbox-delivery-failed", "--repo", root, "--dry-run", "--json")
+	var retryRows []outboxActionResult
+	if err := json.Unmarshal(retry.Bytes(), &retryRows); err != nil {
+		t.Fatalf("decode team outbox retry: %v\n%s", err, retry.String())
+	}
+	if len(retryRows) != 1 || retryRows[0].Action != "would_retry" || !retryRows[0].DryRun {
+		t.Fatalf("retry rows = %+v", retryRows)
+	}
+	stillFailed, err := daemon.ReadOutboxItem(teamDir, "outbox-delivery-failed")
+	if err != nil || stillFailed.State != daemon.OutboxStateFailed {
+		t.Fatalf("dry-run retry changed item=%+v err=%v", stillFailed, err)
+	}
+
+	drop := runRootForOutboxTest(t, "team", "outbox", "drop", "delivery", "outbox-delivery-pending", "--repo", root, "--dry-run", "--json")
+	var dropRows []outboxActionResult
+	if err := json.Unmarshal(drop.Bytes(), &dropRows); err != nil {
+		t.Fatalf("decode team outbox drop: %v\n%s", err, drop.String())
+	}
+	if len(dropRows) != 1 || dropRows[0].Action != "would_drop" || !dropRows[0].DryRun {
+		t.Fatalf("drop rows = %+v", dropRows)
+	}
+	if _, err := daemon.ReadOutboxItem(teamDir, "outbox-delivery-pending"); err != nil {
+		t.Fatalf("dry-run drop removed item: %v", err)
+	}
+
+	_, stderr, err := runRootForOutboxTestErr(t, "team", "outbox", "show", "delivery", "outbox-platform-pending", "--repo", root)
+	if err == nil {
+		t.Fatalf("out-of-team show succeeded")
+	}
+	if !strings.Contains(stderr.String(), `outbox item "outbox-platform-pending" is not owned by team "delivery"`) {
+		t.Fatalf("out-of-team error = %q", stderr.String())
+	}
+}
+
 func writeCLIOutboxItem(t *testing.T, teamDir string, item *daemon.OutboxItem) {
 	t.Helper()
 	if err := daemon.WriteOutboxItem(teamDir, item); err != nil {
@@ -158,13 +298,20 @@ func writeCLIOutboxItem(t *testing.T, teamDir string, item *daemon.OutboxItem) {
 
 func runRootForOutboxTest(t *testing.T, args ...string) *bytes.Buffer {
 	t.Helper()
+	out, stderr, err := runRootForOutboxTestErr(t, args...)
+	if err != nil {
+		t.Fatalf("agent-team %s: %v\nstderr=%s\nstdout=%s", strings.Join(args, " "), err, stderr.String(), out.String())
+	}
+	return out
+}
+
+func runRootForOutboxTestErr(t *testing.T, args ...string) (*bytes.Buffer, *bytes.Buffer, error) {
+	t.Helper()
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
 	cmd.SetArgs(args)
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("agent-team %s: %v\nstderr=%s\nstdout=%s", strings.Join(args, " "), err, stderr.String(), out.String())
-	}
-	return out
+	err := cmd.Execute()
+	return out, stderr, err
 }

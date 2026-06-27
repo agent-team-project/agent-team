@@ -235,6 +235,10 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team queue drop <team> --all` | Drop matching team-owned entries; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
 | `agent-team team queue prune <team>` | Age-prune team-owned entries; filter and limit prune candidates with `--runtime`, `--ready`, and `--limit` |
 | `agent-team team queue quarantine <team>` | Scoped quarantine list; sort rows with `--sort` and cap output with `--limit` |
+| `agent-team team outbox <team>` | Scoped outbox list or summary; filter by state, type, source, or job and sort/cap rows |
+| `agent-team team outbox show <team> <id>` | Inspect one outbox event owned by a team |
+| `agent-team team outbox retry <team> <id>` | Move one team-owned failed or processed outbox event back to pending |
+| `agent-team team outbox drop <team> <id>` | Remove one inspected team-owned outbox event |
 | `agent-team team pipelines <team>` | List or watch team-owned pipeline status rows with queue/quarantine counts; sort rows and cap output with `--limit` |
 | `agent-team team explain <team>` | Expand or watch team-owned pipeline jobs as per-step diagnostics; sort and cap large histories with `--sort` and `--limit`, or add `--step` to focus one stage |
 | `agent-team team ready <team>` | List or watch scoped ready pipeline steps; filter by `--step`, sort by `--sort`, and cap rows with `--limit` |

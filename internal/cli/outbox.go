@@ -395,6 +395,10 @@ func runOutboxList(w io.Writer, teamDir string, filters outboxListFilters, opts 
 	if err != nil {
 		return err
 	}
+	return runOutboxListItems(w, items, filters, opts, jsonOut, tmpl)
+}
+
+func runOutboxListItems(w io.Writer, items []*daemon.OutboxItem, filters outboxListFilters, opts outboxListOptions, jsonOut bool, tmpl *template.Template) error {
 	filtered := filterOutboxItems(items, filters)
 	sortOutboxItems(filtered, opts.Sort)
 	filtered = limitOutboxItems(filtered, opts.Limit)
@@ -412,6 +416,10 @@ func renderOutboxSummary(w io.Writer, teamDir string, filters outboxListFilters,
 	if err != nil {
 		return err
 	}
+	return renderOutboxSummaryForItems(w, items, filters, jsonOut)
+}
+
+func renderOutboxSummaryForItems(w io.Writer, items []*daemon.OutboxItem, filters outboxListFilters, jsonOut bool) error {
 	filtered := filterOutboxItems(items, filters)
 	summary := summarizeOutboxItems(items)
 	summary.Filtered = len(filtered)

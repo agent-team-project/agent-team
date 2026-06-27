@@ -60,6 +60,7 @@ func newTeamCmd() *cobra.Command {
 	cmd.AddCommand(newTeamRetryCmd())
 	cmd.AddCommand(newTeamTimeoutCmd())
 	cmd.AddCommand(newTeamQueueCmd())
+	cmd.AddCommand(newTeamOutboxCmd())
 	cmd.AddCommand(newTeamLogsCmd())
 	cmd.AddCommand(newTeamEventsCmd())
 	cmd.AddCommand(newTeamSendCmd())
