@@ -810,8 +810,168 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	if err := invalidSection.Execute(); err == nil {
 		t.Fatalf("snapshot diff invalid section succeeded")
 	}
-	if !strings.Contains(invalidSectionErr.String(), "--section must be provenance, git, runtime, health, plan, next") {
+	if !strings.Contains(invalidSectionErr.String(), "--section must be provenance, git, runtime, health, plan, triage, next") {
 		t.Fatalf("invalid section stderr = %q", invalidSectionErr.String())
+	}
+}
+
+func TestSnapshotDiffCommandReportsTriageChanges(t *testing.T) {
+	tmp := t.TempDir()
+	beforePath := filepath.Join(tmp, "triage-before.json")
+	afterPath := filepath.Join(tmp, "triage-after.json")
+	now := time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC)
+	before := snapshotDiffInput{
+		CapturedAt: now.Format(time.RFC3339),
+		Repo:       "/repo",
+		JobTriage: &jobTriageSnapshot{
+			Summary: jobSummary{Total: 3, Running: 2, Blocked: 1},
+			Queue:   queueSummary{Total: 1, Dead: 1},
+			Attention: []jobTriageItem{
+				{
+					JobID:     "squ-201",
+					Ticket:    "SQU-201",
+					Status:    job.StatusRunning,
+					Severity:  "warning",
+					Reasons:   []string{"queue_dead"},
+					Actions:   []string{"agent-team job queue retry squ-201 --all --dry-run"},
+					Target:    "worker",
+					Instance:  "worker-squ-201",
+					Pipeline:  "ticket_to_pr",
+					QueueDead: 1,
+					QueueIDs:  []string{"q-201"},
+				},
+				{
+					JobID:     "squ-202",
+					Ticket:    "SQU-202",
+					Status:    job.StatusBlocked,
+					Severity:  "critical",
+					Reasons:   []string{"blocked_status"},
+					StepID:    "review",
+					StepState: "blocked",
+					Pipeline:  "ticket_to_pr",
+					Message:   "operator input required",
+				},
+			},
+			ReadySteps: []jobReadyRow{{
+				JobID:      "squ-203",
+				Ticket:     "SQU-203",
+				Pipeline:   "ticket_to_pr",
+				JobStatus:  job.StatusQueued,
+				State:      "ready",
+				StepID:     "implement",
+				Target:     "worker",
+				StepStatus: job.StatusQueued,
+				Actions:    []string{"agent-team job advance squ-203 --dry-run"},
+			}},
+			StatusPreviews: []jobStatusReconcileResult{{
+				JobID:     "squ-202",
+				Instance:  "worker-squ-202",
+				Phase:     "blocked",
+				MatchedBy: "status",
+				Before:    job.StatusRunning,
+				After:     job.StatusBlocked,
+				Message:   "blocked",
+				Changed:   true,
+				DryRun:    true,
+			}},
+		},
+	}
+	after := snapshotDiffInput{
+		CapturedAt: now.Add(5 * time.Minute).Format(time.RFC3339),
+		Repo:       "/repo",
+		JobTriage: &jobTriageSnapshot{
+			Summary: jobSummary{Total: 3, Running: 1, Blocked: 1, Done: 1},
+			Queue:   queueSummary{},
+			Attention: []jobTriageItem{
+				{
+					JobID:     "squ-202",
+					Ticket:    "SQU-202",
+					Status:    job.StatusBlocked,
+					Severity:  "warning",
+					Reasons:   []string{"blocked_status"},
+					StepID:    "review",
+					StepState: "blocked",
+					Pipeline:  "ticket_to_pr",
+					Message:   "still waiting",
+				},
+				{
+					JobID:    "squ-204",
+					Ticket:   "SQU-204",
+					Status:   job.StatusRunning,
+					Severity: "warning",
+					Reasons:  []string{"stale_running"},
+					Target:   "worker",
+					Instance: "worker-squ-204",
+					Actions:  []string{"agent-team job timeout squ-204 --dry-run"},
+				},
+			},
+			ReadySteps: []jobReadyRow{{
+				JobID:      "squ-205",
+				Ticket:     "SQU-205",
+				Pipeline:   "ticket_to_pr",
+				JobStatus:  job.StatusQueued,
+				State:      "ready",
+				StepID:     "review",
+				Target:     "manager",
+				StepStatus: job.StatusQueued,
+				Actions:    []string{"agent-team job advance squ-205 --dry-run"},
+			}},
+		},
+	}
+	writeSnapshotDiffInput(t, beforePath, before)
+	writeSnapshotDiffInput(t, afterPath, after)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "triage", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("snapshot diff triage section: %v\nstderr=%s", err, stderr.String())
+	}
+	var result snapshotDiffResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode triage snapshot diff: %v\nbody=%s", err, out.String())
+	}
+	if result.Summary.TotalChanges == 0 || result.Summary.Triage.Added == 0 || result.Summary.Triage.Removed == 0 || result.Summary.Triage.Changed == 0 {
+		t.Fatalf("triage diff summary = %+v", result.Summary)
+	}
+	if result.Summary.Jobs.Added != 0 || result.Summary.Next.Added != 0 {
+		t.Fatalf("triage-only diff leaked other sections: %+v", result.Summary)
+	}
+	for _, change := range result.Changes {
+		if change.Section != "triage" {
+			t.Fatalf("triage-only diff included %q change: %+v", change.Section, result.Changes)
+		}
+	}
+	for _, want := range []struct {
+		id     string
+		action string
+	}{
+		{"attention/squ-201", "removed"},
+		{"attention/squ-202/step/review", "changed"},
+		{"attention/squ-204", "added"},
+		{"ready/squ-203/step/implement", "removed"},
+		{"ready/squ-205/step/review", "added"},
+		{"status_preview/squ-202/worker-squ-202", "removed"},
+		{"attention.reason.queue_dead", "removed"},
+		{"attention.reason.stale_running", "added"},
+	} {
+		if !hasSnapshotDiffChange(result.Changes, "triage", want.id, want.action) {
+			t.Fatalf("missing triage change %s %s: %+v", want.id, want.action, result.Changes)
+		}
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "triage"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("snapshot diff triage text: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "triage: added=") || !strings.Contains(textOut.String(), "attention/squ-204") {
+		t.Fatalf("triage text missing expected details:\n%s", textOut.String())
 	}
 }
 

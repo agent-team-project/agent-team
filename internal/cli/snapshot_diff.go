@@ -22,7 +22,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 		Use:   "diff <before.json> <after.json>",
 		Short: "Compare two saved diagnostic snapshots.",
 		Long: "Compare two saved global, team, pipeline, or job diagnostic snapshot JSON files and summarize " +
-			"provenance, git, runtime, health, plan, next-action, instance, job, inbox, queue, schedule, intake, event, pipeline, ready-advance, and section-error changes.",
+			"provenance, git, runtime, health, plan, triage, next-action, instance, job, inbox, queue, schedule, intake, event, pipeline, ready-advance, and section-error changes.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sectionSet, err := parseSnapshotDiffSections(sections)
@@ -50,7 +50,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit snapshot diff as JSON.")
 	cmd.Flags().BoolVar(&exitCode, "exit-code", false, "Exit with status 1 when snapshots differ.")
-	cmd.Flags().StringSliceVar(&sections, "section", nil, "Only compare sections: provenance, git, runtime, health, plan, next, instances, jobs, pipelines, inbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&sections, "section", nil, "Only compare sections: provenance, git, runtime, health, plan, triage, next, instances, jobs, pipelines, inbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all. Can repeat or comma-separate.")
 	return cmd
 }
 
@@ -63,6 +63,7 @@ type snapshotDiffInput struct {
 	Runtime          *runtimeInfo                  `json:"runtime,omitempty"`
 	Health           *healthResult                 `json:"health,omitempty"`
 	Plan             *planResult                   `json:"plan,omitempty"`
+	JobTriage        *jobTriageSnapshot            `json:"job_triage,omitempty"`
 	Next             *nextActionResult             `json:"next,omitempty"`
 	Actions          []string                      `json:"actions,omitempty"`
 	Team             *teamInfo                     `json:"team,omitempty"`
@@ -341,6 +342,7 @@ type snapshotDiffSummary struct {
 	Runtime         snapshotDiffCounters `json:"runtime"`
 	Health          snapshotDiffCounters `json:"health"`
 	Plan            snapshotDiffCounters `json:"plan"`
+	Triage          snapshotDiffCounters `json:"triage"`
 	Next            snapshotDiffCounters `json:"next"`
 	Instances       snapshotDiffCounters `json:"instances"`
 	Jobs            snapshotDiffCounters `json:"jobs"`
@@ -376,6 +378,7 @@ type snapshotDiffComparable struct {
 	Runtime         map[string]string
 	Health          map[string]string
 	Plan            map[string]string
+	Triage          map[string]string
 	Next            map[string]string
 	Instances       map[string]string
 	Jobs            map[string]string
@@ -421,6 +424,9 @@ func diffSnapshotFiles(beforePath, afterPath string, opts snapshotDiffOptions) (
 	}
 	if snapshotDiffSectionEnabled(opts.Sections, "plan") {
 		result.Changes = append(result.Changes, diffSnapshotStringMaps("plan", before.Plan, after.Plan, &result.Summary.Plan)...)
+	}
+	if snapshotDiffSectionEnabled(opts.Sections, "triage") {
+		result.Changes = append(result.Changes, diffSnapshotStringMaps("triage", before.Triage, after.Triage, &result.Summary.Triage)...)
 	}
 	if snapshotDiffSectionEnabled(opts.Sections, "next") {
 		result.Changes = append(result.Changes, diffSnapshotStringMaps("next", before.Next, after.Next, &result.Summary.Next)...)
@@ -472,6 +478,7 @@ func parseSnapshotDiffSections(values []string) (map[string]bool, error) {
 		"runtime":          true,
 		"health":           true,
 		"plan":             true,
+		"triage":           true,
 		"next":             true,
 		"instances":        true,
 		"jobs":             true,
@@ -499,7 +506,7 @@ func parseSnapshotDiffSections(values []string) (map[string]bool, error) {
 				name = "queue_quarantine"
 			}
 			if !valid[name] {
-				return nil, fmt.Errorf("--section must be provenance, git, runtime, health, plan, next, instances, jobs, pipelines, inbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all")
+				return nil, fmt.Errorf("--section must be provenance, git, runtime, health, plan, triage, next, instances, jobs, pipelines, inbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all")
 			}
 			out[name] = true
 		}
@@ -541,6 +548,7 @@ func snapshotDiffComparableFromInput(path string, input snapshotDiffInput) snaps
 		Runtime:         snapshotDiffRuntimeMap(input.Runtime),
 		Health:          snapshotDiffHealthMap(input.Health),
 		Plan:            snapshotDiffPlanMap(input.Plan),
+		Triage:          snapshotDiffTriageMap(input.JobTriage),
 		Next:            snapshotDiffNextMap(input.Next, input.Actions),
 		Instances:       map[string]string{},
 		Jobs:            map[string]string{},
@@ -716,6 +724,124 @@ func snapshotDiffPlanMap(plan *planResult) map[string]string {
 		out["instance."+id] = compactSnapshotDiffValue(row.Agent, row.Kind, row.Status, row.Phase, row.Action, row.Detail)
 	}
 	return out
+}
+
+func snapshotDiffTriageMap(triage *jobTriageSnapshot) map[string]string {
+	out := map[string]string{}
+	if triage == nil {
+		return out
+	}
+	addSnapshotDiffJobSummary(out, "summary", triage.Summary)
+	addSnapshotDiffQueueSummary(out, "queue", triage.Queue)
+	setSnapshotDiffInt(out, "attention.total", len(triage.Attention))
+	setSnapshotDiffInt(out, "ready_steps.total", len(triage.ReadySteps))
+	setSnapshotDiffInt(out, "status_previews.total", len(triage.StatusPreviews))
+	severities := map[string]int{}
+	reasons := map[string]int{}
+	for _, item := range triage.Attention {
+		if severity := strings.TrimSpace(item.Severity); severity != "" {
+			severities[severity]++
+		}
+		for _, reason := range item.Reasons {
+			reason = strings.TrimSpace(reason)
+			if reason != "" {
+				reasons[reason]++
+			}
+		}
+		addSnapshotDiffTriageAttention(out, item)
+	}
+	addSnapshotDiffCountMap(out, "attention.severity", severities)
+	addSnapshotDiffCountMap(out, "attention.reason", reasons)
+	for _, row := range triage.ReadySteps {
+		addSnapshotDiffTriageReadyStep(out, row)
+	}
+	for _, preview := range triage.StatusPreviews {
+		addSnapshotDiffTriageStatusPreview(out, preview)
+	}
+	return out
+}
+
+func addSnapshotDiffTriageAttention(out map[string]string, item jobTriageItem) {
+	id := strings.TrimSpace(item.JobID)
+	if id == "" {
+		return
+	}
+	if step := strings.TrimSpace(item.StepID); step != "" {
+		id += "/step/" + step
+	}
+	out["attention/"+id] = compactSnapshotDiffValue(
+		string(item.Status),
+		item.Severity,
+		snapshotDiffSortedListValue(item.Reasons),
+		item.Target,
+		item.Instance,
+		item.Pipeline,
+		item.StepState,
+		item.StepTarget,
+		intSnapshotDiffValue("queue_pending", item.QueuePending),
+		intSnapshotDiffValue("queue_dead", item.QueueDead),
+		intSnapshotDiffValue("queue_delayed", item.QueueDelayed),
+		intSnapshotDiffValue("queue_quarantined", item.QueueQuarantined),
+		intSnapshotDiffValue("queue_restorable", item.QueueQuarantineRestorable),
+		intSnapshotDiffValue("queue_unrestorable", item.QueueQuarantineUnrestorable),
+		snapshotDiffSortedListValue(item.QueueIDs),
+		snapshotDiffSortedListValue(item.QueueQuarantinePaths),
+		snapshotDiffSortedListValue(item.QueueQuarantineRestorablePaths),
+		item.Message,
+		snapshotDiffSortedListValue(item.Actions),
+	)
+}
+
+func addSnapshotDiffTriageReadyStep(out map[string]string, row jobReadyRow) {
+	id := strings.TrimSpace(row.JobID)
+	if id == "" {
+		return
+	}
+	if step := strings.TrimSpace(row.StepID); step != "" {
+		id += "/step/" + step
+	}
+	out["ready/"+id] = compactSnapshotDiffValue(
+		string(row.JobStatus),
+		row.State,
+		row.Target,
+		row.Instance,
+		row.Pipeline,
+		string(row.StepStatus),
+		row.Gate,
+		row.Workspace,
+		row.Runtime,
+		row.RuntimeBin,
+		boolSnapshotDiffValue("optional", row.Optional),
+		intSnapshotDiffValue("attempts", row.Attempts),
+		intSnapshotDiffValue("max_attempts", row.MaxAttempts),
+		intSnapshotDiffValue("parallel_ready", row.ParallelReadySteps),
+		snapshotDiffSortedListValue(row.WaitingFor),
+		snapshotDiffSortedListValue(row.Actions),
+		row.Message,
+	)
+}
+
+func addSnapshotDiffTriageStatusPreview(out map[string]string, preview jobStatusReconcileResult) {
+	id := strings.TrimSpace(preview.JobID)
+	if id == "" {
+		return
+	}
+	if instance := strings.TrimSpace(preview.Instance); instance != "" {
+		id += "/" + instance
+	}
+	transition := ""
+	if preview.Before != "" || preview.After != "" {
+		transition = string(preview.Before) + "->" + string(preview.After)
+	}
+	out["status_preview/"+id] = compactSnapshotDiffValue(
+		preview.Phase,
+		preview.MatchedBy,
+		transition,
+		preview.Branch,
+		preview.PR,
+		boolSnapshotDiffValue("changed", preview.Changed),
+		preview.Message,
+	)
 }
 
 func snapshotDiffNextMap(next *nextActionResult, actions []string) map[string]string {
@@ -1248,6 +1374,24 @@ func snapshotDiffStringMapValue(values map[string]string) string {
 	return strings.Join(parts, ",")
 }
 
+func snapshotDiffSortedListValue(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	clean := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			clean = append(clean, value)
+		}
+	}
+	if len(clean) == 0 {
+		return ""
+	}
+	sort.Strings(clean)
+	return strings.Join(clean, ",")
+}
+
 func compactSnapshotDiffValue(parts ...string) string {
 	clean := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -1311,6 +1455,7 @@ func renderSnapshotDiff(w io.Writer, result *snapshotDiffResult) {
 	renderSnapshotDiffCounterLine(w, "runtime", result.Summary.Runtime)
 	renderSnapshotDiffCounterLine(w, "health", result.Summary.Health)
 	renderSnapshotDiffCounterLine(w, "plan", result.Summary.Plan)
+	renderSnapshotDiffCounterLine(w, "triage", result.Summary.Triage)
 	renderSnapshotDiffCounterLine(w, "next", result.Summary.Next)
 	renderSnapshotDiffCounterLine(w, "instances", result.Summary.Instances)
 	renderSnapshotDiffCounterLine(w, "jobs", result.Summary.Jobs)
