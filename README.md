@@ -255,7 +255,7 @@ agent-team job queue <job-id> [-w] [--no-clear] [--interval 2s] [--summary] [--s
                                                 # list, inspect, restore, retry, drop, or prune active/quarantined daemon queue items owned by one durable job
 agent-team job retry <job-id> [--dispatch] [--workspace auto|worktree|repo] [--runtime claude|codex] [--runtime-bin <path>] [--dry-run] [--json]
                                                 # reopen a failed/closed job and optionally dispatch another attempt immediately
-agent-team job dispatch <job-id> [--source <instance>] [--workspace auto|worktree|repo] [--runtime claude|codex] [--runtime-bin <path>] [--dry-run] [--format <template>] [--json]
+agent-team job dispatch <job-id> [--source <instance>] [--workspace auto|worktree|repo] [--runtime claude|codex] [--runtime-bin <path>] [--wait [--wait-status running|terminal] [--wait-event dispatched] [--wait-timeout 5m] [--fail-on-failed]] [--dry-run] [--format <template>] [--json]
 agent-team job adopt <job-id> (--pid <pid>|--pid-file <path>) [--step <id>] [--instance <name>] [--runtime claude|codex] [--session-id <id>] [--dry-run] [--format '{{.Job.ID}} {{.Metadata.Instance}}'] [--json]
 agent-team job advance <job-id> [--workspace auto|worktree|repo] [--runtime claude|codex] [--runtime-bin <path>] [--dry-run] [--format '{{.Job.ID}} {{.Step.ID}}'] [--json]
 agent-team job approve <job-id> [message...] [--message "..."] [--message-file <path|->] [--step review] [--advance] [--dry-run] [--format '{{.Job.ID}} {{.Step.ID}}'] [--json]

@@ -2025,14 +2025,20 @@ agent-team job dispatch <job-id> [flags]
 Flags:
 
 ```text
-      --dry-run              Preview topology matches without publishing to the daemon or updating the job.
-      --format string        Render the updated job or dry-run preview with a Go template.
-      --json                 Emit the updated job and daemon event outcome as JSON.
-      --repo string          Repo root containing .agent_team. (default "<repo>")
-      --runtime string       Runtime profile for the dispatched instance (claude or codex). Overrides env and repo config.
-      --runtime-bin string   Runtime binary for the dispatched instance. Overrides env and repo config.
-      --source string        Source instance for the dispatch event (default: AGENT_TEAM_INSTANCE or cli).
-      --workspace string     Workspace mode for spawned children: auto, worktree, or repo. (default "auto")
+      --dry-run                  Preview topology matches without publishing to the daemon or updating the job.
+      --fail-on-failed           With --wait, exit 1 if the job resolves to failed.
+      --format string            Render the updated job or dry-run preview with a Go template.
+      --json                     Emit the updated job and daemon event outcome as JSON.
+      --repo string              Repo root containing .agent_team. (default "<repo>")
+      --runtime string           Runtime profile for the dispatched instance (claude or codex). Overrides env and repo config.
+      --runtime-bin string       Runtime binary for the dispatched instance. Overrides env and repo config.
+      --source string            Source instance for the dispatch event (default: AGENT_TEAM_INSTANCE or cli).
+      --wait                     After dispatching, wait for the job to reach a lifecycle status or event.
+      --wait-event strings       With --wait, last event to wait for, e.g. dispatched, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration   Polling interval with --wait. (default 500ms)
+      --wait-status strings      With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-timeout duration    Maximum time to wait with --wait (0 = no timeout).
+      --workspace string         Workspace mode for spawned children: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team job events`

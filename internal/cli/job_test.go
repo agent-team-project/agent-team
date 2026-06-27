@@ -6658,6 +6658,101 @@ func TestJobDispatchAndSend(t *testing.T) {
 	stopAndWaitForTest(t, mgr, "worker-squ-43")
 }
 
+func TestJobDispatchWaitsForRequestedStatus(t *testing.T) {
+	target, mgr, cleanup := setupDispatchCommandRepo(t)
+	defer cleanup()
+
+	create := NewRootCmd()
+	create.SetOut(&bytes.Buffer{})
+	createErr := &bytes.Buffer{}
+	create.SetErr(createErr)
+	create.SetArgs([]string{
+		"job", "create", "SQU-181",
+		"--target", "worker",
+		"--kickoff", "wait until dispatched",
+		"--repo", target,
+	})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("job create: %v\nstderr=%s", err, createErr.String())
+	}
+
+	dispatch := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	dispatch.SetOut(out)
+	dispatch.SetErr(stderr)
+	dispatch.SetArgs([]string{
+		"job", "dispatch", "squ-181",
+		"--repo", target,
+		"--workspace", "repo",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := dispatch.Execute(); err != nil {
+		t.Fatalf("job dispatch --wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var dispatched struct {
+		Job   job.Job       `json:"job"`
+		Event eventResponse `json:"event"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &dispatched); err != nil {
+		t.Fatalf("decode dispatch wait json: %v\nbody=%s", err, out.String())
+	}
+	if dispatched.Job.Status != job.StatusRunning || dispatched.Job.Instance != "worker-squ-181" || dispatched.Job.LastEvent != "dispatched" {
+		t.Fatalf("waited dispatch job = %+v", dispatched.Job)
+	}
+	if len(dispatched.Event.Dispatched) != 1 {
+		t.Fatalf("event = %+v, want one dispatch", dispatched.Event)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-181")
+}
+
+func TestJobDispatchWaitTimesOutForEvent(t *testing.T) {
+	target, mgr, cleanup := setupDispatchCommandRepo(t)
+	defer cleanup()
+
+	create := NewRootCmd()
+	create.SetOut(&bytes.Buffer{})
+	createErr := &bytes.Buffer{}
+	create.SetErr(createErr)
+	create.SetArgs([]string{
+		"job", "create", "SQU-182",
+		"--target", "worker",
+		"--kickoff", "wait for event",
+		"--repo", target,
+	})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("job create: %v\nstderr=%s", err, createErr.String())
+	}
+
+	dispatch := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	dispatch.SetOut(out)
+	dispatch.SetErr(stderr)
+	dispatch.SetArgs([]string{
+		"job", "dispatch", "squ-182",
+		"--repo", target,
+		"--workspace", "repo",
+		"--wait",
+		"--wait-event", "closed",
+		"--wait-timeout", "1ms",
+		"--wait-interval", "10ms",
+	})
+	if err := dispatch.Execute(); err == nil {
+		t.Fatalf("job dispatch --wait succeeded unexpectedly")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("dispatch wait timeout wrote stdout=%q", out.String())
+	}
+	if !strings.Contains(stderr.String(), "timed out waiting for squ-182 to reach event=closed") ||
+		!strings.Contains(stderr.String(), "current=running event=dispatched") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-182")
+}
+
 func TestJobSendUsesExplicitStepInstance(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
