@@ -183,6 +183,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team outbox retry --all` | Retry matching outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--job`, `--sort`, and `--limit` |
 | `agent-team outbox drop <id>` | Remove one outbox event after inspection |
 | `agent-team outbox drop --all` | Drop matching outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--job`, `--sort`, and `--limit` |
+| `agent-team outbox prune` | Remove old processed outbox events by default; pass `--state failed`, `pending`, or `all` for explicit cleanup and bound with `--older-than`, filters, and `--limit` |
 
 ## Pipelines
 

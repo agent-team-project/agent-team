@@ -3439,6 +3439,7 @@ Subcommands:
 - `agent-team outbox drain` - Ask the running daemon to publish pending outbox events.
 - `agent-team outbox drop` - Drop one or more outbox events.
 - `agent-team outbox ls` - List sandboxed agent outbox events.
+- `agent-team outbox prune` - Prune old sandboxed agent outbox events.
 - `agent-team outbox retry` - Retry one or more processed or failed outbox events.
 - `agent-team outbox show` - Show one outbox event.
 
@@ -3518,6 +3519,37 @@ Flags:
       --summary          Show aggregate outbox counts instead of rows.
       --target string    Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
       --type strings     Filter by event type; repeat or comma-separate values.
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team outbox prune`
+
+Prune old sandboxed agent outbox events.
+
+Prune old sandboxed agent outbox events. By default this removes processed events; pass --state failed, pending, or all for explicit cleanup.
+
+```text
+agent-team outbox prune [flags]
+```
+
+Flags:
+
+```text
+      --dry-run               Preview outbox events that would be pruned without dropping them.
+      --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.Dropped}}'.
+      --job strings           Filter by job id or ticket before pruning; repeat or comma-separate values.
+      --json                  Emit prune results as JSON.
+      --limit int             Prune at most this many matching outbox events; 0 means no limit.
+      --older-than duration   Only prune items older than this duration based on processed/failed/update/create time.
+      --source strings        Filter by source agent/instance before pruning; repeat or comma-separate values.
+      --state string          Outbox state to prune: processed, failed, pending, or all. (default "processed")
+      --target string         Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+      --type strings          Filter by event type before pruning; repeat or comma-separate values.
 ```
 
 Inherited Flags:

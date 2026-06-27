@@ -161,6 +161,107 @@ func TestOutboxListShowRetryDrop(t *testing.T) {
 	}
 }
 
+func TestOutboxPruneLocal(t *testing.T) {
+	target := t.TempDir()
+	teamDir := filepath.Join(target, ".agent_team")
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, item := range []*daemon.OutboxItem{
+		{
+			ID:          "outbox-processed-old",
+			State:       daemon.OutboxStateProcessed,
+			Type:        "agent.dispatch",
+			Payload:     map[string]any{"job_id": "squ-601", "ticket": "SQU-601", "target": "worker"},
+			Source:      "manager",
+			CreatedAt:   now.Add(-72 * time.Hour),
+			UpdatedAt:   now.Add(-72 * time.Hour),
+			ProcessedAt: now.Add(-72 * time.Hour),
+		},
+		{
+			ID:          "outbox-processed-mid",
+			State:       daemon.OutboxStateProcessed,
+			Type:        "agent.dispatch",
+			Payload:     map[string]any{"job_id": "squ-602", "ticket": "SQU-602", "target": "worker"},
+			Source:      "manager",
+			CreatedAt:   now.Add(-48 * time.Hour),
+			UpdatedAt:   now.Add(-48 * time.Hour),
+			ProcessedAt: now.Add(-48 * time.Hour),
+		},
+		{
+			ID:          "outbox-processed-new",
+			State:       daemon.OutboxStateProcessed,
+			Type:        "agent.dispatch",
+			Payload:     map[string]any{"job_id": "squ-603", "ticket": "SQU-603", "target": "worker"},
+			Source:      "manager",
+			CreatedAt:   now.Add(-time.Hour),
+			UpdatedAt:   now.Add(-time.Hour),
+			ProcessedAt: now.Add(-time.Hour),
+		},
+		{
+			ID:        "outbox-failed-old",
+			State:     daemon.OutboxStateFailed,
+			Type:      "agent.dispatch",
+			Payload:   map[string]any{"job_id": "squ-604", "ticket": "SQU-604", "target": "worker"},
+			Source:    "manager",
+			CreatedAt: now.Add(-48 * time.Hour),
+			UpdatedAt: now.Add(-48 * time.Hour),
+			FailedAt:  now.Add(-48 * time.Hour),
+		},
+		{
+			ID:        "outbox-pending-old",
+			State:     daemon.OutboxStatePending,
+			Type:      "agent.dispatch",
+			Payload:   map[string]any{"job_id": "squ-605", "ticket": "SQU-605", "target": "worker"},
+			Source:    "manager",
+			CreatedAt: now.Add(-72 * time.Hour),
+			UpdatedAt: now.Add(-72 * time.Hour),
+		},
+	} {
+		writeCLIOutboxItem(t, teamDir, item)
+	}
+
+	dry := runRootForOutboxTest(t, "outbox", "prune", "--target", target, "--older-than", "24h", "--limit", "1", "--dry-run", "--json")
+	var dryRows []outboxPruneResult
+	if err := json.Unmarshal(dry.Bytes(), &dryRows); err != nil {
+		t.Fatalf("decode prune dry-run: %v\n%s", err, dry.String())
+	}
+	if len(dryRows) != 1 || dryRows[0].ID != "outbox-processed-old" || !dryRows[0].DryRun || dryRows[0].Dropped {
+		t.Fatalf("prune dry-run rows = %+v", dryRows)
+	}
+	if _, err := daemon.ReadOutboxItem(teamDir, "outbox-processed-old"); err != nil {
+		t.Fatalf("dry-run removed processed old: %v", err)
+	}
+
+	pruned := runRootForOutboxTest(t, "outbox", "prune", "--target", target, "--older-than", "24h", "--format", "{{.ID}} {{.State}} {{.Dropped}}")
+	if got, want := strings.TrimSpace(pruned.String()), "outbox-processed-old processed true\noutbox-processed-mid processed true"; got != want {
+		t.Fatalf("prune output = %q, want %q", got, want)
+	}
+	for _, id := range []string{"outbox-processed-old", "outbox-processed-mid"} {
+		if _, err := daemon.ReadOutboxItem(teamDir, id); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s should be removed, err=%v", id, err)
+		}
+	}
+	for _, id := range []string{"outbox-processed-new", "outbox-failed-old", "outbox-pending-old"} {
+		if _, err := daemon.ReadOutboxItem(teamDir, id); err != nil {
+			t.Fatalf("%s should remain after default prune: %v", id, err)
+		}
+	}
+
+	failed := runRootForOutboxTest(t, "outbox", "prune", "--target", target, "--state", "failed", "--older-than", "24h", "--source", "manager", "--json")
+	var failedRows []outboxPruneResult
+	if err := json.Unmarshal(failed.Bytes(), &failedRows); err != nil {
+		t.Fatalf("decode failed prune: %v\n%s", err, failed.String())
+	}
+	if len(failedRows) != 1 || failedRows[0].ID != "outbox-failed-old" || !failedRows[0].Dropped {
+		t.Fatalf("failed prune rows = %+v", failedRows)
+	}
+	if _, err := daemon.ReadOutboxItem(teamDir, "outbox-failed-old"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("outbox-failed-old should be removed, err=%v", err)
+	}
+	if _, err := daemon.ReadOutboxItem(teamDir, "outbox-pending-old"); err != nil {
+		t.Fatalf("pending item should remain after failed prune: %v", err)
+	}
+}
+
 func TestOutboxDrainDryRunOffline(t *testing.T) {
 	target := t.TempDir()
 	teamDir := filepath.Join(target, ".agent_team")

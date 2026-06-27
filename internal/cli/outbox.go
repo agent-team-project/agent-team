@@ -32,6 +32,7 @@ func newOutboxCmd() *cobra.Command {
 	cmd.AddCommand(newOutboxDrainCmd())
 	cmd.AddCommand(newOutboxRetryCmd())
 	cmd.AddCommand(newOutboxDropCmd())
+	cmd.AddCommand(newOutboxPruneCmd())
 	return cmd
 }
 
@@ -401,6 +402,77 @@ func newOutboxDropCmd() *cobra.Command {
 	return cmd
 }
 
+func newOutboxPruneCmd() *cobra.Command {
+	var (
+		target    string
+		stateFlag string
+		olderThan time.Duration
+		dryRun    bool
+		jsonOut   bool
+		format    string
+		types     []string
+		sources   []string
+		jobs      []string
+		limit     int
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Prune old sandboxed agent outbox events.",
+		Long:  "Prune old sandboxed agent outbox events. By default this removes processed events; pass --state failed, pending, or all for explicit cleanup.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox prune: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if olderThan < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox prune: --older-than must be >= 0.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox prune: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			tmpl, err := parseOutboxPruneFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team outbox prune: %v\n", err)
+				return exitErr(2)
+			}
+			state, err := parseOutboxPruneState(stateFlag)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team outbox prune: %v\n", err)
+				return exitErr(2)
+			}
+			filters, err := parseOutboxFilters("", types, sources, jobs)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team outbox prune: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, target)
+			if err != nil {
+				return err
+			}
+			results, err := pruneOutboxItems(teamDir, state, olderThan, time.Now().UTC(), dryRun, filters, limit)
+			if err != nil {
+				return err
+			}
+			return renderOutboxPruneResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
+	cmd.Flags().StringVar(&stateFlag, "state", daemon.OutboxStateProcessed, "Outbox state to prune: processed, failed, pending, or all.")
+	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "Only prune items older than this duration based on processed/failed/update/create time.")
+	cmd.Flags().StringSliceVar(&types, "type", nil, "Filter by event type before pruning; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&sources, "source", nil, "Filter by source agent/instance before pruning; repeat or comma-separate values.")
+	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Filter by job id or ticket before pruning; repeat or comma-separate values.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Prune at most this many matching outbox events; 0 means no limit.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview outbox events that would be pruned without dropping them.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit prune results as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each prune result with a Go template, e.g. '{{.ID}} {{.Dropped}}'.")
+	return cmd
+}
+
 type outboxActionResult struct {
 	ID     string             `json:"id"`
 	State  string             `json:"state"`
@@ -418,6 +490,21 @@ type outboxSummary struct {
 	Processed int `json:"processed"`
 	Failed    int `json:"failed"`
 	Filtered  int `json:"filtered"`
+}
+
+const outboxPruneStateAll = "all"
+
+type outboxPruneResult struct {
+	ID        string    `json:"id"`
+	State     string    `json:"state"`
+	Type      string    `json:"type"`
+	Source    string    `json:"source,omitempty"`
+	Job       string    `json:"job,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Reference time.Time `json:"reference_time"`
+	DryRun    bool      `json:"dry_run,omitempty"`
+	Dropped   bool      `json:"dropped"`
 }
 
 func parseOutboxFilters(state string, types, sources, jobs []string) (outboxListFilters, error) {
@@ -494,6 +581,29 @@ func parseOutboxActionFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
+func parseOutboxPruneFormat(format string) (*template.Template, error) {
+	if format == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("outbox-prune-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func parseOutboxPruneState(raw string) (string, error) {
+	state := strings.ToLower(strings.TrimSpace(raw))
+	switch state {
+	case "", daemon.OutboxStateProcessed:
+		return daemon.OutboxStateProcessed, nil
+	case daemon.OutboxStateFailed, daemon.OutboxStatePending, outboxPruneStateAll:
+		return state, nil
+	default:
+		return "", fmt.Errorf("--state must be processed, failed, pending, or all")
+	}
+}
+
 func runOutboxList(w io.Writer, teamDir string, filters outboxListFilters, opts outboxListOptions, jsonOut bool, tmpl *template.Template) error {
 	items, err := daemon.ListOutboxItems(teamDir)
 	if err != nil {
@@ -545,6 +655,108 @@ func filteredOutboxActionItems(teamDir string, filters outboxListFilters, opts o
 		return nil, err
 	}
 	return prepareOutboxActionMatches(filterOutboxItems(items, filters), opts), nil
+}
+
+func pruneOutboxItems(teamDir, state string, olderThan time.Duration, now time.Time, dryRun bool, filters outboxListFilters, limit int) ([]outboxPruneResult, error) {
+	items, err := daemon.ListOutboxItems(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	matches := make([]*daemon.OutboxItem, 0, len(items))
+	for _, item := range filterOutboxItems(items, filters) {
+		if outboxItemMatchesPrune(item, state, olderThan, now) {
+			matches = append(matches, item)
+		}
+	}
+	matches = prepareOutboxPruneMatches(matches, limit)
+	return pruneOutboxItemMatches(teamDir, matches, dryRun)
+}
+
+func prepareOutboxPruneMatches(items []*daemon.OutboxItem, limit int) []*daemon.OutboxItem {
+	sort.SliceStable(items, func(i, j int) bool {
+		left, right := items[i], items[j]
+		leftRef, rightRef := outboxPruneReferenceTime(left), outboxPruneReferenceTime(right)
+		if !leftRef.Equal(rightRef) {
+			if leftRef.IsZero() {
+				return false
+			}
+			if rightRef.IsZero() {
+				return true
+			}
+			return leftRef.Before(rightRef)
+		}
+		if left != nil && right != nil && !left.CreatedAt.Equal(right.CreatedAt) {
+			return left.CreatedAt.Before(right.CreatedAt)
+		}
+		if left == nil || right == nil {
+			return right != nil
+		}
+		return left.ID < right.ID
+	})
+	return limitOutboxItems(items, limit)
+}
+
+func pruneOutboxItemMatches(teamDir string, items []*daemon.OutboxItem, dryRun bool) ([]outboxPruneResult, error) {
+	results := make([]outboxPruneResult, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		result := outboxPruneResult{
+			ID:        item.ID,
+			State:     item.State,
+			Type:      item.Type,
+			Source:    item.Source,
+			Job:       outboxItemJob(item),
+			CreatedAt: item.CreatedAt,
+			UpdatedAt: item.UpdatedAt,
+			Reference: outboxPruneReferenceTime(item),
+			DryRun:    dryRun,
+		}
+		if !dryRun {
+			if err := daemon.RemoveOutboxItem(teamDir, item.ID); err != nil {
+				if !errors.Is(err, fs.ErrNotExist) {
+					return nil, err
+				}
+			}
+			result.Dropped = true
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func outboxItemMatchesPrune(item *daemon.OutboxItem, state string, olderThan time.Duration, now time.Time) bool {
+	if item == nil {
+		return false
+	}
+	if state != outboxPruneStateAll && item.State != state {
+		return false
+	}
+	if olderThan <= 0 {
+		return true
+	}
+	ref := outboxPruneReferenceTime(item)
+	if ref.IsZero() {
+		return false
+	}
+	return !ref.After(now.Add(-olderThan))
+}
+
+func outboxPruneReferenceTime(item *daemon.OutboxItem) time.Time {
+	if item == nil {
+		return time.Time{}
+	}
+	if !item.ProcessedAt.IsZero() {
+		return item.ProcessedAt
+	}
+	if !item.FailedAt.IsZero() {
+		return item.FailedAt
+	}
+	if !item.UpdatedAt.IsZero() {
+		return item.UpdatedAt
+	}
+	return item.CreatedAt
 }
 
 func renderOutboxSummary(w io.Writer, teamDir string, filters outboxListFilters, jsonOut bool) error {
@@ -781,6 +993,50 @@ func renderOutboxActionResults(w io.Writer, results []outboxActionResult, jsonOu
 			result.ID, result.State, result.Type, emptyDash(result.Job), result.Action)
 	}
 	return tw.Flush()
+}
+
+func renderOutboxPruneResults(w io.Writer, results []outboxPruneResult, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(results)
+	}
+	if tmpl != nil {
+		for _, result := range results {
+			if err := tmpl.Execute(w, result); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	renderOutboxPruneTable(w, results)
+	return nil
+}
+
+func renderOutboxPruneTable(w io.Writer, results []outboxPruneResult) {
+	if len(results) == 0 {
+		fmt.Fprintln(w, "(no outbox events pruned)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tSTATE\tTYPE\tSOURCE\tJOB\tACTION\tREFERENCE")
+	for _, result := range results {
+		action := "dropped"
+		if result.DryRun {
+			action = "would_drop"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			result.ID,
+			result.State,
+			result.Type,
+			emptyDash(result.Source),
+			emptyDash(result.Job),
+			action,
+			queueTime(result.Reference),
+		)
+	}
+	_ = tw.Flush()
 }
 
 func retryOutboxItem(teamDir, id string, dryRun bool) (outboxActionResult, error) {
