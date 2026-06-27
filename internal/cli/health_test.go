@@ -908,6 +908,215 @@ target = "worker"
 	}
 }
 
+func TestHealthCommandReportsOutboxQuarantine(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	writeQuarantinedOutboxFile(t, teamDir, "20260627T220000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-health-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"target": "worker", "ticket": "SQU-220"},
+		CreatedAt: now.Add(-time.Minute),
+		UpdatedAt: now,
+	})
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"health", "--json", "--target", tmp})
+	err := cmd.Execute()
+	var code ExitCode
+	if !errors.As(err, &code) || code != 1 {
+		t.Fatalf("err = %v, want exit 1\nstderr=%s", err, stderr.String())
+	}
+	var body healthResult
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode health outbox quarantine json: %v\nbody=%s", err, stdout.String())
+	}
+	if body.OutboxQuarantine.Quarantined != 1 || body.OutboxQuarantine.Restorable != 1 || body.OutboxQuarantine.Unrestorable != 0 {
+		t.Fatalf("outbox quarantine = %+v, want one restorable item", body.OutboxQuarantine)
+	}
+	var sawQuarantineIssue bool
+	for _, issue := range body.Issues {
+		if issue.Code == "outbox_quarantined" {
+			if issue.Severity != "warning" || !containsString(issue.Actions, "agent-team outbox quarantine ls") || !containsString(issue.Actions, "agent-team outbox quarantine ls --restorable") || !containsString(issue.Actions, "agent-team snapshot --json") {
+				t.Fatalf("outbox quarantine issue = %+v", issue)
+			}
+			sawQuarantineIssue = true
+			break
+		}
+	}
+	if !sawQuarantineIssue {
+		t.Fatalf("issues = %+v, missing outbox_quarantined", body.Issues)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"health", "--target", tmp})
+	if err := text.Execute(); err == nil {
+		t.Fatal("health text succeeded unexpectedly")
+	}
+	for _, want := range []string{"outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "outbox_quarantined", "agent-team outbox quarantine ls --restorable"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("health text missing %q:\n%s\nstderr=%s", want, textOut.String(), textErr.String())
+		}
+	}
+}
+
+func TestHealthCommandSuggestsJobScopedOutboxQuarantine(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := mustNewJob(t, "SQU-221", "worker")
+	j.Instance = "worker-squ-221"
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("job.Write: %v", err)
+	}
+	writeQuarantinedOutboxFile(t, teamDir, "20260627T221000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-health-job-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"target": "worker", "ticket": "SQU-221", "job_id": "squ-221"},
+		CreatedAt: now.Add(-time.Minute),
+		UpdatedAt: now,
+	})
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"health", "--json", "--target", tmp})
+	err := cmd.Execute()
+	var code ExitCode
+	if !errors.As(err, &code) || code != 1 {
+		t.Fatalf("err = %v, want exit 1\nstderr=%s", err, stderr.String())
+	}
+	var body healthResult
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode health outbox quarantine json: %v\nbody=%s", err, stdout.String())
+	}
+	var outboxIssue *healthIssue
+	for i := range body.Issues {
+		if body.Issues[i].Code == "outbox_quarantined" {
+			outboxIssue = &body.Issues[i]
+			break
+		}
+	}
+	if outboxIssue == nil {
+		t.Fatalf("issues = %+v, missing outbox_quarantined", body.Issues)
+	}
+	for _, want := range []string{
+		"agent-team job outbox quarantine squ-221",
+		"agent-team job outbox quarantine squ-221 --restorable",
+		"agent-team job snapshot squ-221 --json",
+	} {
+		if !containsString(outboxIssue.Actions, want) {
+			t.Fatalf("outbox issue actions missing %q: %+v", want, outboxIssue.Actions)
+		}
+	}
+	if containsString(outboxIssue.Actions, "agent-team outbox quarantine ls") {
+		t.Fatalf("outbox issue should use job-scoped quarantine actions: %+v", outboxIssue.Actions)
+	}
+}
+
+func TestHealthCommandSuggestsPipelineScopedOutboxQuarantine(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture+`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		mustNewJob(t, "SQU-222", "worker"),
+		mustNewJob(t, "SQU-223", "worker"),
+	} {
+		j.Pipeline = "ticket_to_pr"
+		j.Instance = "worker-" + j.ID
+		j.Status = job.StatusRunning
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("job.Write: %v", err)
+		}
+		writeQuarantinedOutboxFile(t, teamDir, "20260627T222000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+			ID:        "outbox-health-" + j.ID + "-quarantined",
+			State:     daemon.OutboxStatePending,
+			Type:      "agent.dispatch",
+			Source:    "manager",
+			Payload:   map[string]any{"target": "worker", "ticket": j.Ticket, "job_id": j.ID},
+			CreatedAt: now.Add(-time.Minute),
+			UpdatedAt: now,
+		})
+	}
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"health", "--json", "--target", tmp})
+	err := cmd.Execute()
+	var code ExitCode
+	if !errors.As(err, &code) || code != 1 {
+		t.Fatalf("err = %v, want exit 1\nstderr=%s", err, stderr.String())
+	}
+	var body healthResult
+	if err := json.Unmarshal(stdout.Bytes(), &body); err != nil {
+		t.Fatalf("decode health outbox quarantine json: %v\nbody=%s", err, stdout.String())
+	}
+	var outboxIssue *healthIssue
+	for i := range body.Issues {
+		if body.Issues[i].Code == "outbox_quarantined" {
+			outboxIssue = &body.Issues[i]
+			break
+		}
+	}
+	if outboxIssue == nil {
+		t.Fatalf("issues = %+v, missing outbox_quarantined", body.Issues)
+	}
+	for _, want := range []string{
+		"agent-team pipeline outbox quarantine ticket_to_pr",
+		"agent-team pipeline outbox quarantine ticket_to_pr --restorable",
+		"agent-team pipeline snapshot ticket_to_pr --json",
+	} {
+		if !containsString(outboxIssue.Actions, want) {
+			t.Fatalf("outbox issue actions missing %q: %+v", want, outboxIssue.Actions)
+		}
+	}
+	if containsString(outboxIssue.Actions, "agent-team outbox quarantine ls") || containsString(outboxIssue.Actions, "agent-team job outbox quarantine") {
+		t.Fatalf("outbox issue should use pipeline-scoped actions: %+v", outboxIssue.Actions)
+	}
+
+	next := NewRootCmd()
+	nextOut, nextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	next.SetOut(nextOut)
+	next.SetErr(nextErr)
+	next.SetArgs([]string{"next", "--target", tmp, "--source", "outbox", "--reason", "quarantined", "--json"})
+	if err := next.Execute(); err != nil {
+		t.Fatalf("next outbox quarantine json: %v\nstderr=%s", err, nextErr.String())
+	}
+	var nextResult nextActionResult
+	if err := json.Unmarshal(nextOut.Bytes(), &nextResult); err != nil {
+		t.Fatalf("decode next outbox quarantine: %v\nbody=%s", err, nextOut.String())
+	}
+	if len(nextResult.Actions) != 1 || nextResult.Actions[0] != "agent-team pipeline outbox quarantine ticket_to_pr" {
+		t.Fatalf("next outbox quarantine actions = %+v", nextResult)
+	}
+}
+
 func TestHealthCommandReportsIntakeFailures(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

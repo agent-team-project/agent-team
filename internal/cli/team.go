@@ -6328,6 +6328,9 @@ func collectTeamHealthWithOptions(teamDir, name string, now time.Time, includeJo
 	if err := addTeamQueueHealth(result, teamDir, top, team, ownedJobs, now); err != nil {
 		return nil, err
 	}
+	if err := addTeamOutboxQuarantineHealth(result, teamDir, top, team, ownedJobs); err != nil {
+		return nil, err
+	}
 	if includeJobs {
 		if err := addTeamJobHealth(result, teamDir, top, team, ownedJobs, now); err != nil {
 			return nil, err
@@ -6760,6 +6763,32 @@ func addTeamQueueHealth(result *healthResult, teamDir string, top *topology.Topo
 			queueQuarantineHealthActions(result.Queue, team.Name, "", ""),
 		)
 	}
+	return nil
+}
+
+func addTeamOutboxQuarantineHealth(result *healthResult, teamDir string, top *topology.Topology, team *topology.Team, ownedJobs []*job.Job) error {
+	if result == nil {
+		return nil
+	}
+	items, err := listOutboxQuarantine(teamDir)
+	if err != nil {
+		return err
+	}
+	teamItems := teamOutboxQuarantineItems(top, team, ownedJobs, items)
+	result.OutboxQuarantine = summarizeOutboxQuarantineItems(teamItems)
+	if result.OutboxQuarantine.Quarantined == 0 {
+		return nil
+	}
+	result.addIssueWithSeverityAndActions(
+		"outbox_quarantined",
+		"warning",
+		"",
+		"",
+		"",
+		"",
+		fmt.Sprintf("team %q outbox has %d quarantined file(s) (%d restorable, %d unrestorable)", team.Name, result.OutboxQuarantine.Quarantined, result.OutboxQuarantine.Restorable, result.OutboxQuarantine.Unrestorable),
+		outboxQuarantineHealthActions(result.OutboxQuarantine, team.Name, "", ""),
+	)
 	return nil
 }
 

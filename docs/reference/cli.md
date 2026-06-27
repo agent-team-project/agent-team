@@ -329,7 +329,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | --- | --- |
 | `agent-team overview` | Compact state and action hints, including queue/outbox quarantine recovery; JSON includes structured `action_details` |
 | `agent-team next` | Recommended next commands with structured JSON `action_details`; filter quarantined outbox recovery with `--source outbox --reason quarantined` |
-| `agent-team health` | Scriptable health check |
+| `agent-team health` | Scriptable health check with queue/outbox quarantine warnings and scoped recovery actions |
 | `agent-team monitor` | Operator dashboard |
 | `agent-team watch` | Continuous monitor |
 | `agent-team snapshot` | Redacted diagnostic artifact with command provenance, queue/outbox quarantine inventory, and formatted summary fields |

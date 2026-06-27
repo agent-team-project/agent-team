@@ -40,7 +40,7 @@ Subcommands:
 - `agent-team drain` - Run maintenance cycles until idle.
 - `agent-team event` - Publish manual topology events to the daemon (for testing trigger matching).
 - `agent-team events` - Show daemon lifecycle events.
-- `agent-team health` - Check daemon and instance fleet health.
+- `agent-team health` - Check daemon, instance, queue, and outbox health.
 - `agent-team help` - Help about any command
 - `agent-team inbox` - Inspect and acknowledge daemon mailbox messages.
 - `agent-team init` - Vendor a starter team template into the current repo (creates .agent_team/).
@@ -966,7 +966,7 @@ Inherited Flags:
 
 ## `agent-team health`
 
-Check daemon and instance fleet health.
+Check daemon, instance, queue, and outbox health.
 
 Check the daemon, declared persistent instances, crashed instances, and stale status files. One-shot checks exit 0 when healthy and 1 when unhealthy.
 

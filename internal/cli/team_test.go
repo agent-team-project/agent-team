@@ -10175,6 +10175,24 @@ pipelines = ["ticket_to_pr"]
 		QueuedAt:   now.Add(-2 * time.Hour),
 		UpdatedAt:  now.Add(-2 * time.Hour),
 	})
+	writeQuarantinedOutboxFile(t, teamDir, "20260619T030000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-team-health-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": "squ-901", "target": "worker", "ticket": "SQU-901"},
+		CreatedAt: now.Add(-2 * time.Hour),
+		UpdatedAt: now.Add(-2 * time.Hour),
+	})
+	writeQuarantinedOutboxFile(t, teamDir, "20260619T030000.000000000Z", daemon.OutboxStatePending, &daemon.OutboxItem{
+		ID:        "outbox-other-health-quarantined",
+		State:     daemon.OutboxStatePending,
+		Type:      "agent.dispatch",
+		Source:    "manager",
+		Payload:   map[string]any{"job_id": "oth-1", "target": "other", "ticket": "OTH-1"},
+		CreatedAt: now.Add(-2 * time.Hour),
+		UpdatedAt: now.Add(-2 * time.Hour),
+	})
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -10202,6 +10220,9 @@ pipelines = ["ticket_to_pr"]
 	if snapshot.Health.Queue.Dead != 1 || snapshot.Health.Queue.Quarantined != 1 || snapshot.Health.Queue.QuarantineRestorable != 1 || snapshot.Health.Queue.QuarantineUnrestorable != 0 {
 		t.Fatalf("team queue summary = %+v", snapshot.Health.Queue)
 	}
+	if snapshot.Health.OutboxQuarantine.Quarantined != 1 || snapshot.Health.OutboxQuarantine.Restorable != 1 || snapshot.Health.OutboxQuarantine.Unrestorable != 0 {
+		t.Fatalf("team outbox quarantine summary = %+v", snapshot.Health.OutboxQuarantine)
+	}
 	if len(snapshot.Health.PipelineStatus) != 1 || snapshot.Health.PipelineStatus[0].Pipeline != "ticket_to_pr" || snapshot.Health.PipelineStatus[0].FailedSteps != 1 {
 		t.Fatalf("pipeline status = %+v", snapshot.Health.PipelineStatus)
 	}
@@ -10214,6 +10235,7 @@ pipelines = ["ticket_to_pr"]
 	var sawTeamJob bool
 	var sawScopedQueueAction bool
 	var sawQuarantineAction bool
+	var sawOutboxQuarantineAction bool
 	var sawScopedPipelineAction bool
 	for _, issue := range snapshot.Health.Issues {
 		codes[issue.Code] = true
@@ -10231,8 +10253,11 @@ pipelines = ["ticket_to_pr"]
 		if issue.Code == "queue_quarantined" && containsString(issue.Actions, "agent-team team queue quarantine delivery") && containsString(issue.Actions, "agent-team team queue quarantine delivery --restorable") && containsString(issue.Actions, "agent-team team snapshot delivery --json") {
 			sawQuarantineAction = true
 		}
+		if issue.Code == "outbox_quarantined" && containsString(issue.Actions, "agent-team team outbox quarantine delivery") && containsString(issue.Actions, "agent-team team outbox quarantine delivery --restorable") && containsString(issue.Actions, "agent-team team snapshot delivery --json") {
+			sawOutboxQuarantineAction = true
+		}
 	}
-	for _, want := range []string{"daemon_not_running", "queue_dead_letter", "queue_quarantined", "job_attention", "pipeline_failed_step"} {
+	for _, want := range []string{"daemon_not_running", "queue_dead_letter", "queue_quarantined", "outbox_quarantined", "job_attention", "pipeline_failed_step"} {
 		if !codes[want] {
 			t.Fatalf("issues = %+v, missing %s", snapshot.Health.Issues, want)
 		}
@@ -10249,6 +10274,9 @@ pipelines = ["ticket_to_pr"]
 	if !sawQuarantineAction {
 		t.Fatalf("issues = %+v, missing scoped quarantine action", snapshot.Health.Issues)
 	}
+	if !sawOutboxQuarantineAction {
+		t.Fatalf("issues = %+v, missing scoped outbox quarantine action", snapshot.Health.Issues)
+	}
 
 	text := NewRootCmd()
 	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -10258,7 +10286,7 @@ pipelines = ["ticket_to_pr"]
 	if err := text.Execute(); err == nil {
 		t.Fatal("team health text unexpectedly succeeded")
 	}
-	for _, want := range []string{"Team: delivery", "health: unhealthy", "jobs: total=1", "quarantined=1 restorable=1 unrestorable=0", "pipeline_failed_step", "queue_dead_letter", "queue_quarantined", "agent-team team retry delivery --dry-run --dispatch --preview-routes", "agent-team team repair delivery --retry-pipelines --dry-run --preview-routes", "agent-team team queue quarantine delivery --restorable"} {
+	for _, want := range []string{"Team: delivery", "health: unhealthy", "jobs: total=1", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "pipeline_failed_step", "queue_dead_letter", "queue_quarantined", "outbox_quarantined", "agent-team team retry delivery --dry-run --dispatch --preview-routes", "agent-team team repair delivery --retry-pipelines --dry-run --preview-routes", "agent-team team queue quarantine delivery --restorable", "agent-team team outbox quarantine delivery --restorable"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("team health text missing %q:\n%s", want, textOut.String())
 		}
@@ -10279,7 +10307,7 @@ pipelines = ["ticket_to_pr"]
 	if err := json.Unmarshal(defaultOut.Bytes(), &defaultSnapshot); err != nil {
 		t.Fatalf("decode default team health: %v\nbody=%s\nstderr=%s", err, defaultOut.String(), defaultErr.String())
 	}
-	if defaultSnapshot.Health == nil || defaultSnapshot.Health.Queue.Quarantined != 1 || defaultSnapshot.Health.Queue.QuarantineRestorable != 1 || defaultSnapshot.Health.Queue.QuarantineUnrestorable != 0 || defaultSnapshot.Health.Jobs != nil {
+	if defaultSnapshot.Health == nil || defaultSnapshot.Health.Queue.Quarantined != 1 || defaultSnapshot.Health.Queue.QuarantineRestorable != 1 || defaultSnapshot.Health.Queue.QuarantineUnrestorable != 0 || defaultSnapshot.Health.OutboxQuarantine.Quarantined != 1 || defaultSnapshot.Health.OutboxQuarantine.Restorable != 1 || defaultSnapshot.Health.OutboxQuarantine.Unrestorable != 0 || defaultSnapshot.Health.Jobs != nil {
 		t.Fatalf("default team health = %+v", defaultSnapshot.Health)
 	}
 
@@ -10287,13 +10315,13 @@ pipelines = ["ticket_to_pr"]
 	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	formatted.SetOut(formatOut)
 	formatted.SetErr(formatErr)
-	formatted.SetArgs([]string{"team", "health", "delivery", "--repo", root, "--jobs", "--format", "{{.Team.Name}} {{.Health.Healthy}} {{.Health.Jobs.Summary.Failed}} {{.Health.Queue.Dead}} {{.Health.Queue.Quarantined}}"})
+	formatted.SetArgs([]string{"team", "health", "delivery", "--repo", root, "--jobs", "--format", "{{.Team.Name}} {{.Health.Healthy}} {{.Health.Jobs.Summary.Failed}} {{.Health.Queue.Dead}} {{.Health.Queue.Quarantined}} {{.Health.OutboxQuarantine.Quarantined}}"})
 	if err := formatted.Execute(); err == nil {
 		t.Fatal("team health format unexpectedly succeeded")
 	} else if !errors.As(err, &code) || int(code) != 1 {
 		t.Fatalf("team health format err = %v, want exit 1\nstderr=%s", err, formatErr.String())
 	}
-	if got, want := formatOut.String(), "delivery false 1 1 1\n"; got != want {
+	if got, want := formatOut.String(), "delivery false 1 1 1 1\n"; got != want {
 		t.Fatalf("team health format output = %q, want %q", got, want)
 	}
 }

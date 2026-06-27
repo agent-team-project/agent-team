@@ -45,7 +45,7 @@ func newHealthCmd() *cobra.Command {
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "health",
-		Short: "Check daemon and instance fleet health.",
+		Short: "Check daemon, instance, queue, and outbox health.",
 		Long: "Check the daemon, declared persistent instances, crashed instances, and stale status files. " +
 			"One-shot checks exit 0 when healthy and 1 when unhealthy.",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -201,19 +201,20 @@ func newHealthOptionsWithRuntimeInstancesAndUnhealthy(statusFilters, runtimeFilt
 }
 
 type healthResult struct {
-	Healthy        bool                       `json:"healthy"`
-	Daemon         healthDaemon               `json:"daemon"`
-	Summary        psSummaryJSON              `json:"summary"`
-	Queue          queueSummary               `json:"queue"`
-	Intake         overviewIntakeSummary      `json:"intake"`
-	Jobs           *jobTriageSnapshot         `json:"jobs,omitempty"`
-	JobStatus      []jobStatusReconcileResult `json:"job_status_preview,omitempty"`
-	PipelineStatus []pipelineStatusRow        `json:"pipeline_status,omitempty"`
-	PipelineDoctor *pipelineDoctorResult      `json:"pipeline_doctor,omitempty"`
-	Declared       healthDeclared             `json:"declared"`
-	Issues         []healthIssue              `json:"issues"`
-	CheckedAt      string                     `json:"checked_at"`
-	Instances      []healthInstance           `json:"instances,omitempty"`
+	Healthy          bool                       `json:"healthy"`
+	Daemon           healthDaemon               `json:"daemon"`
+	Summary          psSummaryJSON              `json:"summary"`
+	Queue            queueSummary               `json:"queue"`
+	OutboxQuarantine outboxQuarantineSummary    `json:"outbox_quarantine"`
+	Intake           overviewIntakeSummary      `json:"intake"`
+	Jobs             *jobTriageSnapshot         `json:"jobs,omitempty"`
+	JobStatus        []jobStatusReconcileResult `json:"job_status_preview,omitempty"`
+	PipelineStatus   []pipelineStatusRow        `json:"pipeline_status,omitempty"`
+	PipelineDoctor   *pipelineDoctorResult      `json:"pipeline_doctor,omitempty"`
+	Declared         healthDeclared             `json:"declared"`
+	Issues           []healthIssue              `json:"issues"`
+	CheckedAt        string                     `json:"checked_at"`
+	Instances        []healthInstance           `json:"instances,omitempty"`
 }
 
 type healthDaemon struct {
@@ -391,6 +392,9 @@ func collectHealthWithOptions(teamDir string, now time.Time, opts healthOptions)
 		return nil, err
 	}
 	if err := addQueueHealth(result, teamDir, now); err != nil {
+		return nil, err
+	}
+	if err := addOutboxQuarantineHealth(result, teamDir); err != nil {
 		return nil, err
 	}
 	if err := addIntakeHealth(result, teamDir); err != nil {
@@ -810,6 +814,160 @@ func queueQuarantineHealthActions(summary queueSummary, teamName, pipelineName, 
 	return actions
 }
 
+func addOutboxQuarantineHealth(result *healthResult, teamDir string) error {
+	if result == nil {
+		return nil
+	}
+	items, err := listOutboxQuarantine(teamDir)
+	if err != nil {
+		return err
+	}
+	result.OutboxQuarantine = summarizeOutboxQuarantineItems(items)
+	if result.OutboxQuarantine.Quarantined == 0 {
+		return nil
+	}
+	jobID := singleOutboxQuarantineJobID(teamDir, items)
+	pipelineName := ""
+	if jobID == "" {
+		pipelineName = singleOutboxQuarantinePipeline(teamDir, items)
+	}
+	result.addIssueWithSeverityAndActions(
+		"outbox_quarantined",
+		"warning",
+		"",
+		"",
+		"",
+		"",
+		fmt.Sprintf("outbox has %d quarantined file(s) (%d restorable, %d unrestorable)", result.OutboxQuarantine.Quarantined, result.OutboxQuarantine.Restorable, result.OutboxQuarantine.Unrestorable),
+		outboxQuarantineHealthActions(result.OutboxQuarantine, "", pipelineName, jobID),
+	)
+	return nil
+}
+
+func singleOutboxQuarantineJobID(teamDir string, items []outboxQuarantineItem) string {
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return ""
+	}
+	return singleOutboxQuarantineJobIDForJobs(items, jobs)
+}
+
+func singleOutboxQuarantineJobIDForJobs(items []outboxQuarantineItem, jobs []*job.Job) string {
+	var found string
+	if len(items) == 0 {
+		return ""
+	}
+	for _, item := range items {
+		matches := map[string]bool{}
+		for _, j := range jobs {
+			if j == nil || strings.TrimSpace(j.ID) == "" {
+				continue
+			}
+			if outboxQuarantineItemMatchesJob(item, j) {
+				matches[j.ID] = true
+			}
+		}
+		if len(matches) != 1 {
+			return ""
+		}
+		var id string
+		for match := range matches {
+			id = match
+		}
+		if found == "" {
+			found = id
+			continue
+		}
+		if found != id {
+			return ""
+		}
+	}
+	return found
+}
+
+func singleOutboxQuarantinePipeline(teamDir string, items []outboxQuarantineItem) string {
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return ""
+	}
+	pipelineName := singleOutboxQuarantinePipelineForJobs(items, jobs)
+	if pipelineName == "" {
+		return ""
+	}
+	if _, err := loadPipelineInfo(teamDir, pipelineName); err != nil {
+		return ""
+	}
+	return pipelineName
+}
+
+func singleOutboxQuarantinePipelineForJobs(items []outboxQuarantineItem, jobs []*job.Job) string {
+	var found string
+	if len(items) == 0 {
+		return ""
+	}
+	for _, item := range items {
+		matches := map[string]bool{}
+		for _, j := range jobs {
+			if j == nil || strings.TrimSpace(j.Pipeline) == "" {
+				continue
+			}
+			if outboxQuarantineItemMatchesJob(item, j) {
+				matches[j.Pipeline] = true
+			}
+		}
+		if len(matches) != 1 {
+			return ""
+		}
+		var pipelineName string
+		for match := range matches {
+			pipelineName = match
+		}
+		if found == "" {
+			found = pipelineName
+			continue
+		}
+		if found != pipelineName {
+			return ""
+		}
+	}
+	return found
+}
+
+func outboxQuarantineHealthActions(summary outboxQuarantineSummary, teamName, pipelineName, jobID string) []string {
+	var listAction, detailAction, restorableAction, unrestorableAction string
+	switch {
+	case teamName != "":
+		listAction = fmt.Sprintf("agent-team team outbox quarantine %s", teamName)
+		detailAction = fmt.Sprintf("agent-team team snapshot %s --json", teamName)
+		restorableAction = fmt.Sprintf("agent-team team outbox quarantine %s --restorable", teamName)
+		unrestorableAction = fmt.Sprintf("agent-team team outbox quarantine %s --unrestorable", teamName)
+	case jobID != "":
+		listAction = fmt.Sprintf("agent-team job outbox quarantine %s", jobID)
+		detailAction = fmt.Sprintf("agent-team job snapshot %s --json", jobID)
+		restorableAction = fmt.Sprintf("agent-team job outbox quarantine %s --restorable", jobID)
+		unrestorableAction = fmt.Sprintf("agent-team job outbox quarantine %s --unrestorable", jobID)
+	case pipelineName != "":
+		listAction = fmt.Sprintf("agent-team pipeline outbox quarantine %s", pipelineName)
+		detailAction = fmt.Sprintf("agent-team pipeline snapshot %s --json", pipelineName)
+		restorableAction = fmt.Sprintf("agent-team pipeline outbox quarantine %s --restorable", pipelineName)
+		unrestorableAction = fmt.Sprintf("agent-team pipeline outbox quarantine %s --unrestorable", pipelineName)
+	default:
+		listAction = "agent-team outbox quarantine ls"
+		detailAction = "agent-team snapshot --json"
+		restorableAction = "agent-team outbox quarantine ls --restorable"
+		unrestorableAction = "agent-team outbox quarantine ls --unrestorable"
+	}
+	actions := []string{listAction}
+	if summary.Unrestorable > 0 {
+		actions = append(actions, unrestorableAction)
+	}
+	if summary.Restorable > 0 {
+		actions = append(actions, restorableAction)
+	}
+	actions = append(actions, detailAction)
+	return actions
+}
+
 func addIntakeHealth(result *healthResult, teamDir string) error {
 	if result == nil {
 		return nil
@@ -1143,6 +1301,9 @@ func renderHealth(w io.Writer, result *healthResult) {
 	)
 	if result.Queue.Total > 0 || result.Queue.Quarantined > 0 {
 		fmt.Fprintln(w, queueSummaryLine(result.Queue))
+	}
+	if result.OutboxQuarantine.Quarantined > 0 {
+		fmt.Fprintln(w, outboxQuarantineSummaryLine(result.OutboxQuarantine))
 	}
 	if result.Intake.Deliveries > 0 {
 		fmt.Fprintf(w, "intake: deliveries=%d errors=%d recovered=%d replayable=%d duplicate_request_ids=%d\n",

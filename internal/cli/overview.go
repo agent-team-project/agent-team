@@ -820,6 +820,9 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 			}
 			for _, action := range issue.Actions {
 				action = overviewIssueAction(action)
+				if issue.Code == "outbox_quarantined" && overviewOutboxQuarantinePrimaryAction(action) {
+					continue
+				}
 				add(action, overviewIssueActionSource(action, issue.Code), issue.Code)
 			}
 		}
@@ -847,7 +850,7 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 		add(overviewQueueQuarantineAction(health, teamName), "queue", fmt.Sprintf("quarantined=%d", out.Queue.Quarantined))
 	}
 	if out.OutboxQuarantine.Quarantined > 0 {
-		add(overviewOutboxQuarantineAction(out, teamName), "outbox", fmt.Sprintf("quarantined=%d", out.OutboxQuarantine.Quarantined))
+		add(overviewOutboxQuarantineAction(out, health, teamName), "outbox", fmt.Sprintf("quarantined=%d", out.OutboxQuarantine.Quarantined))
 	}
 	if out.Outbox.Failed > 0 {
 		if teamName != "" {
@@ -1186,12 +1189,28 @@ func overviewIssueAction(action string) string {
 	return action
 }
 
+func overviewOutboxQuarantinePrimaryAction(action string) bool {
+	action = strings.TrimSpace(action)
+	switch {
+	case action == "agent-team outbox quarantine ls":
+		return true
+	case strings.HasPrefix(action, "agent-team job outbox quarantine "),
+		strings.HasPrefix(action, "agent-team pipeline outbox quarantine "),
+		strings.HasPrefix(action, "agent-team team outbox quarantine "):
+		return !strings.Contains(action, " --")
+	default:
+		return false
+	}
+}
+
 func overviewIssueActionSource(action, code string) string {
 	action = strings.TrimSpace(action)
 	code = strings.TrimSpace(code)
 	switch {
 	case strings.HasPrefix(code, "queue_") || strings.Contains(action, " queue "):
 		return "queue"
+	case strings.HasPrefix(code, "outbox_") || strings.Contains(action, " outbox "):
+		return "outbox"
 	case strings.HasPrefix(code, "job_") || strings.HasPrefix(action, "agent-team job "):
 		return "jobs"
 	case strings.HasPrefix(code, "pipeline_") || strings.HasPrefix(action, "agent-team pipeline "):
@@ -1241,9 +1260,24 @@ func overviewQueueQuarantineAction(health *healthResult, teamName string) string
 	return "agent-team queue quarantine ls"
 }
 
-func overviewOutboxQuarantineAction(out *overviewResult, teamName string) string {
+func overviewOutboxQuarantineAction(out *overviewResult, health *healthResult, teamName string) string {
 	if teamName != "" {
 		return fmt.Sprintf("agent-team team outbox quarantine %s", teamName)
+	}
+	if health != nil {
+		for _, issue := range health.Issues {
+			if issue.Code != "outbox_quarantined" {
+				continue
+			}
+			for _, action := range issue.Actions {
+				action = strings.TrimSpace(action)
+				if strings.HasPrefix(action, "agent-team job outbox quarantine ") ||
+					strings.HasPrefix(action, "agent-team pipeline outbox quarantine ") ||
+					action == "agent-team outbox quarantine ls" {
+					return action
+				}
+			}
+		}
 	}
 	if out != nil && strings.TrimSpace(out.OutboxQuarantineOwner) != "" {
 		return fmt.Sprintf("agent-team job outbox quarantine %s", strings.TrimSpace(out.OutboxQuarantineOwner))
