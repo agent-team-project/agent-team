@@ -6780,19 +6780,26 @@ func collectTeamReadyRows(teamDir, name string, states map[string]bool) ([]jobRe
 
 func teamReadyRowActions(teamName string, row jobReadyRow) []string {
 	if jobReadyRowIsAdvanceable(row) {
-		actions := []string{fmt.Sprintf("agent-team team advance %s --dry-run --preview-routes", teamName)}
+		actions := []string{teamTickPreviewAction(teamName, false)}
 		if row.ParallelReadySteps > 1 {
-			actions = append(actions, fmt.Sprintf("agent-team team advance %s --all-ready-steps --dry-run --preview-routes", teamName))
+			actions = append(actions, teamTickPreviewAction(teamName, true))
 		}
 		return actions
 	}
 	if row.State == "queued" {
-		return []string{fmt.Sprintf("agent-team team tick %s", teamName)}
+		return []string{teamTickPreviewAction(teamName, false)}
 	}
 	if strings.TrimSpace(row.Pipeline) == "" {
 		return row.Actions
 	}
 	return scopeTeamExplainActionList(teamName, row.Pipeline, row.JobID, row.StepID, row.Actions)
+}
+
+func teamTickPreviewAction(teamName string, allReadySteps bool) string {
+	if allReadySteps {
+		return fmt.Sprintf("agent-team team tick %s --all-ready-steps --dry-run --preview-routes", teamName)
+	}
+	return fmt.Sprintf("agent-team team tick %s --dry-run --preview-routes", teamName)
 }
 
 func scopeTeamTriageActions(teamName string, items []jobTriageItem) []jobTriageItem {
@@ -9309,11 +9316,11 @@ func scopeTeamExplainActionList(teamName, pipeline, jobID, stepID string, action
 
 func scopeTeamExplainAction(teamName, pipeline, jobID, stepID, action string) string {
 	action = scopePipelineExplainAction(pipeline, jobID, stepID, action)
-	if action == fmt.Sprintf("agent-team pipeline advance %s --dry-run --preview-routes", pipeline) {
-		return fmt.Sprintf("agent-team team advance %s --dry-run --preview-routes", teamName)
+	if action == pipelineTickPreviewAction(pipeline, false) {
+		return teamTickPreviewAction(teamName, false)
 	}
-	if action == fmt.Sprintf("agent-team pipeline advance %s --all-ready-steps --dry-run --preview-routes", pipeline) {
-		return fmt.Sprintf("agent-team team advance %s --all-ready-steps --dry-run --preview-routes", teamName)
+	if action == pipelineTickPreviewAction(pipeline, true) {
+		return teamTickPreviewAction(teamName, true)
 	}
 	stepID = strings.TrimSpace(stepID)
 	if stepID != "" && action == fmt.Sprintf("agent-team pipeline retry %s --step %s --dry-run --dispatch --preview-routes", pipeline, stepID) {
@@ -9342,58 +9349,66 @@ func scopeTeamExplainAction(teamName, pipeline, jobID, stepID, action string) st
 
 func teamPipelineActions(teamName string, row pipelineStatusRow) []string {
 	actions := []string{}
+	add := func(action string) {
+		action = strings.TrimSpace(action)
+		if action == "" || stringSliceContains(actions, action) {
+			return
+		}
+		actions = append(actions, action)
+	}
 	if row.ReadySteps > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team team advance %s --dry-run --preview-routes", teamName))
+		add(teamTickPreviewAction(teamName, false))
 	}
 	if row.ParallelReadySteps > 1 {
-		actions = append(actions, fmt.Sprintf("agent-team team advance %s --all-ready-steps --dry-run --preview-routes", teamName))
+		add(teamTickPreviewAction(teamName, true))
 	}
 	if row.FailedSteps > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team team retry %s --dry-run --dispatch --preview-routes", teamName))
-		actions = append(actions, fmt.Sprintf("agent-team team repair %s --retry-pipelines --dry-run --preview-routes", teamName))
-		actions = append(actions, fmt.Sprintf("agent-team team explain %s --state failed", teamName))
-		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state failed", teamName))
+		add(fmt.Sprintf("agent-team team retry %s --dry-run --dispatch --preview-routes", teamName))
+		add(fmt.Sprintf("agent-team team repair %s --retry-pipelines --dry-run --preview-routes", teamName))
+		add(fmt.Sprintf("agent-team team explain %s --state failed", teamName))
+		add(fmt.Sprintf("agent-team team ready %s --state failed", teamName))
 	}
 	if row.StaleRunningSteps > 0 {
-		actions = append(actions, "agent-team job reconcile events --dry-run")
-		actions = append(actions, fmt.Sprintf("agent-team team timeout %s --dry-run", teamName))
-		actions = append(actions, fmt.Sprintf("agent-team team repair %s --timeout-jobs --dry-run", teamName))
-		actions = append(actions, fmt.Sprintf("agent-team team explain %s --state running", teamName))
-		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state running", teamName))
+		add("agent-team job reconcile events --dry-run")
+		add(fmt.Sprintf("agent-team team timeout %s --dry-run", teamName))
+		add(fmt.Sprintf("agent-team team repair %s --timeout-jobs --dry-run", teamName))
+		add(fmt.Sprintf("agent-team team explain %s --state running", teamName))
+		add(fmt.Sprintf("agent-team team ready %s --state running", teamName))
 	}
 	if row.ManualGates > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team team approve %s --dry-run --dispatch --preview-routes", teamName))
+		add(fmt.Sprintf("agent-team team approve %s --dry-run --dispatch --preview-routes", teamName))
 	}
 	if row.BlockedSteps > 0 {
 		if row.BlockedSteps > row.ManualGates {
-			actions = append(actions, fmt.Sprintf("agent-team team unblock %s <answer...> --dry-run", teamName))
+			add(fmt.Sprintf("agent-team team unblock %s <answer...> --dry-run", teamName))
 		}
-		actions = append(actions, fmt.Sprintf("agent-team team explain %s --state blocked", teamName))
-		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state blocked", teamName))
+		add(fmt.Sprintf("agent-team team explain %s --state blocked", teamName))
+		add(fmt.Sprintf("agent-team team ready %s --state blocked", teamName))
 	}
 	if row.HeldSteps > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team team explain %s --state held", teamName))
-		actions = append(actions, fmt.Sprintf("agent-team team ready %s --state held", teamName))
+		add(fmt.Sprintf("agent-team team explain %s --state held", teamName))
+		add(fmt.Sprintf("agent-team team ready %s --state held", teamName))
 	}
 	if row.QueuedSteps > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team team tick %s", teamName))
+		add(teamTickPreviewAction(teamName, false))
 	}
 	if row.QueueDead > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team team queue %s --state dead --summary", teamName))
-		actions = append(actions, teamQueueRetryAllRecoveryAction(teamName, true))
+		add(fmt.Sprintf("agent-team team queue %s --state dead --summary", teamName))
+		add(teamQueueRetryAllRecoveryAction(teamName, true))
 	}
 	if row.QueueQuarantined > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team team queue quarantine %s", teamName))
+		add(fmt.Sprintf("agent-team team queue quarantine %s", teamName))
 		if row.QueueUnrestorable > 0 {
-			actions = append(actions, fmt.Sprintf("agent-team team queue quarantine %s --unrestorable", teamName))
+			add(fmt.Sprintf("agent-team team queue quarantine %s --unrestorable", teamName))
 		}
 		if row.QueueRestorable > 0 {
-			actions = append(actions, fmt.Sprintf("agent-team team queue quarantine %s --restorable", teamName))
+			add(fmt.Sprintf("agent-team team queue quarantine %s --restorable", teamName))
 		}
-		actions = append(actions, fmt.Sprintf("agent-team team snapshot %s --json", teamName))
+		add(fmt.Sprintf("agent-team team snapshot %s --json", teamName))
 	}
 	if row.QueuePending > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team team queue %s --state pending", teamName))
+		add(teamTickPreviewAction(teamName, false))
+		add(fmt.Sprintf("agent-team team queue %s --state pending", teamName))
 	}
 	return actions
 }

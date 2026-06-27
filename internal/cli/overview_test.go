@@ -185,7 +185,7 @@ func TestOverviewRecommendsParallelReadyFanout(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
 		t.Fatalf("decode overview parallel ready: %v\nbody=%s", err, out.String())
 	}
-	if overview.Pipelines.ParallelReadySteps != 2 || !stringSliceContains(overview.Actions, "agent-team pipeline advance --all --all-ready-steps --dry-run --preview-routes") {
+	if overview.Pipelines.ParallelReadySteps != 2 || !stringSliceContains(overview.Actions, "agent-team tick --all-ready-steps --dry-run --preview-routes") {
 		t.Fatalf("overview parallel actions = %+v pipelines=%+v", overview.Actions, overview.Pipelines)
 	}
 	text := NewRootCmd()
@@ -212,7 +212,7 @@ func TestOverviewRecommendsParallelReadyFanout(t *testing.T) {
 	if err := json.Unmarshal(teamOut.Bytes(), &teamOverview); err != nil {
 		t.Fatalf("decode team overview parallel ready: %v\nbody=%s", err, teamOut.String())
 	}
-	if teamOverview.Pipelines.ParallelReadySteps != 2 || !stringSliceContains(teamOverview.Actions, "agent-team team advance delivery --all-ready-steps --dry-run --preview-routes") {
+	if teamOverview.Pipelines.ParallelReadySteps != 2 || !stringSliceContains(teamOverview.Actions, "agent-team team tick delivery --all-ready-steps --dry-run --preview-routes") {
 		t.Fatalf("team overview parallel actions = %+v pipelines=%+v", teamOverview.Actions, teamOverview.Pipelines)
 	}
 }
@@ -918,7 +918,7 @@ func TestTeamOverviewScopesCountsAndActions(t *testing.T) {
 		"agent-team team queue retry delivery --all --job squ-700 --sort attempts --limit 10 --dry-run",
 		"agent-team team queue quarantine delivery",
 		"agent-team team triage delivery",
-		"agent-team team advance delivery --dry-run --preview-routes",
+		"agent-team team tick delivery --dry-run --preview-routes",
 		"agent-team team tick delivery --dry-run --skip-drain --skip-advance",
 		"agent-team team drain delivery",
 	} {
@@ -926,7 +926,7 @@ func TestTeamOverviewScopesCountsAndActions(t *testing.T) {
 			t.Fatalf("actions missing %q: %+v", want, overview.Actions)
 		}
 	}
-	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team team advance delivery --dry-run --preview-routes"); !ok || detail.Team != "delivery" || detail.Source != "pipelines" || detail.Reason == "" {
+	if detail, ok := findOperatorActionHint(overview.ActionDetails, "agent-team team tick delivery --dry-run --preview-routes"); !ok || detail.Team != "delivery" || detail.Source != "pipelines" || detail.Reason == "" {
 		t.Fatalf("team advance detail = %+v, ok=%v", detail, ok)
 	}
 	if stringSliceContains(overview.Actions, "agent-team team queue retry delivery --all --sort attempts --limit 10 --dry-run") {

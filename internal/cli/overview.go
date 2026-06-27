@@ -798,17 +798,17 @@ func overviewActionHintsForScope(out *overviewResult, health *healthResult, team
 	if out.Jobs.ReadySteps > 0 || out.Pipelines.ReadySteps > 0 {
 		reason := fmt.Sprintf("ready_steps=%d", out.Jobs.ReadySteps+out.Pipelines.ReadySteps)
 		if teamName != "" {
-			add(fmt.Sprintf("agent-team team advance %s --dry-run --preview-routes", teamName), "pipelines", reason)
+			add(teamTickPreviewAction(teamName, false), "pipelines", reason)
 		} else {
-			add("agent-team pipeline advance --all --dry-run --preview-routes", "pipelines", reason)
+			add("agent-team tick --dry-run --preview-routes", "pipelines", reason)
 		}
 	}
 	if out.Pipelines.ParallelReadySteps > 1 {
 		reason := fmt.Sprintf("parallel_ready_steps=%d", out.Pipelines.ParallelReadySteps)
 		if teamName != "" {
-			add(fmt.Sprintf("agent-team team advance %s --all-ready-steps --dry-run --preview-routes", teamName), "pipelines", reason)
+			add(teamTickPreviewAction(teamName, true), "pipelines", reason)
 		} else {
-			add("agent-team pipeline advance --all --all-ready-steps --dry-run --preview-routes", "pipelines", reason)
+			add("agent-team tick --all-ready-steps --dry-run --preview-routes", "pipelines", reason)
 		}
 	}
 	if out.Pipelines.ManualGates > 0 {

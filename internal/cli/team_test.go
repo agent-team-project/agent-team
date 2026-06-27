@@ -566,10 +566,10 @@ since = "2026-06-18T12:00:00Z"
 	if len(explainRows) != 1 || explainRows[0].Pipeline != "ticket_to_pr" || explainRows[0].TotalJobs != 1 || len(explainRows[0].Jobs) != 1 || explainRows[0].Jobs[0].JobID != "squ-801" {
 		t.Fatalf("team explain rows = %+v", explainRows)
 	}
-	if containsString(explainRows[0].Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") ||
-		!containsString(explainRows[0].Actions, "agent-team team advance delivery --dry-run --preview-routes") ||
-		!containsString(explainRows[0].Jobs[0].Actions, "agent-team team advance delivery --dry-run --preview-routes") ||
-		containsString(explainRows[0].Jobs[0].Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") ||
+	if containsString(explainRows[0].Actions, "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes") ||
+		!containsString(explainRows[0].Actions, "agent-team team tick delivery --dry-run --preview-routes") ||
+		!containsString(explainRows[0].Jobs[0].Actions, "agent-team team tick delivery --dry-run --preview-routes") ||
+		containsString(explainRows[0].Jobs[0].Actions, "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes") ||
 		containsString(explainRows[0].Jobs[0].Actions, "agent-team job advance squ-801") {
 		t.Fatalf("team explain actions = %+v job actions=%+v", explainRows[0].Actions, explainRows[0].Jobs[0].Actions)
 	}
@@ -582,12 +582,12 @@ since = "2026-06-18T12:00:00Z"
 	if err := explainText.Execute(); err != nil {
 		t.Fatalf("team explain text: %v\nstderr=%s", err, explainTextErr.String())
 	}
-	for _, want := range []string{"Pipeline: ticket_to_pr", "squ-801", "agent-team team advance delivery --dry-run --preview-routes"} {
+	for _, want := range []string{"Pipeline: ticket_to_pr", "squ-801", "agent-team team tick delivery --dry-run --preview-routes"} {
 		if !strings.Contains(explainTextOut.String(), want) {
 			t.Fatalf("team explain text missing %q:\n%s", want, explainTextOut.String())
 		}
 	}
-	for _, unwanted := range []string{"agent-team pipeline advance ticket_to_pr --dry-run --preview-routes", "agent-team job advance squ-801"} {
+	for _, unwanted := range []string{"agent-team pipeline tick ticket_to_pr --dry-run --preview-routes", "agent-team job advance squ-801"} {
 		if strings.Contains(explainTextOut.String(), unwanted) {
 			t.Fatalf("team explain text included unscoped action %q:\n%s", unwanted, explainTextOut.String())
 		}
@@ -782,7 +782,7 @@ since = "2026-06-18T12:00:00Z"
 	if err := text.Execute(); err != nil {
 		t.Fatalf("team status text: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"Team: delivery", "instances: total=3", "jobs: total=1", "queue: total=1 pending=0 dead=1 delayed=0 attempts=3 quarantined=1 restorable=1 unrestorable=0", "pipeline status: pipelines=1 jobs=1 ready_steps=1", "Actions:", "agent-team team sync delivery --wait", "agent-team team queue retry delivery --all --job squ-801 --sort attempts --limit 10 --dry-run", "agent-team team queue quarantine delivery", "agent-team team queue quarantine delivery --restorable", "agent-team team advance delivery --dry-run --preview-routes"} {
+	for _, want := range []string{"Team: delivery", "instances: total=3", "jobs: total=1", "queue: total=1 pending=0 dead=1 delayed=0 attempts=3 quarantined=1 restorable=1 unrestorable=0", "pipeline status: pipelines=1 jobs=1 ready_steps=1", "Actions:", "agent-team team sync delivery --wait", "agent-team team queue retry delivery --all --job squ-801 --sort attempts --limit 10 --dry-run", "agent-team team queue quarantine delivery", "agent-team team queue quarantine delivery --restorable", "agent-team team tick delivery --dry-run --preview-routes"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("team status text missing %q:\n%s", want, textOut.String())
 		}
@@ -1308,7 +1308,7 @@ pipelines = ["parallel_checks"]
 	if err := json.Unmarshal(readyOut.Bytes(), &readyRows); err != nil {
 		t.Fatalf("decode team ready rows: %v\nbody=%s", err, readyOut.String())
 	}
-	if len(readyRows) != 1 || readyRows[0].ParallelReadySteps != 2 || !containsString(readyRows[0].Actions, "agent-team team advance delivery --all-ready-steps --dry-run --preview-routes") {
+	if len(readyRows) != 1 || readyRows[0].ParallelReadySteps != 2 || !containsString(readyRows[0].Actions, "agent-team team tick delivery --all-ready-steps --dry-run --preview-routes") {
 		t.Fatalf("team ready rows = %+v, want scoped all-ready action", readyRows)
 	}
 
@@ -1324,7 +1324,7 @@ pipelines = ["parallel_checks"]
 	if err := json.Unmarshal(statusOut.Bytes(), &statusRows); err != nil {
 		t.Fatalf("decode team pipeline status: %v\nbody=%s", err, statusOut.String())
 	}
-	if len(statusRows) != 1 || statusRows[0].ParallelReadySteps != 2 || !containsString(statusRows[0].Actions, "agent-team team advance delivery --all-ready-steps --dry-run --preview-routes") {
+	if len(statusRows) != 1 || statusRows[0].ParallelReadySteps != 2 || !containsString(statusRows[0].Actions, "agent-team team tick delivery --all-ready-steps --dry-run --preview-routes") {
 		t.Fatalf("team pipeline status = %+v, want scoped all-ready action", statusRows)
 	}
 

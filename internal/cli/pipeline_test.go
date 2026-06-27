@@ -1141,7 +1141,7 @@ target = "manager"
 	if !ticket.Declared || ticket.Steps != 2 || ticket.Jobs != 4 || ticket.Running != 2 || ticket.Blocked != 1 || ticket.Failed != 1 || ticket.ReadySteps != 1 || ticket.ManualGates != 1 || ticket.FailedSteps != 1 || ticket.StaleRunningSteps != 1 {
 		t.Fatalf("ticket status = %+v", ticket)
 	}
-	if !containsString(ticket.Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") ||
+	if !containsString(ticket.Actions, "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes") ||
 		!containsString(ticket.Actions, "agent-team job reconcile events --dry-run") ||
 		!containsString(ticket.Actions, "agent-team pipeline timeout ticket_to_pr --dry-run") ||
 		!containsString(ticket.Actions, "agent-team pipeline repair ticket_to_pr --timeout-jobs --dry-run --preview-routes") ||
@@ -1159,8 +1159,7 @@ target = "manager"
 	if !nightly.Declared || nightly.Steps != 1 || nightly.Jobs != 1 || nightly.Queued != 1 || nightly.ReadySteps != 1 || nightly.QueuedSteps != 1 {
 		t.Fatalf("nightly status = %+v", nightly)
 	}
-	if !containsString(nightly.Actions, "agent-team pipeline advance nightly --dry-run --preview-routes") ||
-		!containsString(nightly.Actions, "agent-team tick") {
+	if !containsString(nightly.Actions, "agent-team pipeline tick nightly --dry-run --preview-routes") {
 		t.Fatalf("nightly actions = %+v", nightly.Actions)
 	}
 	adHoc := byName["ad_hoc"]
@@ -1227,7 +1226,7 @@ target = "manager"
 	if err := text.Execute(); err != nil {
 		t.Fatalf("pipeline status text: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"PIPELINE", "STALE_RUNNING", "MANUAL_GATES", "ACTION", "ticket_to_pr", "yes", "running=2,blocked=1,failed=1", "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes", "agent-team job reconcile events --dry-run", "agent-team pipeline timeout ticket_to_pr --dry-run", "agent-team pipeline repair ticket_to_pr --timeout-jobs --dry-run --preview-routes", "agent-team repair --timeout-jobs --dry-run", "agent-team pipeline approve ticket_to_pr --dry-run --dispatch --preview-routes", "agent-team pipeline repair ticket_to_pr --retry-pipelines --dry-run --preview-routes", "agent-team repair --retry-pipelines --dry-run --preview-routes", "ad_hoc", "no"} {
+	for _, want := range []string{"PIPELINE", "STALE_RUNNING", "MANUAL_GATES", "ACTION", "ticket_to_pr", "yes", "running=2,blocked=1,failed=1", "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes", "agent-team job reconcile events --dry-run", "agent-team pipeline timeout ticket_to_pr --dry-run", "agent-team pipeline repair ticket_to_pr --timeout-jobs --dry-run --preview-routes", "agent-team repair --timeout-jobs --dry-run", "agent-team pipeline approve ticket_to_pr --dry-run --dispatch --preview-routes", "agent-team pipeline repair ticket_to_pr --retry-pipelines --dry-run --preview-routes", "agent-team repair --retry-pipelines --dry-run --preview-routes", "ad_hoc", "no"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("pipeline status text missing %q:\n%s", want, textOut.String())
 		}
@@ -1258,7 +1257,7 @@ target = "manager"
 			switch {
 			case explainedJob.JobID == "squ-610" && step.ID == "review":
 				readyReview = step.State == "ready" &&
-					containsString(step.Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") &&
+					containsString(step.Actions, "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes") &&
 					!containsString(step.Actions, "agent-team job advance squ-610")
 			case explainedJob.JobID == "squ-614" && step.ID == "review":
 				manualGate = step.State == "waiting" && step.Gate == job.StepGateManual &&
@@ -1285,7 +1284,7 @@ target = "manager"
 	if err := explainText.Execute(); err != nil {
 		t.Fatalf("pipeline explain text: %v\nstderr=%s", err, explainTextErr.String())
 	}
-	for _, want := range []string{"Pipeline: ticket_to_pr", "Jobs:", "Steps:", "squ-610", "review", "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes", "agent-team pipeline approve ticket_to_pr --step review --dry-run --dispatch --preview-routes", "agent-team pipeline reject ticket_to_pr --step review --dry-run"} {
+	for _, want := range []string{"Pipeline: ticket_to_pr", "Jobs:", "Steps:", "squ-610", "review", "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes", "agent-team pipeline approve ticket_to_pr --step review --dry-run --dispatch --preview-routes", "agent-team pipeline reject ticket_to_pr --step review --dry-run"} {
 		if !strings.Contains(explainTextOut.String(), want) {
 			t.Fatalf("pipeline explain text missing %q:\n%s", want, explainTextOut.String())
 		}
@@ -2373,8 +2372,8 @@ pipelines = ["ticket_to_pr"]
 	if len(actions) != 2 {
 		t.Fatalf("actions = %+v, want two limited actions", actions)
 	}
-	if actions[0].Pipeline != "ticket_to_pr" || actions[0].Reason != "ready_steps=1" || actions[0].Action != "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes" || actions[0].Status.ReadySteps != 1 {
-		t.Fatalf("first action = %+v, want ready advance", actions[0])
+	if actions[0].Pipeline != "ticket_to_pr" || actions[0].Reason != "ready_steps=1" || actions[0].Action != "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes" || actions[0].Status.ReadySteps != 1 {
+		t.Fatalf("first action = %+v, want ready tick", actions[0])
 	}
 	if actions[1].Reason != "failed_steps=1" || actions[1].Action != "agent-team pipeline retry ticket_to_pr --dry-run --dispatch --preview-routes" || actions[1].Status.FailedSteps != 1 {
 		t.Fatalf("second action = %+v, want failed retry", actions[1])
@@ -2389,12 +2388,11 @@ pipelines = ["ticket_to_pr"]
 		t.Fatalf("pipeline next format: %v\nstderr=%s", err, formatErr.String())
 	}
 	for _, want := range []string{
-		"ticket_to_pr|ready_steps=1|agent-team pipeline advance ticket_to_pr --dry-run --preview-routes",
+		"ticket_to_pr|ready_steps=1|agent-team pipeline tick ticket_to_pr --dry-run --preview-routes",
 		"ticket_to_pr|failed_steps=1|agent-team pipeline repair ticket_to_pr --retry-pipelines --dry-run --preview-routes",
 		"ticket_to_pr|failed_steps=1|agent-team repair --retry-pipelines --dry-run --preview-routes",
 		"ticket_to_pr|failed_steps=1|agent-team pipeline explain ticket_to_pr --state failed",
 		"ticket_to_pr|failed_steps=1|agent-team pipeline ready ticket_to_pr --state failed",
-		"ticket_to_pr|queued_steps=1|agent-team tick",
 	} {
 		if !strings.Contains(formatOut.String(), want) {
 			t.Fatalf("pipeline next format missing %q:\n%s", want, formatOut.String())
@@ -2412,7 +2410,7 @@ pipelines = ["ticket_to_pr"]
 	if err := watchCmd.Execute(); err != nil {
 		t.Fatalf("pipeline next watch: %v\nstderr=%s", err, watchErr.String())
 	}
-	if got := strings.TrimSpace(watchOut.String()); got != "ticket_to_pr|ready_steps=1|agent-team pipeline advance ticket_to_pr --dry-run --preview-routes" || strings.Contains(watchOut.String(), watchClearSequence) {
+	if got := strings.TrimSpace(watchOut.String()); got != "ticket_to_pr|ready_steps=1|agent-team pipeline tick ticket_to_pr --dry-run --preview-routes" || strings.Contains(watchOut.String(), watchClearSequence) {
 		t.Fatalf("pipeline next watch output = %q", watchOut.String())
 	}
 
@@ -2425,11 +2423,10 @@ pipelines = ["ticket_to_pr"]
 		t.Fatalf("pipeline next team format: %v\nstderr=%s", err, teamErr.String())
 	}
 	for _, want := range []string{
-		"ticket_to_pr|ready_steps=1|agent-team team advance delivery --dry-run --preview-routes",
+		"ticket_to_pr|ready_steps=1|agent-team team tick delivery --dry-run --preview-routes",
 		"ticket_to_pr|failed_steps=1|agent-team team repair delivery --retry-pipelines --dry-run --preview-routes",
 		"ticket_to_pr|failed_steps=1|agent-team team explain delivery --state failed",
 		"ticket_to_pr|failed_steps=1|agent-team team ready delivery --state failed",
-		"ticket_to_pr|queued_steps=1|agent-team team tick delivery",
 	} {
 		if !strings.Contains(teamOut.String(), want) {
 			t.Fatalf("pipeline next team format missing %q:\n%s", want, teamOut.String())
@@ -2893,8 +2890,8 @@ target = "worker"
 	for _, row := range snapshot.ReadySteps {
 		ready[row.JobID] = row
 	}
-	if !containsString(ready["squ-832"].Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") ||
-		!containsString(ready["squ-834"].Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") {
+	if !containsString(ready["squ-832"].Actions, "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes") ||
+		!containsString(ready["squ-834"].Actions, "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes") {
 		t.Fatalf("ready actions = %+v", snapshot.ReadySteps)
 	}
 
@@ -2965,7 +2962,7 @@ func TestPipelineReadyRowActionsPreservesNonAdvanceableQueuedHint(t *testing.T) 
 		Actions:    []string{"agent-team tick"},
 	}
 	blockedActions := pipelineReadyRowActions("ticket_to_pr", blocked)
-	if !containsString(blockedActions, "agent-team tick") ||
+	if !containsString(blockedActions, "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes") ||
 		containsString(blockedActions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") {
 		t.Fatalf("blocked queued actions = %+v", blockedActions)
 	}
@@ -2976,7 +2973,7 @@ func TestPipelineReadyRowActionsPreservesNonAdvanceableQueuedHint(t *testing.T) 
 		Actions: []string{"agent-team job advance squ-836"},
 	}
 	advanceActions := pipelineReadyRowActions("ticket_to_pr", advanceable)
-	if !containsString(advanceActions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") ||
+	if !containsString(advanceActions, "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes") ||
 		containsString(advanceActions, "agent-team job advance squ-836") {
 		t.Fatalf("advanceable queued actions = %+v", advanceActions)
 	}
@@ -3102,7 +3099,7 @@ func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 	if len(rows) != 1 || rows[0].JobID != "squ-310" || rows[0].State != "ready" || rows[0].StepID != "review" {
 		t.Fatalf("ready rows = %+v", rows)
 	}
-	if !containsString(rows[0].Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") ||
+	if !containsString(rows[0].Actions, "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes") ||
 		containsString(rows[0].Actions, "agent-team job advance squ-310") {
 		t.Fatalf("ready actions = %+v", rows[0].Actions)
 	}
@@ -3185,8 +3182,8 @@ func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 	if len(allRows) != 2 || allRows[0].JobID != "squ-310" || allRows[1].JobID != "squ-312" || allRows[1].Pipeline != "nightly" {
 		t.Fatalf("all ready rows = %+v", allRows)
 	}
-	if !containsString(allRows[0].Actions, "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes") ||
-		!containsString(allRows[1].Actions, "agent-team pipeline advance nightly --dry-run --preview-routes") {
+	if !containsString(allRows[0].Actions, "agent-team pipeline tick ticket_to_pr --dry-run --preview-routes") ||
+		!containsString(allRows[1].Actions, "agent-team pipeline tick nightly --dry-run --preview-routes") {
 		t.Fatalf("all ready actions = %+v", allRows)
 	}
 
@@ -8318,7 +8315,7 @@ after = ["lint", "test"]
 	if err := json.Unmarshal(readyOut.Bytes(), &readyRows); err != nil {
 		t.Fatalf("decode ready rows: %v\nbody=%s", err, readyOut.String())
 	}
-	if len(readyRows) != 1 || readyRows[0].ParallelReadySteps != 2 || !containsString(readyRows[0].Actions, "agent-team pipeline advance parallel_checks --all-ready-steps --dry-run --preview-routes") {
+	if len(readyRows) != 1 || readyRows[0].ParallelReadySteps != 2 || !containsString(readyRows[0].Actions, "agent-team pipeline tick parallel_checks --all-ready-steps --dry-run --preview-routes") {
 		t.Fatalf("ready rows = %+v, want parallel-ready action", readyRows)
 	}
 
@@ -8334,7 +8331,7 @@ after = ["lint", "test"]
 	if err := json.Unmarshal(statusOut.Bytes(), &statusRows); err != nil {
 		t.Fatalf("decode status rows: %v\nbody=%s", err, statusOut.String())
 	}
-	if len(statusRows) != 1 || statusRows[0].ParallelReadySteps != 2 || !containsString(statusRows[0].Actions, "agent-team pipeline advance parallel_checks --all-ready-steps --dry-run --preview-routes") {
+	if len(statusRows) != 1 || statusRows[0].ParallelReadySteps != 2 || !containsString(statusRows[0].Actions, "agent-team pipeline tick parallel_checks --all-ready-steps --dry-run --preview-routes") {
 		t.Fatalf("status rows = %+v, want parallel-ready action", statusRows)
 	}
 
@@ -8352,7 +8349,7 @@ after = ["lint", "test"]
 	}
 	foundAllReady := false
 	for _, row := range nextRows {
-		if row.Action == "agent-team pipeline advance parallel_checks --all-ready-steps --dry-run --preview-routes" {
+		if row.Action == "agent-team pipeline tick parallel_checks --all-ready-steps --dry-run --preview-routes" {
 			foundAllReady = true
 			if row.Reason != "parallel_ready_steps=2" {
 				t.Fatalf("all-ready reason = %q, want parallel_ready_steps=2", row.Reason)

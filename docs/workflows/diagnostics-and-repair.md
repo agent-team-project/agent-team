@@ -87,6 +87,10 @@ specific trigger; values match exactly, or as prefixes before `=`, so
 When outstanding queue, schedule, status, or ready pipeline work can be drained,
 overview adds `agent-team drain` (or `agent-team team drain <team>`). Filter that
 shortcut with `agent-team next --source overview --reason drainable_work`.
+When the ready work should be previewed for just one cycle, pipeline and team
+recommendation rows prefer `pipeline tick <pipeline> --dry-run --preview-routes`
+or `team tick <team> --dry-run --preview-routes` so queued dispatches and ready
+steps stay in the same scoped handoff.
 
 Use it in scripts or when a human wants a short checklist.
 

@@ -5483,10 +5483,19 @@ func scopePipelineExplainAction(pipeline, jobID, stepID, action string) string {
 		return action
 	}
 	if action == fmt.Sprintf("agent-team job advance %s", jobID) {
-		return fmt.Sprintf("agent-team pipeline advance %s --dry-run --preview-routes", pipeline)
+		return pipelineTickPreviewAction(pipeline, false)
 	}
 	if action == fmt.Sprintf("agent-team job advance %s --all-ready-steps", jobID) {
-		return fmt.Sprintf("agent-team pipeline advance %s --all-ready-steps --dry-run --preview-routes", pipeline)
+		return pipelineTickPreviewAction(pipeline, true)
+	}
+	if action == fmt.Sprintf("agent-team pipeline advance %s --dry-run --preview-routes", pipeline) {
+		return pipelineTickPreviewAction(pipeline, false)
+	}
+	if action == fmt.Sprintf("agent-team pipeline advance %s --all-ready-steps --dry-run --preview-routes", pipeline) {
+		return pipelineTickPreviewAction(pipeline, true)
+	}
+	if action == "agent-team tick" {
+		return pipelineTickPreviewAction(pipeline, false)
 	}
 	if action == fmt.Sprintf("agent-team job retry %s --dispatch", jobID) ||
 		action == fmt.Sprintf("agent-team job retry %s --dry-run --dispatch", jobID) {
@@ -5514,6 +5523,13 @@ func scopePipelineExplainAction(pipeline, jobID, stepID, action string) string {
 		return fmt.Sprintf("agent-team pipeline reject %s --step %s --dry-run", pipeline, stepID)
 	}
 	return action
+}
+
+func pipelineTickPreviewAction(pipeline string, allReadySteps bool) string {
+	if allReadySteps {
+		return fmt.Sprintf("agent-team pipeline tick %s --all-ready-steps --dry-run --preview-routes", pipeline)
+	}
+	return fmt.Sprintf("agent-team pipeline tick %s --dry-run --preview-routes", pipeline)
 }
 
 func filterJobExplainResultByStep(explained jobExplainResult, stepFilter string) (jobExplainResult, bool) {
@@ -5589,60 +5605,68 @@ func finalizePipelineStatusRow(row *pipelineStatusRow) {
 		return
 	}
 	actions := []string{}
+	add := func(action string) {
+		action = strings.TrimSpace(action)
+		if action == "" || stringSliceContains(actions, action) {
+			return
+		}
+		actions = append(actions, action)
+	}
 	if row.ReadySteps > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team pipeline advance %s --dry-run --preview-routes", row.Pipeline))
+		add(pipelineTickPreviewAction(row.Pipeline, false))
 	}
 	if row.ParallelReadySteps > 1 {
-		actions = append(actions, fmt.Sprintf("agent-team pipeline advance %s --all-ready-steps --dry-run --preview-routes", row.Pipeline))
+		add(pipelineTickPreviewAction(row.Pipeline, true))
 	}
 	if row.FailedSteps > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team pipeline retry %s --dry-run --dispatch --preview-routes", row.Pipeline))
-		actions = append(actions, fmt.Sprintf("agent-team pipeline repair %s --retry-pipelines --dry-run --preview-routes", row.Pipeline))
-		actions = append(actions, "agent-team repair --retry-pipelines --dry-run --preview-routes")
-		actions = append(actions, fmt.Sprintf("agent-team pipeline explain %s --state failed", row.Pipeline))
-		actions = append(actions, fmt.Sprintf("agent-team pipeline ready %s --state failed", row.Pipeline))
+		add(fmt.Sprintf("agent-team pipeline retry %s --dry-run --dispatch --preview-routes", row.Pipeline))
+		add(fmt.Sprintf("agent-team pipeline repair %s --retry-pipelines --dry-run --preview-routes", row.Pipeline))
+		add("agent-team repair --retry-pipelines --dry-run --preview-routes")
+		add(fmt.Sprintf("agent-team pipeline explain %s --state failed", row.Pipeline))
+		add(fmt.Sprintf("agent-team pipeline ready %s --state failed", row.Pipeline))
 	}
 	if row.StaleRunningSteps > 0 {
-		actions = append(actions, "agent-team job reconcile events --dry-run")
-		actions = append(actions, fmt.Sprintf("agent-team pipeline timeout %s --dry-run", row.Pipeline))
-		actions = append(actions, fmt.Sprintf("agent-team pipeline repair %s --timeout-jobs --dry-run --preview-routes", row.Pipeline))
-		actions = append(actions, "agent-team repair --timeout-jobs --dry-run")
-		actions = append(actions, fmt.Sprintf("agent-team pipeline explain %s --state running", row.Pipeline))
-		actions = append(actions, fmt.Sprintf("agent-team pipeline ready %s --state running", row.Pipeline))
+		add("agent-team job reconcile events --dry-run")
+		add(fmt.Sprintf("agent-team pipeline timeout %s --dry-run", row.Pipeline))
+		add(fmt.Sprintf("agent-team pipeline repair %s --timeout-jobs --dry-run --preview-routes", row.Pipeline))
+		add("agent-team repair --timeout-jobs --dry-run")
+		add(fmt.Sprintf("agent-team pipeline explain %s --state running", row.Pipeline))
+		add(fmt.Sprintf("agent-team pipeline ready %s --state running", row.Pipeline))
 	}
 	if row.HeldSteps > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team pipeline explain %s --state held", row.Pipeline))
-		actions = append(actions, fmt.Sprintf("agent-team pipeline ready %s --state held", row.Pipeline))
+		add(fmt.Sprintf("agent-team pipeline explain %s --state held", row.Pipeline))
+		add(fmt.Sprintf("agent-team pipeline ready %s --state held", row.Pipeline))
 	}
 	if row.ManualGates > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team pipeline approve %s --dry-run --dispatch --preview-routes", row.Pipeline))
+		add(fmt.Sprintf("agent-team pipeline approve %s --dry-run --dispatch --preview-routes", row.Pipeline))
 	}
 	if row.BlockedSteps > 0 {
 		if row.BlockedSteps > row.ManualGates {
-			actions = append(actions, fmt.Sprintf("agent-team pipeline unblock %s <answer...> --dry-run", row.Pipeline))
+			add(fmt.Sprintf("agent-team pipeline unblock %s <answer...> --dry-run", row.Pipeline))
 		}
-		actions = append(actions, fmt.Sprintf("agent-team pipeline explain %s --state blocked", row.Pipeline))
-		actions = append(actions, fmt.Sprintf("agent-team pipeline ready %s --state blocked", row.Pipeline))
+		add(fmt.Sprintf("agent-team pipeline explain %s --state blocked", row.Pipeline))
+		add(fmt.Sprintf("agent-team pipeline ready %s --state blocked", row.Pipeline))
 	}
 	if row.QueuedSteps > 0 {
-		actions = append(actions, "agent-team tick")
+		add(pipelineTickPreviewAction(row.Pipeline, false))
 	}
 	if row.QueueDead > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team pipeline queue %s --state dead --summary", row.Pipeline))
-		actions = append(actions, pipelineQueueRetryAllRecoveryAction(row.Pipeline, true))
+		add(fmt.Sprintf("agent-team pipeline queue %s --state dead --summary", row.Pipeline))
+		add(pipelineQueueRetryAllRecoveryAction(row.Pipeline, true))
 	}
 	if row.QueueQuarantined > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team pipeline queue quarantine %s", row.Pipeline))
+		add(fmt.Sprintf("agent-team pipeline queue quarantine %s", row.Pipeline))
 		if row.QueueUnrestorable > 0 {
-			actions = append(actions, fmt.Sprintf("agent-team pipeline queue quarantine %s --unrestorable", row.Pipeline))
+			add(fmt.Sprintf("agent-team pipeline queue quarantine %s --unrestorable", row.Pipeline))
 		}
 		if row.QueueRestorable > 0 {
-			actions = append(actions, fmt.Sprintf("agent-team pipeline queue quarantine %s --restorable", row.Pipeline))
+			add(fmt.Sprintf("agent-team pipeline queue quarantine %s --restorable", row.Pipeline))
 		}
-		actions = append(actions, fmt.Sprintf("agent-team pipeline snapshot %s --json", row.Pipeline))
+		add(fmt.Sprintf("agent-team pipeline snapshot %s --json", row.Pipeline))
 	}
 	if row.QueuePending > 0 {
-		actions = append(actions, fmt.Sprintf("agent-team pipeline queue %s --state pending", row.Pipeline))
+		add(pipelineTickPreviewAction(row.Pipeline, false))
+		add(fmt.Sprintf("agent-team pipeline queue %s --state pending", row.Pipeline))
 	}
 	row.Actions = actions
 }
@@ -5723,6 +5747,14 @@ func pipelineNextActionReason(row pipelineStatusRow, action string) string {
 	switch {
 	case strings.Contains(action, " --all-ready-steps"):
 		return fmt.Sprintf("parallel_ready_steps=%d", row.ParallelReadySteps)
+	case strings.Contains(action, " tick "):
+		if row.ReadySteps > 0 {
+			return fmt.Sprintf("ready_steps=%d", row.ReadySteps)
+		}
+		if row.QueuePending > 0 {
+			return fmt.Sprintf("queue_pending=%d", row.QueuePending)
+		}
+		return fmt.Sprintf("queued_steps=%d", row.QueuedSteps)
 	case strings.Contains(action, " advance "):
 		return fmt.Sprintf("ready_steps=%d", row.ReadySteps)
 	case strings.Contains(action, " queue quarantine "):
@@ -5749,7 +5781,7 @@ func pipelineNextActionReason(row pipelineStatusRow, action string) string {
 		return fmt.Sprintf("stale_running_steps=%d", row.StaleRunningSteps)
 	case strings.Contains(action, " --state held"):
 		return fmt.Sprintf("held_steps=%d", row.HeldSteps)
-	case action == "agent-team tick", strings.Contains(action, " tick "):
+	case action == "agent-team tick":
 		return fmt.Sprintf("queued_steps=%d", row.QueuedSteps)
 	default:
 		return ""
@@ -6035,9 +6067,9 @@ func scopePipelineReadyRowsByOwner(rows []jobReadyRow) []jobReadyRow {
 
 func pipelineReadyRowActions(pipeline string, row jobReadyRow) []string {
 	if jobReadyRowIsAdvanceable(row) {
-		actions := []string{fmt.Sprintf("agent-team pipeline advance %s --dry-run --preview-routes", pipeline)}
+		actions := []string{pipelineTickPreviewAction(pipeline, false)}
 		if row.ParallelReadySteps > 1 {
-			actions = append(actions, fmt.Sprintf("agent-team pipeline advance %s --all-ready-steps --dry-run --preview-routes", pipeline))
+			actions = append(actions, pipelineTickPreviewAction(pipeline, true))
 		}
 		return actions
 	}

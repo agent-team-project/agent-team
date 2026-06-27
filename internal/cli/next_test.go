@@ -309,7 +309,7 @@ func TestTeamNextCommandFiltersBySource(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("decode team filtered next json: %v\nbody=%s", err, out.String())
 	}
-	if len(result.Actions) != 1 || result.Actions[0] != "agent-team team advance delivery --dry-run --preview-routes" {
+	if len(result.Actions) != 1 || result.Actions[0] != "agent-team team tick delivery --dry-run --preview-routes" {
 		t.Fatalf("team filtered result = %+v", result)
 	}
 	if len(result.ActionDetails) != 1 || result.ActionDetails[0].Team != "delivery" || result.ActionDetails[0].Source != "pipelines" {
