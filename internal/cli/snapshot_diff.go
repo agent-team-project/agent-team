@@ -22,7 +22,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 		Use:   "diff <before.json> <after.json>",
 		Short: "Compare two saved diagnostic snapshots.",
 		Long: "Compare two saved global, team, or pipeline diagnostic snapshot JSON files and summarize " +
-			"provenance, git, instance, job, inbox, queue, schedule, intake, event, pipeline, ready-advance, and section-error changes.",
+			"provenance, git, runtime, instance, job, inbox, queue, schedule, intake, event, pipeline, ready-advance, and section-error changes.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sectionSet, err := parseSnapshotDiffSections(sections)
@@ -50,7 +50,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit snapshot diff as JSON.")
 	cmd.Flags().BoolVar(&exitCode, "exit-code", false, "Exit with status 1 when snapshots differ.")
-	cmd.Flags().StringSliceVar(&sections, "section", nil, "Only compare sections: provenance, git, instances, jobs, pipelines, inbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&sections, "section", nil, "Only compare sections: provenance, git, runtime, instances, jobs, pipelines, inbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all. Can repeat or comma-separate.")
 	return cmd
 }
 
@@ -60,6 +60,7 @@ type snapshotDiffInput struct {
 	Repo             string                        `json:"repo,omitempty"`
 	Provenance       *snapshotProvenance           `json:"provenance,omitempty"`
 	Git              *snapshotGitInfo              `json:"git,omitempty"`
+	Runtime          *runtimeInfo                  `json:"runtime,omitempty"`
 	Team             *teamInfo                     `json:"team,omitempty"`
 	Pipeline         string                        `json:"pipeline,omitempty"`
 	Instances        []snapshotDiffInstance        `json:"instances,omitempty"`
@@ -202,6 +203,7 @@ type snapshotDiffSummary struct {
 	TotalChanges    int                  `json:"total_changes"`
 	Provenance      snapshotDiffCounters `json:"provenance"`
 	Git             snapshotDiffCounters `json:"git"`
+	Runtime         snapshotDiffCounters `json:"runtime"`
 	Instances       snapshotDiffCounters `json:"instances"`
 	Jobs            snapshotDiffCounters `json:"jobs"`
 	Pipelines       snapshotDiffCounters `json:"pipelines"`
@@ -233,6 +235,7 @@ type snapshotDiffComparable struct {
 	Meta            snapshotDiffMeta
 	Provenance      map[string]string
 	Git             map[string]string
+	Runtime         map[string]string
 	Instances       map[string]string
 	Jobs            map[string]string
 	Pipelines       map[string]string
@@ -268,6 +271,9 @@ func diffSnapshotFiles(beforePath, afterPath string, opts snapshotDiffOptions) (
 	}
 	if snapshotDiffSectionEnabled(opts.Sections, "git") {
 		result.Changes = append(result.Changes, diffSnapshotStringMaps("git", before.Git, after.Git, &result.Summary.Git)...)
+	}
+	if snapshotDiffSectionEnabled(opts.Sections, "runtime") {
+		result.Changes = append(result.Changes, diffSnapshotStringMaps("runtime", before.Runtime, after.Runtime, &result.Summary.Runtime)...)
 	}
 	if snapshotDiffSectionEnabled(opts.Sections, "instances") {
 		result.Changes = append(result.Changes, diffSnapshotStringMaps("instances", before.Instances, after.Instances, &result.Summary.Instances)...)
@@ -313,6 +319,7 @@ func parseSnapshotDiffSections(values []string) (map[string]bool, error) {
 	valid := map[string]bool{
 		"provenance":       true,
 		"git":              true,
+		"runtime":          true,
 		"instances":        true,
 		"jobs":             true,
 		"pipelines":        true,
@@ -339,7 +346,7 @@ func parseSnapshotDiffSections(values []string) (map[string]bool, error) {
 				name = "queue_quarantine"
 			}
 			if !valid[name] {
-				return nil, fmt.Errorf("--section must be provenance, git, instances, jobs, pipelines, inbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all")
+				return nil, fmt.Errorf("--section must be provenance, git, runtime, instances, jobs, pipelines, inbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all")
 			}
 			out[name] = true
 		}
@@ -378,6 +385,7 @@ func snapshotDiffComparableFromInput(path string, input snapshotDiffInput) snaps
 		},
 		Provenance:      snapshotDiffProvenanceMap(input.Provenance),
 		Git:             snapshotDiffGitMap(input.Git),
+		Runtime:         snapshotDiffRuntimeMap(input.Runtime),
 		Instances:       map[string]string{},
 		Jobs:            map[string]string{},
 		Pipelines:       map[string]string{},
@@ -496,6 +504,40 @@ func snapshotDiffComparableFromInput(path string, input snapshotDiffInput) snaps
 		}
 		out.SectionErrors[key] = strings.TrimSpace(value)
 	}
+	return out
+}
+
+func snapshotDiffRuntimeMap(runtime *runtimeInfo) map[string]string {
+	out := map[string]string{}
+	if runtime == nil {
+		return out
+	}
+	if value := strings.TrimSpace(runtime.Runtime); value != "" {
+		out["runtime"] = value
+	}
+	if value := strings.TrimSpace(runtime.Binary); value != "" {
+		out["binary"] = value
+	}
+	if value := strings.TrimSpace(runtime.Path); value != "" {
+		out["path"] = value
+	}
+	if value := strings.TrimSpace(runtime.EnvRuntime); value != "" {
+		out["env_runtime"] = value
+	}
+	if value := strings.TrimSpace(runtime.EnvBinary); value != "" {
+		out["env_binary"] = value
+	}
+	if value := strings.TrimSpace(runtime.ConfigPath); value != "" {
+		out["config_path"] = value
+	}
+	out["selected"] = fmt.Sprintf("%t", runtime.Selected)
+	out["available"] = fmt.Sprintf("%t", runtime.Available)
+	out["direct_run"] = fmt.Sprintf("%t", runtime.DirectRun)
+	out["daemon_dispatch"] = fmt.Sprintf("%t", runtime.DaemonDispatch)
+	out["direct_resume"] = fmt.Sprintf("%t", runtime.DirectResume)
+	out["managed_resume"] = fmt.Sprintf("%t", runtime.ManagedResume)
+	out["resume"] = fmt.Sprintf("%t", runtime.Resume)
+	out["subagents"] = fmt.Sprintf("%t", runtime.Subagents)
 	return out
 }
 
@@ -704,6 +746,7 @@ func renderSnapshotDiff(w io.Writer, result *snapshotDiffResult) {
 	fmt.Fprintf(w, "changes: total=%d\n", result.Summary.TotalChanges)
 	renderSnapshotDiffCounterLine(w, "provenance", result.Summary.Provenance)
 	renderSnapshotDiffCounterLine(w, "git", result.Summary.Git)
+	renderSnapshotDiffCounterLine(w, "runtime", result.Summary.Runtime)
 	renderSnapshotDiffCounterLine(w, "instances", result.Summary.Instances)
 	renderSnapshotDiffCounterLine(w, "jobs", result.Summary.Jobs)
 	renderSnapshotDiffCounterLine(w, "pipelines", result.Summary.Pipelines)

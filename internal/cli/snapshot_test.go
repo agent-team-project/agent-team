@@ -272,6 +272,19 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		CapturedAt: "2026-06-18T12:00:00Z",
 		Pipeline:   "ticket_to_pr",
 		Git:        &snapshotGitInfo{Branch: "main", Commit: "1111111", Upstream: "origin/main", Behind: 1},
+		Runtime: &runtimeInfo{
+			Runtime:        "claude",
+			Binary:         "claude",
+			Path:           "/usr/local/bin/claude",
+			Available:      true,
+			DirectRun:      true,
+			DaemonDispatch: true,
+			DirectResume:   true,
+			ManagedResume:  true,
+			Resume:         true,
+			Subagents:      true,
+			ConfigPath:     "/repo/.agent_team/config.toml",
+		},
 		Provenance: newSnapshotProvenance("agent-team snapshot", "global", "", snapshotProvenanceOptions{
 			Events:           intValuePtr(20),
 			IntakeDeliveries: intValuePtr(20),
@@ -326,6 +339,17 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		CapturedAt: "2026-06-18T12:05:00Z",
 		Pipeline:   "ticket_to_pr",
 		Git:        &snapshotGitInfo{Branch: "feature/squ-801", Commit: "2222222", Upstream: "origin/feature/squ-801", Dirty: true, Changes: 3, Ahead: 2},
+		Runtime: &runtimeInfo{
+			Runtime:        "codex",
+			Binary:         "codex",
+			Path:           "/usr/local/bin/codex",
+			Available:      true,
+			DirectRun:      true,
+			DaemonDispatch: true,
+			DirectResume:   true,
+			EnvRuntime:     "codex",
+			ConfigPath:     "/repo/.agent_team/config.toml",
+		},
 		Provenance: newSnapshotProvenance("agent-team team snapshot", "team", "delivery", snapshotProvenanceOptions{
 			Events:        intValuePtr(5),
 			ScheduleLimit: intValuePtr(0),
@@ -405,6 +429,9 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	if result.Summary.Git.Changed != 7 {
 		t.Fatalf("git counters = %+v", result.Summary.Git)
 	}
+	if result.Summary.Runtime.Added != 1 || result.Summary.Runtime.Changed != 6 {
+		t.Fatalf("runtime counters = %+v", result.Summary.Runtime)
+	}
 	if result.Summary.Jobs.Added != 1 || result.Summary.Jobs.Removed != 1 || result.Summary.Jobs.Changed != 1 {
 		t.Fatalf("job counters = %+v", result.Summary.Jobs)
 	}
@@ -440,6 +467,9 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		!hasSnapshotDiffChange(result.Changes, "provenance", "intake_deliveries", "removed") ||
 		!hasSnapshotDiffChange(result.Changes, "git", "branch", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "git", "dirty", "changed") ||
+		!hasSnapshotDiffChange(result.Changes, "runtime", "runtime", "changed") ||
+		!hasSnapshotDiffChange(result.Changes, "runtime", "env_runtime", "added") ||
+		!hasSnapshotDiffChange(result.Changes, "runtime", "subagents", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "jobs", "squ-801", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "jobs", "squ-802", "removed") ||
 		!hasSnapshotDiffChange(result.Changes, "jobs", "squ-803", "added") ||
@@ -469,6 +499,7 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		"snapshot diff:",
 		"provenance: added=1 removed=1 changed=5",
 		"git: added=0 removed=0 changed=7",
+		"runtime: added=1 removed=0 changed=6",
 		"instances: added=1 removed=0 changed=1",
 		"jobs: added=1 removed=1 changed=1",
 		"pipelines:",
@@ -558,6 +589,27 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		}
 	}
 
+	runtimeOnly := NewRootCmd()
+	runtimeOnlyOut, runtimeOnlyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeOnly.SetOut(runtimeOnlyOut)
+	runtimeOnly.SetErr(runtimeOnlyErr)
+	runtimeOnly.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "runtime", "--json"})
+	if err := runtimeOnly.Execute(); err != nil {
+		t.Fatalf("snapshot diff runtime section: %v\nstderr=%s", err, runtimeOnlyErr.String())
+	}
+	var runtimeOnlyResult snapshotDiffResult
+	if err := json.Unmarshal(runtimeOnlyOut.Bytes(), &runtimeOnlyResult); err != nil {
+		t.Fatalf("decode runtime-only snapshot diff: %v\nbody=%s", err, runtimeOnlyOut.String())
+	}
+	if runtimeOnlyResult.Summary.TotalChanges != 7 || runtimeOnlyResult.Summary.Runtime.Added != 1 || runtimeOnlyResult.Summary.Runtime.Changed != 6 || runtimeOnlyResult.Summary.Git.Changed != 0 {
+		t.Fatalf("runtime-only diff summary = %+v", runtimeOnlyResult.Summary)
+	}
+	for _, change := range runtimeOnlyResult.Changes {
+		if change.Section != "runtime" {
+			t.Fatalf("runtime-only diff included %q change: %+v", change.Section, runtimeOnlyResult.Changes)
+		}
+	}
+
 	queueOnly := NewRootCmd()
 	queueOnlyOut, queueOnlyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	queueOnly.SetOut(queueOnlyOut)
@@ -604,11 +656,11 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	invalidSectionOut, invalidSectionErr := &bytes.Buffer{}, &bytes.Buffer{}
 	invalidSection.SetOut(invalidSectionOut)
 	invalidSection.SetErr(invalidSectionErr)
-	invalidSection.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "runtime"})
+	invalidSection.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "telemetry"})
 	if err := invalidSection.Execute(); err == nil {
 		t.Fatalf("snapshot diff invalid section succeeded")
 	}
-	if !strings.Contains(invalidSectionErr.String(), "--section must be provenance, git") {
+	if !strings.Contains(invalidSectionErr.String(), "--section must be provenance, git, runtime") {
 		t.Fatalf("invalid section stderr = %q", invalidSectionErr.String())
 	}
 }
