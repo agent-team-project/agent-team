@@ -1888,6 +1888,43 @@ pipelines = ["platform_ops"]
 	}
 }
 
+func TestTeamRetryDispatchWaitsForRequestedStatus(t *testing.T) {
+	root, mgr, cleanup := setupManualGateApprovalRepo(t, true)
+	defer cleanup()
+	teamDir := filepath.Join(root, ".agent_team")
+	writeFailedRetryJob(t, teamDir, "squ-910")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"team", "retry", "delivery",
+		"--repo", root,
+		"--dispatch",
+		"--workspace", "repo",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team retry --dispatch --wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []pipelineRetryResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode team retry wait json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Pipeline != "ticket_to_pr" || rows[0].Action != "dispatched" || rows[0].Job == nil || rows[0].Job.Status != job.StatusRunning || rows[0].Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("team retry wait rows = %+v", rows)
+	}
+	if rows[0].Step == nil || rows[0].Step.ID != "implement" || rows[0].Step.Status != job.StatusRunning || rows[0].Step.Instance != "worker-squ-910-implement" {
+		t.Fatalf("team retry wait step = %+v", rows[0].Step)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-910-implement")
+}
+
 func TestTeamRetryStepFilter(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
@@ -3541,6 +3578,9 @@ func TestTeamRetryValidation(t *testing.T) {
 	}{
 		{[]string{"team", "retry", "delivery", "--limit", "-1"}, "--limit must be >= 0"},
 		{[]string{"team", "retry", "delivery", "--preview-routes", "--dry-run"}, "--preview-routes requires --dry-run and --dispatch"},
+		{[]string{"team", "retry", "delivery", "--wait", "--dry-run"}, "--wait cannot be combined with --dry-run"},
+		{[]string{"team", "retry", "delivery", "--wait-status", "running"}, "wait-related flags require --wait"},
+		{[]string{"team", "retry", "delivery", "--wait-timeout", "-1s", "--wait"}, "--wait-timeout must be >= 0"},
 		{[]string{"team", "retry", "delivery", "--format", "{{.JobID}}", "--json"}, "--format cannot be combined with --json"},
 	}
 	for _, tc := range cases {

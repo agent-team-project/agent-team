@@ -3622,6 +3622,29 @@ func writeManualGateApprovalJob(t *testing.T, teamDir, id string) {
 	}
 }
 
+func writeFailedRetryJob(t *testing.T, teamDir, id string) {
+	t.Helper()
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:         id,
+		Ticket:     strings.ToUpper(id),
+		Target:     "worker",
+		Kickoff:    "retry failed implementation",
+		Pipeline:   "ticket_to_pr",
+		Status:     job.StatusFailed,
+		LastEvent:  "step_failed",
+		LastStatus: "implement failed",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusFailed, Instance: "worker-old", StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-30 * time.Minute)},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write failed retry job: %v", err)
+	}
+}
+
 func TestPipelineRejectManualGate(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
@@ -8242,6 +8265,76 @@ func TestPipelineRetryFailedSteps(t *testing.T) {
 	}
 }
 
+func TestPipelineRetryDispatchWaitsForRequestedStatus(t *testing.T) {
+	root, mgr, cleanup := setupManualGateApprovalRepo(t, false)
+	defer cleanup()
+	teamDir := filepath.Join(root, ".agent_team")
+	writeFailedRetryJob(t, teamDir, "squ-908")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"pipeline", "retry", "ticket_to_pr",
+		"--repo", root,
+		"--dispatch",
+		"--workspace", "repo",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline retry --dispatch --wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []pipelineRetryResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline retry wait json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Action != "dispatched" || rows[0].Job == nil || rows[0].Job.Status != job.StatusRunning || rows[0].Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("retry wait rows = %+v", rows)
+	}
+	if rows[0].Step == nil || rows[0].Step.ID != "implement" || rows[0].Step.Status != job.StatusRunning || rows[0].Step.Instance != "worker-squ-908-implement" {
+		t.Fatalf("retry wait step = %+v", rows[0].Step)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-908-implement")
+}
+
+func TestPipelineRetryDispatchWaitTimesOutForEvent(t *testing.T) {
+	root, mgr, cleanup := setupManualGateApprovalRepo(t, false)
+	defer cleanup()
+	teamDir := filepath.Join(root, ".agent_team")
+	writeFailedRetryJob(t, teamDir, "squ-909")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"pipeline", "retry", "ticket_to_pr",
+		"--repo", root,
+		"--dispatch",
+		"--workspace", "repo",
+		"--wait",
+		"--wait-event", "closed",
+		"--wait-timeout", "1ms",
+		"--wait-interval", "10ms",
+	})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("pipeline retry --dispatch --wait succeeded unexpectedly")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("retry wait timeout wrote stdout=%q", out.String())
+	}
+	if !strings.Contains(stderr.String(), "timed out waiting for retried jobs to reach event=closed") ||
+		!strings.Contains(stderr.String(), "pending=squ-909=running event=advance_dispatched") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-909-implement")
+}
+
 func TestPipelineRetryStepFilter(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
@@ -8483,6 +8576,9 @@ func TestPipelineRetryValidation(t *testing.T) {
 		{[]string{"pipeline", "retry", "ticket_triage", "--all"}, "--all cannot be combined"},
 		{[]string{"pipeline", "retry", "ticket_triage", "--limit", "-1"}, "--limit must be >= 0"},
 		{[]string{"pipeline", "retry", "ticket_triage", "--preview-routes", "--dry-run"}, "--preview-routes requires --dry-run and --dispatch"},
+		{[]string{"pipeline", "retry", "ticket_triage", "--wait", "--dry-run"}, "--wait cannot be combined with --dry-run"},
+		{[]string{"pipeline", "retry", "ticket_triage", "--wait-status", "running"}, "wait-related flags require --wait"},
+		{[]string{"pipeline", "retry", "ticket_triage", "--wait-timeout", "-1s", "--wait"}, "--wait-timeout must be >= 0"},
 		{[]string{"pipeline", "retry", "ticket_triage", "--format", "{{.JobID}}", "--json"}, "--format cannot be combined with --json"},
 	}
 	for _, tc := range cases {
