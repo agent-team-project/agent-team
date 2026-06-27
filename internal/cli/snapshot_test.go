@@ -1249,6 +1249,36 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		}
 	}
 
+	quarantineAlias := NewRootCmd()
+	quarantineAliasOut, quarantineAliasErr := &bytes.Buffer{}, &bytes.Buffer{}
+	quarantineAlias.SetOut(quarantineAliasOut)
+	quarantineAlias.SetErr(quarantineAliasErr)
+	quarantineAlias.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "quarantine", "--json"})
+	if err := quarantineAlias.Execute(); err != nil {
+		t.Fatalf("snapshot diff quarantine alias section: %v\nstderr=%s", err, quarantineAliasErr.String())
+	}
+	var quarantineAliasResult snapshotDiffResult
+	if err := json.Unmarshal(quarantineAliasOut.Bytes(), &quarantineAliasResult); err != nil {
+		t.Fatalf("decode quarantine-alias snapshot diff: %v\nbody=%s", err, quarantineAliasOut.String())
+	}
+	if quarantineAliasResult.Summary.TotalChanges != 6 ||
+		quarantineAliasResult.Summary.JobQuarantine.Added != 1 ||
+		quarantineAliasResult.Summary.JobQuarantine.Changed != 1 ||
+		quarantineAliasResult.Summary.OutboxQuarantine.Added != 1 ||
+		quarantineAliasResult.Summary.OutboxQuarantine.Changed != 1 ||
+		quarantineAliasResult.Summary.QueueQuarantine.Added != 1 ||
+		quarantineAliasResult.Summary.QueueQuarantine.Changed != 1 ||
+		quarantineAliasResult.Summary.Queue.Added != 0 {
+		t.Fatalf("quarantine-alias diff summary = %+v", quarantineAliasResult.Summary)
+	}
+	for _, change := range quarantineAliasResult.Changes {
+		switch change.Section {
+		case "job_quarantine", "outbox_quarantine", "queue_quarantine":
+		default:
+			t.Fatalf("quarantine-alias diff included %q change: %+v", change.Section, quarantineAliasResult.Changes)
+		}
+	}
+
 	inboxOnly := NewRootCmd()
 	inboxOnlyOut, inboxOnlyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	inboxOnly.SetOut(inboxOnlyOut)

@@ -165,7 +165,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit snapshot diff as JSON.")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write the JSON snapshot diff to this file. Use '-' for stdout.")
 	cmd.Flags().BoolVar(&exitCode, "exit-code", false, "Exit with status 1 when snapshots differ.")
-	cmd.Flags().StringSliceVar(&sections, "section", nil, "Only compare sections: provenance, git, runtime, health, plan, triage, next, instances, jobs, job_quarantine, pipelines, inbox, outbox, outbox_quarantine, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&sections, "section", nil, "Only compare sections: provenance, git, runtime, health, plan, triage, next, instances, jobs, job_quarantine, pipelines, inbox, outbox, outbox_quarantine, queue, queue_quarantine, schedules, intake, events, advance, section_errors, quarantine, or all. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actions, "action", nil, "Only compare change actions: added, removed, or changed. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the diff result with a Go template, e.g. '{{.Summary.TotalChanges}} {{len .Changes}}'.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit emitted change detail rows after summarizing all changes; 0 means all.")
@@ -989,19 +989,34 @@ func parseSnapshotDiffSections(values []string) (map[string]bool, error) {
 			if name == "all" {
 				return nil, nil
 			}
-			if name == "quarantine" {
-				name = "queue_quarantine"
+			names := normalizeSnapshotDiffSectionAliases(name)
+			for _, name := range names {
+				if !valid[name] {
+					return nil, fmt.Errorf("--section must be provenance, git, runtime, health, plan, triage, next, instances, jobs, job_quarantine, pipelines, inbox, outbox, outbox_quarantine, queue, queue_quarantine, schedules, intake, events, advance, section_errors, quarantine, or all")
+				}
+				out[name] = true
 			}
-			if !valid[name] {
-				return nil, fmt.Errorf("--section must be provenance, git, runtime, health, plan, triage, next, instances, jobs, job_quarantine, pipelines, inbox, outbox, outbox_quarantine, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all")
-			}
-			out[name] = true
 		}
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("--section requires at least one non-empty section")
 	}
 	return out, nil
+}
+
+func normalizeSnapshotDiffSectionAliases(name string) []string {
+	switch name {
+	case "quarantine", "quarantines":
+		return []string{"job_quarantine", "outbox_quarantine", "queue_quarantine"}
+	case "job_quarantines", "jobs_quarantine", "jobs_quarantines":
+		return []string{"job_quarantine"}
+	case "outbox_quarantines":
+		return []string{"outbox_quarantine"}
+	case "queue_quarantines":
+		return []string{"queue_quarantine"}
+	default:
+		return []string{name}
+	}
 }
 
 func snapshotDiffSectionEnabled(sections map[string]bool, section string) bool {
