@@ -4181,10 +4181,12 @@ Flags:
       --timeout-pipelines             Mark stale running pipeline steps failed before retrying failed steps.
       --timeout-step string           With --timeout-jobs or --timeout-pipelines, mark only stale running steps with this id failed.
       --timeout-target-agent string   With --timeout-jobs or --timeout-pipelines, mark only stale work targeting this agent.
-      --wait                          After repair dispatches retried or ready steps, wait for those jobs to reach a lifecycle status or event.
+      --wait                          After repair dispatches retried or ready steps, wait for those jobs to reach a lifecycle status, event, or next-step state.
       --wait-event strings            With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
       --wait-interval duration        Polling interval with --wait. (default 500ms)
+      --wait-next-state strings       With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
       --wait-status strings           With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-step string              With --wait, pipeline step id that must be the current next step for every repaired job.
       --wait-timeout duration         Maximum time to wait with --wait (0 = no timeout).
       --workspace string              Workspace mode for retried or advanced pipeline steps: auto, worktree, or repo. (default "auto")
 ```
@@ -5129,10 +5131,12 @@ Flags:
       --timeout-step string           With --timeout-jobs or --timeout-pipelines, mark only stale running steps with this id failed.
       --timeout-target-agent string   With --timeout-jobs or --timeout-pipelines, mark only stale work targeting this agent.
       --until-idle                    Run maintenance ticks until no immediate queue, schedule, or pipeline work remains.
-      --wait                          After repair dispatches retried or ready steps, wait for those jobs to reach a lifecycle status or event.
+      --wait                          After repair dispatches retried or ready steps, wait for those jobs to reach a lifecycle status, event, or next-step state.
       --wait-event strings            With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
       --wait-interval duration        Polling interval with --wait. (default 500ms)
+      --wait-next-state strings       With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
       --wait-status strings           With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-step string              With --wait, pipeline step id that must be the current next step for every repaired job.
       --wait-timeout duration         Maximum time to wait with --wait (0 = no timeout).
       --workspace string              Workspace mode for retried or advanced pipeline steps: auto, worktree, or repo. (default "auto")
 ```
@@ -7010,10 +7014,12 @@ Flags:
       --timeout-step string           With --timeout-jobs or --timeout-pipelines, mark only stale running team steps with this id failed.
       --timeout-target-agent string   With --timeout-jobs or --timeout-pipelines, mark only stale team work targeting this agent.
       --until-idle                    Run scoped team ticks until no immediate team queue, schedule, or pipeline work remains.
-      --wait                          After team repair dispatches retried or ready steps, wait for those jobs to reach a lifecycle status or event.
+      --wait                          After team repair dispatches retried or ready steps, wait for those jobs to reach a lifecycle status, event, or next-step state.
       --wait-event strings            With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
       --wait-interval duration        Polling interval with --wait. (default 500ms)
+      --wait-next-state strings       With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
       --wait-status strings           With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-step string              With --wait, pipeline step id that must be the current next step for every repaired job.
       --wait-timeout duration         Maximum time to wait with --wait (0 = no timeout).
       --workspace string              Workspace mode for retried or advanced team pipeline steps: auto, worktree, or repo. (default "auto")
 ```

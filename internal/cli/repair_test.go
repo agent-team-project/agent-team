@@ -605,6 +605,8 @@ func TestRepairWaitsForRepairedJobs(t *testing.T) {
 		"--retry-pipelines",
 		"--wait",
 		"--wait-status", "running",
+		"--wait-next-state", "running",
+		"--wait-step", "implement",
 		"--wait-timeout", "2s",
 		"--wait-interval", "10ms",
 		"--json",
@@ -1263,6 +1265,21 @@ func TestRepairRejectsInvalidFlagCombinations(t *testing.T) {
 			name: "wait status without wait",
 			args: []string{"repair", "--wait-status", "running"},
 			want: "wait-related flags require --wait",
+		},
+		{
+			name: "wait next-state without wait",
+			args: []string{"repair", "--wait-next-state", "running"},
+			want: "wait-related flags require --wait",
+		},
+		{
+			name: "wait step without wait",
+			args: []string{"repair", "--wait-step", "implement"},
+			want: "wait-related flags require --wait",
+		},
+		{
+			name: "invalid wait next-state",
+			args: []string{"repair", "--wait", "--wait-next-state", "missing"},
+			want: "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all",
 		},
 		{
 			name: "timeout jobs with timeout pipelines",
