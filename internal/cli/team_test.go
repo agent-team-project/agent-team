@@ -1888,6 +1888,42 @@ pipelines = ["platform_ops"]
 	}
 }
 
+func TestTeamAdvanceWaitsForRequestedStatus(t *testing.T) {
+	root, mgr, cleanup := setupManualGateApprovalRepo(t, true)
+	defer cleanup()
+	teamDir := filepath.Join(root, ".agent_team")
+	writeReadyAdvanceJob(t, teamDir, "squ-913")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"team", "advance", "delivery",
+		"--repo", root,
+		"--workspace", "repo",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team advance --wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []pipelineAdvanceResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode team advance wait json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Pipeline != "ticket_to_pr" || rows[0].Action != "advanced" || rows[0].Job == nil || rows[0].Job.Status != job.StatusRunning || rows[0].Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("team advance wait rows = %+v", rows)
+	}
+	if rows[0].Step == nil || rows[0].Step.ID != "implement" || rows[0].Step.Status != job.StatusRunning || rows[0].Step.Instance != "worker-squ-913-implement" {
+		t.Fatalf("team advance wait step = %+v", rows[0].Step)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-913-implement")
+}
+
 func TestTeamRetryDispatchWaitsForRequestedStatus(t *testing.T) {
 	root, mgr, cleanup := setupManualGateApprovalRepo(t, true)
 	defer cleanup()
@@ -3582,6 +3618,31 @@ func TestTeamRetryValidation(t *testing.T) {
 		{[]string{"team", "retry", "delivery", "--wait-status", "running"}, "wait-related flags require --wait"},
 		{[]string{"team", "retry", "delivery", "--wait-timeout", "-1s", "--wait"}, "--wait-timeout must be >= 0"},
 		{[]string{"team", "retry", "delivery", "--format", "{{.JobID}}", "--json"}, "--format cannot be combined with --json"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+	}
+}
+
+func TestTeamAdvanceWaitValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"team", "advance", "delivery", "--wait", "--dry-run"}, "--wait cannot be combined with --dry-run"},
+		{[]string{"team", "advance", "delivery", "--wait-status", "running"}, "wait-related flags require --wait"},
+		{[]string{"team", "advance", "delivery", "--wait-timeout", "-1s", "--wait"}, "--wait-timeout must be >= 0"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

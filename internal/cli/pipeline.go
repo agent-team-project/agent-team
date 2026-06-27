@@ -1792,6 +1792,12 @@ func newPipelineAdvanceCmd() *cobra.Command {
 		allReadySteps bool
 		dryRun        bool
 		previewRoutes bool
+		wait          bool
+		waitStatuses  []string
+		waitEvents    []string
+		waitTimeout   time.Duration
+		waitInterval  time.Duration
+		failOnFailed  bool
 		jsonOut       bool
 		format        string
 	)
@@ -1818,14 +1824,44 @@ func newPipelineAdvanceCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --limit must be >= 0.")
 				return exitErr(2)
 			}
+			if waitInterval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --wait-interval must be >= 0.")
+				return exitErr(2)
+			}
+			if waitTimeout < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --wait-timeout must be >= 0.")
+				return exitErr(2)
+			}
 			if previewRoutes && !dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --preview-routes requires --dry-run.")
+				return exitErr(2)
+			}
+			if dryRun && wait {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --wait cannot be combined with --dry-run.")
+				return exitErr(2)
+			}
+			if !wait && (cmd.Flags().Changed("wait-status") || cmd.Flags().Changed("wait-event") || cmd.Flags().Changed("wait-timeout") || cmd.Flags().Changed("wait-interval") || failOnFailed) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: wait-related flags require --wait.")
 				return exitErr(2)
 			}
 			tmpl, err := parsePipelineAdvanceFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline advance: %v\n", err)
 				return exitErr(2)
+			}
+			waitEventsSet := map[string]bool{}
+			waitStatusesSet := map[job.Status]bool{}
+			if wait {
+				waitEventsSet = parseJobWaitEvents(waitEvents)
+				waitStatusesSet, err = parseJobWaitStatuses(waitStatuses, !cmd.Flags().Changed("wait-status") && len(waitEventsSet) == 0)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline advance: %v\n", err)
+					return exitErr(2)
+				}
+				if len(waitStatusesSet) == 0 && len(waitEventsSet) == 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: pass at least one non-empty --wait-status or --wait-event.")
+					return exitErr(2)
+				}
 			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
@@ -1843,7 +1879,22 @@ func newPipelineAdvanceCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return renderPipelineAdvanceResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
+			if wait {
+				results, err = waitForPipelineAdvanceResults(cmd, teamDir, results, waitStatusesSet, waitEventsSet, waitTimeout, waitInterval, "agent-team pipeline advance")
+				if err != nil {
+					if err == context.Canceled {
+						return nil
+					}
+					return err
+				}
+			}
+			if err := renderPipelineAdvanceResults(cmd.OutOrStdout(), results, jsonOut, tmpl); err != nil {
+				return err
+			}
+			if failOnFailed && pipelineAdvanceResultsHaveFailed(results) {
+				return exitErr(1)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -1855,6 +1906,12 @@ func newPipelineAdvanceCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&allReadySteps, "all-ready-steps", false, "Advance every currently ready independent step for each selected job.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview ready steps without dispatching them.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include local topology route and dispatch payload previews.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "After advancing, wait for advanced jobs to reach a lifecycle status or event.")
+	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&waitEvents, "wait-event", nil, "With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
+	cmd.Flags().DurationVar(&waitInterval, "wait-interval", 500*time.Millisecond, "Polling interval with --wait.")
+	cmd.Flags().BoolVar(&failOnFailed, "fail-on-failed", false, "With --wait, exit 1 if any advanced job resolves to failed.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit advance results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd
@@ -6880,6 +6937,94 @@ func pipelineAdvanceResultFromAdvance(row jobReadyRow, advanced *jobAdvanceResul
 		result.Instance = advanced.Step.Instance
 	}
 	return result
+}
+
+func waitForPipelineAdvanceResults(cmd *cobra.Command, teamDir string, results []pipelineAdvanceResult, statuses map[job.Status]bool, events map[string]bool, timeout, interval time.Duration, prefix string) ([]pipelineAdvanceResult, error) {
+	ids := make([]string, 0, len(results))
+	seen := map[string]bool{}
+	for _, result := range results {
+		id := strings.TrimSpace(result.JobID)
+		if id == "" || result.DryRun || result.Action == "skipped" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return results, nil
+	}
+	jobs := make([]*job.Job, 0, len(ids))
+	for _, id := range ids {
+		j, err := job.Read(teamDir, id)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, j)
+	}
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	defer stop()
+	cancel := func() {}
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	defer cancel()
+	waited, err := runPipelineWait(ctx, teamDir, jobs, statuses, events, interval)
+	if err != nil {
+		if timeoutErr, ok := err.(*pipelineWaitTimeoutError); ok {
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s: timed out waiting for advanced jobs to reach %s (pending=%s).\n",
+				prefix, jobWaitConditionList(statuses, events), pipelineWaitPendingSummary(timeoutErr.Pending))
+			return nil, exitErr(1)
+		}
+		return nil, err
+	}
+	waitedByID := make(map[string]*job.Job, len(waited))
+	for _, j := range waited {
+		if j != nil {
+			waitedByID[j.ID] = j
+		}
+	}
+	refreshed := append([]pipelineAdvanceResult(nil), results...)
+	for i := range refreshed {
+		if waitedJob := waitedByID[refreshed[i].JobID]; waitedJob != nil {
+			refreshPipelineAdvanceResultAfterWait(&refreshed[i], waitedJob)
+		}
+	}
+	return refreshed, nil
+}
+
+func refreshPipelineAdvanceResultAfterWait(result *pipelineAdvanceResult, waited *job.Job) {
+	if result == nil || waited == nil {
+		return
+	}
+	stepID := strings.TrimSpace(result.StepID)
+	result.Job = waited
+	result.JobID = waited.ID
+	result.Ticket = waited.Ticket
+	result.Pipeline = waited.Pipeline
+	result.Message = waited.LastStatus
+	if stepID == "" {
+		return
+	}
+	idx := jobStepIndex(waited, stepID)
+	if idx == -1 {
+		result.Step = nil
+		return
+	}
+	step := cloneJobStep(&waited.Steps[idx])
+	result.Step = step
+	result.StepID = step.ID
+	result.Target = step.Target
+	result.StepStatus = step.Status
+	result.Instance = step.Instance
+}
+
+func pipelineAdvanceResultsHaveFailed(results []pipelineAdvanceResult) bool {
+	for _, result := range results {
+		if result.Job != nil && result.Job.Status == job.StatusFailed {
+			return true
+		}
+	}
+	return false
 }
 
 func approvePipelineManualGates(cmd *cobra.Command, teamDir, pipeline, workspace string, selection runtimeSelection, stepFilter, message string, limit int, dispatchNow, dryRun bool, previewRoutes bool) ([]pipelineApproveResult, error) {

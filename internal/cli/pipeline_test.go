@@ -3645,6 +3645,29 @@ func writeFailedRetryJob(t *testing.T, teamDir, id string) {
 	}
 }
 
+func writeReadyAdvanceJob(t *testing.T, teamDir, id string) {
+	t.Helper()
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:         id,
+		Ticket:     strings.ToUpper(id),
+		Target:     "worker",
+		Kickoff:    "advance ready implementation",
+		Pipeline:   "ticket_to_pr",
+		Status:     job.StatusQueued,
+		LastEvent:  "created",
+		LastStatus: "ready",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusBlocked},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write ready advance job: %v", err)
+	}
+}
+
 func TestPipelineRejectManualGate(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
@@ -8031,6 +8054,99 @@ func TestPipelineAdvanceDryRunAndDispatch(t *testing.T) {
 	}
 	if first.Steps[1].Status != job.StatusQueued || second.Steps[1].Status != job.StatusBlocked {
 		t.Fatalf("jobs after advance first=%+v second=%+v", first, second)
+	}
+}
+
+func TestPipelineAdvanceWaitsForRequestedStatus(t *testing.T) {
+	root, mgr, cleanup := setupManualGateApprovalRepo(t, false)
+	defer cleanup()
+	teamDir := filepath.Join(root, ".agent_team")
+	writeReadyAdvanceJob(t, teamDir, "squ-911")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"pipeline", "advance", "ticket_to_pr",
+		"--repo", root,
+		"--workspace", "repo",
+		"--wait",
+		"--wait-status", "running",
+		"--wait-timeout", "2s",
+		"--wait-interval", "10ms",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline advance --wait: %v\nstderr=%s", err, stderr.String())
+	}
+	var rows []pipelineAdvanceResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline advance wait json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Action != "advanced" || rows[0].Job == nil || rows[0].Job.Status != job.StatusRunning || rows[0].Job.LastEvent != "advance_dispatched" {
+		t.Fatalf("advance wait rows = %+v", rows)
+	}
+	if rows[0].Step == nil || rows[0].Step.ID != "implement" || rows[0].Step.Status != job.StatusRunning || rows[0].Step.Instance != "worker-squ-911-implement" {
+		t.Fatalf("advance wait step = %+v", rows[0].Step)
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-911-implement")
+}
+
+func TestPipelineAdvanceWaitTimesOutForEvent(t *testing.T) {
+	root, mgr, cleanup := setupManualGateApprovalRepo(t, false)
+	defer cleanup()
+	teamDir := filepath.Join(root, ".agent_team")
+	writeReadyAdvanceJob(t, teamDir, "squ-912")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"pipeline", "advance", "ticket_to_pr",
+		"--repo", root,
+		"--workspace", "repo",
+		"--wait",
+		"--wait-event", "closed",
+		"--wait-timeout", "1ms",
+		"--wait-interval", "10ms",
+	})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("pipeline advance --wait succeeded unexpectedly")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("advance wait timeout wrote stdout=%q", out.String())
+	}
+	if !strings.Contains(stderr.String(), "timed out waiting for advanced jobs to reach event=closed") ||
+		!strings.Contains(stderr.String(), "pending=squ-912=running event=advance_dispatched") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	stopAndWaitForTest(t, mgr, "worker-squ-912-implement")
+}
+
+func TestPipelineAdvanceWaitValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait", "--dry-run"}, "--wait cannot be combined with --dry-run"},
+		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait-status", "running"}, "wait-related flags require --wait"},
+		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait-timeout", "-1s", "--wait"}, "--wait-timeout must be >= 0"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
 	}
 }
 
