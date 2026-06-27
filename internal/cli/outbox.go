@@ -721,8 +721,12 @@ func outboxItemJob(item *daemon.OutboxItem) string {
 	if item == nil {
 		return ""
 	}
+	return outboxItemJobFromPayload(item.Payload)
+}
+
+func outboxItemJobFromPayload(payload map[string]any) string {
 	for _, key := range []string{"job_id", "job", "ticket", "ticket_id"} {
-		if value := outboxPayloadString(item.Payload, key); value != "" {
+		if value := outboxPayloadString(payload, key); value != "" {
 			return value
 		}
 	}

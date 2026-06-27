@@ -5912,7 +5912,7 @@ Inherited Flags:
 
 Capture a read-only orchestration diagnostic report.
 
-Capture a read-only diagnostic report with health, plan, instance, job, job status preview, queue, inbox, schedule, runtime, recent lifecycle event state, and command provenance. Use --json for stdout or --output to write a JSON file.
+Capture a read-only diagnostic report with health, plan, instance, job, job status preview, outbox, queue, inbox, schedule, runtime, recent lifecycle event state, and command provenance. Use --json for stdout or --output to write a JSON file.
 
 ```text
 agent-team snapshot [flags]
@@ -5945,7 +5945,7 @@ Subcommands:
 
 Compare two saved diagnostic snapshots.
 
-Compare two saved global, team, pipeline, or job diagnostic snapshot JSON files and summarize provenance, git, runtime, health, plan, triage, next-action, instance, job, inbox, queue, schedule, intake, event, pipeline, ready-advance, and section-error changes. Use --current-after or --current-before to compare one saved snapshot against the current repo state.
+Compare two saved global, team, pipeline, or job diagnostic snapshot JSON files and summarize provenance, git, runtime, health, plan, triage, next-action, instance, job, inbox, outbox, queue, schedule, intake, event, pipeline, ready-advance, and section-error changes. Use --current-after or --current-before to compare one saved snapshot against the current repo state.
 
 ```text
 agent-team snapshot diff <before.json> <after.json> | <snapshot.json> (--current-after|--current-before) [flags]
@@ -5966,7 +5966,7 @@ Flags:
       --no-redact               With --current-after/--current-before, include raw payload values instead of redacting sensitive keys.
   -o, --output string           Write the JSON snapshot diff to this file. Use '-' for stdout.
       --schedule-limit int      With --current-after/--current-before, upcoming schedules to include after ordering; 0 means all. (default 10)
-      --section strings         Only compare sections: provenance, git, runtime, health, plan, triage, next, instances, jobs, pipelines, inbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all. Can repeat or comma-separate.
+      --section strings         Only compare sections: provenance, git, runtime, health, plan, triage, next, instances, jobs, pipelines, inbox, outbox, queue, queue_quarantine, schedules, intake, events, advance, section_errors, or all. Can repeat or comma-separate.
       --sort string             Sort emitted change detail rows by section, action, or id before applying --limit. (default "section")
       --summary                 Only emit metadata and summary counters; suppress change detail rows.
 ```

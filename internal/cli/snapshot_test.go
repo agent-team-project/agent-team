@@ -63,6 +63,25 @@ branch = "worker-squ-501"
 	if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), queue); err != nil {
 		t.Fatalf("write queue: %v", err)
 	}
+	if err := daemon.WriteOutboxItem(teamDir, &daemon.OutboxItem{
+		ID:     "outbox-snapshot",
+		State:  daemon.OutboxStatePending,
+		Type:   "agent.dispatch",
+		Source: "manager",
+		Payload: map[string]any{
+			"job_id":       "squ-501",
+			"target":       "worker",
+			"access_token": "outbox-secret",
+			"headers": map[string]any{
+				"authorization": "Bearer outbox-secret",
+				"safe":          "visible",
+			},
+		},
+		CreatedAt: now.Add(-50 * time.Minute),
+		UpdatedAt: now.Add(-49 * time.Minute),
+	}); err != nil {
+		t.Fatalf("write outbox: %v", err)
+	}
 	writeQuarantinedQueueItem(t, teamDir, "20260619T000000.000000000Z", daemon.QueueStatePending, &daemon.QueueItem{
 		ID:         "q-snapshot-quarantined",
 		EventType:  "agent.dispatch",
@@ -157,6 +176,12 @@ branch = "worker-squ-501"
 	if len(snapshot.Queue) != 1 || snapshot.Queue[0].ID != "q-snapshot" || snapshot.QueueSummary == nil || snapshot.QueueSummary.Dead != 1 || snapshot.QueueSummary.Quarantined != 1 || snapshot.QueueSummary.QuarantineRestorable != 1 || snapshot.QueueSummary.QuarantineUnrestorable != 0 {
 		t.Fatalf("queue = %+v summary=%+v", snapshot.Queue, snapshot.QueueSummary)
 	}
+	if len(snapshot.Outbox) != 1 || snapshot.Outbox[0].ID != "outbox-snapshot" || snapshot.OutboxSummary == nil || snapshot.OutboxSummary.Total != 1 || snapshot.OutboxSummary.Pending != 1 {
+		t.Fatalf("outbox = %+v summary=%+v", snapshot.Outbox, snapshot.OutboxSummary)
+	}
+	if snapshot.Overview == nil || snapshot.Overview.Outbox.Pending != 1 {
+		t.Fatalf("overview outbox = %+v", snapshot.Overview)
+	}
 	if len(snapshot.QueueQuarantine) != 1 || snapshot.QueueQuarantine[0].ID != "q-snapshot-quarantined" || !snapshot.QueueQuarantine[0].Restorable || snapshot.QueueQuarantine[0].Job != "squ-501" {
 		t.Fatalf("queue quarantine = %+v", snapshot.QueueQuarantine)
 	}
@@ -175,6 +200,13 @@ branch = "worker-squ-501"
 	headers, ok := snapshot.Queue[0].Payload["headers"].(map[string]any)
 	if !ok || headers["authorization"] != snapshotRedactedValue || headers["safe"] != "visible" {
 		t.Fatalf("nested redacted payload = %+v", snapshot.Queue[0].Payload["headers"])
+	}
+	if snapshot.Outbox[0].Payload["target"] != "worker" || snapshot.Outbox[0].Payload["access_token"] != snapshotRedactedValue {
+		t.Fatalf("redacted outbox payload = %+v", snapshot.Outbox[0].Payload)
+	}
+	outboxHeaders, ok := snapshot.Outbox[0].Payload["headers"].(map[string]any)
+	if !ok || outboxHeaders["authorization"] != snapshotRedactedValue || outboxHeaders["safe"] != "visible" {
+		t.Fatalf("nested redacted outbox payload = %+v", snapshot.Outbox[0].Payload["headers"])
 	}
 	if len(snapshot.Events) != 1 || snapshot.Events[0].Instance != "worker-squ-501" {
 		t.Fatalf("events = %+v", snapshot.Events)
@@ -447,6 +479,9 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		Inbox: []snapshotDiffInbox{
 			{Instance: "manager", Agent: "manager", Status: "running", Total: 1, Unread: 1, LatestID: "msg-1", LatestFrom: "tester", LatestTS: "2026-06-18T11:59:00Z"},
 		},
+		Outbox: []snapshotDiffOutboxItem{
+			{ID: "outbox-1", State: "pending", Type: "agent.dispatch", Source: "manager", Payload: map[string]any{"job_id": "squ-801", "target": "worker"}},
+		},
 		Queue: []snapshotDiffQueueItem{
 			{ID: "q-1", State: "pending"},
 		},
@@ -544,6 +579,10 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 			{Instance: "manager", Agent: "manager", Status: "running", Total: 2, Unread: 0, Cursor: "msg-2", LatestID: "msg-2", LatestFrom: "worker", LatestTS: "2026-06-18T12:04:00Z"},
 			{Instance: "worker-squ-803", Agent: "worker", Status: "running", Total: 1, Unread: 1, LatestID: "msg-3", LatestFrom: "manager", LatestTS: "2026-06-18T12:05:00Z"},
 		},
+		Outbox: []snapshotDiffOutboxItem{
+			{ID: "outbox-1", State: "failed", Type: "agent.dispatch", Source: "manager", Payload: map[string]any{"job_id": "squ-801", "target": "worker"}, LastError: "route missing"},
+			{ID: "outbox-2", State: "pending", Type: "agent.dispatch", Source: "manager", Payload: map[string]any{"job_id": "squ-803", "target": "manager"}},
+		},
 		Queue: []snapshotDiffQueueItem{
 			{ID: "q-1", State: "dead"},
 			{ID: "q-2", State: "pending"},
@@ -626,6 +665,9 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	if result.Summary.Inbox.Added != 1 || result.Summary.Inbox.Changed != 1 {
 		t.Fatalf("inbox counters = %+v", result.Summary.Inbox)
 	}
+	if result.Summary.Outbox.Added != 1 || result.Summary.Outbox.Changed != 1 {
+		t.Fatalf("outbox counters = %+v", result.Summary.Outbox)
+	}
 	if result.Summary.Queue.Added != 1 || result.Summary.Queue.Changed != 1 {
 		t.Fatalf("queue counters = %+v", result.Summary.Queue)
 	}
@@ -669,6 +711,8 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		!hasSnapshotDiffChange(result.Changes, "instances", "worker-squ-801", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "inbox", "manager", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "inbox", "worker-squ-803", "added") ||
+		!hasSnapshotDiffChange(result.Changes, "outbox", "outbox-1", "changed") ||
+		!hasSnapshotDiffChange(result.Changes, "outbox", "outbox-2", "added") ||
 		!hasSnapshotDiffChange(result.Changes, "queue_quarantine", "dead/q-dead.json", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "schedules", "declared/delivery_due", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "intake", "duplicate/github/github-delivery-1", "changed") ||
@@ -699,6 +743,7 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 		"jobs: added=1 removed=1 changed=1",
 		"pipelines:",
 		"inbox: added=1 removed=0 changed=1",
+		"outbox: added=1 removed=0 changed=1",
 		"queue: added=1 removed=0 changed=1",
 		"queue_quarantine: added=1 removed=0 changed=1",
 		"schedules: added=0 removed=0 changed=2",

@@ -36,7 +36,7 @@ func newSnapshotCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "snapshot",
 		Short: "Capture a read-only orchestration diagnostic report.",
-		Long: "Capture a read-only diagnostic report with health, plan, instance, job, job status preview, queue, " +
+		Long: "Capture a read-only diagnostic report with health, plan, instance, job, job status preview, outbox, queue, " +
 			"inbox, schedule, runtime, recent lifecycle event state, and command provenance. Use --json for stdout or --output to write a JSON file.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -147,6 +147,8 @@ type snapshotResult struct {
 	PipelineAdvance  []pipelineAdvanceResult    `json:"pipeline_advance_preview,omitempty"`
 	TeamsDoctor      *allTeamDoctorResult       `json:"teams_doctor,omitempty"`
 	TeamDoctor       *teamDoctorResult          `json:"team_doctor,omitempty"`
+	Outbox           []*daemon.OutboxItem       `json:"outbox,omitempty"`
+	OutboxSummary    *outboxSummary             `json:"outbox_summary,omitempty"`
 	Queue            []*daemon.QueueItem        `json:"queue,omitempty"`
 	QueueSummary     *queueSummary              `json:"queue_summary,omitempty"`
 	QueueQuarantine  []queueQuarantineItem      `json:"queue_quarantine,omitempty"`
@@ -253,6 +255,13 @@ func collectSnapshot(teamDir, repoRoot string, opts snapshotOptions) *snapshotRe
 		out.addError("teams_doctor", err)
 	} else if allTeamDoctorHasSnapshotContent(teamsDoctor) {
 		out.TeamsDoctor = teamsDoctor
+	}
+	if outbox, err := daemon.ListOutboxItems(teamDir); err != nil {
+		out.addError("outbox", err)
+	} else {
+		out.Outbox = outbox
+		summary := summarizeOutboxItems(outbox)
+		out.OutboxSummary = &summary
 	}
 	if queue, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir)); err != nil {
 		out.addError("queue", err)
@@ -404,6 +413,14 @@ func collectTeamSnapshot(teamDir, repoRoot, name string, opts snapshotOptions) (
 	} else {
 		out.TeamDoctor = teamDoctor
 	}
+	if outbox, err := daemon.ListOutboxItems(teamDir); err != nil {
+		out.addError("outbox", err)
+	} else {
+		teamOutbox := teamOutboxItems(top, team, ownedJobs, outbox)
+		out.Outbox = teamOutbox
+		summary := summarizeOutboxItems(teamOutbox)
+		out.OutboxSummary = &summary
+	}
 	if inbox, summary, err := collectSnapshotInbox(teamDir, top, team); err != nil {
 		out.addError("inbox", err)
 	} else {
@@ -511,6 +528,61 @@ func queueQuarantineMatchesAnyJob(item queueQuarantineItem, jobs []*job.Job) boo
 
 func queueQuarantineMatchesTeamTarget(item queueQuarantineItem, instances, agents map[string]bool) bool {
 	for _, value := range []string{item.Instance, item.InstanceID} {
+		value = strings.TrimSpace(value)
+		if value != "" && (instances[value] || agents[value]) {
+			return true
+		}
+	}
+	return false
+}
+
+func teamOutboxItems(top *topology.Topology, team *topology.Team, jobs []*job.Job, items []*daemon.OutboxItem) []*daemon.OutboxItem {
+	if team == nil {
+		return nil
+	}
+	instanceNames := stringSliceSet(team.Instances)
+	agents := teamAgentSet(top, team)
+	out := make([]*daemon.OutboxItem, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if outboxItemMatchesAnyJob(item, jobs) || outboxItemMatchesTeamTarget(item, instanceNames, agents) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func outboxItemMatchesAnyJob(item *daemon.OutboxItem, jobs []*job.Job) bool {
+	if item == nil {
+		return false
+	}
+	jobID := normalizeOutboxJob(outboxItemJob(item))
+	for _, j := range jobs {
+		if j == nil {
+			continue
+		}
+		if jobID != "" && jobID == j.ID {
+			return true
+		}
+		if name := strings.TrimSpace(outboxPayloadString(item.Payload, "name")); name != "" && strings.TrimSpace(j.Instance) != "" && name == j.Instance {
+			return true
+		}
+	}
+	return false
+}
+
+func outboxItemMatchesTeamTarget(item *daemon.OutboxItem, instances, agents map[string]bool) bool {
+	if item == nil {
+		return false
+	}
+	for _, value := range []string{
+		outboxPayloadString(item.Payload, "target"),
+		outboxPayloadString(item.Payload, "instance"),
+		outboxPayloadString(item.Payload, "agent"),
+		outboxPayloadString(item.Payload, "name"),
+	} {
 		value = strings.TrimSpace(value)
 		if value != "" && (instances[value] || agents[value]) {
 			return true
@@ -674,6 +746,12 @@ func redactSnapshotResult(snapshot *snapshotResult) {
 		return
 	}
 	snapshot.Redacted = true
+	for _, item := range snapshot.Outbox {
+		if item == nil {
+			continue
+		}
+		item.Payload = redactSnapshotMap(item.Payload)
+	}
 	for _, item := range snapshot.Queue {
 		if item == nil {
 			continue
@@ -888,6 +966,13 @@ func renderSnapshotSummary(w io.Writer, snapshot *snapshotResult) {
 		fmt.Fprintf(w, "team doctor: problems=%d warnings=%d\n",
 			len(snapshot.TeamDoctor.Problems),
 			countSnapshotTeamDoctorWarnings(snapshot.TeamDoctor.Warnings))
+	}
+	if snapshot.OutboxSummary != nil {
+		fmt.Fprintf(w, "outbox: total=%d pending=%d failed=%d processed=%d\n",
+			snapshot.OutboxSummary.Total,
+			snapshot.OutboxSummary.Pending,
+			snapshot.OutboxSummary.Failed,
+			snapshot.OutboxSummary.Processed)
 	}
 	if snapshot.QueueSummary != nil {
 		fmt.Fprintln(w, queueSummaryLine(*snapshot.QueueSummary))
