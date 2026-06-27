@@ -3091,6 +3091,8 @@ Show one durable job.
 agent-team job show <job-id> [flags]
 ```
 
+Aliases: `inspect`
+
 Flags:
 
 ```text
@@ -5190,6 +5192,8 @@ Show one declared pipeline.
 ```text
 agent-team pipeline show <pipeline> [flags]
 ```
+
+Aliases: `inspect`
 
 Flags:
 
@@ -8391,6 +8395,8 @@ Show one declared team.
 ```text
 agent-team team show <team> [flags]
 ```
+
+Aliases: `inspect`
 
 Flags:
 

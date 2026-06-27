@@ -117,6 +117,18 @@ max_attempts = 3
 	if got, want := formatShowOut.String(), "ticket_to_pr 2 implement;review;\n"; got != want {
 		t.Fatalf("pipeline show format output = %q, want %q", got, want)
 	}
+
+	inspect := NewRootCmd()
+	inspectOut, inspectErr := &bytes.Buffer{}, &bytes.Buffer{}
+	inspect.SetOut(inspectOut)
+	inspect.SetErr(inspectErr)
+	inspect.SetArgs([]string{"pipeline", "inspect", "ticket_to_pr", "--repo", root, "--format", "{{.Name}} {{len .Steps}}"})
+	if err := inspect.Execute(); err != nil {
+		t.Fatalf("pipeline inspect alias: %v\nstderr=%s", err, inspectErr.String())
+	}
+	if got, want := inspectOut.String(), "ticket_to_pr 2\n"; got != want {
+		t.Fatalf("pipeline inspect alias output = %q, want %q", got, want)
+	}
 }
 
 func TestPipelineAdoptUsesScopedJobDefaults(t *testing.T) {

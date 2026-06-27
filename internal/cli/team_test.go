@@ -154,6 +154,22 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team info = %+v", info)
 	}
 
+	inspect := NewRootCmd()
+	inspectOut, inspectErr := &bytes.Buffer{}, &bytes.Buffer{}
+	inspect.SetOut(inspectOut)
+	inspect.SetErr(inspectErr)
+	inspect.SetArgs([]string{"team", "inspect", "delivery", "--repo", root, "--json"})
+	if err := inspect.Execute(); err != nil {
+		t.Fatalf("team inspect alias: %v\nstderr=%s", err, inspectErr.String())
+	}
+	var inspected teamInfo
+	if err := json.Unmarshal(inspectOut.Bytes(), &inspected); err != nil {
+		t.Fatalf("decode team inspect alias: %v\nbody=%s", err, inspectOut.String())
+	}
+	if inspected.Name != "delivery" || len(inspected.Instances) != 3 || len(inspected.Pipelines) != 1 || len(inspected.Schedules) != 1 {
+		t.Fatalf("team inspect alias info = %+v", inspected)
+	}
+
 	graphCmd := NewRootCmd()
 	graphOut, graphErr := &bytes.Buffer{}, &bytes.Buffer{}
 	graphCmd.SetOut(graphOut)

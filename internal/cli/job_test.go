@@ -776,6 +776,18 @@ func TestJobShowDisplaysRuntimeMetadata(t *testing.T) {
 			t.Fatalf("job show missing %q:\n%s", want, out.String())
 		}
 	}
+
+	alias := NewRootCmd()
+	aliasOut, aliasErr := &bytes.Buffer{}, &bytes.Buffer{}
+	alias.SetOut(aliasOut)
+	alias.SetErr(aliasErr)
+	alias.SetArgs([]string{"job", "inspect", "squ-45", "--repo", tmp, "--format", "{{.ID}} {{.Status}}"})
+	if err := alias.Execute(); err != nil {
+		t.Fatalf("job inspect alias: %v\nstderr=%s", err, aliasErr.String())
+	}
+	if got, want := aliasOut.String(), "squ-45 running\n"; got != want {
+		t.Fatalf("job inspect alias output = %q, want %q", got, want)
+	}
 }
 
 func TestJobShowSuggestsRuntimeResumePlanForCrashedMetadata(t *testing.T) {

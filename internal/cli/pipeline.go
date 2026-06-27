@@ -114,9 +114,10 @@ func newPipelineShowCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "show <pipeline>",
-		Short: "Show one declared pipeline.",
-		Args:  cobra.ExactArgs(1),
+		Use:     "show <pipeline>",
+		Aliases: []string{"inspect"},
+		Short:   "Show one declared pipeline.",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline show: --format cannot be combined with --json.")

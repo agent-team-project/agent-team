@@ -1306,9 +1306,10 @@ func newJobShowCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "show <job-id>",
-		Short: "Show one durable job.",
-		Args:  cobra.ExactArgs(1),
+		Use:     "show <job-id>",
+		Aliases: []string{"inspect"},
+		Short:   "Show one durable job.",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			includeEvents := cmd.Flags().Changed("events")
 			if format != "" && jsonOut {

@@ -93,7 +93,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | --- | --- |
 | `agent-team job create <ticket>` | Create a durable job; add `--dispatch --wait` for bounded create-and-run automation and `--wait --wait-next-state`/`--wait-step` for pipeline stage handoff |
 | `agent-team job ls` | List jobs; filter held state, hold deadlines, and mixed-runtime ownership; sort rows and cap output with `--limit` |
-| `agent-team job show <job-id>` | Show job detail, runtime metadata, queue, quarantine, outbox, status previews, and actions |
+| `agent-team job show <job-id>` | Show job detail, runtime metadata, queue, quarantine, outbox, status previews, and actions; `inspect` is an alias |
 | `agent-team job wait <job-id>` | Wait for lifecycle status, last event, or next-step state/stage with `--next-state` and `--step` |
 | `agent-team job next <job-id>` | Show the next pipeline step without dispatching it; add `--state` or `--step` when scripts need a compact assertion |
 | `agent-team job resume-plan <job-id>` | Show runtime resume, attach, and log fallback commands for one job; add `--step` for one pipeline stage, or `--sort`/`--limit` for multi-runtime jobs |
@@ -209,7 +209,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | Command | Purpose |
 | --- | --- |
 | `agent-team pipeline ls` | List pipeline declarations |
-| `agent-team pipeline show <pipeline>` | Show one declaration |
+| `agent-team pipeline show <pipeline>` | Show one declaration; `inspect` is an alias |
 | `agent-team pipeline graph <pipeline>` | Render text, Mermaid, DOT, or JSON step graphs |
 | `agent-team pipeline doctor --all` | Validate workflows; add `--strict-runtime` to fail on unavailable step runtime defaults |
 | `agent-team pipeline run <pipeline> <ticket>` | Create pipeline job; `--dispatch` accepts workspace/runtime overrides and `--wait-next-state`/`--wait-step` can block for the first stage handoff |
@@ -260,7 +260,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | Command | Purpose |
 | --- | --- |
 | `agent-team team ls` | List teams |
-| `agent-team team show <team>` | Show team declaration |
+| `agent-team team show <team>` | Show team declaration; `inspect` is an alias |
 | `agent-team team graph <team>` | Render team-owned instance, schedule, and pipeline wiring |
 | `agent-team team doctor --all` | Validate team-owned workflow wiring; add `--strict-runtime` to fail on unavailable step runtime defaults |
 | `agent-team team overview <team>` | Scoped operator overview |

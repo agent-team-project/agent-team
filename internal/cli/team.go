@@ -115,9 +115,10 @@ func newTeamShowCmd() *cobra.Command {
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
-		Use:   "show <team>",
-		Short: "Show one declared team.",
-		Args:  cobra.ExactArgs(1),
+		Use:     "show <team>",
+		Aliases: []string{"inspect"},
+		Short:   "Show one declared team.",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
