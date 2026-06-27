@@ -554,6 +554,31 @@ func teamOutboxItems(top *topology.Topology, team *topology.Team, jobs []*job.Jo
 	return out
 }
 
+func teamOutboxQuarantineItems(top *topology.Topology, team *topology.Team, jobs []*job.Job, items []outboxQuarantineItem) []outboxQuarantineItem {
+	if team == nil {
+		return nil
+	}
+	instanceNames := stringSliceSet(team.Instances)
+	agents := teamAgentSet(top, team)
+	out := make([]outboxQuarantineItem, 0, len(items))
+	for _, item := range items {
+		if outboxQuarantineMatchesAnyJob(item, jobs) || outboxQuarantineMatchesTeamTarget(item, instanceNames, agents) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func outboxQuarantineMatchesTeamTarget(item outboxQuarantineItem, instances, agents map[string]bool) bool {
+	for _, value := range []string{item.Target, item.Instance, item.Agent} {
+		value = strings.TrimSpace(value)
+		if value != "" && (instances[value] || agents[value]) {
+			return true
+		}
+	}
+	return false
+}
+
 func outboxItemMatchesAnyJob(item *daemon.OutboxItem, jobs []*job.Job) bool {
 	if item == nil {
 		return false

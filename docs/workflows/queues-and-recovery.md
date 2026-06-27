@@ -229,7 +229,18 @@ agent-team pipeline outbox quarantine restore ticket_to_pr --all --job SQU-42 --
 agent-team pipeline outbox quarantine drop ticket_to_pr --all --unrestorable --dry-run
 ```
 
-Job and pipeline scoping prevent a recovery command for one ticket or workflow from restoring or deleting another owner's preserved outbox file.
+When a declared team owns the files, use team-scoped recovery:
+
+```sh
+agent-team team outbox quarantine delivery
+agent-team team outbox quarantine delivery --job SQU-42 --restorable
+agent-team team outbox quarantine show delivery <path>
+agent-team team outbox quarantine restore delivery <path> --dry-run
+agent-team team outbox quarantine restore delivery --all --job SQU-42 --dry-run
+agent-team team outbox quarantine drop delivery --all --unrestorable --dry-run
+```
+
+Job, pipeline, and team scoping prevent a recovery command for one ticket, workflow, or ownership boundary from restoring or deleting another owner's preserved outbox file.
 
 ## Team-Scoped Quarantine
 

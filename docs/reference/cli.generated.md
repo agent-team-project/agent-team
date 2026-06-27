@@ -7461,6 +7461,7 @@ Subcommands:
 
 - `agent-team team outbox drop` - Drop outbox events owned by one team.
 - `agent-team team outbox prune` - Prune old outbox events owned by one team.
+- `agent-team team outbox quarantine` - List team-owned quarantined outbox files.
 - `agent-team team outbox retry` - Retry outbox events owned by one team.
 - `agent-team team outbox show` - Show one outbox event owned by one team.
 
@@ -7513,6 +7514,110 @@ Flags:
       --source strings        Filter by source agent/instance before pruning; repeat or comma-separate values.
       --state string          Outbox state to prune: processed, failed, pending, or all. (default "processed")
       --type strings          Filter by event type before pruning; repeat or comma-separate values.
+```
+
+## `agent-team team outbox quarantine`
+
+List team-owned quarantined outbox files.
+
+List quarantined sandboxed agent outbox files owned by one declared team.
+
+```text
+agent-team team outbox quarantine <team> [flags]
+```
+
+Flags:
+
+```text
+      --format string    Render each team-owned quarantined outbox file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.
+      --job strings      Filter by job id or ticket; repeat or comma-separate values.
+      --json             Emit team-owned quarantined outbox files as JSON.
+      --limit int        Limit rows after filtering and sorting; 0 means no limit.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --restorable       Only show quarantined files that can be restored.
+      --sort string      Sort rows by path, state, id, type, source, job, created, updated, modified, restorable, or size. (default "path")
+      --source strings   Filter by source agent/instance; repeat or comma-separate values.
+      --state string     Filter by outbox state: pending, processed, or failed.
+      --type strings     Filter by event type; repeat or comma-separate values.
+      --unrestorable     Only show quarantined files that cannot be restored.
+```
+
+Subcommands:
+
+- `agent-team team outbox quarantine drop` - Drop team-owned quarantined outbox files after inspection.
+- `agent-team team outbox quarantine restore` - Restore team-owned quarantined outbox files.
+- `agent-team team outbox quarantine show` - Show one team-owned quarantined outbox file.
+
+## `agent-team team outbox quarantine drop`
+
+Drop team-owned quarantined outbox files after inspection.
+
+Drop one team-owned quarantined outbox file by path, or drop a filtered team-owned batch with --all.
+
+```text
+agent-team team outbox quarantine drop <team> [quarantine-path] [flags]
+```
+
+Flags:
+
+```text
+      --all                   Drop all matching team-owned quarantined files instead of one path.
+      --dry-run               Preview quarantined files that would be dropped.
+      --format string         Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --job strings           With --all, filter by job id or ticket; repeat or comma-separate values.
+      --json                  Emit drop results as JSON.
+      --limit int             With --all, drop at most this many matching team-owned quarantined files; 0 means no limit.
+      --older-than duration   With --all, only drop files older than this duration based on file mtime.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --restorable            With --all, only drop quarantined files that can be restored.
+      --sort string           With --all, sort matching team-owned quarantined files before limiting: path, state, id, type, source, job, created, updated, modified, restorable, or size. (default "path")
+      --source strings        With --all, filter by source agent/instance; repeat or comma-separate values.
+      --state string          With --all, filter by outbox state: pending, processed, or failed.
+      --type strings          With --all, filter by event type; repeat or comma-separate values.
+      --unrestorable          With --all, only drop quarantined files that cannot be restored.
+```
+
+## `agent-team team outbox quarantine restore`
+
+Restore team-owned quarantined outbox files.
+
+Restore one team-owned quarantined outbox file by path, or restore a filtered team-owned batch of restorable files with --all.
+
+```text
+agent-team team outbox quarantine restore <team> [quarantine-path] [flags]
+```
+
+Flags:
+
+```text
+      --all              Restore all matching team-owned restorable quarantined files instead of one path.
+      --dry-run          Preview the restore without moving files.
+      --force            Overwrite an existing active outbox file with the same restore path.
+      --format string    Render each restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.
+      --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.
+      --json             Emit restore result as JSON.
+      --limit int        With --all, restore at most this many matching team-owned quarantined files; 0 means no limit.
+      --repo string      Repo root containing .agent_team. (default "<repo>")
+      --sort string      With --all, sort matching team-owned quarantined files before limiting: path, state, id, type, source, job, created, updated, modified, restorable, or size. (default "path")
+      --source strings   With --all, filter by source agent/instance; repeat or comma-separate values.
+      --state string     With --all, filter by outbox state: pending, processed, or failed.
+      --type strings     With --all, filter by event type; repeat or comma-separate values.
+```
+
+## `agent-team team outbox quarantine show`
+
+Show one team-owned quarantined outbox file.
+
+```text
+agent-team team outbox quarantine show <team> <quarantine-path> [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render the team-owned quarantined outbox file with a Go template, e.g. '{{.ID}} {{.State}}'.
+      --json            Emit the team-owned quarantined outbox file as JSON.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
 ```
 
 ## `agent-team team outbox retry`

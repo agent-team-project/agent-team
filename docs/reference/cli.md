@@ -280,6 +280,12 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team outbox drop <team> <id>` | Remove one inspected team-owned outbox event |
 | `agent-team team outbox drop <team> --all` | Drop matching team-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--job`, `--sort`, and `--limit` |
 | `agent-team team outbox prune <team>` | Remove old team-owned processed outbox events by default; pass `--state failed`, `pending`, or `all` for explicit cleanup and bound with `--older-than`, filters, and `--limit` |
+| `agent-team team outbox quarantine <team>` | List quarantined outbox files owned by one team; filter by state, job, or restorable state |
+| `agent-team team outbox quarantine show <team> <path>` | Inspect one team-owned quarantined outbox file and its payload when parseable |
+| `agent-team team outbox quarantine restore <team> <path>` | Restore one validated team-owned quarantined outbox file to the active outbox |
+| `agent-team team outbox quarantine restore <team> --all` | Restore matching team-owned restorable quarantined outbox files; filter, sort, and limit batch actions |
+| `agent-team team outbox quarantine drop <team> <path>` | Drop one team-owned quarantined outbox file after inspection |
+| `agent-team team outbox quarantine drop <team> --all` | Drop matching team-owned quarantined outbox files; filter by state, job, restorable state, or age before deleting |
 | `agent-team team pipelines <team>` | List or watch team-owned pipeline status rows with queue/quarantine counts; sort rows and cap output with `--limit` |
 | `agent-team team explain <team>` | Expand or watch team-owned pipeline jobs as per-step diagnostics; sort and cap large histories with `--sort` and `--limit`, or add `--step` to focus one stage |
 | `agent-team team ready <team>` | List or watch scoped ready pipeline steps; filter by `--step`, sort by `--sort`, and cap rows with `--limit` |
