@@ -97,6 +97,18 @@ func TestJobTimelineCombinesAuditAndLifecycle(t *testing.T) {
 		t.Fatalf("timeline format = %q, want %q", got, want)
 	}
 
+	since := NewRootCmd()
+	sinceOut, sinceErr := &bytes.Buffer{}, &bytes.Buffer{}
+	since.SetOut(sinceOut)
+	since.SetErr(sinceErr)
+	since.SetArgs([]string{"job", "timeline", "squ-170", "--repo", tmp, "--since", now.Add(90 * time.Second).Format(time.RFC3339), "--format", "{{.Kind}}"})
+	if err := since.Execute(); err != nil {
+		t.Fatalf("job timeline since: %v\nstderr=%s", err, sinceErr.String())
+	}
+	if got, want := sinceOut.String(), "note\n"; got != want {
+		t.Fatalf("timeline since = %q, want %q", got, want)
+	}
+
 	invalid := NewRootCmd()
 	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
 	invalid.SetOut(invalidOut)
@@ -107,6 +119,18 @@ func TestJobTimelineCombinesAuditAndLifecycle(t *testing.T) {
 	}
 	if !strings.Contains(invalidErr.String(), "--source must be all, job, or lifecycle") {
 		t.Fatalf("invalid source stderr = %q", invalidErr.String())
+	}
+
+	invalidSince := NewRootCmd()
+	invalidSinceOut, invalidSinceErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSince.SetOut(invalidSinceOut)
+	invalidSince.SetErr(invalidSinceErr)
+	invalidSince.SetArgs([]string{"job", "timeline", "squ-170", "--repo", tmp, "--since", "not-a-time"})
+	if err := invalidSince.Execute(); err == nil {
+		t.Fatalf("job timeline invalid since succeeded")
+	}
+	if !strings.Contains(invalidSinceErr.String(), "invalid --since") {
+		t.Fatalf("invalid since stderr = %q", invalidSinceErr.String())
 	}
 }
 
@@ -204,5 +228,17 @@ func TestScopedTimelineCommands(t *testing.T) {
 	}
 	if got, want := teamOut.String(), "squ-181 lifecycle dispatch worker-squ-181\n"; got != want {
 		t.Fatalf("team timeline output = %q, want %q", got, want)
+	}
+
+	teamSince := NewRootCmd()
+	teamSinceOut, teamSinceErr := &bytes.Buffer{}, &bytes.Buffer{}
+	teamSince.SetOut(teamSinceOut)
+	teamSince.SetErr(teamSinceErr)
+	teamSince.SetArgs([]string{"team", "timeline", "delivery", "--repo", tmp, "--since", now.Add(80 * time.Second).Format(time.RFC3339), "--format", "{{.JobID}} {{.Kind}}"})
+	if err := teamSince.Execute(); err != nil {
+		t.Fatalf("team timeline since: %v\nstderr=%s", err, teamSinceErr.String())
+	}
+	if got, want := teamSinceOut.String(), "squ-181 dispatch\n"; got != want {
+		t.Fatalf("team timeline since output = %q, want %q", got, want)
 	}
 }

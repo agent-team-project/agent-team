@@ -1382,6 +1382,7 @@ func newTeamTimelineCmd() *cobra.Command {
 		tail    string
 		source  string
 		sortBy  string
+		since   string
 		jsonOut bool
 		format  string
 	)
@@ -1411,6 +1412,11 @@ func newTeamTimelineCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeline: %v\n", err)
 				return exitErr(2)
 			}
+			sinceAt, err := parseJobTimelineSince(since, time.Now)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeline: %v\n", err)
+				return exitErr(2)
+			}
 			tmpl, err := parseJobTimelineFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeline: %v\n", err)
@@ -1426,7 +1432,7 @@ func newTeamTimelineCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeline: %v\n", err)
 				return exitErr(1)
 			}
-			entries, err := collectJobTimelineForJobs(teamDir, jobs, sourceMode, tailEvents, sortMode)
+			entries, err := collectJobTimelineForJobs(teamDir, jobs, sourceMode, sinceAt, tailEvents, sortMode)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeline: %v\n", err)
 				return exitErr(1)
@@ -1438,6 +1444,7 @@ func newTeamTimelineCmd() *cobra.Command {
 	cmd.Flags().StringVar(&tail, "tail", "0", "Show only the last N combined events before sorting for display (0 or all = all).")
 	cmd.Flags().StringVar(&source, "source", "all", "Timeline source to include: all, job, or lifecycle.")
 	cmd.Flags().StringVar(&sortBy, "sort", "oldest", "Sort returned timeline rows by oldest or newest after applying --tail.")
+	cmd.Flags().StringVar(&since, "since", "", "Only show timeline rows since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each timeline row with a Go template, e.g. '{{.JobID}} {{.Source}} {{.Kind}}'.")
 	return cmd

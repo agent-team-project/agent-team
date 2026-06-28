@@ -17,11 +17,12 @@ import (
 
 func newPipelineSnapshotCmd() *cobra.Command {
 	var (
-		repo     string
-		output   string
-		jsonOut  bool
-		noRedact bool
-		format   string
+		repo         string
+		output       string
+		timelineTail string
+		jsonOut      bool
+		noRedact     bool
+		format       string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -49,6 +50,11 @@ func newPipelineSnapshotCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline snapshot: pipeline name is required.")
 				return exitErr(2)
 			}
+			timelineEvents, err := parseLogTail(timelineTail)
+			if err != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline snapshot: --timeline must be >= 0 or \"all\".")
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -58,8 +64,9 @@ func newPipelineSnapshotCmd() *cobra.Command {
 				return exitErr(2)
 			}
 			snapshot := collectPipelineSnapshot(teamDir, repoRoot, pipelineName, pipelineSnapshotOptions{
-				Redact: !noRedact,
-				Now:    time.Now().UTC(),
+				Redact:       !noRedact,
+				Now:          time.Now().UTC(),
+				TimelineTail: timelineEvents,
 			})
 			snapshot.Provenance = newSnapshotProvenance(cmd.CommandPath(), "pipeline", pipelineName, snapshotProvenanceOptions{
 				Redacted: !noRedact,
@@ -84,6 +91,7 @@ func newPipelineSnapshotCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write the full JSON pipeline snapshot to this file. Use '-' for stdout.")
+	cmd.Flags().StringVar(&timelineTail, "timeline", "50", "Include the last N combined audit/lifecycle timeline rows in the snapshot (0 or all = all).")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the full pipeline snapshot JSON to stdout.")
 	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "Include raw payload values and latest inbox bodies instead of redacting them.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the pipeline snapshot with a Go template, e.g. '{{.Pipeline}} {{len .Jobs}}'.")
@@ -91,8 +99,9 @@ func newPipelineSnapshotCmd() *cobra.Command {
 }
 
 type pipelineSnapshotOptions struct {
-	Redact bool
-	Now    time.Time
+	Redact       bool
+	Now          time.Time
+	TimelineTail int
 }
 
 type pipelineSnapshotResult struct {
@@ -116,6 +125,7 @@ type pipelineSnapshotResult struct {
 	OutboxSummary           *outboxSummary           `json:"outbox_summary,omitempty"`
 	OutboxQuarantine        []outboxQuarantineItem   `json:"outbox_quarantine,omitempty"`
 	OutboxQuarantineSummary *outboxQuarantineSummary `json:"outbox_quarantine_summary,omitempty"`
+	Timeline                []jobTimelineEntry       `json:"timeline,omitempty"`
 	AdvancePreview          []pipelineAdvanceResult  `json:"advance_preview,omitempty"`
 	SectionErrors           map[string]string        `json:"section_errors,omitempty"`
 }
@@ -153,6 +163,11 @@ func collectPipelineSnapshot(teamDir, repoRoot, pipeline string, opts pipelineSn
 	} else {
 		out.Jobs = filterJobsByPipeline(jobs, pipeline)
 		sortJobs(out.Jobs, "updated")
+	}
+	if timeline, err := collectJobTimelineForJobs(teamDir, out.Jobs, "all", nil, opts.TimelineTail, "oldest"); err != nil {
+		out.addError("timeline", err)
+	} else {
+		out.Timeline = timeline
 	}
 	if queue, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir)); err != nil {
 		out.addError("queue", err)
@@ -312,9 +327,27 @@ func redactPipelineSnapshotResult(snapshot *pipelineSnapshotResult) {
 			snapshot.Inbox[i].LatestBody = snapshotRedactedValue
 		}
 	}
+	for i := range snapshot.Timeline {
+		snapshot.Timeline[i].Data = redactSnapshotStringMap(snapshot.Timeline[i].Data)
+	}
 	for i := range snapshot.AdvancePreview {
 		redactSnapshotPipelineAdvance(&snapshot.AdvancePreview[i])
 	}
+}
+
+func redactSnapshotStringMap(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		if snapshotSensitiveKey(key) {
+			out[key] = snapshotRedactedValue
+			continue
+		}
+		out[key] = value
+	}
+	return out
 }
 
 func writePipelineSnapshotFile(path string, snapshot *pipelineSnapshotResult) (string, error) {
@@ -419,6 +452,10 @@ func renderPipelineSnapshotSummary(w io.Writer, snapshot *pipelineSnapshotResult
 	if snapshot.OutboxQuarantineSummary != nil && snapshot.OutboxQuarantineSummary.Quarantined > 0 {
 		fmt.Fprintln(w, outboxQuarantineSummaryLine(*snapshot.OutboxQuarantineSummary))
 	}
+	if snapshot.Timeline != nil {
+		jobRows, lifecycleRows := countJobTimelineSources(snapshot.Timeline)
+		fmt.Fprintf(w, "timeline: events=%d job=%d lifecycle=%d\n", len(snapshot.Timeline), jobRows, lifecycleRows)
+	}
 	if snapshot.AdvancePreview != nil {
 		fmt.Fprintf(w, "advance: ready=%d route_previews=%d\n",
 			len(snapshot.AdvancePreview),
@@ -435,4 +472,16 @@ func renderPipelineSnapshotSummary(w io.Writer, snapshot *pipelineSnapshotResult
 			fmt.Fprintf(w, "  %s: %s\n", key, snapshot.SectionErrors[key])
 		}
 	}
+}
+
+func countJobTimelineSources(entries []jobTimelineEntry) (jobRows, lifecycleRows int) {
+	for _, entry := range entries {
+		switch entry.Source {
+		case "job":
+			jobRows++
+		case "lifecycle":
+			lifecycleRows++
+		}
+	}
+	return jobRows, lifecycleRows
 }

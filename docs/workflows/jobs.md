@@ -528,8 +528,9 @@ instance after `--type`, `--status`, `--actor`, `--instance`, `--since`, and
 
 Use `agent-team job timeline squ-42` when you need the durable audit log and
 matching daemon lifecycle events in one ordered view. Add `--source job` or
-`--source lifecycle` to isolate one side, `--tail N --sort newest` for the
-latest handoff rows, or `--json` / `--format` for scripts. Use
+`--source lifecycle` to isolate one side, `--since 24h` to narrow large
+histories, `--tail N --sort newest` for the latest handoff rows, or `--json` /
+`--format` for scripts. Use
 `agent-team pipeline timeline ticket_to_pr` or `agent-team team timeline delivery`
 for the same combined timeline scoped across a workflow or declared team.
 

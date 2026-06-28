@@ -133,7 +133,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job advance <job-id>` | Advance a pipeline step; add `--dry-run --commands` for the apply command or `--wait --wait-next-state`/`--wait-step` for stage-aware handoff |
 | `agent-team job reconcile github` | Reconcile GitHub PR payloads into jobs; add `--dry-run --commands` for the apply command or `--advance --wait --wait-next-state`/`--wait-step` for PR-gate handoff |
 | `agent-team job events <job-id>\|--all` | Show, follow, sort, or summarize job event logs |
-| `agent-team job timeline <job-id>` | Merge one job's durable audit log with matching daemon lifecycle events; filter by `--source`, tail before display sorting, or emit JSON/templates for handoffs |
+| `agent-team job timeline <job-id>` | Merge one job's durable audit log with matching daemon lifecycle events; filter by `--source` and `--since`, tail before display sorting, or emit JSON/templates for handoffs |
 
 ## Job Queue
 
@@ -226,7 +226,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline watch [<pipeline>]` | Continuous pipeline status shortcut with queue/outbox and quarantine counts |
 | `agent-team pipeline triage [<pipeline>]` | Show pipeline-owned jobs needing attention, including queue/outbox quarantine and ready-step recovery hints; add `--commands` for repo-scoped attention-row recovery commands |
 | `agent-team pipeline explain <pipeline>` | Expand or watch pipeline jobs as per-step readiness, blockers, gates, and actions; sort and cap large histories with `--sort` and `--limit`, add `--step` to focus one stage, or `--commands` for repo-scoped flattened action commands |
-| `agent-team pipeline snapshot <pipeline>` | Capture one pipeline's status, provenance, explained jobs, inboxes, queue/outbox ownership including quarantine, dry-run advance previews, and formatted summary fields |
+| `agent-team pipeline snapshot <pipeline>` | Capture one pipeline's status, provenance, explained jobs, inboxes, queue/outbox ownership including quarantine, bounded timeline rows via `--timeline`, dry-run advance previews, and formatted summary fields |
 | `agent-team pipeline next` | Print or watch recommended pipeline actions; use `--commands` for one selected repo-scoped action command per line |
 | `agent-team pipeline wait [<pipeline>]` | Wait for pipeline jobs to reach a lifecycle status, event, or next-step state/stage |
 | `agent-team pipeline jobs [<pipeline>]` | List, summarize, or watch pipeline jobs; filter ownership metadata, held state, hold deadlines, mixed-runtime ownership, sort rows, cap output with `--limit`, or print visible-row follow-ups with `--commands` |
@@ -248,7 +248,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline logs [<pipeline>]` | Read daemon-captured logs for pipeline-owned instances across all workflows by default |
 | `agent-team pipeline events [<pipeline>]` | Read, follow, or sort lifecycle events for pipeline-owned instances across all workflows by default |
 | `agent-team pipeline job-events [<pipeline>]` | Read, follow, or sort durable job audit events for pipeline-owned jobs across all workflows by default |
-| `agent-team pipeline timeline [<pipeline>]` | Merge durable audit and lifecycle timelines across pipeline-owned jobs; add `--source`, `--tail`, `--sort newest`, JSON, or templates for scoped handoffs |
+| `agent-team pipeline timeline [<pipeline>]` | Merge durable audit and lifecycle timelines across pipeline-owned jobs; add `--source`, `--since`, `--tail`, `--sort newest`, JSON, or templates for scoped handoffs |
 | `agent-team pipeline cleanup <pipeline>` | Scoped job cleanup for done jobs in one pipeline |
 | `agent-team pipeline queue [<pipeline>]` | List or summarize active/quarantined queue items owned by one or all pipelines; add `--commands` to print visible row actions; subcommands inspect, retry, drop, prune, or recover items owned by one pipeline |
 | `agent-team pipeline queue quarantine [<pipeline>]` | List or summarize pipeline-owned quarantined queue files across one or all workflows; sort rows with `--sort`, cap output with `--limit`, or print visible restore/drop actions with `--commands` |
@@ -293,7 +293,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team send <team>` | Send a mailbox message to team-owned daemon-known instances; add `--dry-run --commands` to print the matching scoped send apply command |
 | `agent-team team jobs <team>` | Scoped job list, summary, or watch view; filter ownership metadata, held state, mixed-runtime ownership, cap output with `--limit`, or print visible-row follow-ups with `--commands` |
 | `agent-team team job-events <team>` | Read, follow, or sort durable job audit events for team-owned jobs |
-| `agent-team team timeline <team>` | Merge durable audit and lifecycle timelines for jobs owned by one declared team; supports source filters, tailing, newest-first display, JSON, and templates |
+| `agent-team team timeline <team>` | Merge durable audit and lifecycle timelines for jobs owned by one declared team; supports source/since filters, tailing, newest-first display, JSON, and templates |
 | `agent-team team wait <team>` | Wait for team-owned instance lifecycle or phase conditions; add `--dry-run --commands` to print the scoped replay command for the selected instances |
 | `agent-team team wait-jobs <team>` | Wait for team-owned jobs to reach a lifecycle status, event, or next-step state/stage |
 | `agent-team team tick <team>` | Scoped maintenance cycle; add `--dry-run --commands` for the scoped apply command, use `--workspace`/`--runtime` for advanced steps, and use `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |

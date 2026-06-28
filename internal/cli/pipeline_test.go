@@ -2842,6 +2842,56 @@ target = "worker"
 			t.Fatalf("append inbox message %s: %v", msg.id, err)
 		}
 	}
+	for _, ev := range []job.Event{
+		{
+			TS:      now.Add(-90 * time.Second),
+			JobID:   "squ-704",
+			Type:    "note",
+			Status:  job.StatusRunning,
+			Actor:   "operator",
+			Message: "ticket pipeline audit",
+			Data:    map[string]string{"access_token": "timeline-ticket-secret", "detail": "kept"},
+		},
+		{
+			TS:      now.Add(-90 * time.Second),
+			JobID:   "squ-705",
+			Type:    "note",
+			Status:  job.StatusRunning,
+			Actor:   "operator",
+			Message: "platform pipeline audit",
+			Data:    map[string]string{"access_token": "timeline-platform-secret"},
+		},
+	} {
+		if err := job.AppendEvent(teamDir, &ev); err != nil {
+			t.Fatalf("append job event %s: %v", ev.JobID, err)
+		}
+	}
+	for _, ev := range []*daemon.LifecycleEvent{
+		{
+			ID:       "life-ticket-pipeline",
+			TS:       now.Add(-80 * time.Second),
+			Action:   "dispatch",
+			Instance: "worker-squ-704-implement",
+			Agent:    "worker",
+			Job:      "squ-704",
+			Status:   daemon.StatusRunning,
+			Message:  "ticket pipeline lifecycle",
+		},
+		{
+			ID:       "life-platform-pipeline",
+			TS:       now.Add(-80 * time.Second),
+			Action:   "dispatch",
+			Instance: "worker-squ-705-implement",
+			Agent:    "worker",
+			Job:      "squ-705",
+			Status:   daemon.StatusRunning,
+			Message:  "platform pipeline lifecycle",
+		},
+	} {
+		if err := daemon.AppendLifecycleEvent(daemon.DaemonRoot(teamDir), ev); err != nil {
+			t.Fatalf("append lifecycle event %s: %v", ev.ID, err)
+		}
+	}
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -2897,6 +2947,12 @@ target = "worker"
 	if len(snapshot.QueueQuarantine) != 1 || snapshot.QueueQuarantine[0].ID != "q-ticket-quarantined" || snapshot.QueueQuarantine[0].Job != "squ-704" {
 		t.Fatalf("snapshot queue quarantine = %+v", snapshot.QueueQuarantine)
 	}
+	if len(snapshot.Timeline) != 2 || snapshot.Timeline[0].JobID != "squ-704" || snapshot.Timeline[0].Kind != "note" || snapshot.Timeline[1].JobID != "squ-704" || snapshot.Timeline[1].Kind != "dispatch" {
+		t.Fatalf("snapshot timeline = %+v", snapshot.Timeline)
+	}
+	if snapshot.Timeline[0].Data["access_token"] != snapshotRedactedValue || snapshot.Timeline[0].Data["detail"] != "kept" {
+		t.Fatalf("snapshot timeline data not redacted: %+v", snapshot.Timeline[0].Data)
+	}
 	if len(snapshot.AdvancePreview) != 1 || snapshot.AdvancePreview[0].JobID != "squ-704" || snapshot.AdvancePreview[0].Action != "would_advance" || !snapshot.AdvancePreview[0].DryRun {
 		t.Fatalf("snapshot advance = %+v", snapshot.AdvancePreview)
 	}
@@ -2904,7 +2960,7 @@ target = "worker"
 	if preview == nil || preview.Step == nil || preview.Step.ID != "implement" || preview.Dispatch == nil || preview.Dispatch.RequestedName != "worker-squ-704-implement" {
 		t.Fatalf("snapshot route preview = %+v", preview)
 	}
-	if strings.Contains(out.String(), "platform_work") || strings.Contains(out.String(), "squ-705") || strings.Contains(out.String(), "q-platform") || strings.Contains(out.String(), "outbox-platform") || strings.Contains(out.String(), "ticket-secret") || strings.Contains(out.String(), "outbox-ticket-secret") || strings.Contains(out.String(), "ticket pipeline inbox secret") || strings.Contains(out.String(), "platform pipeline inbox secret") {
+	if strings.Contains(out.String(), "platform_work") || strings.Contains(out.String(), "squ-705") || strings.Contains(out.String(), "q-platform") || strings.Contains(out.String(), "outbox-platform") || strings.Contains(out.String(), "ticket-secret") || strings.Contains(out.String(), "outbox-ticket-secret") || strings.Contains(out.String(), "timeline-ticket-secret") || strings.Contains(out.String(), "timeline-platform-secret") || strings.Contains(out.String(), "platform pipeline audit") || strings.Contains(out.String(), "platform pipeline lifecycle") || strings.Contains(out.String(), "ticket pipeline inbox secret") || strings.Contains(out.String(), "platform pipeline inbox secret") {
 		t.Fatalf("pipeline snapshot leaked unrelated workflow:\n%s", out.String())
 	}
 
@@ -2926,8 +2982,27 @@ target = "worker"
 	if len(rawSnapshot.Outbox) != 1 || rawSnapshot.Outbox[0].Payload["access_token"] != "outbox-ticket-secret" {
 		t.Fatalf("raw pipeline outbox = %+v", rawSnapshot.Outbox)
 	}
-	if strings.Contains(rawOut.String(), "platform pipeline inbox secret") || strings.Contains(rawOut.String(), "outbox-platform") {
+	if len(rawSnapshot.Timeline) != 2 || rawSnapshot.Timeline[0].Data["access_token"] != "timeline-ticket-secret" {
+		t.Fatalf("raw pipeline timeline = %+v", rawSnapshot.Timeline)
+	}
+	if strings.Contains(rawOut.String(), "platform pipeline inbox secret") || strings.Contains(rawOut.String(), "outbox-platform") || strings.Contains(rawOut.String(), "timeline-platform-secret") {
 		t.Fatalf("raw pipeline snapshot leaked unrelated workflow:\n%s", rawOut.String())
+	}
+
+	timelineCmd := NewRootCmd()
+	timelineOut, timelineErr := &bytes.Buffer{}, &bytes.Buffer{}
+	timelineCmd.SetOut(timelineOut)
+	timelineCmd.SetErr(timelineErr)
+	timelineCmd.SetArgs([]string{"pipeline", "snapshot", "ticket_to_pr", "--repo", target, "--timeline", "1", "--json"})
+	if err := timelineCmd.Execute(); err != nil {
+		t.Fatalf("pipeline snapshot timeline limit: %v\nstderr=%s", err, timelineErr.String())
+	}
+	var timelineSnapshot pipelineSnapshotResult
+	if err := json.Unmarshal(timelineOut.Bytes(), &timelineSnapshot); err != nil {
+		t.Fatalf("decode limited pipeline snapshot: %v\nbody=%s", err, timelineOut.String())
+	}
+	if len(timelineSnapshot.Timeline) != 1 || timelineSnapshot.Timeline[0].Kind != "dispatch" {
+		t.Fatalf("limited pipeline snapshot timeline = %+v", timelineSnapshot.Timeline)
 	}
 
 	text := NewRootCmd()
@@ -2938,7 +3013,7 @@ target = "worker"
 	if err := text.Execute(); err != nil {
 		t.Fatalf("pipeline snapshot text: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"pipeline snapshot:", "pipeline: ticket_to_pr", "command: agent-team pipeline snapshot scope=pipeline subject=ticket_to_pr", "status: jobs=1 ready_steps=1", "explain: jobs=1 steps=1", "jobs: total=1", "inbox: instances=1 total=1 unread=1 unread_instances=1", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "outbox: total=1 pending=1 failed=0 processed=0", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "advance: ready=1 route_previews=1"} {
+	for _, want := range []string{"pipeline snapshot:", "pipeline: ticket_to_pr", "command: agent-team pipeline snapshot scope=pipeline subject=ticket_to_pr", "status: jobs=1 ready_steps=1", "explain: jobs=1 steps=1", "jobs: total=1", "inbox: instances=1 total=1 unread=1 unread_instances=1", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "outbox: total=1 pending=1 failed=0 processed=0", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "timeline: events=2 job=1 lifecycle=1", "advance: ready=1 route_previews=1"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("pipeline snapshot text missing %q:\n%s", want, textOut.String())
 		}
@@ -2969,7 +3044,7 @@ target = "worker"
 	if err := json.Unmarshal(fileBody, &fileSnapshot); err != nil {
 		t.Fatalf("decode pipeline snapshot output: %v\nbody=%s", err, string(fileBody))
 	}
-	if fileSnapshot.Pipeline != "ticket_to_pr" || len(fileSnapshot.Jobs) != 1 || fileSnapshot.Jobs[0].ID != "squ-704" {
+	if fileSnapshot.Pipeline != "ticket_to_pr" || len(fileSnapshot.Jobs) != 1 || fileSnapshot.Jobs[0].ID != "squ-704" || len(fileSnapshot.Timeline) != 2 {
 		t.Fatalf("pipeline snapshot file = %+v", fileSnapshot)
 	}
 }

@@ -1192,6 +1192,7 @@ func newJobTimelineCmd() *cobra.Command {
 		tail    string
 		source  string
 		sortBy  string
+		since   string
 		jsonOut bool
 		format  string
 	)
@@ -1222,6 +1223,11 @@ func newJobTimelineCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeline: %v\n", err)
 				return exitErr(2)
 			}
+			sinceAt, err := parseJobTimelineSince(since, time.Now)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeline: %v\n", err)
+				return exitErr(2)
+			}
 			tmpl, err := parseJobTimelineFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeline: %v\n", err)
@@ -1236,7 +1242,7 @@ func newJobTimelineCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeline: %v\n", err)
 				return exitErr(1)
 			}
-			entries, err := collectJobTimeline(teamDir, j, sourceMode, tailEvents, sortMode)
+			entries, err := collectJobTimeline(teamDir, j, sourceMode, sinceAt, tailEvents, sortMode)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeline: %v\n", err)
 				return exitErr(1)
@@ -1248,6 +1254,7 @@ func newJobTimelineCmd() *cobra.Command {
 	cmd.Flags().StringVar(&tail, "tail", "0", "Show only the last N combined events before sorting for display (0 or all = all).")
 	cmd.Flags().StringVar(&source, "source", "all", "Timeline source to include: all, job, or lifecycle.")
 	cmd.Flags().StringVar(&sortBy, "sort", "oldest", "Sort returned timeline rows by oldest or newest after applying --tail.")
+	cmd.Flags().StringVar(&since, "since", "", "Only show timeline rows since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each timeline row with a Go template, e.g. '{{.TS}} {{.Source}} {{.Kind}} {{.Message}}'.")
 	return cmd
@@ -8105,7 +8112,7 @@ func parseJobTimelineSource(raw string) (string, error) {
 	}
 }
 
-func collectJobTimeline(teamDir string, j *job.Job, source string, tail int, sortMode string) ([]jobTimelineEntry, error) {
+func collectJobTimeline(teamDir string, j *job.Job, source string, since *time.Time, tail int, sortMode string) ([]jobTimelineEntry, error) {
 	if j == nil {
 		return nil, errors.New("job is nil")
 	}
@@ -8131,19 +8138,20 @@ func collectJobTimeline(teamDir string, j *job.Job, source string, tail int, sor
 			entries = append(entries, jobTimelineEntryFromLifecycleEvent(*ev, j.ID))
 		}
 	}
+	entries = filterJobTimelineEntriesSince(entries, since)
 	sortJobTimelineEntries(entries)
 	entries = tailJobTimelineEntries(entries, tail)
 	sortJobTimelineEntriesForDisplay(entries, sortMode)
 	return entries, nil
 }
 
-func collectJobTimelineForJobs(teamDir string, jobs []*job.Job, source string, tail int, sortMode string) ([]jobTimelineEntry, error) {
+func collectJobTimelineForJobs(teamDir string, jobs []*job.Job, source string, since *time.Time, tail int, sortMode string) ([]jobTimelineEntry, error) {
 	entries := []jobTimelineEntry{}
 	for _, j := range jobs {
 		if j == nil {
 			continue
 		}
-		jobEntries, err := collectJobTimeline(teamDir, j, source, 0, "oldest")
+		jobEntries, err := collectJobTimeline(teamDir, j, source, since, 0, "oldest")
 		if err != nil {
 			return nil, err
 		}
@@ -8153,6 +8161,32 @@ func collectJobTimelineForJobs(teamDir string, jobs []*job.Job, source string, t
 	entries = tailJobTimelineEntries(entries, tail)
 	sortJobTimelineEntriesForDisplay(entries, sortMode)
 	return entries, nil
+}
+
+func parseJobTimelineSince(raw string, now func() time.Time) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	parsed, err := parseEventSince(raw, now)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --since: %w", err)
+	}
+	return &parsed, nil
+}
+
+func filterJobTimelineEntriesSince(entries []jobTimelineEntry, since *time.Time) []jobTimelineEntry {
+	if since == nil {
+		return entries
+	}
+	out := make([]jobTimelineEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.TS.Before(*since) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func jobTimelineEntryFromJobEvent(ev job.Event) jobTimelineEntry {
