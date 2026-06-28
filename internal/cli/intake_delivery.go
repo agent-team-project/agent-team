@@ -147,7 +147,7 @@ func newIntakeDeliveriesCmd() *cobra.Command {
 			})
 			deliveries = tailIntakeDeliveries(deliveries, tailLines)
 			deliveries = withIntakeDeliveryActions(deliveries)
-			return renderIntakeDeliveries(cmd.OutOrStdout(), deliveries, jsonOut, tmpl, commands)
+			return renderIntakeDeliveries(cmd.OutOrStdout(), deliveries, jsonOut, tmpl, commands, operatorCommandScopeFromCommand(cmd, target, "target"))
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
@@ -211,7 +211,7 @@ func newIntakeDuplicatesCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			rows := duplicateIntakeRequestIDs(deliveries, provider, requestID)
-			return renderIntakeDuplicates(cmd.OutOrStdout(), rows, jsonOut, tmpl, commands)
+			return renderIntakeDuplicates(cmd.OutOrStdout(), rows, jsonOut, tmpl, commands, operatorCommandScopeFromCommand(cmd, target, "target"))
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
@@ -1343,12 +1343,12 @@ func parseIntakePruneFormat(format string) (*template.Template, error) {
 	return tmpl, nil
 }
 
-func renderIntakeDeliveries(w io.Writer, deliveries []intakeDelivery, jsonOut bool, tmpl *template.Template, commands bool) error {
+func renderIntakeDeliveries(w io.Writer, deliveries []intakeDelivery, jsonOut bool, tmpl *template.Template, commands bool, scope operatorCommandScope) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(deliveries)
 	}
 	if commands {
-		return renderActionCommands(w, intakeDeliveryCommandActions(deliveries))
+		return renderOperatorActionCommands(w, intakeDeliveryCommandActions(deliveries), scope)
 	}
 	if tmpl != nil {
 		for _, delivery := range deliveries {
@@ -1386,12 +1386,12 @@ func renderIntakeDeliveries(w io.Writer, deliveries []intakeDelivery, jsonOut bo
 	return tw.Flush()
 }
 
-func renderIntakeDuplicates(w io.Writer, rows []intakeDuplicateRequest, jsonOut bool, tmpl *template.Template, commands bool) error {
+func renderIntakeDuplicates(w io.Writer, rows []intakeDuplicateRequest, jsonOut bool, tmpl *template.Template, commands bool, scope operatorCommandScope) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(rows)
 	}
 	if commands {
-		return renderActionCommands(w, intakeDuplicateCommandActions(rows))
+		return renderOperatorActionCommands(w, intakeDuplicateCommandActions(rows), scope)
 	}
 	if tmpl != nil {
 		for _, row := range rows {

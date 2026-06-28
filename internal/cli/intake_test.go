@@ -1062,7 +1062,10 @@ func TestIntakeDeliveriesFiltersAndFormat(t *testing.T) {
 	if err := commands.Execute(); err != nil {
 		t.Fatalf("intake deliveries --commands: %v\nstderr=%s", err, commandsErr.String())
 	}
-	if got, want := commandsOut.String(), "agent-team intake replay github-error --dry-run --preview-triggers\nagent-team intake replay github-error\n"; got != want {
+	if got, want := commandsOut.String(), strings.Join(scopedOperatorActions([]string{
+		"agent-team intake replay github-error --dry-run --preview-triggers",
+		"agent-team intake replay github-error",
+	}, operatorCommandScope{Repo: target, Set: true}), "\n")+"\n"; got != want {
 		t.Fatalf("intake deliveries --commands output = %q, want %q", got, want)
 	}
 	if commandsErr.Len() != 0 {
@@ -1387,7 +1390,9 @@ func TestIntakeDuplicatesListsRequestGroups(t *testing.T) {
 	if err := commands.Execute(); err != nil {
 		t.Fatalf("intake duplicates --commands: %v\nstderr=%s", err, commandsErr.String())
 	}
-	if got, want := commandsOut.String(), "agent-team intake deliveries --provider github --request-id delivery-dup\n"; got != want {
+	if got, want := commandsOut.String(), strings.Join(scopedOperatorActions([]string{
+		"agent-team intake deliveries --provider github --request-id delivery-dup",
+	}, operatorCommandScope{Repo: target, Set: true}), "\n")+"\n"; got != want {
 		t.Fatalf("intake duplicates --commands output = %q, want %q", got, want)
 	}
 	if commandsErr.Len() != 0 {
