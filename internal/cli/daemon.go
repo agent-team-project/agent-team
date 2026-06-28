@@ -892,21 +892,22 @@ func renderDaemonReconcile(w fmtWriter, resp *daemonReconcileResponse) error {
 }
 
 type daemonStatusJSON struct {
-	Running        bool   `json:"running"`
-	Ready          bool   `json:"ready"`
-	PID            int    `json:"pid,omitempty"`
-	Instances      int    `json:"instances"`
-	TeamDir        string `json:"team_dir"`
-	Socket         string `json:"socket"`
-	SocketExists   bool   `json:"socket_exists"`
-	HTTPAddr       string `json:"http_addr,omitempty"`
-	HTTPURL        string `json:"http_url,omitempty"`
-	HTTPAddrFile   string `json:"http_addr_file,omitempty"`
-	HTTPAddrExists bool   `json:"http_addr_exists,omitempty"`
-	Pidfile        string `json:"pidfile"`
-	StalePidfile   bool   `json:"stale_pidfile,omitempty"`
-	Log            string `json:"log"`
-	Error          string `json:"error,omitempty"`
+	Running        bool     `json:"running"`
+	Ready          bool     `json:"ready"`
+	PID            int      `json:"pid,omitempty"`
+	Instances      int      `json:"instances"`
+	TeamDir        string   `json:"team_dir"`
+	Socket         string   `json:"socket"`
+	SocketExists   bool     `json:"socket_exists"`
+	HTTPAddr       string   `json:"http_addr,omitempty"`
+	HTTPURL        string   `json:"http_url,omitempty"`
+	HTTPAddrFile   string   `json:"http_addr_file,omitempty"`
+	HTTPAddrExists bool     `json:"http_addr_exists,omitempty"`
+	Pidfile        string   `json:"pidfile"`
+	StalePidfile   bool     `json:"stale_pidfile,omitempty"`
+	Log            string   `json:"log"`
+	Error          string   `json:"error,omitempty"`
+	Actions        []string `json:"actions,omitempty"`
 }
 
 type daemonStatusOptions struct {
@@ -936,6 +937,7 @@ func runDaemonStatus(cmd *cobra.Command, target string, jsonOut, quiet, commands
 			}
 		}
 	}
+	status = daemonStatusWithActions(status)
 	if jsonOut {
 		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(status); err != nil {
 			return err
@@ -986,7 +988,7 @@ func runDaemonStatus(cmd *cobra.Command, target string, jsonOut, quiet, commands
 }
 
 func renderDaemonStatusCommands(w io.Writer, status daemonStatusJSON, scope operatorCommandScope) error {
-	return renderOperatorActionCommands(w, daemonStatusCommandActions(status), scope)
+	return renderOperatorActionCommands(w, daemonStatusActions(status), scope)
 }
 
 func daemonStatusCommandActions(status daemonStatusJSON) []string {
@@ -1003,6 +1005,18 @@ func daemonStatusCommandActions(status daemonStatusJSON) []string {
 		"agent-team ps",
 		"agent-team monitor",
 	}
+}
+
+func daemonStatusWithActions(status daemonStatusJSON) daemonStatusJSON {
+	status.Actions = daemonStatusCommandActions(status)
+	return status
+}
+
+func daemonStatusActions(status daemonStatusJSON) []string {
+	if len(status.Actions) > 0 {
+		return status.Actions
+	}
+	return daemonStatusCommandActions(status)
 }
 
 func parseDaemonStatusFormat(format string) (*template.Template, error) {

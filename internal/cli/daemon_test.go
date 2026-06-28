@@ -225,6 +225,9 @@ func TestDaemonStatusJSON_NotRunning(t *testing.T) {
 	if body.Ready || body.SocketExists || body.StalePidfile || body.Instances != 0 {
 		t.Fatalf("status json should report daemon down without readiness: %+v", body)
 	}
+	if len(body.Actions) != 1 || body.Actions[0] != "agent-team daemon start" {
+		t.Fatalf("status json actions = %+v, want daemon start", body.Actions)
+	}
 	if body.Socket != daemon.SocketPath(body.TeamDir) {
 		t.Fatalf("socket = %q, want %q", body.Socket, daemon.SocketPath(body.TeamDir))
 	}
@@ -266,6 +269,9 @@ func TestDaemonStatusJSON_Running(t *testing.T) {
 	if !strings.Contains(body.Error, "socket") {
 		t.Fatalf("status json should report missing socket: %+v", body)
 	}
+	if len(body.Actions) != 2 || body.Actions[0] != "agent-team daemon restart" || body.Actions[1] != "agent-team daemon logs --tail 80" {
+		t.Fatalf("status json actions = %+v, want restart/logs", body.Actions)
+	}
 }
 
 func TestDaemonStatusJSON_ReadyWithInstanceCount(t *testing.T) {
@@ -299,6 +305,9 @@ func TestDaemonStatusJSON_ReadyWithInstanceCount(t *testing.T) {
 	}
 	if !body.Running || !body.Ready || !body.SocketExists || body.PID != os.Getpid() || body.Instances != 1 || body.Error != "" {
 		t.Fatalf("status json should report ready daemon with one instance: %+v", body)
+	}
+	if len(body.Actions) != 2 || body.Actions[0] != "agent-team ps" || body.Actions[1] != "agent-team monitor" {
+		t.Fatalf("status json actions = %+v, want ps/monitor", body.Actions)
 	}
 }
 
@@ -953,11 +962,11 @@ func TestDaemonStatusFormatNotRunning(t *testing.T) {
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"daemon", "status", "--format", "{{.Running}}:{{.Ready}}:{{.Instances}}:{{.SocketExists}}", "--target", tmp})
+	cmd.SetArgs([]string{"daemon", "status", "--format", "{{.Running}}:{{.Ready}}:{{.Instances}}:{{.SocketExists}}:{{index .Actions 0}}", "--target", tmp})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("status --format: %v", err)
 	}
-	if got, want := out.String(), "false:false:0:false\n"; got != want {
+	if got, want := out.String(), "false:false:0:false:agent-team daemon start\n"; got != want {
 		t.Fatalf("status --format output = %q, want %q", got, want)
 	}
 }
