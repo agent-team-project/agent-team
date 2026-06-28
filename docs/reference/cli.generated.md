@@ -3687,6 +3687,7 @@ Flags:
   -f, --follow            Tail the log; print new bytes as they appear.
       --format string     With --list, render each log stream with a Go template, e.g. '{{.Instance}} {{.LogPath}}'.
       --grep string       Only print log lines matching this regular expression. One-shot reads only.
+      --job strings       Only show logs for this job id or ticket. Can repeat or comma-separate.
       --json              Emit machine-readable JSON with --list.
   -n, --last int          Show logs for the N most recently started instances after other filters (0 = all).
       --last-message      Show the clean final Codex response sidecar instead of the raw runtime log.
@@ -4637,6 +4638,7 @@ Flags:
   -f, --follow            Tail selected pipeline logs.
       --format string     With --list, render each log stream with a Go template, e.g. '{{.Instance}} {{.LogPath}}'.
       --grep string       Only print log lines matching this regular expression. One-shot reads only.
+      --job strings       Only show logs for this pipeline-owned job id or ticket. Can repeat or comma-separate.
       --json              Emit machine-readable JSON with --list.
   -n, --last int          Show logs for the N most recently started pipeline instances (0 = all).
       --last-message      Show clean final Codex response sidecars instead of raw runtime logs.
@@ -7712,6 +7714,7 @@ Flags:
   -f, --follow            Tail selected team logs.
       --format string     With --list, render each log stream with a Go template, e.g. '{{.Instance}} {{.LogPath}}'.
       --grep string       Only print log lines matching this regular expression. One-shot reads only.
+      --job strings       Only show logs for this team-owned job id or ticket. Can repeat or comma-separate.
       --json              Emit machine-readable JSON with --list.
   -n, --last int          Show logs for the N most recently started team instances (0 = all).
       --last-message      Show clean final Codex response sidecars instead of raw runtime logs.

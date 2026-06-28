@@ -3957,6 +3957,7 @@ func newTeamLogsCmd() *cobra.Command {
 		statuses         []string
 		runtimes         []string
 		phases           []string
+		jobs             []string
 		staleOnly        bool
 		runtimeStaleOnly bool
 		unhealthy        bool
@@ -4075,6 +4076,11 @@ func newTeamLogsCmd() *cobra.Command {
 			}
 			listOpts.runtimeStale = runtimeStaleOnly
 			listOpts.step = strings.TrimSpace(step)
+			listOpts.jobs, err = jobIDSetFilter(jobs, "--job")
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team logs: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -4109,6 +4115,7 @@ func newTeamLogsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&statuses, "status", nil, "Only show logs for lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Only show logs for team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phases, "phase", nil, "Only show logs for work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Only show logs for this team-owned job id or ticket. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&step, "step", "", "Only show logs for instances recorded on this pipeline step id.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show logs for team instances whose status.toml is stale.")
 	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show logs for team instances whose recorded runtime PID is no longer live.")

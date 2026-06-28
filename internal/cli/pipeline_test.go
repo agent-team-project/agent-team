@@ -6514,6 +6514,18 @@ target = "worker"
 		t.Fatalf("pipeline all log rows = %v, want every pipeline-owned stream only", got)
 	}
 
+	jobList := NewRootCmd()
+	jobListOut, jobListErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jobList.SetOut(jobListOut)
+	jobList.SetErr(jobListErr)
+	jobList.SetArgs([]string{"pipeline", "logs", "--all", "--repo", root, "--job", "SQU-981", "--list", "--format", "{{.Instance}} {{.JobID}} {{.Ticket}}"})
+	if err := jobList.Execute(); err != nil {
+		t.Fatalf("pipeline logs job list: %v\nstderr=%s", err, jobListErr.String())
+	}
+	if got, want := strings.TrimSpace(jobListOut.String()), "worker-squ-981 squ-981 SQU-981"; got != want {
+		t.Fatalf("pipeline logs job list = %q, want %q", got, want)
+	}
+
 	stepList := NewRootCmd()
 	stepListOut, stepListErr := &bytes.Buffer{}, &bytes.Buffer{}
 	stepList.SetOut(stepListOut)
@@ -6636,6 +6648,18 @@ target = "worker"
 	}
 	if got := stepLastOut.String(); got != "worker final\n" {
 		t.Fatalf("pipeline logs step last-message = %q", got)
+	}
+
+	jobLast := NewRootCmd()
+	jobLastOut, jobLastErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jobLast.SetOut(jobLastOut)
+	jobLast.SetErr(jobLastErr)
+	jobLast.SetArgs([]string{"pipeline", "logs", "--all", "--repo", root, "--job", "SQU-981", "--last-message"})
+	if err := jobLast.Execute(); err != nil {
+		t.Fatalf("pipeline logs job last-message: %v\nstderr=%s", err, jobLastErr.String())
+	}
+	if got := jobLastOut.String(); got != "foreign final\n" {
+		t.Fatalf("pipeline logs job last-message = %q", got)
 	}
 
 	invalidMany := NewRootCmd()

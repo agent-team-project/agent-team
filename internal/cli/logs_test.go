@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/jamesaud/agent-team/internal/runtimebin"
 )
 
@@ -1041,6 +1042,90 @@ func TestLogsListUsesLocalMetadataWhenDaemonStopped(t *testing.T) {
 	}
 }
 
+func TestLogsJobFilterUsesLocalJobOwnershipWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-201",
+			Ticket:    "SQU-201",
+			Target:    "worker",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-201",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "squ-202",
+			Ticket:    "SQU-202",
+			Target:    "worker",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-202",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "worker-squ-201", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, StartedAt: now.Add(time.Minute)},
+		{Instance: "worker-squ-202", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, StartedAt: now.Add(2 * time.Minute)},
+	} {
+		if err := daemon.WriteMetadata(root, meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	writeChildLogForTest(t, root, "worker-squ-201", "owned first\nowned latest\n")
+	writeChildLogForTest(t, root, "worker-squ-202", "foreign first\nforeign latest\n")
+	writeLastMessageForTest(t, teamDir, "worker-squ-201", "owned final")
+	writeLastMessageForTest(t, teamDir, "worker-squ-202", "foreign final")
+
+	list := NewRootCmd()
+	listOut, listErr := &bytes.Buffer{}, &bytes.Buffer{}
+	list.SetOut(listOut)
+	list.SetErr(listErr)
+	list.SetArgs([]string{"logs", "--list", "--json", "--job", "SQU-201", "--target", tmp})
+	if err := list.Execute(); err != nil {
+		t.Fatalf("logs --list --job: %v\nstderr=%s", err, listErr.String())
+	}
+	var rows []logListRow
+	if err := json.Unmarshal(listOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode logs list job: %v\nbody=%s", err, listOut.String())
+	}
+	if len(rows) != 1 || rows[0].Instance != "worker-squ-201" || rows[0].JobID != "squ-201" || rows[0].Ticket != "SQU-201" {
+		t.Fatalf("job-filtered rows = %+v", rows)
+	}
+
+	raw := NewRootCmd()
+	rawOut, rawErr := &bytes.Buffer{}, &bytes.Buffer{}
+	raw.SetOut(rawOut)
+	raw.SetErr(rawErr)
+	raw.SetArgs([]string{"logs", "--job", "squ-201", "--latest", "--tail", "1", "--target", tmp})
+	if err := raw.Execute(); err != nil {
+		t.Fatalf("logs --job latest: %v\nstderr=%s", err, rawErr.String())
+	}
+	if got := rawOut.String(); got != "owned latest\n" {
+		t.Fatalf("job-filtered latest log = %q", got)
+	}
+
+	last := NewRootCmd()
+	lastOut, lastErr := &bytes.Buffer{}, &bytes.Buffer{}
+	last.SetOut(lastOut)
+	last.SetErr(lastErr)
+	last.SetArgs([]string{"logs", "--job", "squ-201", "--latest", "--last-message", "--target", tmp})
+	if err := last.Execute(); err != nil {
+		t.Fatalf("logs --job last-message: %v\nstderr=%s", err, lastErr.String())
+	}
+	if got := lastOut.String(); got != "owned final\n" {
+		t.Fatalf("job-filtered last message = %q", got)
+	}
+}
+
 func TestLogsListJSONIncludesStale(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -1674,6 +1759,18 @@ func TestFilterLogListRows(t *testing.T) {
 	}
 }
 
+func TestFilterLogListRowsJob(t *testing.T) {
+	rows := []logListRow{
+		{Instance: "worker-squ-201", JobID: "squ-201", Ticket: "SQU-201"},
+		{Instance: "worker-squ-202", Ticket: "SQU-202"},
+		{Instance: "worker-squ-203"},
+	}
+	got := filterLogListRows(rows, logListOptions{jobs: map[string]bool{"squ-202": true}})
+	if len(got) != 1 || got[0].Instance != "worker-squ-202" {
+		t.Fatalf("filtered rows = %+v, want squ-202 by ticket", got)
+	}
+}
+
 func TestFilterLogListRowsUnhealthy(t *testing.T) {
 	rows := []logListRow{
 		{Instance: "crashed", Agent: "worker", Status: string(daemon.StatusCrashed)},
@@ -1810,7 +1907,7 @@ func TestLogsRequiresInstanceUnlessAll(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected validation error")
 	}
-	if !strings.Contains(stderr.String(), "instance is required unless --all, --latest, --last, --status, --runtime, --agent, --phase, --stale, --runtime-stale, or --unhealthy is set") {
+	if !strings.Contains(stderr.String(), "instance is required unless --all, --latest, --last, --status, --runtime, --agent, --phase, --job, --stale, --runtime-stale, or --unhealthy is set") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
@@ -2090,7 +2187,7 @@ func TestLogsNoPrefixRequiresMultiInstanceSelection(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected validation error")
 	}
-	if !strings.Contains(stderr.String(), "--no-prefix requires --all, --latest, --last, --status, --runtime, --agent, --phase, --stale, --runtime-stale, or --unhealthy") {
+	if !strings.Contains(stderr.String(), "--no-prefix requires --all, --latest, --last, --status, --runtime, --agent, --phase, --job, --stale, --runtime-stale, or --unhealthy") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

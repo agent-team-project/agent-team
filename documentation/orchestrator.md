@@ -215,7 +215,7 @@ agent-team ps [-a] [-w] [--no-clear] [-q] [--summary] [--latest | --last N] [--s
                                   # list/watch/filter instances, using persisted runtime metadata if the daemon is down
 agent-team stats [<instance>...] [--all] [--latest | --last N] [-w] [--no-clear] [--summary] [--sort cpu|mem|rss|status|agent|phase|stale|runtime-stale|unhealthy|name] [--json] [--format '{{.Instance}} {{.CPUPercent}} {{.RSS}}'] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--runtime-stale] [--unhealthy]
                                   # CPU/memory snapshot or watch stream; falls back to metadata-only rows if the daemon is down
-agent-team logs [<instance> | --latest | --last N] [--all | --agent manager] [--status running] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--no-prefix] [--list [--format '{{.Instance}} {{.LogPath}}'] [--json]] [--daemon] [--tail N|all] [--since 10m] [--grep 'error|panic'] [-f]
+agent-team logs [<instance> | --latest | --last N] [--all | --agent manager] [--status running] [--phase idle] [--job SQU-42] [--stale] [--runtime-stale] [--unhealthy] [--no-prefix] [--list [--format '{{.Instance}} {{.LogPath}}'] [--json]] [--daemon] [--tail N|all] [--since 10m] [--grep 'error|panic'] [-f]
                                   # list/show/follow instance or daemon logs; reads daemon-managed logs locally if the daemon is down
 agent-team attach <instance> [--dry-run] [--no-resume]
                                   # preview or run interactive `claude --resume` handoff; daemon resumes supervision afterward

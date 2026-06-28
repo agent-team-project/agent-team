@@ -7399,6 +7399,18 @@ instances = ["other", "build-worker"]
 		t.Fatalf("team log row job metadata = %+v", rows)
 	}
 
+	jobList := NewRootCmd()
+	jobListOut, jobListErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jobList.SetOut(jobListOut)
+	jobList.SetErr(jobListErr)
+	jobList.SetArgs([]string{"team", "logs", "delivery", "--repo", root, "--job", "SQU-201", "--list", "--format", "{{.Instance}} {{.JobID}} {{.Ticket}}"})
+	if err := jobList.Execute(); err != nil {
+		t.Fatalf("team logs job list: %v\nstderr=%s", err, jobListErr.String())
+	}
+	if got, want := strings.TrimSpace(jobListOut.String()), "manager squ-201 SQU-201\nworker-squ-201 squ-201 SQU-201"; got != want {
+		t.Fatalf("team logs job list = %q, want %q", got, want)
+	}
+
 	codexList := NewRootCmd()
 	codexListOut, codexListErr := &bytes.Buffer{}, &bytes.Buffer{}
 	codexList.SetOut(codexListOut)
@@ -7530,6 +7542,18 @@ instances = ["other", "build-worker"]
 	}
 	if got := stepLastOut.String(); got != "worker final\n" {
 		t.Fatalf("team logs step last-message = %q", got)
+	}
+
+	jobLast := NewRootCmd()
+	jobLastOut, jobLastErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jobLast.SetOut(jobLastOut)
+	jobLast.SetErr(jobLastErr)
+	jobLast.SetArgs([]string{"team", "logs", "delivery", "--repo", root, "--job", "SQU-201", "--runtime", "codex", "--last-message"})
+	if err := jobLast.Execute(); err != nil {
+		t.Fatalf("team logs job last-message: %v\nstderr=%s", err, jobLastErr.String())
+	}
+	if got := jobLastOut.String(); got != "worker final\n" {
+		t.Fatalf("team logs job last-message = %q", got)
 	}
 
 	runtimeLast := NewRootCmd()

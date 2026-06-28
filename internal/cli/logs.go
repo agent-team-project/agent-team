@@ -50,6 +50,7 @@ func newLogsCmd() *cobra.Command {
 		runtimes         []string
 		agents           []string
 		phases           []string
+		jobs             []string
 		staleOnly        bool
 		runtimeStaleOnly bool
 		unhealthy        bool
@@ -107,6 +108,7 @@ func newLogsCmd() *cobra.Command {
 				RuntimeFilters: runtimes,
 				AgentFilters:   agents,
 				PhaseFilters:   phases,
+				JobFilters:     jobs,
 				Stale:          staleOnly,
 				RuntimeStale:   runtimeStaleOnly,
 				Unhealthy:      unhealthy,
@@ -133,6 +135,7 @@ func newLogsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Only show logs for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&agents, "agent", nil, "Only show logs for this agent. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&phases, "phase", nil, "Only show logs for instances in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Only show logs for this job id or ticket. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show logs for instances whose status.toml is stale.")
 	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show logs for running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthy, "unhealthy", false, "Only show logs for crashed, status-stale, or runtime-stale instances.")
@@ -158,6 +161,7 @@ type logsOptions struct {
 	RuntimeFilters []string
 	AgentFilters   []string
 	PhaseFilters   []string
+	JobFilters     []string
 	Stale          bool
 	RuntimeStale   bool
 	Unhealthy      bool
@@ -320,17 +324,17 @@ func runLogs(cmd *cobra.Command, target string, args []string, opts logsOptions)
 			return exitErr(2)
 		}
 	}
-	hasFilters := len(opts.StatusFilters) > 0 || len(opts.RuntimeFilters) > 0 || len(opts.AgentFilters) > 0 || len(opts.PhaseFilters) > 0 || opts.Stale || opts.RuntimeStale || opts.Unhealthy
+	hasFilters := len(opts.StatusFilters) > 0 || len(opts.RuntimeFilters) > 0 || len(opts.AgentFilters) > 0 || len(opts.PhaseFilters) > 0 || len(opts.JobFilters) > 0 || opts.Stale || opts.RuntimeStale || opts.Unhealthy
 	if opts.NoPrefix && !opts.All && !hasFilters && !opts.Latest && opts.Limit == 0 {
-		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team logs: --no-prefix requires --all, --latest, --last, --status, --runtime, --agent, --phase, --stale, --runtime-stale, or --unhealthy.")
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team logs: --no-prefix requires --all, --latest, --last, --status, --runtime, --agent, --phase, --job, --stale, --runtime-stale, or --unhealthy.")
 		return exitErr(2)
 	}
 	if hasFilters && len(args) > 0 {
-		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team logs: --status, --runtime, --agent, --phase, --stale, --runtime-stale, and --unhealthy cannot be combined with an instance name.")
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team logs: --status, --runtime, --agent, --phase, --job, --stale, --runtime-stale, and --unhealthy cannot be combined with an instance name.")
 		return exitErr(2)
 	}
 	if hasFilters && opts.Daemon {
-		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team logs: --daemon cannot be combined with --status, --runtime, --agent, --phase, --stale, --runtime-stale, or --unhealthy.")
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team logs: --daemon cannot be combined with --status, --runtime, --agent, --phase, --job, --stale, --runtime-stale, or --unhealthy.")
 		return exitErr(2)
 	}
 	listOpts := logListOptions{}
@@ -342,6 +346,11 @@ func runLogs(cmd *cobra.Command, target string, args []string, opts logsOptions)
 			return exitErr(2)
 		}
 		listOpts.runtimeStale = opts.RuntimeStale
+		listOpts.jobs, err = jobIDSetFilter(opts.JobFilters, "--job")
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "agent-team logs: %v\n", err)
+			return exitErr(2)
+		}
 	}
 	if opts.List {
 		if len(args) > 0 {
@@ -360,7 +369,7 @@ func runLogs(cmd *cobra.Command, target string, args []string, opts logsOptions)
 		if opts.Daemon {
 			return runDaemonLog(cmd, target, opts)
 		}
-		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team logs: instance is required unless --all, --latest, --last, --status, --runtime, --agent, --phase, --stale, --runtime-stale, or --unhealthy is set.")
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team logs: instance is required unless --all, --latest, --last, --status, --runtime, --agent, --phase, --job, --stale, --runtime-stale, or --unhealthy is set.")
 		return exitErr(2)
 	}
 	if opts.List {
@@ -471,6 +480,7 @@ type logListOptions struct {
 	runtimes     map[string]bool
 	agents       map[string]bool
 	phases       map[string]bool
+	jobs         map[string]bool
 	step         string
 	stale        bool
 	runtimeStale bool
@@ -809,7 +819,15 @@ func collectLogListRows(teamDir string, client *daemonClient) ([]logListRow, err
 	if err != nil {
 		return nil, err
 	}
-	return logListRowsFromMetadata(teamDir, metas)
+	rows, err := logListRowsFromMetadata(teamDir, metas)
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	return enrichLogListRowsWithJobs(rows, jobs), nil
 }
 
 func collectLocalLogListRows(teamDir string) ([]logListRow, error) {
@@ -817,7 +835,15 @@ func collectLocalLogListRows(teamDir string) ([]logListRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	return logListRowsFromMetadata(teamDir, metas)
+	rows, err := logListRowsFromMetadata(teamDir, metas)
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	return enrichLogListRowsWithJobs(rows, jobs), nil
 }
 
 func logListRowsFromMetadata(teamDir string, metas []*daemon.Metadata) ([]logListRow, error) {
@@ -1076,6 +1102,9 @@ func filterLogListRows(rows []logListRow, opts logListOptions) []logListRow {
 		if len(opts.phases) > 0 && !opts.phases[logRowPhaseKey(row)] {
 			continue
 		}
+		if len(opts.jobs) > 0 && !logRowMatchesJobFilter(row, opts.jobs) {
+			continue
+		}
 		if opts.step != "" && row.StepID != opts.step {
 			continue
 		}
@@ -1094,7 +1123,20 @@ func filterLogListRows(rows []logListRow, opts logListOptions) []logListRow {
 }
 
 func logListOptionsHasFilters(opts logListOptions) bool {
-	return len(opts.statuses) > 0 || len(opts.runtimes) > 0 || len(opts.agents) > 0 || len(opts.phases) > 0 || opts.step != "" || opts.stale || opts.runtimeStale || opts.unhealthy
+	return len(opts.statuses) > 0 || len(opts.runtimes) > 0 || len(opts.agents) > 0 || len(opts.phases) > 0 || len(opts.jobs) > 0 || opts.step != "" || opts.stale || opts.runtimeStale || opts.unhealthy
+}
+
+func logRowMatchesJobFilter(row logListRow, jobs map[string]bool) bool {
+	if len(jobs) == 0 {
+		return true
+	}
+	if id := job.NormalizeID(row.JobID); id != "" && jobs[id] {
+		return true
+	}
+	if ticket := job.NormalizeID(row.Ticket); ticket != "" && jobs[ticket] {
+		return true
+	}
+	return false
 }
 
 func logRowRuntimeKey(row logListRow) string {
