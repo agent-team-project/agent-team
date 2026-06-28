@@ -8203,6 +8203,36 @@ func TestPipelineQueueControlRejectsCommandsCombinations(t *testing.T) {
 			args: []string{"pipeline", "queue", "prune", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.ID}}"},
 			want: "--commands cannot be combined with --format",
 		},
+		{
+			name: "quarantine restore commands without dry run",
+			args: []string{"pipeline", "queue", "quarantine", "restore", "ticket_to_pr", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "quarantine restore commands with json",
+			args: []string{"pipeline", "queue", "quarantine", "restore", "ticket_to_pr", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "quarantine restore commands with format",
+			args: []string{"pipeline", "queue", "quarantine", "restore", "ticket_to_pr", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "quarantine drop commands without dry run",
+			args: []string{"pipeline", "queue", "quarantine", "drop", "ticket_to_pr", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "quarantine drop commands with json",
+			args: []string{"pipeline", "queue", "quarantine", "drop", "ticket_to_pr", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "quarantine drop commands with format",
+			args: []string{"pipeline", "queue", "quarantine", "drop", "ticket_to_pr", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := NewRootCmd()
@@ -9280,6 +9310,19 @@ target = "worker"
 		t.Fatalf("restore rows = %+v", restoreRows)
 	}
 
+	restoreAllCommands := NewRootCmd()
+	restoreAllCommandsOut, restoreAllCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreAllCommands.SetOut(restoreAllCommandsOut)
+	restoreAllCommands.SetErr(restoreAllCommandsErr)
+	restoreAllCommands.SetArgs([]string{"pipeline", "queue", "quarantine", "restore", "ticket_to_pr", "--repo", root, "--all", "--job", "SQU-902", "--dry-run", "--commands"})
+	if err := restoreAllCommands.Execute(); err != nil {
+		t.Fatalf("pipeline queue quarantine restore --all commands: %v\nstderr=%s", err, restoreAllCommandsErr.String())
+	}
+	wantRestoreAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "queue", "quarantine", "restore", "ticket_to_pr", "--repo", root, "--all", "--job", "SQU-902"}), " ")
+	if got := strings.TrimSpace(restoreAllCommandsOut.String()); got != wantRestoreAllCommand {
+		t.Fatalf("pipeline queue quarantine restore --all commands = %q, want %q", got, wantRestoreAllCommand)
+	}
+
 	restoreLimit := NewRootCmd()
 	restoreLimitOut, restoreLimitErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restoreLimit.SetOut(restoreLimitOut)
@@ -9320,6 +9363,19 @@ target = "worker"
 		t.Fatalf("restore one row = %+v", restoreOneRow)
 	}
 
+	restoreOneCommands := NewRootCmd()
+	restoreOneCommandsOut, restoreOneCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreOneCommands.SetOut(restoreOneCommandsOut)
+	restoreOneCommands.SetErr(restoreOneCommandsErr)
+	restoreOneCommands.SetArgs([]string{"pipeline", "queue", "quarantine", "restore", "ticket_to_pr", restorePath, "--repo", root, "--dry-run", "--commands"})
+	if err := restoreOneCommands.Execute(); err != nil {
+		t.Fatalf("pipeline queue quarantine restore one commands: %v\nstderr=%s", err, restoreOneCommandsErr.String())
+	}
+	wantRestoreOneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "queue", "quarantine", "restore", "ticket_to_pr", restorePath, "--repo", root}), " ")
+	if got := strings.TrimSpace(restoreOneCommandsOut.String()); got != wantRestoreOneCommand {
+		t.Fatalf("pipeline queue quarantine restore one commands = %q, want %q", got, wantRestoreOneCommand)
+	}
+
 	dropOne := NewRootCmd()
 	dropOneOut, dropOneErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dropOne.SetOut(dropOneOut)
@@ -9336,6 +9392,19 @@ target = "worker"
 		t.Fatalf("drop one rows = %+v", dropRows)
 	}
 
+	dropOneCommands := NewRootCmd()
+	dropOneCommandsOut, dropOneCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropOneCommands.SetOut(dropOneCommandsOut)
+	dropOneCommands.SetErr(dropOneCommandsErr)
+	dropOneCommands.SetArgs([]string{"pipeline", "queue", "quarantine", "drop", "ticket_to_pr", restorePath, "--repo", root, "--dry-run", "--commands"})
+	if err := dropOneCommands.Execute(); err != nil {
+		t.Fatalf("pipeline queue quarantine drop one commands: %v\nstderr=%s", err, dropOneCommandsErr.String())
+	}
+	wantDropOneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "queue", "quarantine", "drop", "ticket_to_pr", restorePath, "--repo", root}), " ")
+	if got := strings.TrimSpace(dropOneCommandsOut.String()); got != wantDropOneCommand {
+		t.Fatalf("pipeline queue quarantine drop one commands = %q, want %q", got, wantDropOneCommand)
+	}
+
 	dropUnrestorable := NewRootCmd()
 	dropUnrestorableOut, dropUnrestorableErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dropUnrestorable.SetOut(dropUnrestorableOut)
@@ -9346,6 +9415,19 @@ target = "worker"
 	}
 	if got, want := dropUnrestorableOut.String(), "q-pipeline-unrestorable would_drop false\n"; got != want {
 		t.Fatalf("drop unrestorable format = %q, want %q", got, want)
+	}
+
+	dropUnrestorableCommands := NewRootCmd()
+	dropUnrestorableCommandsOut, dropUnrestorableCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropUnrestorableCommands.SetOut(dropUnrestorableCommandsOut)
+	dropUnrestorableCommands.SetErr(dropUnrestorableCommandsErr)
+	dropUnrestorableCommands.SetArgs([]string{"pipeline", "queue", "quarantine", "drop", "ticket_to_pr", "--repo", root, "--all", "--unrestorable", "--dry-run", "--commands"})
+	if err := dropUnrestorableCommands.Execute(); err != nil {
+		t.Fatalf("pipeline queue quarantine drop unrestorable commands: %v\nstderr=%s", err, dropUnrestorableCommandsErr.String())
+	}
+	wantDropUnrestorableCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "queue", "quarantine", "drop", "ticket_to_pr", "--repo", root, "--all", "--unrestorable"}), " ")
+	if got := strings.TrimSpace(dropUnrestorableCommandsOut.String()); got != wantDropUnrestorableCommand {
+		t.Fatalf("pipeline queue quarantine drop unrestorable commands = %q, want %q", got, wantDropUnrestorableCommand)
 	}
 
 	dropForeign := NewRootCmd()

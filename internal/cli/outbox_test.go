@@ -476,6 +476,36 @@ func TestOutboxRecoveryCommandsRejectInvalidCombinations(t *testing.T) {
 			args: []string{"team", "outbox", "prune", "delivery", "--dry-run", "--commands", "--format", "{{.ID}}"},
 			want: "--commands cannot be combined with --format",
 		},
+		{
+			name: "job quarantine restore commands requires dry run",
+			args: []string{"job", "outbox", "quarantine", "restore", "squ-1", "quarantine/20260627T120000.000000000Z/pending/outbox.json", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "job quarantine drop commands rejects json",
+			args: []string{"job", "outbox", "quarantine", "drop", "squ-1", "quarantine/20260627T120000.000000000Z/pending/outbox.json", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "pipeline quarantine restore commands rejects format",
+			args: []string{"pipeline", "outbox", "quarantine", "restore", "ticket_to_pr", "quarantine/20260627T120000.000000000Z/pending/outbox.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "pipeline quarantine drop commands requires dry run",
+			args: []string{"pipeline", "outbox", "quarantine", "drop", "ticket_to_pr", "quarantine/20260627T120000.000000000Z/pending/outbox.json", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "team quarantine restore commands rejects json",
+			args: []string{"team", "outbox", "quarantine", "restore", "delivery", "quarantine/20260627T120000.000000000Z/pending/outbox.json", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "team quarantine drop commands rejects format",
+			args: []string{"team", "outbox", "quarantine", "drop", "delivery", "quarantine/20260627T120000.000000000Z/pending/outbox.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1396,6 +1426,18 @@ pipelines = ["ops_review"]
 		t.Fatalf("restore all rows = %+v", restoreAllRows)
 	}
 
+	restoreAllCommands := runRootForOutboxTest(t, "team", "outbox", "quarantine", "restore", "delivery", "--repo", root, "--all", "--state", daemon.OutboxStatePending, "--job", "SQU-909", "--dry-run", "--commands")
+	wantRestoreAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "outbox", "quarantine", "restore", "delivery", "--repo", root, "--all", "--state", daemon.OutboxStatePending, "--job", "SQU-909"}), " ")
+	if got := strings.TrimSpace(restoreAllCommands.String()); got != wantRestoreAllCommand {
+		t.Fatalf("team outbox quarantine restore all commands = %q, want %q", got, wantRestoreAllCommand)
+	}
+
+	restoreCommands := runRootForOutboxTest(t, "team", "outbox", "quarantine", "restore", "delivery", restorePath, "--repo", root, "--dry-run", "--commands")
+	wantRestoreCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "outbox", "quarantine", "restore", "delivery", restorePath, "--repo", root}), " ")
+	if got := strings.TrimSpace(restoreCommands.String()); got != wantRestoreCommand {
+		t.Fatalf("team outbox quarantine restore commands = %q, want %q", got, wantRestoreCommand)
+	}
+
 	restore := runRootForOutboxTest(t, "team", "outbox", "quarantine", "restore", "delivery", restorePath, "--repo", root, "--json")
 	var restoreRow outboxQuarantineRestoreResult
 	if err := json.Unmarshal(restore.Bytes(), &restoreRow); err != nil {
@@ -1415,6 +1457,18 @@ pipelines = ["ops_review"]
 	}
 	if len(dropAllRows) != 1 || dropAllRows[0].ID != "outbox-team-quarantine-instance" || dropAllRows[0].Action != "would_drop" {
 		t.Fatalf("drop all rows = %+v", dropAllRows)
+	}
+
+	dropAllCommands := runRootForOutboxTest(t, "team", "outbox", "quarantine", "drop", "delivery", "--repo", root, "--all", "--state", daemon.OutboxStateFailed, "--dry-run", "--commands")
+	wantDropAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "outbox", "quarantine", "drop", "delivery", "--repo", root, "--all", "--state", daemon.OutboxStateFailed}), " ")
+	if got := strings.TrimSpace(dropAllCommands.String()); got != wantDropAllCommand {
+		t.Fatalf("team outbox quarantine drop all commands = %q, want %q", got, wantDropAllCommand)
+	}
+
+	dropCommands := runRootForOutboxTest(t, "team", "outbox", "quarantine", "drop", "delivery", instancePath, "--repo", root, "--dry-run", "--commands")
+	wantDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "outbox", "quarantine", "drop", "delivery", instancePath, "--repo", root}), " ")
+	if got := strings.TrimSpace(dropCommands.String()); got != wantDropCommand {
+		t.Fatalf("team outbox quarantine drop commands = %q, want %q", got, wantDropCommand)
 	}
 
 	drop := runRootForOutboxTest(t, "team", "outbox", "quarantine", "drop", "delivery", instancePath, "--repo", root, "--json")
@@ -1780,6 +1834,18 @@ target = "worker"
 		t.Fatalf("restore all rows = %+v", restoreAllRows)
 	}
 
+	restoreAllCommands := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "restore", "ticket_to_pr", "--repo", root, "--all", "--state", daemon.OutboxStatePending, "--dry-run", "--commands")
+	wantRestoreAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "outbox", "quarantine", "restore", "ticket_to_pr", "--repo", root, "--all", "--state", daemon.OutboxStatePending}), " ")
+	if got := strings.TrimSpace(restoreAllCommands.String()); got != wantRestoreAllCommand {
+		t.Fatalf("pipeline outbox quarantine restore all commands = %q, want %q", got, wantRestoreAllCommand)
+	}
+
+	restoreCommands := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "restore", "ticket_to_pr", restorePath, "--repo", root, "--dry-run", "--commands")
+	wantRestoreCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "outbox", "quarantine", "restore", "ticket_to_pr", restorePath, "--repo", root}), " ")
+	if got := strings.TrimSpace(restoreCommands.String()); got != wantRestoreCommand {
+		t.Fatalf("pipeline outbox quarantine restore commands = %q, want %q", got, wantRestoreCommand)
+	}
+
 	restore := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "restore", "ticket_to_pr", restorePath, "--repo", root, "--json")
 	var restoreRow outboxQuarantineRestoreResult
 	if err := json.Unmarshal(restore.Bytes(), &restoreRow); err != nil {
@@ -1799,6 +1865,18 @@ target = "worker"
 	}
 	if len(dropAllRows) != 1 || dropAllRows[0].ID != "outbox-pipeline-quarantine-instance" || dropAllRows[0].Action != "would_drop" {
 		t.Fatalf("drop all rows = %+v", dropAllRows)
+	}
+
+	dropAllCommands := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "drop", "ticket_to_pr", "--repo", root, "--all", "--state", daemon.OutboxStateFailed, "--dry-run", "--commands")
+	wantDropAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "outbox", "quarantine", "drop", "ticket_to_pr", "--repo", root, "--all", "--state", daemon.OutboxStateFailed}), " ")
+	if got := strings.TrimSpace(dropAllCommands.String()); got != wantDropAllCommand {
+		t.Fatalf("pipeline outbox quarantine drop all commands = %q, want %q", got, wantDropAllCommand)
+	}
+
+	dropCommands := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "drop", "ticket_to_pr", instancePath, "--repo", root, "--dry-run", "--commands")
+	wantDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "outbox", "quarantine", "drop", "ticket_to_pr", instancePath, "--repo", root}), " ")
+	if got := strings.TrimSpace(dropCommands.String()); got != wantDropCommand {
+		t.Fatalf("pipeline outbox quarantine drop commands = %q, want %q", got, wantDropCommand)
 	}
 
 	drop := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "drop", "ticket_to_pr", instancePath, "--repo", root, "--json")
@@ -2222,6 +2300,18 @@ func TestJobOutboxQuarantineScopesRestoreAndDrop(t *testing.T) {
 		t.Fatalf("restore all rows = %+v", restoreAllRows)
 	}
 
+	restoreAllCommands := runRootForOutboxTest(t, "job", "outbox", "quarantine", "restore", "squ-905", "--repo", root, "--all", "--state", daemon.OutboxStatePending, "--dry-run", "--commands")
+	wantRestoreAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "outbox", "quarantine", "restore", "squ-905", "--repo", root, "--all", "--state", daemon.OutboxStatePending}), " ")
+	if got := strings.TrimSpace(restoreAllCommands.String()); got != wantRestoreAllCommand {
+		t.Fatalf("job outbox quarantine restore all commands = %q, want %q", got, wantRestoreAllCommand)
+	}
+
+	restoreCommands := runRootForOutboxTest(t, "job", "outbox", "quarantine", "restore", "squ-905", restorePath, "--repo", root, "--dry-run", "--commands")
+	wantRestoreCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "outbox", "quarantine", "restore", "squ-905", restorePath, "--repo", root}), " ")
+	if got := strings.TrimSpace(restoreCommands.String()); got != wantRestoreCommand {
+		t.Fatalf("job outbox quarantine restore commands = %q, want %q", got, wantRestoreCommand)
+	}
+
 	restore := runRootForOutboxTest(t, "job", "outbox", "quarantine", "restore", "squ-905", restorePath, "--repo", root, "--json")
 	var restoreRow outboxQuarantineRestoreResult
 	if err := json.Unmarshal(restore.Bytes(), &restoreRow); err != nil {
@@ -2241,6 +2331,18 @@ func TestJobOutboxQuarantineScopesRestoreAndDrop(t *testing.T) {
 	}
 	if len(dropAllRows) != 1 || dropAllRows[0].ID != "outbox-job-quarantine-instance" || dropAllRows[0].Action != "would_drop" {
 		t.Fatalf("drop all rows = %+v", dropAllRows)
+	}
+
+	dropAllCommands := runRootForOutboxTest(t, "job", "outbox", "quarantine", "drop", "squ-905", "--repo", root, "--all", "--state", daemon.OutboxStateFailed, "--dry-run", "--commands")
+	wantDropAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "outbox", "quarantine", "drop", "squ-905", "--repo", root, "--all", "--state", daemon.OutboxStateFailed}), " ")
+	if got := strings.TrimSpace(dropAllCommands.String()); got != wantDropAllCommand {
+		t.Fatalf("job outbox quarantine drop all commands = %q, want %q", got, wantDropAllCommand)
+	}
+
+	dropCommands := runRootForOutboxTest(t, "job", "outbox", "quarantine", "drop", "squ-905", instancePath, "--repo", root, "--dry-run", "--commands")
+	wantDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "outbox", "quarantine", "drop", "squ-905", instancePath, "--repo", root}), " ")
+	if got := strings.TrimSpace(dropCommands.String()); got != wantDropCommand {
+		t.Fatalf("job outbox quarantine drop commands = %q, want %q", got, wantDropCommand)
 	}
 
 	drop := runRootForOutboxTest(t, "job", "outbox", "quarantine", "drop", "squ-905", instancePath, "--repo", root, "--json")

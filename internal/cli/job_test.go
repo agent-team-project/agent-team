@@ -2483,6 +2483,45 @@ func TestJobQueueQuarantineScopesOwnedFiles(t *testing.T) {
 		t.Fatalf("restore --all format = %q, want %q", got, want)
 	}
 
+	restoreAllCommands := NewRootCmd()
+	restoreAllCommandsOut, restoreAllCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreAllCommands.SetOut(restoreAllCommandsOut)
+	restoreAllCommands.SetErr(restoreAllCommandsErr)
+	restoreAllCommands.SetArgs([]string{"job", "queue", "quarantine", "restore", "SQU-123", "--repo", tmp, "--all", "--state", "pending", "--dry-run", "--commands"})
+	if err := restoreAllCommands.Execute(); err != nil {
+		t.Fatalf("job queue quarantine restore --all commands: %v\nstderr=%s", err, restoreAllCommandsErr.String())
+	}
+	wantRestoreAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "queue", "quarantine", "restore", "squ-123", "--repo", tmp, "--all", "--state", "pending"}), " ")
+	if got := strings.TrimSpace(restoreAllCommandsOut.String()); got != wantRestoreAllCommand {
+		t.Fatalf("job queue quarantine restore --all commands = %q, want %q", got, wantRestoreAllCommand)
+	}
+
+	restoreCommands := NewRootCmd()
+	restoreCommandsOut, restoreCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreCommands.SetOut(restoreCommandsOut)
+	restoreCommands.SetErr(restoreCommandsErr)
+	restoreCommands.SetArgs([]string{"job", "queue", "quarantine", "restore", "SQU-123", restorePath, "--repo", tmp, "--dry-run", "--commands"})
+	if err := restoreCommands.Execute(); err != nil {
+		t.Fatalf("job queue quarantine restore commands: %v\nstderr=%s", err, restoreCommandsErr.String())
+	}
+	wantRestoreCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "queue", "quarantine", "restore", "squ-123", restorePath, "--repo", tmp}), " ")
+	if got := strings.TrimSpace(restoreCommandsOut.String()); got != wantRestoreCommand {
+		t.Fatalf("job queue quarantine restore commands = %q, want %q", got, wantRestoreCommand)
+	}
+
+	dropAllCommands := NewRootCmd()
+	dropAllCommandsOut, dropAllCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropAllCommands.SetOut(dropAllCommandsOut)
+	dropAllCommands.SetErr(dropAllCommandsErr)
+	dropAllCommands.SetArgs([]string{"job", "queue", "quarantine", "drop", "SQU-123", "--repo", tmp, "--all", "--state", "dead", "--restorable", "--dry-run", "--commands"})
+	if err := dropAllCommands.Execute(); err != nil {
+		t.Fatalf("job queue quarantine drop --all commands: %v\nstderr=%s", err, dropAllCommandsErr.String())
+	}
+	wantDropAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "queue", "quarantine", "drop", "squ-123", "--repo", tmp, "--all", "--state", "dead", "--restorable"}), " ")
+	if got := strings.TrimSpace(dropAllCommandsOut.String()); got != wantDropAllCommand {
+		t.Fatalf("job queue quarantine drop --all commands = %q, want %q", got, wantDropAllCommand)
+	}
+
 	restore := NewRootCmd()
 	restoreOut, restoreErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restore.SetOut(restoreOut)
@@ -2515,6 +2554,19 @@ func TestJobQueueQuarantineScopesOwnedFiles(t *testing.T) {
 	}
 	if !strings.Contains(dropOtherErr.String(), "not owned by job") {
 		t.Fatalf("drop unrelated stderr = %q", dropOtherErr.String())
+	}
+
+	dropCommands := NewRootCmd()
+	dropCommandsOut, dropCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropCommands.SetOut(dropCommandsOut)
+	dropCommands.SetErr(dropCommandsErr)
+	dropCommands.SetArgs([]string{"job", "queue", "quarantine", "drop", "SQU-123", dropPath, "--repo", tmp, "--dry-run", "--commands"})
+	if err := dropCommands.Execute(); err != nil {
+		t.Fatalf("job queue quarantine drop commands: %v\nstderr=%s", err, dropCommandsErr.String())
+	}
+	wantDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "queue", "quarantine", "drop", "squ-123", dropPath, "--repo", tmp}), " ")
+	if got := strings.TrimSpace(dropCommandsOut.String()); got != wantDropCommand {
+		t.Fatalf("job queue quarantine drop commands = %q, want %q", got, wantDropCommand)
 	}
 
 	drop := NewRootCmd()
@@ -3185,6 +3237,36 @@ func TestJobQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 			name: "drop runtime without all",
 			args: []string{"job", "queue", "drop", "SQU-121", "q-job-dead", "--runtime", "codex"},
 			want: "--state, --event-type, --runtime, --ready, --sort, and --limit require --all",
+		},
+		{
+			name: "quarantine restore commands without dry run",
+			args: []string{"job", "queue", "quarantine", "restore", "SQU-121", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "quarantine restore commands with json",
+			args: []string{"job", "queue", "quarantine", "restore", "SQU-121", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "quarantine restore commands with format",
+			args: []string{"job", "queue", "quarantine", "restore", "SQU-121", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "quarantine drop commands without dry run",
+			args: []string{"job", "queue", "quarantine", "drop", "SQU-121", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "quarantine drop commands with json",
+			args: []string{"job", "queue", "quarantine", "drop", "SQU-121", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "quarantine drop commands with format",
+			args: []string{"job", "queue", "quarantine", "drop", "SQU-121", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

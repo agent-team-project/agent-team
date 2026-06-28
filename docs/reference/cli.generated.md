@@ -2455,6 +2455,7 @@ Flags:
 
 ```text
       --all                   Drop all matching job-owned quarantined files instead of one path.
+      --commands              With --dry-run, print the matching job outbox quarantine drop apply command when the preview has actionable work.
       --dry-run               Preview quarantined files that would be dropped.
       --format string         Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --json                  Emit drop results as JSON.
@@ -2483,6 +2484,7 @@ Flags:
 
 ```text
       --all              Restore all matching job-owned restorable quarantined files instead of one path.
+      --commands         With --dry-run, print the matching job outbox quarantine restore apply command when the preview has actionable work.
       --dry-run          Preview the restore without moving files.
       --force            Overwrite an existing active outbox file with the same restore path.
       --format string    Render each restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -2827,6 +2829,7 @@ Flags:
 
 ```text
       --all                   Drop all matching job-owned quarantined files instead of one path.
+      --commands              With --dry-run, print the matching job queue quarantine drop apply command when the preview has actionable work.
       --dry-run               Preview quarantined files that would be dropped.
       --event-type strings    With --all, filter by event type; repeat or comma-separate values.
       --format string         Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -2854,6 +2857,7 @@ Flags:
 
 ```text
       --all                  Restore all matching job-owned restorable quarantined files instead of one path.
+      --commands             With --dry-run, print the matching job queue quarantine restore apply command when the preview has actionable work.
       --dry-run              Preview the restore without moving files.
       --event-type strings   With --all, filter by event type; repeat or comma-separate values.
       --force                Overwrite an existing active queue file with the same restore path.
@@ -4717,6 +4721,7 @@ Flags:
 
 ```text
       --all                   Drop all matching pipeline-owned quarantined files instead of one path.
+      --commands              With --dry-run, print the matching pipeline outbox quarantine drop apply command when the preview has actionable work.
       --dry-run               Preview quarantined files that would be dropped.
       --format string         Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --job strings           With --all, filter by job id or ticket; repeat or comma-separate values.
@@ -4746,6 +4751,7 @@ Flags:
 
 ```text
       --all              Restore all matching pipeline-owned restorable quarantined files instead of one path.
+      --commands         With --dry-run, print the matching pipeline outbox quarantine restore apply command when the preview has actionable work.
       --dry-run          Preview the restore without moving files.
       --force            Overwrite an existing active outbox file with the same restore path.
       --format string    Render each restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -4996,6 +5002,7 @@ Flags:
 
 ```text
       --all                   Drop all matching pipeline-owned quarantined files instead of one path.
+      --commands              With --dry-run, print the matching pipeline queue quarantine drop apply command when the preview has actionable work.
       --dry-run               Preview quarantined files that would be dropped.
       --event-type strings    With --all, filter by event type; repeat or comma-separate values.
       --format string         Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -5024,6 +5031,7 @@ Flags:
 
 ```text
       --all                  Restore all matching pipeline-owned restorable quarantined files instead of one path.
+      --commands             With --dry-run, print the matching pipeline queue quarantine restore apply command when the preview has actionable work.
       --dry-run              Preview the restore without moving files.
       --event-type strings   With --all, filter by event type; repeat or comma-separate values.
       --force                Overwrite an existing active queue file with the same restore path.
@@ -7801,6 +7809,7 @@ Flags:
 
 ```text
       --all                   Drop all matching team-owned quarantined files instead of one path.
+      --commands              With --dry-run, print the matching team outbox quarantine drop apply command when the preview has actionable work.
       --dry-run               Preview quarantined files that would be dropped.
       --format string         Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --job strings           With --all, filter by job id or ticket; repeat or comma-separate values.
@@ -7830,6 +7839,7 @@ Flags:
 
 ```text
       --all              Restore all matching team-owned restorable quarantined files instead of one path.
+      --commands         With --dry-run, print the matching team outbox quarantine restore apply command when the preview has actionable work.
       --dry-run          Preview the restore without moving files.
       --force            Overwrite an existing active outbox file with the same restore path.
       --format string    Render each restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -8158,6 +8168,7 @@ Flags:
 
 ```text
       --all                   Drop all matching team-owned quarantined files instead of one path.
+      --commands              With --dry-run, print the matching team queue quarantine drop apply command when the preview has actionable work.
       --dry-run               Preview quarantined files that would be dropped.
       --event-type strings    With --all, filter by event type; repeat or comma-separate values.
       --format string         Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -8186,6 +8197,7 @@ Flags:
 
 ```text
       --all                  Restore all matching team-owned restorable quarantined files instead of one path.
+      --commands             With --dry-run, print the matching team queue quarantine restore apply command when the preview has actionable work.
       --dry-run              Preview the restore without moving files.
       --event-type strings   With --all, filter by event type; repeat or comma-separate values.
       --force                Overwrite an existing active queue file with the same restore path.

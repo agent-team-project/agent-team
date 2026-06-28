@@ -7697,6 +7697,19 @@ instances = ["other"]
 		t.Fatalf("team restore --all dry-run results = %+v", restoreAllResults)
 	}
 
+	restoreAllCommands := NewRootCmd()
+	restoreAllCommandsOut, restoreAllCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreAllCommands.SetOut(restoreAllCommandsOut)
+	restoreAllCommands.SetErr(restoreAllCommandsErr)
+	restoreAllCommands.SetArgs([]string{"team", "queue", "quarantine", "restore", "delivery", "--repo", root, "--all", "--job", "SQU-501", "--state", "dead", "--dry-run", "--commands"})
+	if err := restoreAllCommands.Execute(); err != nil {
+		t.Fatalf("team queue quarantine restore --all commands: %v\nstderr=%s", err, restoreAllCommandsErr.String())
+	}
+	wantRestoreAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "queue", "quarantine", "restore", "delivery", "--repo", root, "--all", "--state", "dead", "--job", "SQU-501"}), " ")
+	if got := strings.TrimSpace(restoreAllCommandsOut.String()); got != wantRestoreAllCommand {
+		t.Fatalf("team queue quarantine restore --all commands = %q, want %q", got, wantRestoreAllCommand)
+	}
+
 	restoreAllFormat := NewRootCmd()
 	restoreAllFormatOut, restoreAllFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restoreAllFormat.SetOut(restoreAllFormatOut)
@@ -7737,6 +7750,19 @@ instances = ["other"]
 		t.Fatalf("restore result = %+v", restoreResult)
 	}
 
+	restoreCommands := NewRootCmd()
+	restoreCommandsOut, restoreCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreCommands.SetOut(restoreCommandsOut)
+	restoreCommands.SetErr(restoreCommandsErr)
+	restoreCommands.SetArgs([]string{"team", "queue", "quarantine", "restore", "delivery", teamQuarantinePath, "--repo", root, "--dry-run", "--commands"})
+	if err := restoreCommands.Execute(); err != nil {
+		t.Fatalf("team queue quarantine restore commands: %v\nstderr=%s", err, restoreCommandsErr.String())
+	}
+	wantRestoreCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "queue", "quarantine", "restore", "delivery", teamQuarantinePath, "--repo", root}), " ")
+	if got := strings.TrimSpace(restoreCommandsOut.String()); got != wantRestoreCommand {
+		t.Fatalf("team queue quarantine restore commands = %q, want %q", got, wantRestoreCommand)
+	}
+
 	restoreOther := NewRootCmd()
 	restoreOtherOut, restoreOtherErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restoreOther.SetOut(restoreOtherOut)
@@ -7765,6 +7791,19 @@ instances = ["other"]
 		t.Fatalf("drop dry-run results = %+v", dropResults)
 	}
 
+	quarantineDropCommands := NewRootCmd()
+	quarantineDropCommandsOut, quarantineDropCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	quarantineDropCommands.SetOut(quarantineDropCommandsOut)
+	quarantineDropCommands.SetErr(quarantineDropCommandsErr)
+	quarantineDropCommands.SetArgs([]string{"team", "queue", "quarantine", "drop", "delivery", teamQuarantinePath, "--repo", root, "--dry-run", "--commands"})
+	if err := quarantineDropCommands.Execute(); err != nil {
+		t.Fatalf("team queue quarantine drop commands: %v\nstderr=%s", err, quarantineDropCommandsErr.String())
+	}
+	wantQuarantineDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "queue", "quarantine", "drop", "delivery", teamQuarantinePath, "--repo", root}), " ")
+	if got := strings.TrimSpace(quarantineDropCommandsOut.String()); got != wantQuarantineDropCommand {
+		t.Fatalf("team queue quarantine drop commands = %q, want %q", got, wantQuarantineDropCommand)
+	}
+
 	dropFormat := NewRootCmd()
 	dropFormatOut, dropFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dropFormat.SetOut(dropFormatOut)
@@ -7791,6 +7830,19 @@ instances = ["other"]
 	}
 	if len(filterDropResults) != 1 || filterDropResults[0].ID != "q-team-unrestorable" || filterDropResults[0].Restorable {
 		t.Fatalf("filtered drop --all dry-run results = %+v", filterDropResults)
+	}
+
+	filterDropCommands := NewRootCmd()
+	filterDropCommandsOut, filterDropCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	filterDropCommands.SetOut(filterDropCommandsOut)
+	filterDropCommands.SetErr(filterDropCommandsErr)
+	filterDropCommands.SetArgs([]string{"team", "queue", "quarantine", "drop", "delivery", "--repo", root, "--all", "--job", "SQU-501", "--state", "dead", "--unrestorable", "--dry-run", "--commands"})
+	if err := filterDropCommands.Execute(); err != nil {
+		t.Fatalf("team queue quarantine drop filtered commands: %v\nstderr=%s", err, filterDropCommandsErr.String())
+	}
+	wantFilterDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "queue", "quarantine", "drop", "delivery", "--repo", root, "--all", "--state", "dead", "--job", "SQU-501", "--unrestorable"}), " ")
+	if got := strings.TrimSpace(filterDropCommandsOut.String()); got != wantFilterDropCommand {
+		t.Fatalf("team queue quarantine drop filtered commands = %q, want %q", got, wantFilterDropCommand)
 	}
 
 	filterPathDrop := NewRootCmd()
@@ -8581,9 +8633,39 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 			want: "invalid --format template",
 		},
 		{
+			name: "quarantine restore commands without dry run",
+			args: []string{"team", "queue", "quarantine", "restore", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "quarantine restore commands with json",
+			args: []string{"team", "queue", "quarantine", "restore", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "quarantine restore commands with format",
+			args: []string{"team", "queue", "quarantine", "restore", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
 			name: "quarantine drop format with json",
 			args: []string{"team", "queue", "quarantine", "drop", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--format", "{{.ID}}", "--json"},
 			want: "--format cannot be combined",
+		},
+		{
+			name: "quarantine drop commands without dry run",
+			args: []string{"team", "queue", "quarantine", "drop", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "quarantine drop commands with json",
+			args: []string{"team", "queue", "quarantine", "drop", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "quarantine drop commands with format",
+			args: []string{"team", "queue", "quarantine", "drop", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
 		},
 		{
 			name: "prune format with json",
