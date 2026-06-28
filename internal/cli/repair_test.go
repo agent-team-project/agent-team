@@ -189,6 +189,24 @@ func TestRepairDryRunCommandsSilentWithoutAction(t *testing.T) {
 	}
 }
 
+func TestRepairDryRunCommandsIncludeDaemonStart(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--skip-queue", "--skip-tick", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("repair dry-run commands daemon start: %v\nstderr=%s", err, stderr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "repair", "--repo", tmp, "--skip-queue", "--skip-tick"}), " ")
+	if got := strings.TrimSpace(out.String()); got != wantCommand {
+		t.Fatalf("repair daemon-start commands = %q, want %q", got, wantCommand)
+	}
+}
+
 func TestRepairDryRunReportsIntakeRecoveryActions(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

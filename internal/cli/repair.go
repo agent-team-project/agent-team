@@ -490,11 +490,16 @@ func repairResultHasApplyCommand(result *repairResult) bool {
 	if result == nil || !result.DryRun {
 		return false
 	}
-	return repairQueueStepHasApplyCommand(result.Queue) ||
+	return repairDaemonStepHasApplyCommand(result.Daemon) ||
+		repairQueueStepHasApplyCommand(result.Queue) ||
 		repairPipelineTimeoutStepHasApplyCommand(result.JobTimeout) ||
 		repairPipelineTimeoutStepHasApplyCommand(result.PipelineTimeout) ||
 		repairPipelineRetryStepHasApplyCommand(result.PipelineRetry) ||
 		repairTickStepHasApplyCommand(result.Tick)
+}
+
+func repairDaemonStepHasApplyCommand(step repairStepResult) bool {
+	return step.Action == "would_start" || step.Action == "would_wait_ready"
 }
 
 func repairQueueStepHasApplyCommand(step repairQueueStep) bool {
@@ -517,7 +522,8 @@ func pipelineRepairResultHasApplyCommand(result *pipelineRepairResult) bool {
 	if result == nil || !result.DryRun {
 		return false
 	}
-	return repairQueueStepHasApplyCommand(result.Queue) ||
+	return repairDaemonStepHasApplyCommand(result.Daemon) ||
+		repairQueueStepHasApplyCommand(result.Queue) ||
 		repairPipelineTimeoutStepHasApplyCommand(result.JobTimeout) ||
 		repairPipelineTimeoutStepHasApplyCommand(result.PipelineTimeout) ||
 		repairPipelineRetryStepHasApplyCommand(result.PipelineRetry) ||
@@ -540,7 +546,8 @@ func teamRepairResultHasApplyCommand(result *teamRepairResult) bool {
 	if result == nil || !result.DryRun {
 		return false
 	}
-	return repairQueueStepHasApplyCommand(result.Queue) ||
+	return repairDaemonStepHasApplyCommand(result.Daemon) ||
+		repairQueueStepHasApplyCommand(result.Queue) ||
 		repairPipelineTimeoutStepHasApplyCommand(result.JobTimeout) ||
 		repairPipelineTimeoutStepHasApplyCommand(result.PipelineTimeout) ||
 		repairPipelineRetryStepHasApplyCommand(result.PipelineRetry) ||
