@@ -1776,6 +1776,58 @@ func TestSnapshotDiffCommandReportsTopLevelActions(t *testing.T) {
 	if got, want := strings.TrimSpace(aliasOut.String()), "1:1:2"; got != want {
 		t.Fatalf("commands alias output = %q, want %q", got, want)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "actions", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("snapshot diff --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	if got, want := commandsOut.String(), "agent-team pipeline advance ticket_to_pr --dry-run --preview-routes\n"; got != want {
+		t.Fatalf("snapshot diff --commands output = %q, want %q", got, want)
+	}
+
+	scopedCommands := NewRootCmd()
+	scopedCommandsOut, scopedCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	scopedCommands.SetOut(scopedCommandsOut)
+	scopedCommands.SetErr(scopedCommandsErr)
+	scopedCommands.SetArgs([]string{"--repo", tmp, "snapshot", "diff", beforePath, afterPath, "--section", "commands", "--commands"})
+	if err := scopedCommands.Execute(); err != nil {
+		t.Fatalf("snapshot diff scoped --commands: %v\nstderr=%s", err, scopedCommandsErr.String())
+	}
+	wantScopedCommands := &bytes.Buffer{}
+	if err := renderOperatorActionCommands(wantScopedCommands, []string{"agent-team pipeline advance ticket_to_pr --dry-run --preview-routes"}, operatorCommandScope{Repo: tmp, Set: true}); err != nil {
+		t.Fatalf("render wanted scoped commands: %v", err)
+	}
+	if got, want := scopedCommandsOut.String(), wantScopedCommands.String(); got != want {
+		t.Fatalf("snapshot diff scoped --commands output = %q, want %q", got, want)
+	}
+
+	removedCommands := NewRootCmd()
+	removedCommandsOut, removedCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	removedCommands.SetOut(removedCommandsOut)
+	removedCommands.SetErr(removedCommandsErr)
+	removedCommands.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "actions", "--action", "removed", "--commands"})
+	if err := removedCommands.Execute(); err != nil {
+		t.Fatalf("snapshot diff removed --commands: %v\nstderr=%s", err, removedCommandsErr.String())
+	}
+	if got := removedCommandsOut.String(); got != "" {
+		t.Fatalf("snapshot diff removed --commands output = %q, want empty", got)
+	}
+
+	commandsJSON := NewRootCmd()
+	commandsJSONOut, commandsJSONErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commandsJSON.SetOut(commandsJSONOut)
+	commandsJSON.SetErr(commandsJSONErr)
+	commandsJSON.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--commands", "--json"})
+	if err := commandsJSON.Execute(); err == nil {
+		t.Fatalf("snapshot diff --commands --json succeeded")
+	}
+	if !strings.Contains(commandsJSONErr.String(), "--commands cannot be combined with --json, --output, --format, or --summary") {
+		t.Fatalf("commands/json stderr = %q", commandsJSONErr.String())
+	}
 }
 
 func TestSnapshotDiffCommandComparesCurrentSnapshot(t *testing.T) {

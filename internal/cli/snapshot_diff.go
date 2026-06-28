@@ -23,6 +23,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 		output        string
 		sections      []string
 		actions       []string
+		commandsOnly  bool
 		format        string
 		limit         int
 		sortBy        string
@@ -101,6 +102,10 @@ func newSnapshotDiffCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot diff: --format cannot be combined with --summary.")
 				return exitErr(2)
 			}
+			if commandsOnly && (jsonOut || output != "" || format != "" || summary) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot diff: --commands cannot be combined with --json, --output, --format, or --summary.")
+				return exitErr(2)
+			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot diff: --limit must be >= 0.")
 				return exitErr(2)
@@ -155,7 +160,11 @@ func newSnapshotDiffCmd() *cobra.Command {
 				sortSnapshotDiffResult(result, sortMode)
 				limitSnapshotDiffResult(result, limit)
 			}
-			if jsonOut || output == "-" {
+			if commandsOnly {
+				if err := renderSnapshotDiffCommands(cmd.OutOrStdout(), result, operatorCommandScopeFromCommand(cmd, cwd, "")); err != nil {
+					return err
+				}
+			} else if jsonOut || output == "-" {
 				if err := writeSnapshotDiffResultJSON(cmd.OutOrStdout(), result); err != nil {
 					return err
 				}
@@ -183,6 +192,7 @@ func newSnapshotDiffCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&exitCode, "exit-code", false, "Exit with status 1 when snapshots differ.")
 	cmd.Flags().StringSliceVar(&sections, "section", nil, "Only compare sections: provenance, git, runtime, health, plan, triage, next, actions, instances, jobs, job_quarantine, pipelines, inbox, outbox, outbox_quarantine, queue, queue_quarantine, schedules, intake, events, timeline, advance, section_errors, quarantine, timelines, commands, pipeline_metrics, ready_advance, or all. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actions, "action", nil, "Only compare change actions: added, removed, or changed. Can repeat or comma-separate.")
+	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print selected added or changed follow-up commands from next/actions diff rows, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the diff result with a Go template, e.g. '{{.Summary.TotalChanges}} {{len .Changes}}'.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit emitted change detail rows after summarizing all changes; 0 means all.")
 	cmd.Flags().StringVar(&sortBy, "sort", "section", "Sort emitted change detail rows by section, action, or id before applying --limit.")
@@ -2288,6 +2298,35 @@ func renderSnapshotDiff(w io.Writer, result *snapshotDiffResult) {
 			emptyDash(change.After))
 	}
 	_ = tw.Flush()
+}
+
+func renderSnapshotDiffCommands(w io.Writer, result *snapshotDiffResult, scope operatorCommandScope) error {
+	if result == nil {
+		return nil
+	}
+	return renderOperatorActionCommands(w, snapshotDiffCommands(result.Changes), scope)
+}
+
+func snapshotDiffCommands(changes []snapshotDiffChange) []string {
+	commands := make([]string, 0, len(changes))
+	for _, change := range changes {
+		if change.Action == "removed" {
+			continue
+		}
+		switch change.Section {
+		case "actions", "next":
+		default:
+			continue
+		}
+		command := strings.TrimPrefix(change.ID, "action/")
+		if command == change.ID {
+			continue
+		}
+		if command = strings.TrimSpace(command); command != "" {
+			commands = append(commands, command)
+		}
+	}
+	return commands
 }
 
 func parseSnapshotDiffFormat(format string) (*template.Template, error) {
