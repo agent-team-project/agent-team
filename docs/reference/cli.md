@@ -94,7 +94,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | Command | Purpose |
 | --- | --- |
 | `agent-team job create <ticket>` | Create a durable job; add `--dispatch --wait` for bounded create-and-run automation, `--commands` for dry-run apply commands, and `--wait --wait-next-state`/`--wait-step` for pipeline stage handoff |
-| `agent-team job ls` | List jobs; filter held state, hold deadlines, and mixed-runtime ownership; sort rows and cap output with `--limit` |
+| `agent-team job ls` | List jobs; filter held state, hold deadlines, and mixed-runtime ownership; sort rows by fields including `runtime`, and cap output with `--limit` |
 | `agent-team job show <job-id>` | Show job detail, runtime metadata, queue, quarantine, outbox, status previews, and actions; add `--commands` to print only repo-scoped follow-up commands; `inspect` is an alias |
 | `agent-team job doctor` | Validate durable job TOML files, including filename/id ownership and persisted state invariants; `--quarantine --dry-run` previews isolating malformed active job files and `--commands` prints recovery commands |
 | `agent-team job quarantine` | Inspect, summarize, restore, or drop job TOML files preserved by `job doctor --quarantine`; add `--commands` to print visible restore/drop dry-run actions |

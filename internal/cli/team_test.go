@@ -2165,6 +2165,15 @@ instances = ["platform-worker"]
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
+		{
+			ID:        "squ-902",
+			Ticket:    "SQU-902",
+			Target:    "manager",
+			Instance:  "manager",
+			Status:    job.StatusQueued,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
 	} {
 		if err := job.Write(teamDir, j); err != nil {
 			t.Fatalf("write job %s: %v", j.ID, err)
@@ -2194,6 +2203,18 @@ instances = ["platform-worker"]
 	}
 	if len(jobs) != 1 || jobs[0].ID != "squ-901" {
 		t.Fatalf("team jobs runtime = %+v", jobs)
+	}
+
+	runtimeSort := NewRootCmd()
+	runtimeSortOut, runtimeSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeSort.SetOut(runtimeSortOut)
+	runtimeSort.SetErr(runtimeSortErr)
+	runtimeSort.SetArgs([]string{"team", "jobs", "delivery", "--repo", root, "--sort", "runtime", "--format", "{{.ID}}"})
+	if err := runtimeSort.Execute(); err != nil {
+		t.Fatalf("team jobs runtime sort: %v\nstderr=%s", err, runtimeSortErr.String())
+	}
+	if got := strings.Split(strings.TrimSpace(runtimeSortOut.String()), "\n"); strings.Join(got, ",") != "squ-902,squ-901" {
+		t.Fatalf("team runtime sort output = %q", runtimeSortOut.String())
 	}
 
 	summaryCmd := NewRootCmd()
@@ -2253,7 +2274,7 @@ instances = ["platform-worker"]
 	if err := json.Unmarshal(claudeOut.Bytes(), &jobs); err != nil {
 		t.Fatalf("decode team jobs claude runtime: %v\nbody=%s", err, claudeOut.String())
 	}
-	if len(jobs) != 0 {
+	if len(jobs) != 1 || jobs[0].ID != "squ-902" {
 		t.Fatalf("team jobs claude runtime = %+v", jobs)
 	}
 

@@ -1222,7 +1222,7 @@ func newTeamJobsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&status, "status", "", "Filter by job status: queued, running, blocked, done, or failed.")
-	cmd.Flags().StringVar(&sortBy, "sort", "id", "Sort jobs by id, status, target, ticket, created, updated, instance, branch, or pr.")
+	cmd.Flags().StringVar(&sortBy, "sort", "id", "Sort jobs by id, status, target, ticket, created, updated, instance, runtime, branch, or pr.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show team-owned jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh team jobs until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
@@ -8332,8 +8332,9 @@ func collectTeamJobs(teamDir, name string, status job.Status, sortMode string, l
 		}
 		owned = filtered
 	}
+	var runtimeByInstance map[string]string
 	if len(runtimes) > 0 {
-		runtimeByInstance, err := jobRuntimeIndex(teamDir, jobListFilters{Runtimes: runtimes})
+		runtimeByInstance, err = jobRuntimeIndex(teamDir, jobListFilters{Runtimes: runtimes})
 		if err != nil {
 			return nil, err
 		}
@@ -8345,7 +8346,14 @@ func collectTeamJobs(teamDir, name string, status job.Status, sortMode string, l
 		}
 		owned = filtered
 	}
-	sortJobs(owned, sortMode)
+	if sortMode == "runtime" {
+		if len(runtimeByInstance) == 0 {
+			runtimeByInstance = jobRuntimeMap(teamDir)
+		}
+		sortJobsWithRuntime(owned, sortMode, runtimeByInstance)
+	} else {
+		sortJobs(owned, sortMode)
+	}
 	return limitJobRows(owned, limit), nil
 }
 

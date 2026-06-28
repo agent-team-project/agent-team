@@ -956,6 +956,18 @@ func TestPipelineJobsListsMatchingJobs(t *testing.T) {
 		t.Fatalf("pipeline jobs sorted output = %q", sortOut.String())
 	}
 
+	runtimeSort := NewRootCmd()
+	runtimeSortOut, runtimeSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeSort.SetOut(runtimeSortOut)
+	runtimeSort.SetErr(runtimeSortErr)
+	runtimeSort.SetArgs([]string{"pipeline", "jobs", "ticket_to_pr", "--repo", root, "--sort", "runtime", "--format", "{{.ID}}"})
+	if err := runtimeSort.Execute(); err != nil {
+		t.Fatalf("pipeline jobs runtime sort: %v\nstderr=%s", err, runtimeSortErr.String())
+	}
+	if got := strings.Split(strings.TrimSpace(runtimeSortOut.String()), "\n"); strings.Join(got, ",") != "squ-303,squ-301" {
+		t.Fatalf("pipeline runtime sort output = %q", runtimeSortOut.String())
+	}
+
 	limited := NewRootCmd()
 	limitedOut, limitedErr := &bytes.Buffer{}, &bytes.Buffer{}
 	limited.SetOut(limitedOut)

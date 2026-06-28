@@ -6014,6 +6014,18 @@ func TestJobListFilters(t *testing.T) {
 		t.Fatalf("claude runtime jobs = %+v", got)
 	}
 
+	runtimeSort := NewRootCmd()
+	runtimeSortOut, runtimeSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	runtimeSort.SetOut(runtimeSortOut)
+	runtimeSort.SetErr(runtimeSortErr)
+	runtimeSort.SetArgs([]string{"job", "ls", "--repo", tmp, "--sort", "runtime", "--format", "{{.ID}}"})
+	if err := runtimeSort.Execute(); err != nil {
+		t.Fatalf("job ls runtime sort: %v\nstderr=%s", err, runtimeSortErr.String())
+	}
+	if got := strings.Split(strings.TrimSpace(runtimeSortOut.String()), "\n"); strings.Join(got, ",") != "squ-51,squ-52,squ-50" {
+		t.Fatalf("runtime sort output = %q", runtimeSortOut.String())
+	}
+
 	text := NewRootCmd()
 	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
 	text.SetOut(textOut)

@@ -2360,7 +2360,7 @@ Flags:
       --pr string             Filter by PR URL or number substring.
       --repo string           Repo root containing .agent_team. (default "<repo>")
       --runtime strings       Filter by owning instance runtime: claude or codex. Can repeat or comma-separate.
-      --sort string           Sort rows by id, status, target, ticket, created, updated, instance, branch, or pr. (default "id")
+      --sort string           Sort rows by id, status, target, ticket, created, updated, instance, runtime, branch, or pr. (default "id")
       --status string         Filter by status: queued, running, blocked, done, or failed.
       --summary               Show aggregate job counts instead of job rows.
       --target-agent string   Filter by target agent.
@@ -4654,7 +4654,7 @@ Flags:
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --runtime strings     Only show jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.
-      --sort string         Sort jobs by id, status, target, ticket, created, updated, instance, branch, or pr. (default "id")
+      --sort string         Sort jobs by id, status, target, ticket, created, updated, instance, runtime, branch, or pr. (default "id")
       --status string       Filter by job status: queued, running, blocked, done, or failed.
       --summary             Show aggregate pipeline job counts instead of job rows.
       --unheld              Only show jobs that are not held.
@@ -7763,7 +7763,7 @@ Flags:
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --runtime strings     Only show team-owned jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.
-      --sort string         Sort jobs by id, status, target, ticket, created, updated, instance, branch, or pr. (default "id")
+      --sort string         Sort jobs by id, status, target, ticket, created, updated, instance, runtime, branch, or pr. (default "id")
       --status string       Filter by job status: queued, running, blocked, done, or failed.
       --summary             Show aggregate team job counts instead of job rows.
       --unheld              Only show jobs that are not held.

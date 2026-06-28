@@ -1676,7 +1676,7 @@ func newJobLsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate job counts instead of job rows.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
-	cmd.Flags().StringVar(&sortBy, "sort", "id", "Sort rows by id, status, target, ticket, created, updated, instance, branch, or pr.")
+	cmd.Flags().StringVar(&sortBy, "sort", "id", "Sort rows by id, status, target, ticket, created, updated, instance, runtime, branch, or pr.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	return cmd
 }
@@ -8308,17 +8308,24 @@ func jobHoldUntilText(j *job.Job) string {
 func parseJobSort(raw string) (string, error) {
 	sortMode := strings.ToLower(strings.TrimSpace(raw))
 	switch sortMode {
-	case "", "id", "status", "target", "ticket", "created", "updated", "instance", "branch", "pr":
+	case "", "id", "status", "target", "ticket", "created", "updated", "instance", "runtime", "branch", "pr":
 		if sortMode == "" {
 			return "id", nil
 		}
 		return sortMode, nil
 	default:
-		return "", fmt.Errorf("--sort must be id, status, target, ticket, created, updated, instance, branch, or pr")
+		return "", fmt.Errorf("--sort must be id, status, target, ticket, created, updated, instance, runtime, branch, or pr")
 	}
 }
 
 func sortJobs(jobs []*job.Job, sortMode string) {
+	if sortMode == "" {
+		sortMode = "id"
+	}
+	sortJobsWithRuntime(jobs, sortMode, nil)
+}
+
+func sortJobsWithRuntime(jobs []*job.Job, sortMode string, runtimeByInstance map[string]string) {
 	if sortMode == "" {
 		sortMode = "id"
 	}
@@ -8349,6 +8356,10 @@ func sortJobs(jobs []*job.Job, sortMode string) {
 			if left.Instance != right.Instance {
 				return left.Instance < right.Instance
 			}
+		case "runtime":
+			if leftRuntime, rightRuntime := jobRuntimeSortKey(left, runtimeByInstance), jobRuntimeSortKey(right, runtimeByInstance); leftRuntime != rightRuntime {
+				return leftRuntime < rightRuntime
+			}
 		case "branch":
 			if left.Branch != right.Branch {
 				return left.Branch < right.Branch
@@ -8360,6 +8371,14 @@ func sortJobs(jobs []*job.Job, sortMode string) {
 		}
 		return left.ID < right.ID
 	})
+}
+
+func jobRuntimeSortKey(j *job.Job, runtimeByInstance map[string]string) string {
+	label := strings.TrimSpace(jobRuntimeLabel(j, runtimeByInstance))
+	if label == "" || label == "-" {
+		return "~"
+	}
+	return label
 }
 
 func jobStatusSortRank(status job.Status) int {
@@ -10159,7 +10178,14 @@ func filteredJobs(teamDir string, filters jobListFilters) ([]*job.Job, error) {
 			filtered = append(filtered, j)
 		}
 	}
-	sortJobs(filtered, filters.Sort)
+	if filters.Sort == "runtime" {
+		if len(runtimeByInstance) == 0 {
+			runtimeByInstance = jobRuntimeMap(teamDir)
+		}
+		sortJobsWithRuntime(filtered, filters.Sort, runtimeByInstance)
+	} else {
+		sortJobs(filtered, filters.Sort)
+	}
 	return limitJobRows(filtered, filters.Limit), nil
 }
 
