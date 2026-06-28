@@ -519,7 +519,7 @@ func newIntakeSummaryCmd() *cobra.Command {
 				Unresolved:   unresolved,
 			})
 			summary := summarizeIntakeDeliveries(deliveries)
-			return renderIntakeSummary(cmd.OutOrStdout(), summary, jsonOut, tmpl, commands)
+			return renderIntakeSummary(cmd.OutOrStdout(), summary, jsonOut, tmpl, commands, operatorCommandScopeFromCommand(cmd, target, "target"))
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
@@ -1447,12 +1447,12 @@ func intakeDuplicateTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-func renderIntakeSummary(w io.Writer, summary intakeSummaryResult, jsonOut bool, tmpl *template.Template, commands bool) error {
+func renderIntakeSummary(w io.Writer, summary intakeSummaryResult, jsonOut bool, tmpl *template.Template, commands bool, scope operatorCommandScope) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(summary)
 	}
 	if commands {
-		return renderActionCommands(w, commandActionsOnly(summary.Actions))
+		return renderOperatorActionCommands(w, summary.Actions, scope)
 	}
 	if tmpl != nil {
 		if err := tmpl.Execute(w, summary); err != nil {

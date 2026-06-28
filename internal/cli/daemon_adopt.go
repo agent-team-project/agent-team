@@ -40,6 +40,7 @@ type daemonAdoptOptions struct {
 	JSON          bool
 	Format        *template.Template
 	FollowUp      []daemonAdoptFollowUpScope
+	CommandScope  operatorCommandScope
 }
 
 type daemonAdoptFollowUpScope struct {
@@ -142,6 +143,10 @@ func newAdoptExternalProcessCmd(cfg adoptExternalProcessCommandConfig) *cobra.Co
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", label, err)
 				return exitErr(2)
 			}
+			repoFlag := "target"
+			if cfg.RepoFlag {
+				repoFlag = "repo"
+			}
 			return runDaemonAdopt(cmd, target, args[0], daemonAdoptOptions{
 				Agent:         agent,
 				PID:           pid,
@@ -162,6 +167,7 @@ func newAdoptExternalProcessCmd(cfg adoptExternalProcessCommandConfig) *cobra.Co
 				Commands:      commandsOnly,
 				JSON:          jsonOut,
 				Format:        tmpl,
+				CommandScope:  operatorCommandScopeFromCommand(cmd, target, repoFlag),
 			})
 		},
 	}
@@ -546,10 +552,7 @@ func renderDaemonAdoptResult(w fmtWriter, result daemonAdoptResult, opts daemonA
 		return json.NewEncoder(w).Encode(result)
 	}
 	if opts.Commands {
-		for _, action := range result.Actions {
-			fmt.Fprintln(w, action)
-		}
-		return nil
+		return renderOperatorActionCommands(w, result.Actions, opts.CommandScope)
 	}
 	if opts.Format != nil {
 		if err := opts.Format.Execute(w, result); err != nil {

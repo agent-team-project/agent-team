@@ -336,11 +336,11 @@ func TestDaemonAdoptCommandsPrintsOnlyFollowUpActions(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("daemon adopt --commands: %v", err)
 	}
-	want := strings.Join([]string{
+	want := strings.Join(scopedOperatorActions([]string{
 		"agent-team inspect external-worker",
 		"agent-team logs external-worker --follow",
 		"agent-team resume-plan external-worker",
-	}, "\n") + "\n"
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
 	if got := out.String(); got != want {
 		t.Fatalf("adopt commands output = %q, want %q", got, want)
 	}

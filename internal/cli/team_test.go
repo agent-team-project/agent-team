@@ -1394,11 +1394,11 @@ pipelines = ["ticket_to_pr"]
 	if err := commands.Execute(); err != nil {
 		t.Fatalf("team adopt --commands: %v\nstdout=%s\nstderr=%s", err, commandsOut.String(), commandsErr.String())
 	}
-	for _, want := range []string{
+	for _, want := range scopedOperatorActions([]string{
 		"agent-team team status delivery",
 		"agent-team team logs delivery --follow",
 		"agent-team team resume-plan delivery --step review",
-	} {
+	}, operatorCommandScope{Repo: root, Set: true}) {
 		if !strings.Contains(commandsOut.String(), want) {
 			t.Fatalf("team adopt commands missing %q:\n%s", want, commandsOut.String())
 		}

@@ -1162,14 +1162,14 @@ func TestJobAdoptDryRunDoesNotMutateJobOrMetadata(t *testing.T) {
 	if err := commands.Execute(); err != nil {
 		t.Fatalf("job adopt --commands: %v\nstdout=%s\nstderr=%s", err, commandsOut.String(), commandsErr.String())
 	}
-	for _, want := range []string{
+	for _, want := range scopedOperatorActions([]string{
 		"agent-team inspect worker-squ-69",
 		"agent-team logs worker-squ-69 --follow",
 		"agent-team resume-plan worker-squ-69",
 		"agent-team job show squ-69",
 		"agent-team job logs squ-69 --follow",
 		"agent-team job resume-plan squ-69",
-	} {
+	}, operatorCommandScope{Repo: tmp, Set: true}) {
 		if !strings.Contains(commandsOut.String(), want) {
 			t.Fatalf("job adopt commands missing %q:\n%s", want, commandsOut.String())
 		}

@@ -1274,13 +1274,12 @@ func TestIntakeSummaryReportsRecoveryState(t *testing.T) {
 	if err := commands.Execute(); err != nil {
 		t.Fatalf("intake summary --commands: %v\nstderr=%s", err, commandsErr.String())
 	}
-	if got, want := commandsOut.String(), strings.Join([]string{
+	if got, want := commandsOut.String(), strings.Join(scopedOperatorActions([]string{
 		"agent-team intake deliveries --unresolved",
 		"agent-team intake replay --all --dedupe-request-id --dry-run --preview-triggers",
 		"agent-team intake replay --all --dedupe-request-id",
 		"agent-team intake prune --replay-status ok --dry-run",
-		"",
-	}, "\n"); got != want {
+	}, operatorCommandScope{Repo: target, Set: true}), "\n")+"\n"; got != want {
 		t.Fatalf("intake summary --commands output = %q, want %q", got, want)
 	}
 	if commandsErr.Len() != 0 {

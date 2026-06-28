@@ -81,6 +81,7 @@ func newJobAdoptCmd() *cobra.Command {
 					Commands:      commandsOnly,
 					JSON:          jsonOut,
 					Format:        tmpl,
+					CommandScope:  operatorCommandScopeFromCommand(cmd, repo, "repo"),
 				},
 			})
 		},

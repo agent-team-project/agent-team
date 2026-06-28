@@ -99,6 +99,7 @@ func newTeamAdoptCmd() *cobra.Command {
 					Commands:      commandsOnly,
 					JSON:          jsonOut,
 					Format:        tmpl,
+					CommandScope:  operatorCommandScopeFromCommand(cmd, repo, "repo"),
 					FollowUp: []daemonAdoptFollowUpScope{{
 						Kind: "team",
 						Name: team.Name,
