@@ -22,6 +22,7 @@ Commands:
 agent-team schedule ls
 agent-team schedule due
 agent-team schedule next --limit 5
+agent-team team schedules delivery --next --limit 5
 agent-team schedule fire --dry-run --preview-triggers
 agent-team schedule fire --dry-run --commands
 agent-team schedule fire --wait --wait-next-state queued --wait-step triage --wait-timeout 30s

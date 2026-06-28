@@ -8817,8 +8817,11 @@ Flags:
 
 ```text
       --commands        Print the due team schedule preview command, one per line.
+      --due             Only show team schedules due now, including the due reason.
       --format string   Render each schedule with a Go template, e.g. '{{.Name}} {{.Every}}'.
       --json            Emit team schedules as JSON.
+      --limit int       Show at most this many schedules after filtering and ordering; 0 means all.
+      --next            Order team schedules by due state and next run, including due metadata.
       --repo string     Repo root containing .agent_team. (default "<repo>")
 ```
 

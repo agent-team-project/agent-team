@@ -5340,6 +5340,9 @@ func newTeamSchedulesCmd() *cobra.Command {
 		repo     string
 		jsonOut  bool
 		commands bool
+		dueOnly  bool
+		next     bool
+		limit    int
 		format   string
 	)
 	cwd, _ := os.Getwd()
@@ -5360,6 +5363,14 @@ func newTeamSchedulesCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team schedules: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
+			if dueOnly && next {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team schedules: --due cannot be combined with --next.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team schedules: --limit must be >= 0.")
+				return exitErr(2)
+			}
 			tmpl, err := parseScheduleDueFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team schedules: %v\n", err)
@@ -5374,12 +5385,22 @@ func newTeamSchedulesCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team schedules: %v\n", err)
 				return exitErr(1)
 			}
-			return renderTeamSchedules(cmd.OutOrStdout(), args[0], schedules, jsonOut, tmpl, commands)
+			mode := teamScheduleModeList
+			switch {
+			case dueOnly:
+				mode = teamScheduleModeDue
+			case next:
+				mode = teamScheduleModeNext
+			}
+			return renderTeamSchedules(cmd.OutOrStdout(), args[0], schedules, mode, limit, jsonOut, tmpl, commands)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team schedules as JSON.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "Print the due team schedule preview command, one per line.")
+	cmd.Flags().BoolVar(&dueOnly, "due", false, "Only show team schedules due now, including the due reason.")
+	cmd.Flags().BoolVar(&next, "next", false, "Order team schedules by due state and next run, including due metadata.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Show at most this many schedules after filtering and ordering; 0 means all.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each schedule with a Go template, e.g. '{{.Name}} {{.Every}}'.")
 	return cmd
 }
@@ -11623,15 +11644,24 @@ func renderTeamJobs(w io.Writer, teamDir string, jobs []*job.Job, jsonOut bool, 
 	return nil
 }
 
-func renderTeamSchedules(w io.Writer, teamName string, schedules []scheduleInfo, jsonOut bool, tmpl *template.Template, commands bool) error {
+type teamScheduleMode string
+
+const (
+	teamScheduleModeList teamScheduleMode = "list"
+	teamScheduleModeDue  teamScheduleMode = "due"
+	teamScheduleModeNext teamScheduleMode = "next"
+)
+
+func renderTeamSchedules(w io.Writer, teamName string, schedules []scheduleInfo, mode teamScheduleMode, limit int, jsonOut bool, tmpl *template.Template, commands bool) error {
+	rows := teamScheduleRows(schedules, mode, limit, time.Now().UTC())
 	if jsonOut {
-		return json.NewEncoder(w).Encode(schedules)
+		return json.NewEncoder(w).Encode(rows)
 	}
 	if commands {
-		return renderTeamScheduleCommands(w, teamName, schedules)
+		return renderTeamScheduleCommands(w, teamName, rows)
 	}
 	if tmpl != nil {
-		for _, schedule := range schedules {
+		for _, schedule := range rows {
 			if err := tmpl.Execute(w, schedule); err != nil {
 				return err
 			}
@@ -11641,7 +11671,30 @@ func renderTeamSchedules(w io.Writer, teamName string, schedules []scheduleInfo,
 		}
 		return nil
 	}
-	return renderScheduleList(w, schedules, false, nil)
+	switch mode {
+	case teamScheduleModeDue:
+		return renderScheduleDueRows(w, rows, false, nil, false)
+	case teamScheduleModeNext:
+		return renderScheduleNextRows(w, rows, false, nil, false)
+	default:
+		return renderScheduleList(w, rows, false, nil)
+	}
+}
+
+func teamScheduleRows(schedules []scheduleInfo, mode teamScheduleMode, limit int, now time.Time) []scheduleInfo {
+	var rows []scheduleInfo
+	switch mode {
+	case teamScheduleModeDue:
+		rows = dueScheduleRows(schedules, now)
+	case teamScheduleModeNext:
+		return nextScheduleRows(schedules, now, limit)
+	default:
+		rows = append([]scheduleInfo(nil), schedules...)
+	}
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows
 }
 
 func renderTeamScheduleCommands(w io.Writer, teamName string, schedules []scheduleInfo) error {

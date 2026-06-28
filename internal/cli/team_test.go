@@ -969,6 +969,34 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team schedules --commands = %q, want %q", got, want)
 	}
 
+	schedulesDue := NewRootCmd()
+	schedulesDueOut, schedulesDueErr := &bytes.Buffer{}, &bytes.Buffer{}
+	schedulesDue.SetOut(schedulesDueOut)
+	schedulesDue.SetErr(schedulesDueErr)
+	schedulesDue.SetArgs([]string{"team", "schedules", "delivery", "--repo", root, "--due", "--json"})
+	if err := schedulesDue.Execute(); err != nil {
+		t.Fatalf("team schedules --due: %v\nstderr=%s", err, schedulesDueErr.String())
+	}
+	var dueRows []scheduleInfo
+	if err := json.Unmarshal(schedulesDueOut.Bytes(), &dueRows); err != nil {
+		t.Fatalf("decode team schedules due: %v\nbody=%s", err, schedulesDueOut.String())
+	}
+	if len(dueRows) != 1 || dueRows[0].Name != "nightly" || !dueRows[0].Due || dueRows[0].DueReason != "run_on_start" {
+		t.Fatalf("team schedules due = %+v", dueRows)
+	}
+
+	schedulesNext := NewRootCmd()
+	schedulesNextOut, schedulesNextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	schedulesNext.SetOut(schedulesNextOut)
+	schedulesNext.SetErr(schedulesNextErr)
+	schedulesNext.SetArgs([]string{"team", "schedules", "delivery", "--repo", root, "--next", "--limit", "1", "--format", "{{.Name}} {{.Due}} {{.DueReason}}"})
+	if err := schedulesNext.Execute(); err != nil {
+		t.Fatalf("team schedules --next: %v\nstderr=%s", err, schedulesNextErr.String())
+	}
+	if got := strings.TrimSpace(schedulesNextOut.String()); got != "nightly true run_on_start" {
+		t.Fatalf("team schedules --next format = %q", got)
+	}
+
 	for _, tt := range []struct {
 		name string
 		args []string
@@ -983,6 +1011,16 @@ since = "2026-06-18T12:00:00Z"
 			name: "format",
 			args: []string{"team", "schedules", "delivery", "--repo", root, "--commands", "--format", "{{.Name}}"},
 			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "due-next",
+			args: []string{"team", "schedules", "delivery", "--repo", root, "--due", "--next"},
+			want: "--due cannot be combined with --next",
+		},
+		{
+			name: "negative-limit",
+			args: []string{"team", "schedules", "delivery", "--repo", root, "--limit", "-1"},
+			want: "--limit must be >= 0",
 		},
 	} {
 		invalid := NewRootCmd()

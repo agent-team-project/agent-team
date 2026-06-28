@@ -319,7 +319,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team explain <team>` | Expand or watch team-owned pipeline jobs as per-step diagnostics; sort and cap large histories with `--sort` and `--limit`, add `--step` to focus one stage, or `--commands` for scoped action commands that preserve an explicit `--repo` selector |
 | `agent-team team triage <team>` | Show team-owned jobs needing operator attention; add `--commands` for team-scoped attention-row recovery commands that preserve an explicit `--repo` selector |
 | `agent-team team ready <team>` | List or watch scoped ready pipeline steps; filter by `--step`, sort by `--sort`, cap rows with `--limit`, or print one team-scoped action per line with `--commands`, preserving an explicit `--repo` selector |
-| `agent-team team schedules <team>` | List team-owned schedules; add `--commands` to print the scoped dry-run tick preview command when any are due |
+| `agent-team team schedules <team>` | List team-owned schedules; add `--due`, `--next`, or `--limit` for scoped forecasts, and `--commands` to print the scoped dry-run tick preview command when any selected schedule is due |
 | `agent-team team hold <team>` | Hold matching pipeline jobs owned by a team; add `--for` or `--until` for a deadline |
 | `agent-team team release <team>` | Release held pipeline jobs owned by a team; add `--expired` to release only elapsed deadlines |
 | `agent-team team timeout <team>` | Timeout stale team pipeline steps; add `--jobs` for stale step-less team jobs and `--target-agent` to scope by role |
