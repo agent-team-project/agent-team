@@ -10165,6 +10165,25 @@ func TestJobHoldReleaseStopsReadiness(t *testing.T) {
 	if err := os.WriteFile(holdMessageFile, []byte("waiting for user from file\n"), 0o644); err != nil {
 		t.Fatalf("write hold message: %v", err)
 	}
+	holdCommands := NewRootCmd()
+	holdCommandsOut, holdCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	holdCommands.SetOut(holdCommandsOut)
+	holdCommands.SetErr(holdCommandsErr)
+	holdCommands.SetArgs([]string{"job", "hold", "squ-240", "--repo", tmp, "--until", holdUntil.Format(time.RFC3339), "--dry-run", "--commands", "waiting for user"})
+	if err := holdCommands.Execute(); err != nil {
+		t.Fatalf("job hold dry-run commands: %v\nstderr=%s", err, holdCommandsErr.String())
+	}
+	wantHoldCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "hold", "squ-240", "--repo", tmp, "--until", holdUntil.Format(time.RFC3339), "waiting for user"}), " ")
+	if got := strings.TrimSpace(holdCommandsOut.String()); got != wantHoldCommand {
+		t.Fatalf("job hold dry-run commands = %q, want %q", got, wantHoldCommand)
+	}
+	unheld, err := job.Read(teamDir, "squ-240")
+	if err != nil {
+		t.Fatalf("read dry-run held job: %v", err)
+	}
+	if unheld.Held {
+		t.Fatalf("job hold dry-run mutated job: %+v", unheld)
+	}
 	hold.SetArgs([]string{"job", "hold", "squ-240", "--repo", tmp, "--message-file", holdMessageFile, "--until", holdUntil.Format(time.RFC3339), "--json"})
 	if err := hold.Execute(); err != nil {
 		t.Fatalf("job hold: %v\nstderr=%s", err, holdErr.String())
@@ -10379,6 +10398,19 @@ func TestJobHoldReleaseStopsReadiness(t *testing.T) {
 		t.Fatalf("expired hold triage = %+v", expiredTriage.Attention)
 	}
 
+	releaseExpiredCommands := NewRootCmd()
+	releaseExpiredCommandsOut, releaseExpiredCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	releaseExpiredCommands.SetOut(releaseExpiredCommandsOut)
+	releaseExpiredCommands.SetErr(releaseExpiredCommandsErr)
+	releaseExpiredCommands.SetArgs([]string{"job", "release", "--all", "--expired", "--repo", tmp, "--dry-run", "--commands"})
+	if err := releaseExpiredCommands.Execute(); err != nil {
+		t.Fatalf("job release expired dry-run commands: %v\nstderr=%s", err, releaseExpiredCommandsErr.String())
+	}
+	wantReleaseExpiredCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "release", "--repo", tmp, "--all", "--expired"}), " ")
+	if got := strings.TrimSpace(releaseExpiredCommandsOut.String()); got != wantReleaseExpiredCommand {
+		t.Fatalf("job release expired dry-run commands = %q, want %q", got, wantReleaseExpiredCommand)
+	}
+
 	releaseExpired := NewRootCmd()
 	releaseExpiredOut, releaseExpiredErr := &bytes.Buffer{}, &bytes.Buffer{}
 	releaseExpired.SetOut(releaseExpiredOut)
@@ -10477,6 +10509,19 @@ func TestJobHoldAllMatchesActiveJobs(t *testing.T) {
 		}
 	}
 
+	holdCommands := NewRootCmd()
+	holdCommandsOut, holdCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	holdCommands.SetOut(holdCommandsOut)
+	holdCommands.SetErr(holdCommandsErr)
+	holdCommands.SetArgs([]string{"job", "hold", "--all", "--repo", tmp, "--for", "1h", "--message", "incident freeze", "--dry-run", "--commands"})
+	if err := holdCommands.Execute(); err != nil {
+		t.Fatalf("job hold all dry-run commands: %v\nstderr=%s", err, holdCommandsErr.String())
+	}
+	wantHoldAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "hold", "--repo", tmp, "--all", "--for", "1h0m0s", "--message", "incident freeze"}), " ")
+	if got := strings.TrimSpace(holdCommandsOut.String()); got != wantHoldAllCommand {
+		t.Fatalf("job hold all dry-run commands = %q, want %q", got, wantHoldAllCommand)
+	}
+
 	hold := NewRootCmd()
 	holdOut, holdErr := &bytes.Buffer{}, &bytes.Buffer{}
 	hold.SetOut(holdOut)
@@ -10512,6 +10557,47 @@ func TestJobHoldAllMatchesActiveJobs(t *testing.T) {
 	}
 	if !already.Held || already.HoldReason != "already paused" {
 		t.Fatalf("already held job changed unexpectedly: %+v", already)
+	}
+}
+
+func TestJobHoldReleaseCommandsValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "hold without dry-run",
+			args: []string{"job", "hold", "squ-1", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "hold json",
+			args: []string{"job", "hold", "squ-1", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "release without dry-run",
+			args: []string{"job", "release", "squ-1", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "release format",
+			args: []string{"job", "release", "squ-1", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tt.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("%s succeeded", tt.name)
+		}
+		if !strings.Contains(stderr.String(), tt.want) {
+			t.Fatalf("%s stderr = %q, want %q", tt.name, stderr.String(), tt.want)
+		}
 	}
 }
 

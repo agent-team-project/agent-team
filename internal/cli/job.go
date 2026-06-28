@@ -3887,6 +3887,7 @@ func newJobHoldCmd() *cobra.Command {
 		holdFor     time.Duration
 		untilRaw    string
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -3900,6 +3901,18 @@ func newJobHoldCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if limit < 0 {
@@ -3949,6 +3962,26 @@ func newJobHoldCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job hold: %v\n", err)
 					return exitErr(1)
 				}
+				if commands {
+					return renderHoldReleaseApplyCommands(cmd.OutOrStdout(), results, "would_hold", holdReleaseCommandOptions{
+						BaseArgs:       []string{"agent-team", "job", "hold"},
+						Repo:           repo,
+						RepoSet:        cmd.Flags().Changed("repo"),
+						All:            true,
+						Limit:          limit,
+						States:         states,
+						StateSet:       cmd.Flags().Changed("state"),
+						Message:        message,
+						MessageSet:     cmd.Flags().Changed("message"),
+						MessageFile:    messageFile,
+						MessageFileSet: cmd.Flags().Changed("message-file"),
+						HoldFor:        holdFor,
+						HoldForSet:     cmd.Flags().Changed("for"),
+						Until:          untilRaw,
+						UntilSet:       cmd.Flags().Changed("until"),
+						PositionalArgs: args,
+					})
+				}
 				return renderPipelineHoldResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 			}
 			if len(args) == 0 {
@@ -3969,8 +4002,38 @@ func newJobHoldCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job hold: %v\n", err)
 				return exitErr(2)
 			}
+			heldBefore := j.Held
 			holdJobState(j, reason, holdUntil, time.Now().UTC())
 			if dryRun {
+				if commands {
+					return renderHoldReleaseApplyCommands(cmd.OutOrStdout(), []pipelineHoldResult{{
+						JobID:      j.ID,
+						Ticket:     j.Ticket,
+						Pipeline:   j.Pipeline,
+						Status:     j.Status,
+						NextState:  inspectNextJobStep(j).State,
+						Action:     "would_hold",
+						Message:    reason,
+						HeldBefore: heldBefore,
+						HeldAfter:  true,
+						HoldUntil:  jobHoldUntilText(j),
+						DryRun:     true,
+						Job:        j,
+					}}, "would_hold", holdReleaseCommandOptions{
+						BaseArgs:       []string{"agent-team", "job", "hold", args[0]},
+						Repo:           repo,
+						RepoSet:        cmd.Flags().Changed("repo"),
+						Message:        message,
+						MessageSet:     cmd.Flags().Changed("message"),
+						MessageFile:    messageFile,
+						MessageFileSet: cmd.Flags().Changed("message-file"),
+						HoldFor:        holdFor,
+						HoldForSet:     cmd.Flags().Changed("for"),
+						Until:          untilRaw,
+						UntilSet:       cmd.Flags().Changed("until"),
+						PositionalArgs: args[1:],
+					})
+				}
 				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
 			changes := map[string]string{"held": "true"}
@@ -3992,6 +4055,7 @@ func newJobHoldCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&holdFor, "for", 0, "Hold for this duration, for example 30m or 2h.")
 	cmd.Flags().StringVar(&untilRaw, "until", "", "Hold until this RFC3339 timestamp.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the hold without writing job state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching hold apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or batch row with a Go template, e.g. '{{.ID}} {{.Held}} {{.HoldReason}}' or '{{.JobID}} {{.Action}}'.")
 	return cmd
@@ -4094,6 +4158,7 @@ func newJobReleaseCmd() *cobra.Command {
 		message     string
 		messageFile string
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -4107,6 +4172,18 @@ func newJobReleaseCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if limit < 0 {
@@ -4141,6 +4218,21 @@ func newJobReleaseCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job release: %v\n", err)
 					return exitErr(1)
 				}
+				if commands {
+					return renderHoldReleaseApplyCommands(cmd.OutOrStdout(), results, "would_release", holdReleaseCommandOptions{
+						BaseArgs:       []string{"agent-team", "job", "release"},
+						Repo:           repo,
+						RepoSet:        cmd.Flags().Changed("repo"),
+						All:            true,
+						Limit:          limit,
+						Expired:        expiredOnly,
+						Message:        message,
+						MessageSet:     cmd.Flags().Changed("message"),
+						MessageFile:    messageFile,
+						MessageFileSet: cmd.Flags().Changed("message-file"),
+						PositionalArgs: args,
+					})
+				}
 				return renderPipelineHoldResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 			}
 			if len(args) == 0 {
@@ -4161,8 +4253,35 @@ func newJobReleaseCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job release: %v\n", err)
 				return exitErr(2)
 			}
+			heldBefore := j.Held
+			holdUntilBefore := jobHoldUntilText(j)
 			releaseJobState(j, statusMessage, time.Now().UTC())
 			if dryRun {
+				if commands {
+					return renderHoldReleaseApplyCommands(cmd.OutOrStdout(), []pipelineHoldResult{{
+						JobID:      j.ID,
+						Ticket:     j.Ticket,
+						Pipeline:   j.Pipeline,
+						Status:     j.Status,
+						NextState:  inspectNextJobStep(j).State,
+						Action:     "would_release",
+						Message:    statusMessage,
+						HeldBefore: heldBefore,
+						HeldAfter:  false,
+						HoldUntil:  holdUntilBefore,
+						DryRun:     true,
+						Job:        j,
+					}}, "would_release", holdReleaseCommandOptions{
+						BaseArgs:       []string{"agent-team", "job", "release", args[0]},
+						Repo:           repo,
+						RepoSet:        cmd.Flags().Changed("repo"),
+						Message:        message,
+						MessageSet:     cmd.Flags().Changed("message"),
+						MessageFile:    messageFile,
+						MessageFileSet: cmd.Flags().Changed("message-file"),
+						PositionalArgs: args[1:],
+					})
+				}
 				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
 			if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"held": "false", "hold_until": ""}); err != nil {
@@ -4178,6 +4297,7 @@ func newJobReleaseCmd() *cobra.Command {
 	cmd.Flags().StringVar(&message, "message", "", "Release message recorded on the job.")
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read release message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the release without writing job state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching release apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or batch row with a Go template, e.g. '{{.ID}} {{.Held}} {{.LastStatus}}' or '{{.JobID}} {{.Action}}'.")
 	return cmd
@@ -4251,6 +4371,88 @@ func releaseJobs(teamDir, message string, limit int, expiredOnly bool, dryRun bo
 		results = append(results, result)
 	}
 	return results, nil
+}
+
+type holdReleaseCommandOptions struct {
+	BaseArgs       []string
+	Repo           string
+	RepoSet        bool
+	All            bool
+	Limit          int
+	States         []string
+	StateSet       bool
+	HoldFor        time.Duration
+	HoldForSet     bool
+	Until          string
+	UntilSet       bool
+	Expired        bool
+	Message        string
+	MessageSet     bool
+	MessageFile    string
+	MessageFileSet bool
+	PositionalArgs []string
+}
+
+func renderHoldReleaseApplyCommands(w io.Writer, results []pipelineHoldResult, action string, opts holdReleaseCommandOptions) error {
+	if !holdReleaseResultsHaveApplyCommand(results, action) {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(holdReleaseApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func holdReleaseResultsHaveApplyCommand(results []pipelineHoldResult, action string) bool {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return false
+	}
+	for _, result := range results {
+		if !result.DryRun {
+			continue
+		}
+		if strings.TrimSpace(result.Action) == action {
+			return true
+		}
+	}
+	return false
+}
+
+func holdReleaseApplyCommandArgs(opts holdReleaseCommandOptions) []string {
+	args := append([]string{}, opts.BaseArgs...)
+	if opts.RepoSet && strings.TrimSpace(opts.Repo) != "" {
+		args = append(args, "--repo", opts.Repo)
+	}
+	if opts.All {
+		args = append(args, "--all")
+	}
+	if opts.StateSet {
+		args = appendPlanCommandFilterArgs(args, "--state", opts.States)
+	}
+	if opts.Limit > 0 {
+		args = append(args, "--limit", fmt.Sprint(opts.Limit))
+	}
+	if opts.HoldForSet {
+		args = append(args, "--for", opts.HoldFor.String())
+	}
+	if opts.UntilSet && strings.TrimSpace(opts.Until) != "" {
+		args = append(args, "--until", opts.Until)
+	}
+	if opts.Expired {
+		args = append(args, "--expired")
+	}
+	if opts.MessageSet && strings.TrimSpace(opts.Message) != "" {
+		args = append(args, "--message", opts.Message)
+	}
+	if opts.MessageFileSet && strings.TrimSpace(opts.MessageFile) != "" {
+		args = append(args, "--message-file", opts.MessageFile)
+	}
+	for _, arg := range opts.PositionalArgs {
+		if strings.TrimSpace(arg) == "" {
+			continue
+		}
+		args = append(args, arg)
+	}
+	return args
 }
 
 func newJobReopenCmd() *cobra.Command {

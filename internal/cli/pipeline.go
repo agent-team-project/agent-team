@@ -4278,6 +4278,7 @@ func newPipelineHoldCmd() *cobra.Command {
 		holdFor     time.Duration
 		untilRaw    string
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -4291,6 +4292,18 @@ func newPipelineHoldCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline hold: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline hold: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline hold: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline hold: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if !all && len(args) == 0 {
@@ -4347,6 +4360,30 @@ func newPipelineHoldCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline hold: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				baseArgs := []string{"agent-team", "pipeline", "hold"}
+				if !all {
+					baseArgs = append(baseArgs, pipelineName)
+				}
+				return renderHoldReleaseApplyCommands(cmd.OutOrStdout(), results, "would_hold", holdReleaseCommandOptions{
+					BaseArgs:       baseArgs,
+					Repo:           repo,
+					RepoSet:        cmd.Flags().Changed("repo"),
+					All:            all,
+					Limit:          limit,
+					States:         states,
+					StateSet:       cmd.Flags().Changed("state"),
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+					HoldFor:        holdFor,
+					HoldForSet:     cmd.Flags().Changed("for"),
+					Until:          untilRaw,
+					UntilSet:       cmd.Flags().Changed("until"),
+					PositionalArgs: reasonArgs,
+				})
+			}
 			return renderPipelineHoldResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 		},
 	}
@@ -4359,6 +4396,7 @@ func newPipelineHoldCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&holdFor, "for", 0, "Hold for this duration, for example 30m or 2h.")
 	cmd.Flags().StringVar(&untilRaw, "until", "", "Hold until this RFC3339 timestamp.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview holds without writing job state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching hold apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit hold results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each hold result with a Go template, e.g. '{{.JobID}} {{.Action}}'.")
 	return cmd
@@ -4373,6 +4411,7 @@ func newPipelineReleaseCmd() *cobra.Command {
 		messageFile string
 		expiredOnly bool
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -4385,6 +4424,18 @@ func newPipelineReleaseCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline release: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline release: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline release: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline release: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if !all && len(args) == 0 {
@@ -4427,6 +4478,25 @@ func newPipelineReleaseCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline release: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				baseArgs := []string{"agent-team", "pipeline", "release"}
+				if !all {
+					baseArgs = append(baseArgs, pipelineName)
+				}
+				return renderHoldReleaseApplyCommands(cmd.OutOrStdout(), results, "would_release", holdReleaseCommandOptions{
+					BaseArgs:       baseArgs,
+					Repo:           repo,
+					RepoSet:        cmd.Flags().Changed("repo"),
+					All:            all,
+					Limit:          limit,
+					Expired:        expiredOnly,
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+					PositionalArgs: messageArgs,
+				})
+			}
 			return renderPipelineHoldResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 		},
 	}
@@ -4437,6 +4507,7 @@ func newPipelineReleaseCmd() *cobra.Command {
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read release message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&expiredOnly, "expired", false, "Only release held jobs whose hold_until has passed.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview releases without writing job state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching release apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit release results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each release result with a Go template, e.g. '{{.JobID}} {{.Action}}'.")
 	return cmd

@@ -1951,6 +1951,19 @@ pipelines = ["ticket_to_pr", "nightly"]
 		t.Fatalf("dry-run held job on disk: %+v", unchanged)
 	}
 
+	pipelineHoldCommands := NewRootCmd()
+	pipelineHoldCommandsOut, pipelineHoldCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipelineHoldCommands.SetOut(pipelineHoldCommandsOut)
+	pipelineHoldCommands.SetErr(pipelineHoldCommandsErr)
+	pipelineHoldCommands.SetArgs([]string{"pipeline", "hold", "ticket_to_pr", "release freeze", "--repo", root, "--for", "30m", "--dry-run", "--commands"})
+	if err := pipelineHoldCommands.Execute(); err != nil {
+		t.Fatalf("pipeline hold dry-run commands: %v\nstderr=%s", err, pipelineHoldCommandsErr.String())
+	}
+	wantPipelineHoldCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "hold", "ticket_to_pr", "--repo", root, "--for", "30m0s", "release freeze"}), " ")
+	if got := strings.TrimSpace(pipelineHoldCommandsOut.String()); got != wantPipelineHoldCommand {
+		t.Fatalf("pipeline hold dry-run commands = %q, want %q", got, wantPipelineHoldCommand)
+	}
+
 	holdFailed := NewRootCmd()
 	holdFailedOut, holdFailedErr := &bytes.Buffer{}, &bytes.Buffer{}
 	holdFailed.SetOut(holdFailedOut)
@@ -2059,6 +2072,19 @@ pipelines = ["ticket_to_pr", "nightly"]
 		t.Fatalf("held failed job was retryable: %+v", retryRows)
 	}
 
+	pipelineReleaseCommands := NewRootCmd()
+	pipelineReleaseCommandsOut, pipelineReleaseCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipelineReleaseCommands.SetOut(pipelineReleaseCommandsOut)
+	pipelineReleaseCommands.SetErr(pipelineReleaseCommandsErr)
+	pipelineReleaseCommands.SetArgs([]string{"pipeline", "release", "ticket_to_pr", "--repo", root, "--message", "resume failed work", "--dry-run", "--commands"})
+	if err := pipelineReleaseCommands.Execute(); err != nil {
+		t.Fatalf("pipeline release dry-run commands: %v\nstderr=%s", err, pipelineReleaseCommandsErr.String())
+	}
+	wantPipelineReleaseCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "release", "ticket_to_pr", "--repo", root, "--message", "resume failed work"}), " ")
+	if got := strings.TrimSpace(pipelineReleaseCommandsOut.String()); got != wantPipelineReleaseCommand {
+		t.Fatalf("pipeline release dry-run commands = %q, want %q", got, wantPipelineReleaseCommand)
+	}
+
 	release := NewRootCmd()
 	releaseOut, releaseErr := &bytes.Buffer{}, &bytes.Buffer{}
 	release.SetOut(releaseOut)
@@ -2102,6 +2128,19 @@ pipelines = ["ticket_to_pr", "nightly"]
 		t.Fatalf("released failed job was not retryable: %+v", retryRows)
 	}
 
+	teamHoldCommands := NewRootCmd()
+	teamHoldCommandsOut, teamHoldCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	teamHoldCommands.SetOut(teamHoldCommandsOut)
+	teamHoldCommands.SetErr(teamHoldCommandsErr)
+	teamHoldCommands.SetArgs([]string{"team", "hold", "delivery", "--repo", root, "--state", "ready", "--limit", "1", "--message", "team freeze", "--dry-run", "--commands"})
+	if err := teamHoldCommands.Execute(); err != nil {
+		t.Fatalf("team hold dry-run commands: %v\nstderr=%s", err, teamHoldCommandsErr.String())
+	}
+	wantTeamHoldCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "hold", "delivery", "--repo", root, "--state", "ready", "--limit", "1", "--message", "team freeze"}), " ")
+	if got := strings.TrimSpace(teamHoldCommandsOut.String()); got != wantTeamHoldCommand {
+		t.Fatalf("team hold dry-run commands = %q, want %q", got, wantTeamHoldCommand)
+	}
+
 	teamHold := NewRootCmd()
 	teamHoldOut, teamHoldErr := &bytes.Buffer{}, &bytes.Buffer{}
 	teamHold.SetOut(teamHoldOut)
@@ -2122,6 +2161,19 @@ pipelines = ["ticket_to_pr", "nightly"]
 		t.Fatalf("team held rows = %+v", teamHeld)
 	}
 
+	teamReleaseCommands := NewRootCmd()
+	teamReleaseCommandsOut, teamReleaseCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	teamReleaseCommands.SetOut(teamReleaseCommandsOut)
+	teamReleaseCommands.SetErr(teamReleaseCommandsErr)
+	teamReleaseCommands.SetArgs([]string{"team", "release", "delivery", "--repo", root, "--message", "team resume", "--dry-run", "--commands"})
+	if err := teamReleaseCommands.Execute(); err != nil {
+		t.Fatalf("team release dry-run commands: %v\nstderr=%s", err, teamReleaseCommandsErr.String())
+	}
+	wantTeamReleaseCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "release", "delivery", "--repo", root, "--message", "team resume"}), " ")
+	if got := strings.TrimSpace(teamReleaseCommandsOut.String()); got != wantTeamReleaseCommand {
+		t.Fatalf("team release dry-run commands = %q, want %q", got, wantTeamReleaseCommand)
+	}
+
 	teamRelease := NewRootCmd()
 	teamReleaseOut, teamReleaseErr := &bytes.Buffer{}, &bytes.Buffer{}
 	teamRelease.SetOut(teamReleaseOut)
@@ -2140,6 +2192,57 @@ pipelines = ["ticket_to_pr", "nightly"]
 	}
 	if len(teamReleased) != 1 || teamReleased[0].Action != "released" || teamReleased[0].HeldAfter || teamReleased[0].Message != "team release from file" {
 		t.Fatalf("team release rows = %+v", teamReleased)
+	}
+}
+
+func TestPipelineAndTeamHoldReleaseCommandsValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "pipeline hold without dry-run",
+			args: []string{"pipeline", "hold", "ticket_to_pr", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "pipeline hold json",
+			args: []string{"pipeline", "hold", "ticket_to_pr", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "pipeline release format",
+			args: []string{"pipeline", "release", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "team hold without dry-run",
+			args: []string{"team", "hold", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "team release json",
+			args: []string{"team", "release", "delivery", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "team release format",
+			args: []string{"team", "release", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tt.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("%s succeeded", tt.name)
+		}
+		if !strings.Contains(stderr.String(), tt.want) {
+			t.Fatalf("%s stderr = %q, want %q", tt.name, stderr.String(), tt.want)
+		}
 	}
 }
 
