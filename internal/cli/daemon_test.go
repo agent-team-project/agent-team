@@ -767,6 +767,14 @@ func TestDaemonAdoptUsesExplicitPipelineStep(t *testing.T) {
 	if result.Job.Steps[1].Status != job.StatusRunning || result.Job.Steps[1].Instance != "manager-squ-167-review" {
 		t.Fatalf("adopted step = %+v", result.Job.Steps[1])
 	}
+	for _, want := range []string{
+		"agent-team job logs squ-167 --step review --follow",
+		"agent-team job resume-plan squ-167 --step review",
+	} {
+		if !containsString(result.Actions, want) {
+			t.Fatalf("explicit step adopt actions = %+v, missing %q", result.Actions, want)
+		}
+	}
 	events, err := job.ListEvents(teamDir, "squ-167")
 	if err != nil {
 		t.Fatalf("job events: %v", err)

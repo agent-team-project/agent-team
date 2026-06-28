@@ -191,6 +191,8 @@ after = ["implement"]
 		t.Fatalf("adopted steps = %+v", result.Job.Steps)
 	}
 	for _, want := range []string{
+		"agent-team job logs squ-801 --step review --follow",
+		"agent-team job resume-plan squ-801 --step review",
 		"agent-team pipeline status ticket_to_pr",
 		"agent-team pipeline logs ticket_to_pr --follow",
 		"agent-team pipeline resume-plan ticket_to_pr --step review",
@@ -208,6 +210,8 @@ after = ["implement"]
 		t.Fatalf("pipeline adopt --commands: %v\nstdout=%s\nstderr=%s", err, commandsOut.String(), commandsErr.String())
 	}
 	for _, want := range scopedOperatorActions([]string{
+		"agent-team job logs squ-801 --step review --follow",
+		"agent-team job resume-plan squ-801 --step review",
 		"agent-team pipeline status ticket_to_pr",
 		"agent-team pipeline logs ticket_to_pr --follow",
 		"agent-team pipeline resume-plan ticket_to_pr --step review",

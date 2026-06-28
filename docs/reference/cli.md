@@ -101,7 +101,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job wait <job-id>` | Wait for lifecycle status, last event, or next-step state/stage with `--next-state` and `--step` |
 | `agent-team job next <job-id>` | Show the next pipeline step without dispatching it; add `--state`, `--step`, or `--commands` when scripts need a compact assertion or repo-scoped next-action commands |
 | `agent-team job resume-plan <job-id>` | Show runtime resume, attach, and log fallback commands for one job; add `--step` for one pipeline stage, `--last-message` for clean Codex sidecars, `--commands` for repo-scoped command lines, or `--sort`/`--limit` for multi-runtime jobs |
-| `agent-team job adopt <job-id>` | Adopt a live external process as a job owner; pipeline jobs infer the active stage and include pipeline-scoped follow-up actions |
+| `agent-team job adopt <job-id>` | Adopt a live external process as a job owner; pipeline jobs infer the active stage, preserve it on job log/resume-plan follow-ups, and include pipeline-scoped follow-up actions |
 | `agent-team job ps <job-id>` | List daemon-aware instance rows for one job; add `--step` for one pipeline stage |
 | `agent-team job stats <job-id>` | Show CPU and memory usage for one job's instances; add `--step` for one pipeline stage |
 | `agent-team job top <job-id>` | `agent-team job stats <job-id>` |
@@ -238,7 +238,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline unblock <pipeline>` | Answer blocked pipeline workers; add `--dry-run --commands` to print the matching apply command |
 | `agent-team pipeline skip <pipeline> --step <id>` | Mark matching non-running steps intentionally skipped |
 | `agent-team pipeline cancel <pipeline>` | Cancel non-terminal pipeline jobs without stopping instances |
-| `agent-team pipeline adopt <pipeline> <job-id>` | Adopt a live external process for a job after verifying pipeline ownership; output includes scoped follow-up actions and `--commands` |
+| `agent-team pipeline adopt <pipeline> <job-id>` | Adopt a live external process for a job after verifying pipeline ownership; output includes job and pipeline follow-up actions scoped to the adopted step, plus `--commands` |
 | `agent-team pipeline resume-plan [<pipeline>]` | Pipeline-owned runtime recovery commands across all workflows by default; filter by `--step`, `--action`, `--runtime-stale`, or `--unhealthy`, prefer clean Codex sidecars with `--last-message`, sort/limit large recovery lists, print repo-scoped commands with `--commands`, or summarize with `--summary` |
 | `agent-team pipeline send <pipeline>` | Send a mailbox message to pipeline-owned daemon-known instances; add `--dry-run --commands` to print the matching scoped send apply command |
 | `agent-team pipeline ps [<pipeline>\|--all]` | List daemon-aware instance rows for pipeline-owned jobs across all workflows by default |
@@ -329,7 +329,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team unblock <team>` | Answer blocked team-owned pipeline workers; add `--dry-run --commands` to print the matching apply command |
 | `agent-team team skip <team> --step <id>` | Scoped intentional step skip |
 | `agent-team team cancel <team>` | Cancel non-terminal team pipeline jobs without stopping instances |
-| `agent-team team adopt <team> <job-id>` | Adopt a live external process for a job after verifying team ownership; output includes scoped follow-up actions and `--commands` |
+| `agent-team team adopt <team> <job-id>` | Adopt a live external process for a job after verifying team ownership; output includes job, pipeline, and team follow-up actions scoped to the adopted step, plus `--commands` |
 | `agent-team team retry <team>` | Scoped failed-step retry, honoring step `max_attempts` caps; add `--dry-run --commands` for the apply command or `--dispatch --wait-next-state`/`--wait-step` for stage-aware recovery handoff |
 | `agent-team team cleanup <team>` | Scoped job cleanup, optionally verifying PRs with `gh` |
 | `agent-team team snapshot <team>` | Scoped diagnostic artifact with command provenance, queue/outbox quarantine inventory, and formatted summary fields |

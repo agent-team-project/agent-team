@@ -88,7 +88,9 @@ agent, ticket, branch, PR, and workspace from that job. It also updates the job
 with the adopted instance and running status, then appends an `adopted` job
 audit event. Dry-runs include the planned job update in JSON without writing
 metadata or the job file, and job-owned adoption output adds job-scoped
-`show`, `logs`, and `resume-plan` follow-up actions.
+`show`, `logs`, and `resume-plan` follow-up actions. For pipeline jobs,
+adoption infers or honors the active stage and keeps that stage on job
+`logs` and `resume-plan` follow-ups with `--step <id>`.
 
 `agent-team runtime adopt` and `agent-team daemon adopt` expose the same
 operation from narrower operator namespaces.

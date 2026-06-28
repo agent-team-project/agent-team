@@ -328,7 +328,6 @@ func runDaemonAdopt(cmd *cobra.Command, target, instance string, opts daemonAdop
 		Action:   "adopt",
 		Changed:  changed,
 		DryRun:   opts.DryRun,
-		Actions:  daemonAdoptFollowUpActions(meta, opts.FollowUp),
 		Metadata: meta,
 	}
 	if meta != nil {
@@ -338,6 +337,7 @@ func runDaemonAdopt(cmd *cobra.Command, target, instance string, opts daemonAdop
 			return exitErr(1)
 		}
 	}
+	result.Actions = daemonAdoptFollowUpActions(meta, result.Job, opts.FollowUp)
 	if !opts.DryRun {
 		result.Reconciled, result.Message, err = reconcileAfterDaemonAdopt(teamDir)
 		if err != nil {
@@ -607,7 +607,7 @@ func renderDaemonAdoptResult(w fmtWriter, result daemonAdoptResult, opts daemonA
 	return nil
 }
 
-func daemonAdoptFollowUpActions(meta *daemon.Metadata, scopes []daemonAdoptFollowUpScope) []string {
+func daemonAdoptFollowUpActions(meta *daemon.Metadata, j *job.Job, scopes []daemonAdoptFollowUpScope) []string {
 	if meta == nil {
 		return nil
 	}
@@ -624,19 +624,31 @@ func daemonAdoptFollowUpActions(meta *daemon.Metadata, scopes []daemonAdoptFollo
 		actions = append(actions, "agent-team resume-plan "+instance)
 	}
 	if id := job.NormalizeID(meta.Job); id != "" {
+		stepFlag := daemonAdoptJobStepFlag(meta, j)
 		actions = append(actions,
 			"agent-team job show "+id,
-			"agent-team job logs "+id+" --follow",
+			"agent-team job logs "+id+stepFlag+" --follow",
 		)
 		if strings.TrimSpace(meta.Runtime) == string(runtimebin.KindCodex) {
-			actions = append(actions, "agent-team job logs "+id+" --last-message")
+			actions = append(actions, "agent-team job logs "+id+stepFlag+" --last-message")
 		}
-		actions = append(actions, "agent-team job resume-plan "+id)
+		actions = append(actions, "agent-team job resume-plan "+id+stepFlag)
 	}
 	for _, scope := range scopes {
 		actions = append(actions, daemonAdoptScopedFollowUpActions(meta, scope)...)
 	}
 	return actions
+}
+
+func daemonAdoptJobStepFlag(meta *daemon.Metadata, j *job.Job) string {
+	if meta == nil || j == nil {
+		return ""
+	}
+	step := jobStepForRuntimeResumePlan(j, strings.TrimSpace(meta.Instance))
+	if step == nil {
+		return ""
+	}
+	return jobStepCommandFlag(step.ID)
 }
 
 func daemonAdoptScopedFollowUpActions(meta *daemon.Metadata, scope daemonAdoptFollowUpScope) []string {
