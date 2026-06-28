@@ -140,19 +140,19 @@ Health also reports job, queue, and outbox quarantine inventory as warning issue
 
 Crashed and stale-runtime instance issues include an `action=` hint for
 `agent-team runtime resume-plan`, scoped to the owning job when daemon metadata
-records one and scoped to `team resume-plan` from team health.
+records one and scoped to `team resume-plan` from team health or monitor.
 
 ## Monitor and Watch
 
 ```sh
-agent-team monitor --jobs --schedules
+agent-team monitor --jobs --schedules --last-message
 agent-team monitor -w --jobs --events 20
-agent-team watch --jobs
-agent-team team monitor delivery --jobs --schedules
+agent-team watch --jobs --last-message
+agent-team team monitor delivery --jobs --schedules --last-message
 agent-team team watch delivery --jobs --schedules
 ```
 
-Monitor combines health, job/queue/outbox recovery signals, inbox counts, instance rows, resources, events, jobs, schedules, and plan previews. `team monitor <team>` applies the same view to team-owned queue and outbox quarantine before rendering recovery actions, and `team watch <team>` is the continuous shortcut.
+Monitor combines health, job/queue/outbox recovery signals, inbox counts, instance rows, resources, events, jobs, schedules, and plan previews. Add `--last-message` when stale Codex runtime recovery hints should point at clean final-response sidecars. `team monitor <team>` applies the same view to team-owned runtime, queue, and outbox quarantine before rendering recovery actions, and `team watch <team>` is the continuous shortcut.
 
 ## Snapshot
 

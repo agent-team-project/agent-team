@@ -30,6 +30,7 @@ func newMonitorCmd() *cobra.Command {
 		stopExtras       bool
 		summary          bool
 		resources        bool
+		lastMessage      bool
 		jsonOut          bool
 		noClear          bool
 		latest           bool
@@ -151,6 +152,7 @@ func newMonitorCmd() *cobra.Command {
 			opts.EventTail = eventTail
 			opts.EventFilters = eventFilters
 			opts.StrictTopology = strictTopology
+			opts.LastMessage = lastMessage
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -193,6 +195,7 @@ func newMonitorCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&stopExtras, "stop-extras", false, "With --plan, preview running topology extras as stop actions.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show compact non-failing fleet health and optional plan summaries instead of the full monitor.")
 	cmd.Flags().BoolVar(&resources, "resources", false, "With --summary, include aggregate CPU, memory, and RSS totals.")
+	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON. With --watch, writes one JSON object per refresh.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Show only the most recently started instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show only the N most recently started instances after other filters (0 = all).")
@@ -228,6 +231,7 @@ type monitorOptions struct {
 	EventTail        int
 	EventFilters     eventFilters
 	StrictTopology   bool
+	LastMessage      bool
 }
 
 func newMonitorOptions(all bool, statusFilters, agentFilters []string) (monitorOptions, error) {
@@ -504,6 +508,7 @@ func collectMonitorSummarySnapshot(teamDir string, now time.Time, opts monitorOp
 	if err != nil {
 		return nil, err
 	}
+	health = healthResultWithLastMessageActions(health, opts.LastMessage)
 	snapshot := &monitorSummarySnapshot{Health: health}
 	if inbox, err := collectMonitorInbox(teamDir, nil, nil, nil); err != nil {
 		snapshot.InboxError = err.Error()
@@ -818,6 +823,7 @@ func collectMonitorSnapshot(teamDir string, now time.Time, probe processStatsPro
 	if err := addIntakeHealth(health, teamDir); err != nil {
 		return nil, err
 	}
+	health = healthResultWithLastMessageActions(health, opts.LastMessage)
 	displayRows := filterLimitSortPsRows(rows, opts.PS)
 	selectedInstances := monitorSelectedInstanceSet(displayRows, opts.PS)
 	selectedInboxInstances := monitorInboxSelectedInstanceSet(displayRows, opts.PS)
@@ -964,6 +970,8 @@ func collectTeamMonitorSnapshot(teamDir, name string, now time.Time, probe proce
 			return nil, err
 		}
 	}
+	scopeTeamHealthIssueActions(health, team.Name)
+	health = healthResultWithLastMessageActions(health, opts.LastMessage)
 	displayRows := filterLimitSortPsRows(teamRows, opts.PS)
 	selectedInstances := monitorSelectedInstanceSet(displayRows, opts.PS)
 	selectedInboxInstances := monitorInboxSelectedInstanceSet(displayRows, opts.PS)

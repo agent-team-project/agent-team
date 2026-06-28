@@ -3719,6 +3719,7 @@ Flags:
       --jobs                   Include durable job summary, attention, ready-step state, and status-file previews.
       --json                   Emit JSON. With --watch, writes one JSON object per refresh.
   -n, --last int               Show only the N most recently started instances after other filters (0 = all).
+      --last-message           When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.
       --latest                 Show only the most recently started instance after other filters.
       --no-clear               With --watch, append snapshots instead of redrawing the terminal.
       --phase strings          Only show instances and stats in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
@@ -7741,6 +7742,7 @@ Flags:
       --jobs                   Include team-owned durable job summary, attention, ready-step state, and status-file previews.
       --json                   Emit JSON. With --watch, writes one JSON object per refresh.
   -n, --last int               Show only the N most recently started team-owned instances after other filters (0 = all).
+      --last-message           When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.
       --latest                 Show only the most recently started team-owned instance after other filters.
       --no-clear               With --watch, append snapshots instead of redrawing the terminal.
       --phase strings          Only show team-owned instances and stats in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
@@ -9536,6 +9538,7 @@ Flags:
       --jobs                   Include durable job summary, attention, and ready-step state.
       --json                   Emit one JSON object per refresh.
   -n, --last int               Show only the N most recently started instances after other filters (0 = all).
+      --last-message           When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.
       --latest                 Show only the most recently started instance after other filters.
       --no-clear               Append snapshots instead of redrawing the terminal.
       --phase strings          Only show instances and stats in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.

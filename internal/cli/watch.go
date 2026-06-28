@@ -20,6 +20,7 @@ func newWatchCmd() *cobra.Command {
 		stopExtras       bool
 		summary          bool
 		resources        bool
+		lastMessage      bool
 		jsonOut          bool
 		noClear          bool
 		latest           bool
@@ -140,6 +141,7 @@ func newWatchCmd() *cobra.Command {
 			opts.EventTail = eventTail
 			opts.EventFilters = eventFilters
 			opts.StrictTopology = strictTopology
+			opts.LastMessage = lastMessage
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
@@ -164,6 +166,7 @@ func newWatchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&stopExtras, "stop-extras", false, "With --plan, preview running topology extras as stop actions.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Watch compact non-failing fleet health and optional plan summaries instead of the full monitor.")
 	cmd.Flags().BoolVar(&resources, "resources", false, "With --summary, include aggregate CPU, memory, and RSS totals.")
+	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit one JSON object per refresh.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "Append snapshots instead of redrawing the terminal.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Show only the most recently started instance after other filters.")

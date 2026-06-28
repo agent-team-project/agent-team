@@ -63,6 +63,148 @@ func TestMonitorCommandJSONDoesNotExitUnhealthy(t *testing.T) {
 	}
 }
 
+func TestMonitorLastMessageRewritesRuntimeHealthActions(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance:  "runtime-stale",
+		Agent:     "worker",
+		Job:       "SQU-88",
+		Runtime:   "codex",
+		Status:    daemon.StatusRunning,
+		PID:       99999999,
+		Workspace: tmp,
+		StartedAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("write runtime metadata: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--target", tmp, "--last-message", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor last-message json: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot monitorSnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode monitor last-message json: %v\nbody=%s", err, stdout.String())
+	}
+	assertHealthIssueAction(t, snapshot.Health, "runtime_stale", "agent-team job resume-plan squ-88 --runtime-stale --last-message")
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"monitor", "--target", tmp, "--last-message"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("monitor last-message text: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "agent-team job resume-plan squ-88 --runtime-stale --last-message") {
+		t.Fatalf("monitor text missing last-message action:\n%s", textOut.String())
+	}
+
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"monitor", "--target", tmp, "--summary", "--last-message", "--json"})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("monitor summary last-message json: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var health healthResult
+	if err := json.Unmarshal(summaryOut.Bytes(), &health); err != nil {
+		t.Fatalf("decode monitor summary health json: %v\nbody=%s", err, summaryOut.String())
+	}
+	assertHealthIssueAction(t, &health, "runtime_stale", "agent-team job resume-plan squ-88 --runtime-stale --last-message")
+}
+
+func assertHealthIssueAction(t *testing.T, health *healthResult, code, action string) {
+	t.Helper()
+	if health == nil {
+		t.Fatalf("health is nil, want issue %s action %q", code, action)
+	}
+	for _, issue := range health.Issues {
+		if issue.Code == code && containsString(issue.Actions, action) {
+			return
+		}
+	}
+	t.Fatalf("health issue action %q missing for code %s: %+v", action, code, health.Issues)
+}
+
+func TestTeamMonitorLastMessageScopesRuntimeHealthActions(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(filepath.Join(teamDir, "agents", "worker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[instances.build-worker]
+agent = "worker"
+ephemeral = true
+
+[teams.delivery]
+instances = ["worker"]
+
+[teams.platform]
+instances = ["build-worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "worker-squ-902", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, Workspace: root, StartedAt: now},
+		{Instance: "build-worker-1", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, Workspace: root, StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "monitor", "delivery", "--repo", root, "--runtime-stale", "--last-message", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team monitor runtime-stale last-message: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot monitorSnapshot
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode team monitor last-message: %v\nbody=%s", err, out.String())
+	}
+	wantAction := "agent-team team resume-plan delivery --runtime-stale --sort stale --limit 10 --last-message"
+	assertHealthIssueAction(t, snapshot.Health, "runtime_stale", wantAction)
+	for _, issue := range snapshot.Health.Issues {
+		for _, action := range issue.Actions {
+			if strings.Contains(action, "build-worker-1") || strings.Contains(action, "agent-team resume-plan worker-squ-902 --runtime-stale") {
+				t.Fatalf("team monitor leaked unscoped action %q in %+v", action, snapshot.Health.Issues)
+			}
+		}
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"team", "monitor", "delivery", "--repo", root, "--runtime-stale", "--last-message"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("team monitor text last-message: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), wantAction) {
+		t.Fatalf("team monitor text missing %q:\n%s", wantAction, textOut.String())
+	}
+	if strings.Contains(textOut.String(), "build-worker-1") || strings.Contains(textOut.String(), "agent-team resume-plan worker-squ-902 --runtime-stale") {
+		t.Fatalf("team monitor text leaked unscoped or unrelated runtime:\n%s", textOut.String())
+	}
+}
+
 func TestMonitorReportsUnreadInboxSummary(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

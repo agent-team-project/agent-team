@@ -6542,6 +6542,7 @@ func newTeamMonitorCmd() *cobra.Command {
 		jobs             bool
 		schedules        bool
 		stopExtras       bool
+		lastMessage      bool
 		jsonOut          bool
 		noClear          bool
 		latest           bool
@@ -6661,6 +6662,7 @@ func newTeamMonitorCmd() *cobra.Command {
 			opts.PlanActions = planActions
 			opts.EventTail = eventTail
 			opts.EventFilters = eventFilters
+			opts.LastMessage = lastMessage
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -6696,6 +6698,7 @@ func newTeamMonitorCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jobs, "jobs", false, "Include team-owned durable job summary, attention, ready-step state, and status-file previews.")
 	cmd.Flags().BoolVar(&schedules, "schedules", false, "Include due and upcoming team schedules.")
 	cmd.Flags().BoolVar(&stopExtras, "stop-extras", false, "With --plan, preview running team-agent extras as stop actions.")
+	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON. With --watch, writes one JSON object per refresh.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Show only the most recently started team-owned instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show only the N most recently started team-owned instances after other filters (0 = all).")
