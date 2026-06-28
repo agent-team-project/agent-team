@@ -283,6 +283,7 @@ func newPipelineJobsCmd() *cobra.Command {
 		expiredHold    bool
 		activeHold     bool
 		summary        bool
+		commands       bool
 		jsonOut        bool
 		format         string
 		sortBy         string
@@ -306,8 +307,24 @@ func newPipelineJobsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
 			if format != "" && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --commands cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --commands cannot be combined with --watch.")
 				return exitErr(2)
 			}
 			if summary && cmd.Flags().Changed("limit") {
@@ -372,6 +389,9 @@ func newPipelineJobsCmd() *cobra.Command {
 				}
 				return runJobListWatch(ctx, cmd.OutOrStdout(), teamDir, filters, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
+			if commands {
+				return runJobListCommands(cmd.OutOrStdout(), teamDir, filters, operatorCommandScopeFromCommand(cmd, repo, "repo"))
+			}
 			if summary {
 				filtered, err := filteredJobs(teamDir, filters)
 				if err != nil {
@@ -406,6 +426,7 @@ func newPipelineJobsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&expiredHold, "expired-hold", false, "Only show held jobs whose hold_until has passed.")
 	cmd.Flags().BoolVar(&activeHold, "active-hold", false, "Only show held jobs whose hold is still active or has no deadline.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate pipeline job counts instead of job rows.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands from the visible pipeline job rows. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit jobs as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	cmd.Flags().StringVar(&sortBy, "sort", "id", "Sort jobs by id, status, target, ticket, created, updated, instance, runtime, branch, or pr.")

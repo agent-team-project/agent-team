@@ -1581,6 +1581,7 @@ func newJobLsCmd() *cobra.Command {
 		watch          bool
 		noClear        bool
 		summary        bool
+		commands       bool
 		jsonOut        bool
 		format         string
 		sortBy         string
@@ -1596,8 +1597,24 @@ func newJobLsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
 			if format != "" && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --commands cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --commands cannot be combined with --watch.")
 				return exitErr(2)
 			}
 			if summary && cmd.Flags().Changed("limit") {
@@ -1654,6 +1671,9 @@ func newJobLsCmd() *cobra.Command {
 			if summary {
 				return runJobSummary(cmd.OutOrStdout(), teamDir, filters, jsonOut)
 			}
+			if commands {
+				return runJobListCommands(cmd.OutOrStdout(), teamDir, filters, operatorCommandScopeFromCommand(cmd, repo, "repo"))
+			}
 			return runJobList(cmd.OutOrStdout(), teamDir, filters, jsonOut, tmpl)
 		},
 	}
@@ -1674,6 +1694,7 @@ func newJobLsCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the job table until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate job counts instead of job rows.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands from the visible job rows. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	cmd.Flags().StringVar(&sortBy, "sort", "id", "Sort rows by id, status, target, ticket, created, updated, instance, runtime, branch, or pr.")
@@ -9726,6 +9747,89 @@ func runJobList(w io.Writer, teamDir string, filters jobListFilters, jsonOut boo
 	}
 	renderJobTableWithRuntime(w, filtered, jobRuntimeMap(teamDir))
 	return nil
+}
+
+func runJobListCommands(w io.Writer, teamDir string, filters jobListFilters, scope operatorCommandScope) error {
+	filtered, err := filteredJobs(teamDir, filters)
+	if err != nil {
+		return err
+	}
+	return renderJobListCommands(w, teamDir, filtered, scope)
+}
+
+func renderJobListCommands(w io.Writer, teamDir string, jobs []*job.Job, scope operatorCommandScope) error {
+	actions, err := jobListActions(teamDir, jobs)
+	if err != nil {
+		return err
+	}
+	return renderOperatorActionCommands(w, actions, scope)
+}
+
+func jobListActions(teamDir string, jobs []*job.Job) ([]string, error) {
+	if len(jobs) == 0 {
+		return nil, nil
+	}
+	now := time.Now().UTC()
+	queueItems, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return nil, err
+	}
+	queueQuarantineItems, err := listQueueQuarantine(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	outboxItems, err := daemon.ListOutboxItems(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	outboxQuarantineItems, err := listOutboxQuarantine(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	statusPreviews, err := reconcileJobsFromStatus(teamDir, true, now)
+	if err != nil {
+		return nil, err
+	}
+	actions := []string{}
+	for _, j := range jobs {
+		actions = append(actions, jobDetailActions(
+			j,
+			teamDir,
+			queueItemsForJobFromList(queueItems, j),
+			outboxItemsForJobs(outboxItems, []*job.Job{j}),
+			statusPreviewsForJobFromList(statusPreviews, j),
+			jobQueueQuarantineItems(j, queueQuarantineItems),
+			jobOutboxQuarantineItems(j, outboxQuarantineItems),
+			now,
+		)...)
+	}
+	return actions, nil
+}
+
+func queueItemsForJobFromList(items []*daemon.QueueItem, j *job.Job) []*daemon.QueueItem {
+	if len(items) == 0 || j == nil {
+		return nil
+	}
+	out := make([]*daemon.QueueItem, 0, len(items))
+	for _, item := range items {
+		if queueItemMatchesJob(item, j) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func statusPreviewsForJobFromList(previews []jobStatusReconcileResult, j *job.Job) []jobStatusReconcileResult {
+	if len(previews) == 0 || j == nil {
+		return nil
+	}
+	out := make([]jobStatusReconcileResult, 0, len(previews))
+	for _, preview := range previews {
+		if preview.JobID == j.ID {
+			out = append(out, preview)
+		}
+	}
+	return out
 }
 
 func runJobListWatch(ctx context.Context, w io.Writer, teamDir string, filters jobListFilters, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {

@@ -917,6 +917,19 @@ func TestPipelineJobsListsMatchingJobs(t *testing.T) {
 		t.Fatalf("pipeline --all queued rows = %+v", rows)
 	}
 
+	commandsCmd := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commandsCmd.SetOut(commandsOut)
+	commandsCmd.SetErr(commandsErr)
+	commandsCmd.SetArgs([]string{"pipeline", "jobs", "--all", "--repo", root, "--status", "queued", "--commands"})
+	if err := commandsCmd.Execute(); err != nil {
+		t.Fatalf("pipeline jobs commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", root, "job", "dispatch", "squ-302"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("pipeline jobs commands = %q, want %q", got, wantCommand)
+	}
+
 	allTicketCmd := NewRootCmd()
 	allTicketOut, allTicketErr := &bytes.Buffer{}, &bytes.Buffer{}
 	allTicketCmd.SetOut(allTicketOut)
@@ -1106,6 +1119,18 @@ func TestPipelineJobsListsMatchingJobs(t *testing.T) {
 	}
 	if !strings.Contains(summaryLimitErr.String(), "--limit cannot be combined with --summary") {
 		t.Fatalf("summary limit stderr = %q", summaryLimitErr.String())
+	}
+
+	commandsJSON := NewRootCmd()
+	commandsJSONOut, commandsJSONErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commandsJSON.SetOut(commandsJSONOut)
+	commandsJSON.SetErr(commandsJSONErr)
+	commandsJSON.SetArgs([]string{"pipeline", "jobs", "ticket_to_pr", "--repo", root, "--commands", "--json"})
+	if err := commandsJSON.Execute(); err == nil {
+		t.Fatalf("pipeline jobs commands json succeeded unexpectedly")
+	}
+	if !strings.Contains(commandsJSONErr.String(), "--commands cannot be combined with --json") {
+		t.Fatalf("commands json stderr = %q", commandsJSONErr.String())
 	}
 
 	invalidMany := NewRootCmd()

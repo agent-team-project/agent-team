@@ -2348,6 +2348,7 @@ Flags:
 ```text
       --active-hold           Only show held jobs whose hold is still active or has no deadline.
       --branch string         Filter by branch.
+      --commands              Print recommended follow-up commands from the visible job rows. agent-team follow-ups preserve the selected repo scope.
       --expired-hold          Only show held jobs whose hold_until has passed.
       --format string         Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.
       --held                  Only show held jobs.
@@ -4646,6 +4647,7 @@ Flags:
       --active-hold           Only show held jobs whose hold is still active or has no deadline.
       --all                   List jobs across all pipelines. This is the default when no pipeline is passed.
       --branch string         Only show jobs owning this branch.
+      --commands              Print recommended follow-up commands from the visible pipeline job rows. agent-team follow-ups preserve the selected repo scope.
       --expired-hold          Only show held jobs whose hold_until has passed.
       --format string         Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.
       --held                  Only show held jobs.
@@ -7760,6 +7762,7 @@ Flags:
 ```text
       --active-hold           Only show held jobs whose hold is still active or has no deadline.
       --branch string         Only show jobs owning this branch.
+      --commands              Print recommended follow-up commands from the visible team job rows. agent-team follow-ups preserve the selected repo scope.
       --expired-hold          Only show held jobs whose hold_until has passed.
       --format string         Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.
       --held                  Only show held jobs.

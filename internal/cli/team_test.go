@@ -2223,6 +2223,19 @@ instances = ["platform-worker"]
 		t.Fatalf("team jobs owner filter rows = %+v", jobs)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "jobs", "delivery", "--repo", root, "--target-agent", "manager", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team jobs commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", root, "job", "dispatch", "squ-902"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("team jobs commands = %q, want %q", got, wantCommand)
+	}
+
 	branchPR := NewRootCmd()
 	branchPROut, branchPRErr := &bytes.Buffer{}, &bytes.Buffer{}
 	branchPR.SetOut(branchPROut)
@@ -2370,6 +2383,18 @@ instances = ["platform-worker"]
 	}
 	if !strings.Contains(summaryLimitErr.String(), "--limit cannot be combined with --summary") {
 		t.Fatalf("summary limit stderr = %q", summaryLimitErr.String())
+	}
+
+	commandsJSON := NewRootCmd()
+	commandsJSONOut, commandsJSONErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commandsJSON.SetOut(commandsJSONOut)
+	commandsJSON.SetErr(commandsJSONErr)
+	commandsJSON.SetArgs([]string{"team", "jobs", "delivery", "--repo", root, "--commands", "--json"})
+	if err := commandsJSON.Execute(); err == nil {
+		t.Fatalf("team jobs commands json succeeded unexpectedly")
+	}
+	if !strings.Contains(commandsJSONErr.String(), "--commands cannot be combined with --json") {
+		t.Fatalf("commands json stderr = %q", commandsJSONErr.String())
 	}
 }
 

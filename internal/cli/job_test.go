@@ -6040,6 +6040,19 @@ func TestJobListFilters(t *testing.T) {
 		}
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "ls", "--repo", tmp, "--target-agent", "manager", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("job ls commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", tmp, "job", "dispatch", "squ-51"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("job ls commands = %q, want %q", got, wantCommand)
+	}
+
 	invalid := NewRootCmd()
 	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
 	invalid.SetOut(invalidOut)
@@ -6237,6 +6250,18 @@ func TestJobListSortsRows(t *testing.T) {
 	}
 	if !strings.Contains(summaryLimitErr.String(), "--limit cannot be combined with --summary") {
 		t.Fatalf("summary limit stderr = %q", summaryLimitErr.String())
+	}
+
+	commandsJSON := NewRootCmd()
+	commandsJSONOut, commandsJSONErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commandsJSON.SetOut(commandsJSONOut)
+	commandsJSON.SetErr(commandsJSONErr)
+	commandsJSON.SetArgs([]string{"job", "ls", "--repo", tmp, "--commands", "--json"})
+	if err := commandsJSON.Execute(); err == nil {
+		t.Fatalf("job ls commands json succeeded unexpectedly")
+	}
+	if !strings.Contains(commandsJSONErr.String(), "--commands cannot be combined with --json") {
+		t.Fatalf("commands json stderr = %q", commandsJSONErr.String())
 	}
 }
 

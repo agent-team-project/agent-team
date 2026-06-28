@@ -1149,6 +1149,7 @@ func newTeamJobsCmd() *cobra.Command {
 		expiredHold    bool
 		activeHold     bool
 		summary        bool
+		commands       bool
 		jsonOut        bool
 		format         string
 	)
@@ -1162,8 +1163,24 @@ func newTeamJobsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
 			if format != "" && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --commands cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --commands cannot be combined with --watch.")
 				return exitErr(2)
 			}
 			if summary && cmd.Flags().Changed("limit") {
@@ -1214,6 +1231,14 @@ func newTeamJobsCmd() *cobra.Command {
 				defer stop()
 				return runTeamJobsWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], filters, summary, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
+			if commands {
+				jobs, err := collectTeamJobs(teamDir, args[0], filters)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team jobs: %v\n", err)
+					return exitErr(1)
+				}
+				return renderJobListCommands(cmd.OutOrStdout(), teamDir, jobs, operatorCommandScopeFromCommand(cmd, repo, "repo"))
+			}
 			if err := runTeamJobs(cmd.OutOrStdout(), teamDir, args[0], filters, summary, jsonOut, tmpl); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team jobs: %v\n", err)
 				return exitErr(1)
@@ -1239,6 +1264,7 @@ func newTeamJobsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&expiredHold, "expired-hold", false, "Only show held jobs whose hold_until has passed.")
 	cmd.Flags().BoolVar(&activeHold, "active-hold", false, "Only show held jobs whose hold is still active or has no deadline.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate team job counts instead of job rows.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands from the visible team job rows. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team jobs as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
