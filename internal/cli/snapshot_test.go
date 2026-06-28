@@ -1716,6 +1716,68 @@ func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	}
 }
 
+func TestSnapshotDiffCommandReportsTopLevelActions(t *testing.T) {
+	tmp := t.TempDir()
+	beforePath := filepath.Join(tmp, "before.json")
+	afterPath := filepath.Join(tmp, "after.json")
+	before := snapshotDiffInput{
+		CapturedAt: "2026-06-26T12:00:00Z",
+		Pipeline:   "ticket_to_pr",
+		Actions: []string{
+			"agent-team pipeline status ticket_to_pr",
+			"agent-team pipeline queue ticket_to_pr --summary",
+			" agent-team pipeline queue ticket_to_pr --summary ",
+		},
+	}
+	after := snapshotDiffInput{
+		CapturedAt: "2026-06-26T12:05:00Z",
+		Pipeline:   "ticket_to_pr",
+		Actions: []string{
+			"agent-team pipeline status ticket_to_pr",
+			"agent-team pipeline advance ticket_to_pr --dry-run --preview-routes",
+		},
+	}
+	writeSnapshotDiffInput(t, beforePath, before)
+	writeSnapshotDiffInput(t, afterPath, after)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "actions", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("snapshot diff actions section: %v\nstderr=%s", err, stderr.String())
+	}
+	var result snapshotDiffResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode actions snapshot diff: %v\nbody=%s", err, out.String())
+	}
+	if result.Summary.TotalChanges != 2 || result.Summary.Actions.Added != 1 || result.Summary.Actions.Removed != 1 || result.Summary.Next.Added != 0 {
+		t.Fatalf("actions-only summary = %+v", result.Summary)
+	}
+	if !hasSnapshotDiffChange(result.Changes, "actions", "action/agent-team pipeline advance ticket_to_pr --dry-run --preview-routes", "added") ||
+		!hasSnapshotDiffChange(result.Changes, "actions", "action/agent-team pipeline queue ticket_to_pr --summary", "removed") {
+		t.Fatalf("actions-only changes = %+v", result.Changes)
+	}
+	for _, change := range result.Changes {
+		if change.Section != "actions" {
+			t.Fatalf("actions-only diff included %q change: %+v", change.Section, result.Changes)
+		}
+	}
+
+	alias := NewRootCmd()
+	aliasOut, aliasErr := &bytes.Buffer{}, &bytes.Buffer{}
+	alias.SetOut(aliasOut)
+	alias.SetErr(aliasErr)
+	alias.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "commands", "--format", "{{.Summary.Actions.Added}}:{{.Summary.Actions.Removed}}:{{len .Changes}}"})
+	if err := alias.Execute(); err != nil {
+		t.Fatalf("snapshot diff commands alias: %v\nstderr=%s", err, aliasErr.String())
+	}
+	if got, want := strings.TrimSpace(aliasOut.String()), "1:1:2"; got != want {
+		t.Fatalf("commands alias output = %q, want %q", got, want)
+	}
+}
+
 func TestSnapshotDiffCommandComparesCurrentSnapshot(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -2287,8 +2349,8 @@ func TestSnapshotDiffCommandReportsJobSnapshotChanges(t *testing.T) {
 	if result.Summary.Inbox.Removed != 1 {
 		t.Fatalf("job snapshot inbox counters = %+v", result.Summary.Inbox)
 	}
-	if result.Summary.Next.Added != 1 || result.Summary.Next.Removed != 1 {
-		t.Fatalf("job snapshot next counters = %+v", result.Summary.Next)
+	if result.Summary.Actions.Added != 1 || result.Summary.Actions.Removed != 1 || result.Summary.Next.Added != 0 {
+		t.Fatalf("job snapshot action counters = actions=%+v next=%+v", result.Summary.Actions, result.Summary.Next)
 	}
 	if result.Summary.Events.Added != 2 {
 		t.Fatalf("job snapshot event counters = %+v", result.Summary.Events)
@@ -2299,26 +2361,26 @@ func TestSnapshotDiffCommandReportsJobSnapshotChanges(t *testing.T) {
 		!hasSnapshotDiffChange(result.Changes, "runtime", "exit_code", "added") ||
 		!hasSnapshotDiffChange(result.Changes, "queue", "q-160", "changed") ||
 		!hasSnapshotDiffChange(result.Changes, "inbox", "worker-squ-160", "removed") ||
-		!hasSnapshotDiffChange(result.Changes, "next", "action/agent-team inbox show worker-squ-160 --unread", "removed") ||
-		!hasSnapshotDiffChange(result.Changes, "next", "action/agent-team job logs squ-160 --last-message", "added") ||
+		!hasSnapshotDiffChange(result.Changes, "actions", "action/agent-team inbox show worker-squ-160 --unread", "removed") ||
+		!hasSnapshotDiffChange(result.Changes, "actions", "action/agent-team job logs squ-160 --last-message", "added") ||
 		!hasSnapshotDiffChange(result.Changes, "events", "lifecycle/exit-160", "added") {
 		t.Fatalf("missing expected job snapshot changes: %+v", result.Changes)
 	}
 
-	nextOnly := NewRootCmd()
-	nextOnlyOut, nextOnlyErr := &bytes.Buffer{}, &bytes.Buffer{}
-	nextOnly.SetOut(nextOnlyOut)
-	nextOnly.SetErr(nextOnlyErr)
-	nextOnly.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "next", "--json"})
-	if err := nextOnly.Execute(); err != nil {
-		t.Fatalf("job snapshot next diff: %v\nstderr=%s", err, nextOnlyErr.String())
+	actionsOnly := NewRootCmd()
+	actionsOnlyOut, actionsOnlyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	actionsOnly.SetOut(actionsOnlyOut)
+	actionsOnly.SetErr(actionsOnlyErr)
+	actionsOnly.SetArgs([]string{"snapshot", "diff", beforePath, afterPath, "--section", "actions", "--json"})
+	if err := actionsOnly.Execute(); err != nil {
+		t.Fatalf("job snapshot actions diff: %v\nstderr=%s", err, actionsOnlyErr.String())
 	}
-	var nextOnlyResult snapshotDiffResult
-	if err := json.Unmarshal(nextOnlyOut.Bytes(), &nextOnlyResult); err != nil {
-		t.Fatalf("decode job snapshot next diff: %v\nbody=%s", err, nextOnlyOut.String())
+	var actionsOnlyResult snapshotDiffResult
+	if err := json.Unmarshal(actionsOnlyOut.Bytes(), &actionsOnlyResult); err != nil {
+		t.Fatalf("decode job snapshot actions diff: %v\nbody=%s", err, actionsOnlyOut.String())
 	}
-	if nextOnlyResult.Summary.TotalChanges != 2 || nextOnlyResult.Summary.Next.Added != 1 || nextOnlyResult.Summary.Next.Removed != 1 || nextOnlyResult.Summary.Jobs.Changed != 0 {
-		t.Fatalf("job snapshot next-only summary = %+v", nextOnlyResult.Summary)
+	if actionsOnlyResult.Summary.TotalChanges != 2 || actionsOnlyResult.Summary.Actions.Added != 1 || actionsOnlyResult.Summary.Actions.Removed != 1 || actionsOnlyResult.Summary.Jobs.Changed != 0 || actionsOnlyResult.Summary.Next.Added != 0 {
+		t.Fatalf("job snapshot actions-only summary = %+v", actionsOnlyResult.Summary)
 	}
 }
 
