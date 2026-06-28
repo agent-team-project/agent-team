@@ -844,6 +844,7 @@ agent-team doctor [flags]
 Flags:
 
 ```text
+      --commands             Print recommended follow-up commands, one per line.
       --format string        Render the doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.
       --json                 Emit machine-readable JSON.
       --runtime string       Runtime profile to validate for this invocation (claude or codex). Overrides env and repo config.

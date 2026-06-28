@@ -469,6 +469,75 @@ func TestDoctorJSONReportsProblems(t *testing.T) {
 	}
 }
 
+func TestDoctorCommandsReportsAggregatedActions(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	jobsDir := filepath.Join(tmp, ".agent_team", "jobs")
+	if err := os.MkdirAll(jobsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(jobsDir, "bad.toml"), []byte(`id = "bad job"
+target = "worker"
+status = "queued"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"doctor", "--target", tmp, "--commands"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected doctor --commands with invalid job to fail")
+	}
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 1 {
+		t.Fatalf("expected exit 1, got %v", err)
+	}
+	want := strings.Join(scopedOperatorActions([]string{
+		"agent-team job doctor --quarantine --dry-run",
+		"agent-team job doctor --json",
+		"agent-team snapshot --json",
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
+	if got := out.String(); got != want {
+		t.Fatalf("doctor --commands output = %q, want %q", got, want)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("doctor --commands should not write problems to stderr: %s", errOut.String())
+	}
+}
+
+func TestDoctorCommandsReportsMissingTeamAction(t *testing.T) {
+	tmp := t.TempDir()
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"doctor", "--target", tmp, "--commands"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected doctor --commands without .agent_team to fail")
+	}
+	var ec ExitCode
+	if !errors.As(err, &ec) || int(ec) != 1 {
+		t.Fatalf("expected exit 1, got %v", err)
+	}
+	wantTarget := tmp
+	if eval, err := filepath.EvalSymlinks(tmp); err == nil {
+		wantTarget = eval
+	}
+	want := strings.Join(shellQuoteArgs([]string{"agent-team", "init", "--target", wantTarget}), " ") + "\n"
+	if got := out.String(); got != want {
+		t.Fatalf("doctor --commands missing-team output = %q, want %q", got, want)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("doctor --commands should not write missing-team problem to stderr: %s", errOut.String())
+	}
+}
+
 func TestDoctorFormatReportsProblems(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "bad")
 
@@ -502,6 +571,8 @@ func TestDoctorFormatValidation(t *testing.T) {
 		want string
 	}{
 		{[]string{"doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
+		{[]string{"doctor", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
 		{[]string{"doctor", "--format", "{{"}, "invalid --format template"},
 	}
 	for _, tc := range cases {

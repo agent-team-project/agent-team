@@ -23,6 +23,7 @@ func newDoctorCmd() *cobra.Command {
 		strictRuntime  bool
 		strictTemplate bool
 		jsonOut        bool
+		commands       bool
 		format         string
 		runtimeKind    string
 		runtimeBinary  string
@@ -40,12 +41,20 @@ func newDoctorCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team doctor: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team doctor: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team doctor: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			tmpl, err := parseDoctorFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team doctor: %v\n", err)
 				return exitErr(2)
 			}
-			return runDoctor(cmd, target, strictDaemon, strictRuntime, strictTemplate, jsonOut, tmpl, runtimeSelection{
+			return runDoctor(cmd, target, strictDaemon, strictRuntime, strictTemplate, jsonOut, commands, tmpl, runtimeSelection{
 				Kind:   runtimeKind,
 				Binary: runtimeBinary,
 			})
@@ -56,13 +65,14 @@ func newDoctorCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when the selected LLM runtime binary or pipeline/team step runtime defaults are not discoverable.")
 	cmd.Flags().BoolVar(&strictTemplate, "strict-template", false, "Fail when .template.lock no longer matches its resolved template ref.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.")
 	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile to validate for this invocation (claude or codex). Overrides env and repo config.")
 	cmd.Flags().StringVar(&runtimeBinary, "runtime-bin", "", "Runtime binary to validate for this invocation. Overrides env and repo config.")
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, strictTemplate, jsonOut bool, tmpl *texttemplate.Template, selection runtimeSelection) error {
+func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, strictTemplate, jsonOut, commands bool, tmpl *texttemplate.Template, selection runtimeSelection) error {
 	target = effectiveRepoTarget(cmd, target)
 	abs, err := filepath.Abs(target)
 	if err != nil {
@@ -75,6 +85,7 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 
 	var problems []string
 	var warnings []string
+	var actions []string
 	daemonHint := "agent-teamd binary not found — install it alongside agent-team (`go install ./cmd/agent-teamd` if building from source) so `start`, `run --detach`, and other daemon-backed lifecycle commands work."
 	if _, err := findAgentTeamd(); err != nil {
 		if strictDaemon {
@@ -85,7 +96,8 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 	}
 	if st, err := os.Stat(teamDir); err != nil || !st.IsDir() {
 		problems = append(problems, fmt.Sprintf("%s not found — run `agent-team init` first.", teamDir))
-		return reportDoctor(cmd, problems, warnings, jsonOut, tmpl)
+		actions = appendDoctorActions(actions, strings.Join(shellQuoteArgs([]string{"agent-team", "init", "--target", abs}), " "))
+		return reportDoctor(cmd, problems, warnings, actions, jsonOut, commands, tmpl, operatorCommandScopeFromCommand(cmd, target, "target"))
 	}
 	if info, err := collectRuntimeInfoForConfigWithSelection(filepath.Join(teamDir, "config.toml"), selection); err != nil {
 		problems = append(problems, err.Error())
@@ -215,6 +227,7 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 		for _, warning := range jobDoctor.Warnings {
 			warnings = append(warnings, "jobs: "+warning.Message)
 		}
+		actions = appendDoctorActions(actions, jobDoctor.Actions...)
 	}
 	if intakeDoctor, err := collectIntakeDoctor(teamDir); err != nil {
 		problems = append(problems, fmt.Sprintf("intake ledger validation failed: %v", err))
@@ -225,6 +238,7 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 		for _, warning := range intakeDoctor.Warnings {
 			warnings = append(warnings, "intake ledger: "+intakeDoctorFindingMessage(warning))
 		}
+		actions = appendDoctorActions(actions, intakeDoctorActions(intakeDoctor)...)
 	}
 	if queueDoctor, err := collectQueueDoctor(teamDir); err != nil {
 		problems = append(problems, fmt.Sprintf("queue validation failed: %v", err))
@@ -235,6 +249,7 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 		for _, warning := range queueDoctor.Warnings {
 			warnings = append(warnings, "queue: "+warning.Message)
 		}
+		actions = appendDoctorActions(actions, queueDoctor.Actions...)
 	}
 	if outboxDoctor, err := collectOutboxDoctor(teamDir); err != nil {
 		problems = append(problems, fmt.Sprintf("outbox validation failed: %v", err))
@@ -245,24 +260,47 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 		for _, warning := range outboxDoctor.Warnings {
 			warnings = append(warnings, "outbox: "+warning.Message)
 		}
+		actions = appendDoctorActions(actions, outboxDoctor.Actions...)
 	}
 	if quarantine, err := listJobQuarantine(teamDir); err != nil {
 		problems = append(problems, fmt.Sprintf("job quarantine validation failed: %v", err))
 	} else if len(quarantine) > 0 {
 		warnings = append(warnings, fmt.Sprintf("job quarantine: %d file(s) preserved under .agent_team/jobs/quarantine — inspect with `agent-team job quarantine`.", len(quarantine)))
+		actions = appendDoctorActions(actions, "agent-team job quarantine")
 	}
 	if quarantine, err := listQueueQuarantine(teamDir); err != nil {
 		problems = append(problems, fmt.Sprintf("queue quarantine validation failed: %v", err))
 	} else if len(quarantine) > 0 {
 		warnings = append(warnings, fmt.Sprintf("queue quarantine: %d file(s) preserved under .agent_team/daemon/queue/quarantine — inspect with `agent-team queue quarantine ls`.", len(quarantine)))
+		actions = appendDoctorActions(actions, "agent-team queue quarantine ls")
 	}
 	if quarantine, err := listOutboxQuarantine(teamDir); err != nil {
 		problems = append(problems, fmt.Sprintf("outbox quarantine validation failed: %v", err))
 	} else if len(quarantine) > 0 {
 		warnings = append(warnings, fmt.Sprintf("outbox quarantine: %d file(s) preserved under .agent_team/outbox/quarantine — inspect with `agent-team outbox quarantine ls`.", len(quarantine)))
+		actions = appendDoctorActions(actions, "agent-team outbox quarantine ls")
 	}
 
-	return reportDoctor(cmd, problems, warnings, jsonOut, tmpl)
+	return reportDoctor(cmd, problems, warnings, actions, jsonOut, commands, tmpl, operatorCommandScopeFromCommand(cmd, target, "target"))
+}
+
+func appendDoctorActions(actions []string, next ...string) []string {
+	seen := make(map[string]struct{}, len(actions)+len(next))
+	for _, action := range actions {
+		seen[strings.TrimSpace(action)] = struct{}{}
+	}
+	for _, action := range next {
+		action = strings.TrimSpace(action)
+		if action == "" {
+			continue
+		}
+		if _, ok := seen[action]; ok {
+			continue
+		}
+		seen[action] = struct{}{}
+		actions = append(actions, action)
+	}
+	return actions
 }
 
 func isPipelineWorkflowFindingCode(code string) bool {
@@ -303,16 +341,27 @@ type doctorResult struct {
 	OK       bool     `json:"ok"`
 	Problems []string `json:"problems,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
+	Actions  []string `json:"actions,omitempty"`
 }
 
-func reportDoctor(cmd *cobra.Command, problems, warnings []string, jsonOut bool, tmpl *texttemplate.Template) error {
+func reportDoctor(cmd *cobra.Command, problems, warnings, actions []string, jsonOut, commands bool, tmpl *texttemplate.Template, scope operatorCommandScope) error {
 	result := doctorResult{
 		OK:       len(problems) == 0,
 		Problems: problems,
 		Warnings: warnings,
+		Actions:  actions,
 	}
 	if jsonOut {
 		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(result); err != nil {
+			return err
+		}
+		if !result.OK {
+			return exitErr(1)
+		}
+		return nil
+	}
+	if commands {
+		if err := renderOperatorActionCommands(cmd.OutOrStdout(), result.Actions, scope); err != nil {
 			return err
 		}
 		if !result.OK {
