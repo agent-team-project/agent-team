@@ -85,11 +85,12 @@ func newPlanCmd() *cobra.Command {
 			result.Instances = filterPlanRowsWithActions(result.Instances, opts, actions)
 			result.Summary = summarizePlanRows(result.Instances)
 			if commands {
+				scope := operatorCommandScopeFromCommand(cmd, target, "target")
 				return renderPlanCommands(cmd.OutOrStdout(), result.Instances, planCommandOptions{
 					BaseArgs:        []string{"agent-team", "sync"},
-					TargetFlag:      "--target",
-					Target:          target,
-					TargetSet:       cmd.Flags().Changed("target"),
+					TargetFlag:      "--repo",
+					Target:          scope.Repo,
+					TargetSet:       scope.Set,
 					DryRun:          true,
 					StopExtras:      stopExtras,
 					StatusFilters:   statusFilters,
@@ -129,7 +130,7 @@ func newPlanCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show plan rows in this work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only show plan rows with this name. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only show plan rows with this action: start, resume, keep, unsupported, on-demand, stop, or extra. Can repeat or comma-separate.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print the matching dry-run sync command when the plan has actionable work.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print the matching dry-run sync command when the plan has actionable work. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan row with a Go template, e.g. '{{.Instance}} {{.Action}}'.")
 	return cmd
 }

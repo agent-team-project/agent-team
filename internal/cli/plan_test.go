@@ -532,9 +532,21 @@ func TestPlanCommandsPrintsFilteredSyncPreview(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("plan --commands: %v\nstderr: %s", err, stderr.String())
 	}
-	want := "agent-team sync --target " + tmp + " --dry-run --stop-extras --runtime codex --action stop"
+	want := "agent-team sync --repo " + tmp + " --dry-run --stop-extras --runtime codex --action stop"
 	if got := strings.TrimSpace(out.String()); got != want {
 		t.Fatalf("plan --commands = %q, want %q", got, want)
+	}
+
+	rootScoped := NewRootCmd()
+	rootScopedOut, rootScopedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	rootScoped.SetOut(rootScopedOut)
+	rootScoped.SetErr(rootScopedErr)
+	rootScoped.SetArgs([]string{"--repo", tmp, "plan", "--stop-extras", "--runtime", "codex", "--action", "stop", "--commands"})
+	if err := rootScoped.Execute(); err != nil {
+		t.Fatalf("plan root --repo --commands: %v\nstderr: %s", err, rootScopedErr.String())
+	}
+	if got := strings.TrimSpace(rootScopedOut.String()); got != want {
+		t.Fatalf("plan root --repo --commands = %q, want %q", got, want)
 	}
 
 	noAction := NewRootCmd()
