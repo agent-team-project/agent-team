@@ -80,6 +80,12 @@ func TestOutboxListShowRetryDrop(t *testing.T) {
 		t.Fatalf("outbox show --commands = %q, want %q", got, want)
 	}
 
+	retryCommand := runRootForOutboxTest(t, "outbox", "retry", "--target", target, "outbox-b", "--dry-run", "--commands")
+	wantRetryCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "outbox", "retry", "outbox-b", "--target", target}), " ")
+	if got := strings.TrimSpace(retryCommand.String()); got != wantRetryCommand {
+		t.Fatalf("outbox retry --commands = %q, want %q", got, wantRetryCommand)
+	}
+
 	retry := runRootForOutboxTest(t, "outbox", "retry", "--target", target, "outbox-b", "--json")
 	var retryRows []outboxActionResult
 	if err := json.Unmarshal(retry.Bytes(), &retryRows); err != nil {
@@ -138,6 +144,12 @@ func TestOutboxListShowRetryDrop(t *testing.T) {
 		UpdatedAt: now.Add(4 * time.Minute),
 	})
 
+	retryAllCommand := runRootForOutboxTest(t, "outbox", "retry", "--target", target, "--all", "--source", "manager", "--sort", "id", "--limit", "1", "--dry-run", "--commands")
+	wantRetryAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "outbox", "retry", "--target", target, "--all", "--source", "manager", "--sort", "id", "--limit", "1"}), " ")
+	if got := strings.TrimSpace(retryAllCommand.String()); got != wantRetryAllCommand {
+		t.Fatalf("outbox retry --all --commands = %q, want %q", got, wantRetryAllCommand)
+	}
+
 	retryAll := runRootForOutboxTest(t, "outbox", "retry", "--target", target, "--all", "--source", "manager", "--sort", "id", "--limit", "1", "--json")
 	var retryAllRows []outboxActionResult
 	if err := json.Unmarshal(retryAll.Bytes(), &retryAllRows); err != nil {
@@ -153,6 +165,12 @@ func TestOutboxListShowRetryDrop(t *testing.T) {
 	processed, err := daemon.ReadOutboxItem(teamDir, "outbox-e")
 	if err != nil || processed.State != daemon.OutboxStateProcessed {
 		t.Fatalf("retry all changed processed item=%+v err=%v", processed, err)
+	}
+
+	dropAllCommand := runRootForOutboxTest(t, "outbox", "drop", "--target", target, "--all", "--state", "failed", "--job", "SQU-504", "--sort", "id", "--dry-run", "--commands")
+	wantDropAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "outbox", "drop", "--target", target, "--all", "--state", "failed", "--job", "SQU-504", "--sort", "id"}), " ")
+	if got := strings.TrimSpace(dropAllCommand.String()); got != wantDropAllCommand {
+		t.Fatalf("outbox drop --all --commands = %q, want %q", got, wantDropAllCommand)
 	}
 
 	dropAllDryRun := runRootForOutboxTest(t, "outbox", "drop", "--target", target, "--all", "--state", "failed", "--job", "SQU-504", "--sort", "id", "--dry-run", "--json")
@@ -370,6 +388,12 @@ func TestOutboxPruneLocal(t *testing.T) {
 		t.Fatalf("dry-run removed processed old: %v", err)
 	}
 
+	pruneCommand := runRootForOutboxTest(t, "outbox", "prune", "--target", target, "--older-than", "24h", "--limit", "1", "--dry-run", "--commands")
+	wantPruneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "outbox", "prune", "--target", target, "--limit", "1", "--older-than", "24h0m0s"}), " ")
+	if got := strings.TrimSpace(pruneCommand.String()); got != wantPruneCommand {
+		t.Fatalf("outbox prune --commands = %q, want %q", got, wantPruneCommand)
+	}
+
 	pruned := runRootForOutboxTest(t, "outbox", "prune", "--target", target, "--older-than", "24h", "--format", "{{.ID}} {{.State}} {{.Dropped}}")
 	if got, want := strings.TrimSpace(pruned.String()), "outbox-processed-old processed true\noutbox-processed-mid processed true"; got != want {
 		t.Fatalf("prune output = %q, want %q", got, want)
@@ -398,6 +422,56 @@ func TestOutboxPruneLocal(t *testing.T) {
 	}
 	if _, err := daemon.ReadOutboxItem(teamDir, "outbox-pending-old"); err != nil {
 		t.Fatalf("pending item should remain after failed prune: %v", err)
+	}
+}
+
+func TestOutboxRecoveryCommandsRejectInvalidCombinations(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "global retry commands requires dry run",
+			args: []string{"outbox", "retry", "missing", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "global drop commands rejects json",
+			args: []string{"outbox", "drop", "missing", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "global prune commands rejects format",
+			args: []string{"outbox", "prune", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "job retry commands requires dry run",
+			args: []string{"job", "outbox", "retry", "squ-1", "missing", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "pipeline drop commands rejects json",
+			args: []string{"pipeline", "outbox", "drop", "ticket_to_pr", "missing", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "team prune commands rejects format",
+			args: []string{"team", "outbox", "prune", "delivery", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, stderr, err := runRootForOutboxTestErr(t, tt.args...)
+			if err == nil {
+				t.Fatalf("agent-team %s succeeded", strings.Join(tt.args, " "))
+			}
+			if !strings.Contains(stderr.String(), tt.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tt.want)
+			}
+		})
 	}
 }
 
@@ -832,10 +906,22 @@ pipelines = ["ops_review"]
 		t.Fatalf("job prune dry-run rows = %+v", dryJobRows)
 	}
 
+	jobPruneCommand := runRootForOutboxTest(t, "job", "outbox", "prune", "squ-905", "--repo", root, "--older-than", "24h", "--dry-run", "--commands")
+	wantJobPruneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "outbox", "prune", "squ-905", "--repo", root, "--older-than", "24h0m0s"}), " ")
+	if got := strings.TrimSpace(jobPruneCommand.String()); got != wantJobPruneCommand {
+		t.Fatalf("job outbox prune --commands = %q, want %q", got, wantJobPruneCommand)
+	}
+
 	jobPrune := runRootForOutboxTest(t, "job", "outbox", "prune", "squ-905", "--repo", root, "--older-than", "24h", "--format", "{{.ID}} {{.Dropped}}")
 	if got, want := strings.TrimSpace(jobPrune.String()), "outbox-job-prune true"; got != want {
 		t.Fatalf("job prune output = %q, want %q", got, want)
 	}
+	pipelinePruneCommand := runRootForOutboxTest(t, "pipeline", "outbox", "prune", "ticket_to_pr", "--repo", root, "--older-than", "24h", "--job", "SQU-906", "--dry-run", "--commands")
+	wantPipelinePruneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "outbox", "prune", "ticket_to_pr", "--repo", root, "--job", "SQU-906", "--older-than", "24h0m0s"}), " ")
+	if got := strings.TrimSpace(pipelinePruneCommand.String()); got != wantPipelinePruneCommand {
+		t.Fatalf("pipeline outbox prune --commands = %q, want %q", got, wantPipelinePruneCommand)
+	}
+
 	pipelinePrune := runRootForOutboxTest(t, "pipeline", "outbox", "prune", "ticket_to_pr", "--repo", root, "--older-than", "24h", "--job", "SQU-906", "--json")
 	var pipelineRows []outboxPruneResult
 	if err := json.Unmarshal(pipelinePrune.Bytes(), &pipelineRows); err != nil {
@@ -844,6 +930,12 @@ pipelines = ["ops_review"]
 	if len(pipelineRows) != 1 || pipelineRows[0].ID != "outbox-pipeline-prune" || !pipelineRows[0].Dropped {
 		t.Fatalf("pipeline prune rows = %+v", pipelineRows)
 	}
+	teamPruneCommand := runRootForOutboxTest(t, "team", "outbox", "prune", "delivery", "--repo", root, "--older-than", "24h", "--job", "SQU-907", "--dry-run", "--commands")
+	wantTeamPruneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "outbox", "prune", "delivery", "--repo", root, "--job", "SQU-907", "--older-than", "24h0m0s"}), " ")
+	if got := strings.TrimSpace(teamPruneCommand.String()); got != wantTeamPruneCommand {
+		t.Fatalf("team outbox prune --commands = %q, want %q", got, wantTeamPruneCommand)
+	}
+
 	teamPrune := runRootForOutboxTest(t, "team", "outbox", "prune", "delivery", "--repo", root, "--older-than", "24h", "--job", "SQU-907", "--json")
 	var teamRows []outboxPruneResult
 	if err := json.Unmarshal(teamPrune.Bytes(), &teamRows); err != nil {
@@ -1035,6 +1127,12 @@ instances = ["other"]
 		t.Fatalf("team outbox show --commands = %q, want %q", got, want)
 	}
 
+	retryCommand := runRootForOutboxTest(t, "team", "outbox", "retry", "delivery", "outbox-delivery-failed", "--repo", root, "--dry-run", "--commands")
+	wantRetryCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "outbox", "retry", "delivery", "outbox-delivery-failed", "--repo", root}), " ")
+	if got := strings.TrimSpace(retryCommand.String()); got != wantRetryCommand {
+		t.Fatalf("team outbox retry --commands = %q, want %q", got, wantRetryCommand)
+	}
+
 	retry := runRootForOutboxTest(t, "team", "outbox", "retry", "delivery", "outbox-delivery-failed", "--repo", root, "--dry-run", "--json")
 	var retryRows []outboxActionResult
 	if err := json.Unmarshal(retry.Bytes(), &retryRows); err != nil {
@@ -1060,6 +1158,12 @@ instances = ["other"]
 		t.Fatalf("dry-run drop removed item: %v", err)
 	}
 
+	retryAllCommand := runRootForOutboxTest(t, "team", "outbox", "retry", "delivery", "--repo", root, "--all", "--sort", "id", "--dry-run", "--commands")
+	wantRetryAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "outbox", "retry", "delivery", "--repo", root, "--all", "--sort", "id"}), " ")
+	if got := strings.TrimSpace(retryAllCommand.String()); got != wantRetryAllCommand {
+		t.Fatalf("team outbox retry --all --commands = %q, want %q", got, wantRetryAllCommand)
+	}
+
 	retryAll := runRootForOutboxTest(t, "team", "outbox", "retry", "delivery", "--repo", root, "--all", "--sort", "id", "--json")
 	var retryAllRows []outboxActionResult
 	if err := json.Unmarshal(retryAll.Bytes(), &retryAllRows); err != nil {
@@ -1071,6 +1175,12 @@ instances = ["other"]
 	retriedTeamItem, err := daemon.ReadOutboxItem(teamDir, "outbox-delivery-failed")
 	if err != nil || retriedTeamItem.State != daemon.OutboxStatePending {
 		t.Fatalf("team retry all changed item=%+v err=%v", retriedTeamItem, err)
+	}
+
+	dropAllCommand := runRootForOutboxTest(t, "team", "outbox", "drop", "delivery", "--repo", root, "--all", "--state", "pending", "--job", "SQU-901", "--sort", "id", "--limit", "1", "--dry-run", "--commands")
+	wantDropAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "outbox", "drop", "delivery", "--repo", root, "--all", "--state", "pending", "--job", "SQU-901", "--sort", "id", "--limit", "1"}), " ")
+	if got := strings.TrimSpace(dropAllCommand.String()); got != wantDropAllCommand {
+		t.Fatalf("team outbox drop --all --commands = %q, want %q", got, wantDropAllCommand)
 	}
 
 	dropAll := runRootForOutboxTest(t, "team", "outbox", "drop", "delivery", "--repo", root, "--all", "--state", "pending", "--job", "SQU-901", "--sort", "id", "--limit", "1", "--dry-run", "--json")
@@ -1413,6 +1523,12 @@ target = "worker"
 		t.Fatalf("pipeline outbox show --commands = %q, want %q", got, want)
 	}
 
+	retryCommand := runRootForOutboxTest(t, "pipeline", "outbox", "retry", "ticket_to_pr", "outbox-ticket-failed", "--repo", root, "--dry-run", "--commands")
+	wantRetryCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "outbox", "retry", "ticket_to_pr", "outbox-ticket-failed", "--repo", root}), " ")
+	if got := strings.TrimSpace(retryCommand.String()); got != wantRetryCommand {
+		t.Fatalf("pipeline outbox retry --commands = %q, want %q", got, wantRetryCommand)
+	}
+
 	retry := runRootForOutboxTest(t, "pipeline", "outbox", "retry", "ticket_to_pr", "outbox-ticket-failed", "--repo", root, "--dry-run", "--json")
 	var retryRows []outboxActionResult
 	if err := json.Unmarshal(retry.Bytes(), &retryRows); err != nil {
@@ -1438,6 +1554,12 @@ target = "worker"
 		t.Fatalf("dry-run drop removed item: %v", err)
 	}
 
+	retryAllCommand := runRootForOutboxTest(t, "pipeline", "outbox", "retry", "ticket_to_pr", "--repo", root, "--all", "--sort", "id", "--dry-run", "--commands")
+	wantRetryAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "outbox", "retry", "ticket_to_pr", "--repo", root, "--all", "--sort", "id"}), " ")
+	if got := strings.TrimSpace(retryAllCommand.String()); got != wantRetryAllCommand {
+		t.Fatalf("pipeline outbox retry --all --commands = %q, want %q", got, wantRetryAllCommand)
+	}
+
 	retryAll := runRootForOutboxTest(t, "pipeline", "outbox", "retry", "ticket_to_pr", "--repo", root, "--all", "--sort", "id", "--json")
 	var retryAllRows []outboxActionResult
 	if err := json.Unmarshal(retryAll.Bytes(), &retryAllRows); err != nil {
@@ -1449,6 +1571,12 @@ target = "worker"
 	retriedPipelineItem, err := daemon.ReadOutboxItem(teamDir, "outbox-ticket-failed")
 	if err != nil || retriedPipelineItem.State != daemon.OutboxStatePending {
 		t.Fatalf("pipeline retry all changed item=%+v err=%v", retriedPipelineItem, err)
+	}
+
+	dropAllCommand := runRootForOutboxTest(t, "pipeline", "outbox", "drop", "ticket_to_pr", "--repo", root, "--all", "--state", "pending", "--job", "SQU-902", "--sort", "id", "--limit", "1", "--dry-run", "--commands")
+	wantDropAllCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "outbox", "drop", "ticket_to_pr", "--repo", root, "--all", "--state", "pending", "--job", "SQU-902", "--sort", "id", "--limit", "1"}), " ")
+	if got := strings.TrimSpace(dropAllCommand.String()); got != wantDropAllCommand {
+		t.Fatalf("pipeline outbox drop --all --commands = %q, want %q", got, wantDropAllCommand)
 	}
 
 	dropAll := runRootForOutboxTest(t, "pipeline", "outbox", "drop", "ticket_to_pr", "--repo", root, "--all", "--state", "pending", "--job", "SQU-902", "--sort", "id", "--limit", "1", "--dry-run", "--json")
@@ -1753,6 +1881,12 @@ func TestJobOutboxScopesItemsAndActions(t *testing.T) {
 		t.Fatalf("job outbox show --commands = %q, want %q", got, want)
 	}
 
+	retryCommand := runRootForOutboxTest(t, "job", "outbox", "retry", "squ-903", "outbox-job-failed", "--repo", root, "--dry-run", "--commands")
+	wantRetryCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "outbox", "retry", "squ-903", "outbox-job-failed", "--repo", root}), " ")
+	if got := strings.TrimSpace(retryCommand.String()); got != wantRetryCommand {
+		t.Fatalf("job outbox retry --commands = %q, want %q", got, wantRetryCommand)
+	}
+
 	retry := runRootForOutboxTest(t, "job", "outbox", "retry", "squ-903", "outbox-job-failed", "--repo", root, "--dry-run", "--json")
 	var retryRows []outboxActionResult
 	if err := json.Unmarshal(retry.Bytes(), &retryRows); err != nil {
@@ -1776,6 +1910,12 @@ func TestJobOutboxScopesItemsAndActions(t *testing.T) {
 	}
 	if _, err := daemon.ReadOutboxItem(teamDir, "outbox-job-pending"); err != nil {
 		t.Fatalf("dry-run drop removed item: %v", err)
+	}
+
+	dropCommand := runRootForOutboxTest(t, "job", "outbox", "drop", "squ-903", "outbox-job-pending", "--repo", root, "--dry-run", "--commands")
+	wantDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "outbox", "drop", "squ-903", "outbox-job-pending", "--repo", root}), " ")
+	if got := strings.TrimSpace(dropCommand.String()); got != wantDropCommand {
+		t.Fatalf("job outbox drop --commands = %q, want %q", got, wantDropCommand)
 	}
 
 	_, stderr, err := runRootForOutboxTestErr(t, "job", "outbox", "show", "squ-903", "outbox-other-pending", "--repo", root)
@@ -1873,6 +2013,12 @@ func TestJobOutboxRetryDropAllScopesAndFilters(t *testing.T) {
 		t.Fatalf("dry-run retry changed item=%+v err=%v", stillFailed, err)
 	}
 
+	retryCommand := runRootForOutboxTest(t, "job", "outbox", "retry", "squ-904", "--repo", root, "--all", "--source", "manager", "--sort", "id", "--limit", "1", "--dry-run", "--commands")
+	wantRetryCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "outbox", "retry", "squ-904", "--repo", root, "--all", "--source", "manager", "--sort", "id", "--limit", "1"}), " ")
+	if got := strings.TrimSpace(retryCommand.String()); got != wantRetryCommand {
+		t.Fatalf("job outbox retry --all --commands = %q, want %q", got, wantRetryCommand)
+	}
+
 	retry := runRootForOutboxTest(t, "job", "outbox", "retry", "squ-904", "--repo", root, "--all", "--sort", "id", "--json")
 	var retryRows []outboxActionResult
 	if err := json.Unmarshal(retry.Bytes(), &retryRows); err != nil {
@@ -1890,6 +2036,12 @@ func TestJobOutboxRetryDropAllScopesAndFilters(t *testing.T) {
 	other, err := daemon.ReadOutboxItem(teamDir, "outbox-batch-other")
 	if err != nil || other.State != daemon.OutboxStateFailed {
 		t.Fatalf("other job item changed=%+v err=%v", other, err)
+	}
+
+	dropCommand := runRootForOutboxTest(t, "job", "outbox", "drop", "squ-904", "--repo", root, "--all", "--state", "pending", "--sort", "id", "--limit", "2", "--dry-run", "--commands")
+	wantDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "outbox", "drop", "squ-904", "--repo", root, "--all", "--state", "pending", "--sort", "id", "--limit", "2"}), " ")
+	if got := strings.TrimSpace(dropCommand.String()); got != wantDropCommand {
+		t.Fatalf("job outbox drop --all --commands = %q, want %q", got, wantDropCommand)
 	}
 
 	drop := runRootForOutboxTest(t, "job", "outbox", "drop", "squ-904", "--repo", root, "--all", "--state", "pending", "--sort", "id", "--limit", "2", "--json")

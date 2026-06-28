@@ -2372,6 +2372,7 @@ Flags:
 
 ```text
       --all              Drop all matching job-owned outbox events instead of one id.
+      --commands         With --dry-run, print the matching job outbox drop apply command when the preview has actionable work.
       --dry-run          Preview the drop without removing the event.
       --format string    Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --json             Emit machine-readable JSON.
@@ -2396,6 +2397,7 @@ agent-team job outbox prune <job-id> [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching job outbox prune apply command when the preview has actionable work.
       --dry-run               Preview job-owned outbox events that would be pruned without dropping them.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.Dropped}}'.
       --json                  Emit prune results as JSON.
@@ -2526,6 +2528,7 @@ Flags:
 
 ```text
       --all              Retry all matching job-owned outbox events instead of one id.
+      --commands         With --dry-run, print the matching job outbox retry apply command when the preview has actionable work.
       --dry-run          Preview the retry without moving the event.
       --format string    Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --json             Emit machine-readable JSON.
@@ -3780,6 +3783,7 @@ Flags:
 
 ```text
       --all              Drop all matching outbox events instead of one id.
+      --commands         With --dry-run, print the matching drop apply command when the preview has actionable work.
       --dry-run          Preview the drop without removing the event.
       --format string    Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.
@@ -3845,6 +3849,7 @@ agent-team outbox prune [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching prune apply command when the preview has actionable work.
       --dry-run               Preview outbox events that would be pruned without dropping them.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.Dropped}}'.
       --job strings           Filter by job id or ticket before pruning; repeat or comma-separate values.
@@ -4024,6 +4029,7 @@ Flags:
 
 ```text
       --all              Retry all matching outbox events instead of one id.
+      --commands         With --dry-run, print the matching retry apply command when the preview has actionable work.
       --dry-run          Preview the retry without moving the event.
       --format string    Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.
@@ -4622,6 +4628,7 @@ Flags:
 
 ```text
       --all              Drop all matching pipeline-owned outbox events instead of one id.
+      --commands         With --dry-run, print the matching pipeline outbox drop apply command when the preview has actionable work.
       --dry-run          Preview the drop without removing the event.
       --format string    Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.
@@ -4647,6 +4654,7 @@ agent-team pipeline outbox prune <pipeline> [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching pipeline outbox prune apply command when the preview has actionable work.
       --dry-run               Preview pipeline-owned outbox events that would be pruned without dropping them.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.Dropped}}'.
       --job strings           Filter by job id or ticket before pruning; repeat or comma-separate values.
@@ -4782,6 +4790,7 @@ Flags:
 
 ```text
       --all              Retry all matching pipeline-owned outbox events instead of one id.
+      --commands         With --dry-run, print the matching pipeline outbox retry apply command when the preview has actionable work.
       --dry-run          Preview the retry without moving the event.
       --format string    Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.
@@ -7702,6 +7711,7 @@ Flags:
 
 ```text
       --all              Drop all matching team-owned outbox events instead of one id.
+      --commands         With --dry-run, print the matching team outbox drop apply command when the preview has actionable work.
       --dry-run          Preview the drop without removing the event.
       --format string    Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.
@@ -7727,6 +7737,7 @@ agent-team team outbox prune <team> [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching team outbox prune apply command when the preview has actionable work.
       --dry-run               Preview team-owned outbox events that would be pruned without dropping them.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.Dropped}}'.
       --job strings           Filter by job id or ticket before pruning; repeat or comma-separate values.
@@ -7861,6 +7872,7 @@ Flags:
 
 ```text
       --all              Retry all matching team-owned outbox events instead of one id.
+      --commands         With --dry-run, print the matching team outbox retry apply command when the preview has actionable work.
       --dry-run          Preview the retry without moving the event.
       --format string    Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
       --job strings      With --all, filter by job id or ticket; repeat or comma-separate values.

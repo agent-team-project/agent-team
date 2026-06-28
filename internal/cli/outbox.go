@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"text/template"
@@ -263,6 +264,7 @@ func newOutboxRetryCmd() *cobra.Command {
 		format      string
 		retryAll    bool
 		dryRun      bool
+		commands    bool
 		stateFilter string
 		types       []string
 		sources     []string
@@ -278,6 +280,18 @@ func newOutboxRetryCmd() *cobra.Command {
 		Long:    "Move one processed or failed outbox event back to pending by id, or retry a filtered batch with --all. Batch retries default to failed events.",
 		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox retry: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox retry: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox retry: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox retry: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -314,6 +328,26 @@ func newOutboxRetryCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				if commands {
+					results, err := outboxRetryAllResults(teamDir, filters, outboxListOptions{Sort: sortMode, Limit: limit}, true)
+					if err != nil {
+						return err
+					}
+					return renderOutboxApplyCommand(cmd.OutOrStdout(), outboxActionResultsHaveDryRunAction(results, "would_retry"), outboxApplyCommandOptions{
+						BaseArgs:  []string{"agent-team", "outbox", "retry"},
+						Target:    target,
+						TargetSet: cmd.Flags().Changed("target"),
+						All:       true,
+						State:     stateFilter,
+						StateSet:  cmd.Flags().Changed("state"),
+						Types:     types,
+						Sources:   sources,
+						Jobs:      jobs,
+						Sort:      sortBy,
+						SortSet:   cmd.Flags().Changed("sort"),
+						Limit:     limit,
+					})
+				}
 				return runOutboxRetryAll(cmd.OutOrStdout(), teamDir, filters, outboxListOptions{Sort: sortMode, Limit: limit}, dryRun, jsonOut, tmpl)
 			}
 			if len(args) != 1 {
@@ -327,6 +361,16 @@ func newOutboxRetryCmd() *cobra.Command {
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
+			}
+			if commands {
+				if _, err := daemon.ReadOutboxItem(teamDir, args[0]); err != nil {
+					return outboxReadError(args[0], err)
+				}
+				return renderOutboxApplyCommand(cmd.OutOrStdout(), true, outboxApplyCommandOptions{
+					BaseArgs:  []string{"agent-team", "outbox", "retry", args[0]},
+					Target:    target,
+					TargetSet: cmd.Flags().Changed("target"),
+				})
 			}
 			result, err := retryOutboxItem(teamDir, args[0], dryRun)
 			if err != nil {
@@ -344,6 +388,7 @@ func newOutboxRetryCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
 	cmd.Flags().StringVar(&sortBy, "sort", "state", "With --all, sort matching outbox events before limiting: state, id, type, source, job, created, updated, or error.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, retry at most this many matching outbox events; 0 means no limit.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching retry apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	return cmd
@@ -356,6 +401,7 @@ func newOutboxDropCmd() *cobra.Command {
 		format      string
 		dropAll     bool
 		dryRun      bool
+		commands    bool
 		stateFilter string
 		types       []string
 		sources     []string
@@ -370,6 +416,18 @@ func newOutboxDropCmd() *cobra.Command {
 		Long:  "Remove one outbox event by id, or drop a filtered batch with --all. Batch drops default to failed events.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox drop: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox drop: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox drop: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox drop: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -406,6 +464,26 @@ func newOutboxDropCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				if commands {
+					results, err := outboxDropAllResults(teamDir, filters, outboxListOptions{Sort: sortMode, Limit: limit}, true)
+					if err != nil {
+						return err
+					}
+					return renderOutboxApplyCommand(cmd.OutOrStdout(), outboxActionResultsHaveDryRunAction(results, "would_drop"), outboxApplyCommandOptions{
+						BaseArgs:  []string{"agent-team", "outbox", "drop"},
+						Target:    target,
+						TargetSet: cmd.Flags().Changed("target"),
+						All:       true,
+						State:     stateFilter,
+						StateSet:  cmd.Flags().Changed("state"),
+						Types:     types,
+						Sources:   sources,
+						Jobs:      jobs,
+						Sort:      sortBy,
+						SortSet:   cmd.Flags().Changed("sort"),
+						Limit:     limit,
+					})
+				}
 				return runOutboxDropAll(cmd.OutOrStdout(), teamDir, filters, outboxListOptions{Sort: sortMode, Limit: limit}, dryRun, jsonOut, tmpl)
 			}
 			if len(args) != 1 {
@@ -419,6 +497,16 @@ func newOutboxDropCmd() *cobra.Command {
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
+			}
+			if commands {
+				if _, err := daemon.ReadOutboxItem(teamDir, args[0]); err != nil {
+					return outboxReadError(args[0], err)
+				}
+				return renderOutboxApplyCommand(cmd.OutOrStdout(), true, outboxApplyCommandOptions{
+					BaseArgs:  []string{"agent-team", "outbox", "drop", args[0]},
+					Target:    target,
+					TargetSet: cmd.Flags().Changed("target"),
+				})
 			}
 			result, err := dropOutboxItem(teamDir, args[0], dryRun)
 			if err != nil {
@@ -436,6 +524,7 @@ func newOutboxDropCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
 	cmd.Flags().StringVar(&sortBy, "sort", "state", "With --all, sort matching outbox events before limiting: state, id, type, source, job, created, updated, or error.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, drop at most this many matching outbox events; 0 means no limit.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching drop apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	return cmd
@@ -447,6 +536,7 @@ func newOutboxPruneCmd() *cobra.Command {
 		stateFlag string
 		olderThan time.Duration
 		dryRun    bool
+		commands  bool
 		jsonOut   bool
 		format    string
 		types     []string
@@ -461,6 +551,18 @@ func newOutboxPruneCmd() *cobra.Command {
 		Long:  "Prune old sandboxed agent outbox events. By default this removes processed events; pass --state failed, pending, or all for explicit cleanup.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox prune: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox prune: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox prune: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox prune: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -492,6 +594,25 @@ func newOutboxPruneCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if commands {
+				results, err := pruneOutboxItems(teamDir, state, olderThan, time.Now().UTC(), true, filters, limit)
+				if err != nil {
+					return err
+				}
+				return renderOutboxApplyCommand(cmd.OutOrStdout(), outboxPruneResultsHaveDryRunAction(results), outboxApplyCommandOptions{
+					BaseArgs:     []string{"agent-team", "outbox", "prune"},
+					Target:       target,
+					TargetSet:    cmd.Flags().Changed("target"),
+					State:        stateFlag,
+					StateSet:     cmd.Flags().Changed("state"),
+					Types:        types,
+					Sources:      sources,
+					Jobs:         jobs,
+					Limit:        limit,
+					OlderThan:    olderThan,
+					OlderThanSet: cmd.Flags().Changed("older-than"),
+				})
+			}
 			results, err := pruneOutboxItems(teamDir, state, olderThan, time.Now().UTC(), dryRun, filters, limit)
 			if err != nil {
 				return err
@@ -507,6 +628,7 @@ func newOutboxPruneCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "Filter by job id or ticket before pruning; repeat or comma-separate values.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Prune at most this many matching outbox events; 0 means no limit.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview outbox events that would be pruned without dropping them.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching prune apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit prune results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each prune result with a Go template, e.g. '{{.ID}} {{.Dropped}}'.")
 	return cmd
@@ -544,6 +666,25 @@ type outboxPruneResult struct {
 	Reference time.Time `json:"reference_time"`
 	DryRun    bool      `json:"dry_run,omitempty"`
 	Dropped   bool      `json:"dropped"`
+}
+
+type outboxApplyCommandOptions struct {
+	BaseArgs     []string
+	Repo         string
+	RepoSet      bool
+	Target       string
+	TargetSet    bool
+	All          bool
+	State        string
+	StateSet     bool
+	Types        []string
+	Sources      []string
+	Jobs         []string
+	Sort         string
+	SortSet      bool
+	Limit        int
+	OlderThan    time.Duration
+	OlderThanSet bool
 }
 
 func parseOutboxFilters(state string, types, sources, jobs []string) (outboxListFilters, error) {
@@ -671,27 +812,35 @@ func runOutboxListWatch(ctx context.Context, w io.Writer, teamDir string, filter
 }
 
 func runOutboxRetryAll(w io.Writer, teamDir string, filters outboxListFilters, opts outboxListOptions, dryRun, jsonOut bool, tmpl *template.Template) error {
-	matches, err := filteredOutboxActionItems(teamDir, filters, opts)
-	if err != nil {
-		return err
-	}
-	results, err := retryOutboxItemMatches(teamDir, matches, dryRun)
+	results, err := outboxRetryAllResults(teamDir, filters, opts, dryRun)
 	if err != nil {
 		return err
 	}
 	return renderOutboxActionResults(w, results, jsonOut, tmpl)
 }
 
-func runOutboxDropAll(w io.Writer, teamDir string, filters outboxListFilters, opts outboxListOptions, dryRun, jsonOut bool, tmpl *template.Template) error {
+func outboxRetryAllResults(teamDir string, filters outboxListFilters, opts outboxListOptions, dryRun bool) ([]outboxActionResult, error) {
 	matches, err := filteredOutboxActionItems(teamDir, filters, opts)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	results, err := dropOutboxItemMatches(teamDir, matches, dryRun)
+	return retryOutboxItemMatches(teamDir, matches, dryRun)
+}
+
+func runOutboxDropAll(w io.Writer, teamDir string, filters outboxListFilters, opts outboxListOptions, dryRun, jsonOut bool, tmpl *template.Template) error {
+	results, err := outboxDropAllResults(teamDir, filters, opts, dryRun)
 	if err != nil {
 		return err
 	}
 	return renderOutboxActionResults(w, results, jsonOut, tmpl)
+}
+
+func outboxDropAllResults(teamDir string, filters outboxListFilters, opts outboxListOptions, dryRun bool) ([]outboxActionResult, error) {
+	matches, err := filteredOutboxActionItems(teamDir, filters, opts)
+	if err != nil {
+		return nil, err
+	}
+	return dropOutboxItemMatches(teamDir, matches, dryRun)
 }
 
 func filteredOutboxActionItems(teamDir string, filters outboxListFilters, opts outboxListOptions) ([]*daemon.OutboxItem, error) {
@@ -1196,6 +1345,61 @@ func renderOutboxPruneResults(w io.Writer, results []outboxPruneResult, jsonOut 
 	}
 	renderOutboxPruneTable(w, results)
 	return nil
+}
+
+func renderOutboxApplyCommand(w io.Writer, hasAction bool, opts outboxApplyCommandOptions) error {
+	if !hasAction {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(outboxApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func outboxApplyCommandArgs(opts outboxApplyCommandOptions) []string {
+	args := append([]string{}, opts.BaseArgs...)
+	if opts.RepoSet {
+		args = append(args, "--repo", opts.Repo)
+	}
+	if opts.TargetSet {
+		args = append(args, "--target", opts.Target)
+	}
+	if opts.All {
+		args = append(args, "--all")
+	}
+	if opts.StateSet && strings.TrimSpace(opts.State) != "" {
+		args = append(args, "--state", opts.State)
+	}
+	args = appendRepeatedQueueFlag(args, "--type", opts.Types)
+	args = appendRepeatedQueueFlag(args, "--source", opts.Sources)
+	args = appendRepeatedQueueFlag(args, "--job", opts.Jobs)
+	if opts.SortSet && strings.TrimSpace(opts.Sort) != "" {
+		args = append(args, "--sort", opts.Sort)
+	}
+	if opts.Limit > 0 {
+		args = append(args, "--limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.OlderThanSet {
+		args = append(args, "--older-than", opts.OlderThan.String())
+	}
+	return args
+}
+
+func outboxActionResultsHaveDryRunAction(results []outboxActionResult, action string) bool {
+	for _, result := range results {
+		if result.DryRun && result.Action == action {
+			return true
+		}
+	}
+	return false
+}
+
+func outboxPruneResultsHaveDryRunAction(results []outboxPruneResult) bool {
+	for _, result := range results {
+		if result.DryRun && !result.Dropped {
+			return true
+		}
+	}
+	return false
 }
 
 func renderOutboxPruneTable(w io.Writer, results []outboxPruneResult) {
