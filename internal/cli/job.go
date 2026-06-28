@@ -2157,6 +2157,7 @@ func newJobBlockCmd() *cobra.Command {
 		message     string
 		messageFile string
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -2170,6 +2171,18 @@ func newJobBlockCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job block: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job block: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job block: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job block: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			tmpl, err := parseJobFormat(format)
@@ -2191,6 +2204,20 @@ func newJobBlockCmd() *cobra.Command {
 			j.LastStatus = reason
 			j.UpdatedAt = time.Now().UTC()
 			if dryRun {
+				if commands {
+					return renderJobBlockApplyCommand(cmd.OutOrStdout(), true, jobBlockApplyCommandOptions{
+						JobID:             j.ID,
+						Repo:              repo,
+						RepoSet:           cmd.Flags().Changed("repo"),
+						Actor:             actor,
+						ActorSet:          cmd.Flags().Changed("actor"),
+						Message:           message,
+						MessageSet:        cmd.Flags().Changed("message"),
+						MessageFile:       messageFile,
+						MessageFileSet:    cmd.Flags().Changed("message-file"),
+						PositionalMessage: args[1:],
+					})
+				}
 				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
 			blockActor := strings.TrimSpace(actor)
@@ -2208,6 +2235,7 @@ func newJobBlockCmd() *cobra.Command {
 	cmd.Flags().StringVar(&message, "message", "", "Blocked reason recorded on the job.")
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read blocked reason from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the blocked job without changing job state or writing an audit event.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching job block apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job or dry-run preview as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or dry-run preview with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
@@ -12888,6 +12916,47 @@ type jobSendApplyCommandOptions struct {
 	MessageFile       string
 	MessageFileSet    bool
 	PositionalMessage []string
+}
+
+type jobBlockApplyCommandOptions struct {
+	JobID             string
+	Repo              string
+	RepoSet           bool
+	Actor             string
+	ActorSet          bool
+	Message           string
+	MessageSet        bool
+	MessageFile       string
+	MessageFileSet    bool
+	PositionalMessage []string
+}
+
+func renderJobBlockApplyCommand(w io.Writer, hasAction bool, opts jobBlockApplyCommandOptions) error {
+	if !hasAction {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(jobBlockApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func jobBlockApplyCommandArgs(opts jobBlockApplyCommandOptions) []string {
+	args := []string{"agent-team", "job", "block", opts.JobID}
+	if opts.RepoSet && strings.TrimSpace(opts.Repo) != "" {
+		args = append(args, "--repo", opts.Repo)
+	}
+	if opts.ActorSet && strings.TrimSpace(opts.Actor) != "" {
+		args = append(args, "--actor", opts.Actor)
+	}
+	if opts.MessageSet {
+		args = append(args, "--message", opts.Message)
+	}
+	if opts.MessageFileSet && strings.TrimSpace(opts.MessageFile) != "" {
+		args = append(args, "--message-file", opts.MessageFile)
+	}
+	if !opts.MessageSet && !opts.MessageFileSet && len(opts.PositionalMessage) > 0 {
+		args = append(args, opts.PositionalMessage...)
+	}
+	return args
 }
 
 func renderJobSendApplyCommand(w io.Writer, hasAction bool, opts jobSendApplyCommandOptions) error {
