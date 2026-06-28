@@ -2062,7 +2062,11 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 	if err := showCommands.Execute(); err != nil {
 		t.Fatalf("job queue show --commands: %v\nstderr=%s", err, showCommandsErr.String())
 	}
-	if got, want := showCommandsOut.String(), "agent-team job queue retry squ-120 q-job-dead\nagent-team job queue drop squ-120 q-job-dead\n"; got != want {
+	wantCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team job queue retry squ-120 q-job-dead",
+		"agent-team job queue drop squ-120 q-job-dead",
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
+	if got, want := showCommandsOut.String(), wantCommands; got != want {
 		t.Fatalf("job queue show --commands = %q, want %q", got, want)
 	}
 
@@ -2088,7 +2092,11 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 	if err := showReadyCommands.Execute(); err != nil {
 		t.Fatalf("job queue show ready --commands: %v\nstderr=%s", err, showReadyCommandsErr.String())
 	}
-	if got, want := showReadyCommandsOut.String(), "agent-team queue drain\nagent-team job queue drop squ-120 q-job-ready\n"; got != want {
+	wantReadyCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team queue drain",
+		"agent-team job queue drop squ-120 q-job-ready",
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
+	if got, want := showReadyCommandsOut.String(), wantReadyCommands; got != want {
 		t.Fatalf("job queue show ready --commands = %q, want %q", got, want)
 	}
 
@@ -2651,7 +2659,10 @@ func TestJobQueueQuarantineScopesOwnedFiles(t *testing.T) {
 	if err := showCommands.Execute(); err != nil {
 		t.Fatalf("job queue quarantine show --commands: %v\nstderr=%s", err, showCommandsErr.String())
 	}
-	wantCommands := "agent-team job queue quarantine restore squ-123 " + restorePath + "\nagent-team job queue quarantine drop squ-123 " + restorePath + "\n"
+	wantCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team job queue quarantine restore squ-123 " + restorePath,
+		"agent-team job queue quarantine drop squ-123 " + restorePath,
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
 	if got := showCommandsOut.String(); got != wantCommands {
 		t.Fatalf("job queue quarantine show --commands = %q, want %q", got, wantCommands)
 	}

@@ -171,14 +171,14 @@ func newJobQuarantineShowCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			if commands {
-				return renderJobQuarantineCommands(cmd.OutOrStdout(), result)
+				return renderJobQuarantineCommands(cmd.OutOrStdout(), result, operatorCommandScopeFromCommand(cmd, repo, "repo"))
 			}
 			return renderJobQuarantineShow(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the quarantined job file as JSON.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the quarantined job file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.")
 	return cmd
 }
@@ -722,8 +722,8 @@ func renderJobQuarantineShow(w io.Writer, result jobQuarantineShowResult, jsonOu
 	return nil
 }
 
-func renderJobQuarantineCommands(w io.Writer, result jobQuarantineShowResult) error {
-	return renderActionCommands(w, commandActionsOnly(jobQuarantineShowActions(result)))
+func renderJobQuarantineCommands(w io.Writer, result jobQuarantineShowResult, scope operatorCommandScope) error {
+	return renderOperatorActionCommands(w, jobQuarantineShowActions(result), scope)
 }
 
 func renderJobQuarantineApplyCommand(w io.Writer, hasAction bool, args []string) error {

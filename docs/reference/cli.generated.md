@@ -2585,7 +2585,7 @@ agent-team job outbox quarantine show <job-id> <quarantine-path> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the quarantined outbox file with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the quarantined outbox file as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -2630,7 +2630,7 @@ agent-team job outbox show <job-id> <id> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the job-owned outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the job-owned outbox item as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -2769,7 +2769,7 @@ agent-team job quarantine show <quarantine-path> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the quarantined job file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.
       --json            Emit the quarantined job file as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -2960,7 +2960,7 @@ agent-team job queue quarantine show <job-id> <quarantine-path> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the quarantined queue file with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the quarantined queue file as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -3004,7 +3004,7 @@ agent-team job queue show <job-id> <id> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the queue item as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -4095,7 +4095,7 @@ agent-team outbox quarantine show <quarantine-path> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the quarantined outbox file with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the quarantined outbox file as JSON.
       --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
@@ -4153,7 +4153,7 @@ agent-team outbox show <id> [flags]
 Flags:
 
 ```text
-      --commands        Print recommended follow-up commands, one per line.
+      --commands        Print recommended follow-up commands, one per line. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the outbox item as JSON.
       --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
@@ -4866,7 +4866,7 @@ agent-team pipeline outbox quarantine show <pipeline> <quarantine-path> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the pipeline-owned quarantined outbox file with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the pipeline-owned quarantined outbox file as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -4912,7 +4912,7 @@ agent-team pipeline outbox show <pipeline> <id> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the pipeline-owned outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the pipeline-owned outbox item as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -5145,7 +5145,7 @@ agent-team pipeline queue quarantine show <pipeline> <quarantine-path> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the pipeline-owned quarantined queue file with a Go template, e.g. '{{.Pipeline}} {{.ID}}'.
       --json            Emit the pipeline-owned quarantined queue file as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -5190,7 +5190,7 @@ agent-team pipeline queue show <pipeline> <id> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the queue item as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -6153,7 +6153,7 @@ agent-team queue quarantine show <quarantine-path> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the quarantined queue file with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the quarantined queue file as JSON.
       --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
@@ -6211,7 +6211,7 @@ agent-team queue show <id> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the queue item as JSON.
       --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
@@ -7967,7 +7967,7 @@ agent-team team outbox quarantine show <team> <quarantine-path> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the team-owned quarantined outbox file with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the team-owned quarantined outbox file as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -8013,7 +8013,7 @@ agent-team team outbox show <team> <id> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the team-owned outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the team-owned outbox item as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -8324,7 +8324,7 @@ agent-team team queue quarantine show <team> <quarantine-path> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the team-owned quarantined queue file with a Go template, e.g. '{{.Team}} {{.ID}}'.
       --json            Emit the team-owned quarantined queue file as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
@@ -8369,7 +8369,7 @@ agent-team team queue show <team> <id> [flags]
 Flags:
 
 ```text
-      --commands        Print only recommended follow-up commands.
+      --commands        Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --json            Emit the queue item as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")

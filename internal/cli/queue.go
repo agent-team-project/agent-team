@@ -174,14 +174,14 @@ func newQueueShowCmd() *cobra.Command {
 				return err
 			}
 			if commands {
-				return renderQueueItemCommands(cmd.OutOrStdout(), item, nil)
+				return renderQueueItemCommands(cmd.OutOrStdout(), item, nil, operatorCommandScopeFromCommand(cmd, target, "target"))
 			}
 			return renderQueueItemResult(cmd.OutOrStdout(), item, jsonOut, tmpl, queueRuntimeMap(teamDir))
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the queue item as JSON.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
@@ -1910,8 +1910,8 @@ func renderQueueItemResultWithActions(w io.Writer, item *daemon.QueueItem, jsonO
 	return nil
 }
 
-func renderQueueItemCommands(w io.Writer, item *daemon.QueueItem, actions queueActionResolver) error {
-	return renderActionCommands(w, commandActionsOnly(queueItemResolvedActions(item, time.Now().UTC(), actions)))
+func renderQueueItemCommands(w io.Writer, item *daemon.QueueItem, actions queueActionResolver, scope operatorCommandScope) error {
+	return renderOperatorActionCommands(w, queueItemResolvedActions(item, time.Now().UTC(), actions), scope)
 }
 
 func renderQueueItemTemplate(w io.Writer, item *daemon.QueueItem, tmpl *template.Template) error {

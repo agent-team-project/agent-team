@@ -149,7 +149,11 @@ func TestQueueCommandListShowDropLocal(t *testing.T) {
 	if err := showCommands.Execute(); err != nil {
 		t.Fatalf("queue show --commands: %v\nstderr=%s", err, showCommandsErr.String())
 	}
-	if got, want := showCommandsOut.String(), "agent-team queue retry q-local\nagent-team queue drop q-local\n"; got != want {
+	wantShowCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team queue retry q-local",
+		"agent-team queue drop q-local",
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
+	if got, want := showCommandsOut.String(), wantShowCommands; got != want {
 		t.Fatalf("queue show --commands = %q, want %q", got, want)
 	}
 
@@ -906,7 +910,10 @@ func TestQueueQuarantineListAndRestore(t *testing.T) {
 	if err := showCommands.Execute(); err != nil {
 		t.Fatalf("queue quarantine show --commands: %v\nstderr=%s", err, showCommandsErr.String())
 	}
-	wantCommands := "agent-team queue quarantine restore " + restorable.Path + "\nagent-team queue quarantine drop " + restorable.Path + "\n"
+	wantCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team queue quarantine restore " + restorable.Path,
+		"agent-team queue quarantine drop " + restorable.Path,
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
 	if got := showCommandsOut.String(); got != wantCommands {
 		t.Fatalf("queue quarantine show --commands = %q, want %q", got, wantCommands)
 	}

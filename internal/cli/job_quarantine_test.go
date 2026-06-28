@@ -134,7 +134,8 @@ updated_at = 2026-06-27T12:00:00Z
 	if err := showCommands.Execute(); err != nil {
 		t.Fatalf("job quarantine show --commands: %v\nstderr=%s", err, showCommandsErr.String())
 	}
-	if got, want := showCommandsOut.String(), "agent-team job quarantine drop "+brokenRel+" --dry-run\n"; got != want {
+	wantCommand := scopedOperatorAction("agent-team job quarantine drop "+brokenRel+" --dry-run", operatorCommandScope{Repo: tmp, Set: true}) + "\n"
+	if got, want := showCommandsOut.String(), wantCommand; got != want {
 		t.Fatalf("job quarantine show --commands = %q, want %q", got, want)
 	}
 

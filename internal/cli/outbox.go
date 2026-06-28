@@ -187,14 +187,14 @@ func newOutboxShowCmd() *cobra.Command {
 				return outboxReadError(args[0], err)
 			}
 			if commands {
-				return renderOutboxItemCommands(cmd.OutOrStdout(), item, nil)
+				return renderOutboxItemCommands(cmd.OutOrStdout(), item, nil, operatorCommandScopeFromCommand(cmd, target, "target"))
 			}
 			return renderOutboxItemResult(cmd.OutOrStdout(), item, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the outbox item as JSON.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
@@ -1218,8 +1218,8 @@ func renderOutboxItemResultWithActions(w io.Writer, item *daemon.OutboxItem, jso
 	return nil
 }
 
-func renderOutboxItemCommands(w io.Writer, item *daemon.OutboxItem, actions outboxActionResolver) error {
-	return renderActionCommands(w, commandActionsOnly(outboxItemResolvedActions(item, actions)))
+func renderOutboxItemCommands(w io.Writer, item *daemon.OutboxItem, actions outboxActionResolver, scope operatorCommandScope) error {
+	return renderOperatorActionCommands(w, outboxItemResolvedActions(item, actions), scope)
 }
 
 func outboxItemResolvedActions(item *daemon.OutboxItem, actions outboxActionResolver) []string {

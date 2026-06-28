@@ -246,14 +246,14 @@ func newOutboxQuarantineShowCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			if commands {
-				return renderOutboxQuarantineCommands(cmd.OutOrStdout(), result)
+				return renderOutboxQuarantineCommands(cmd.OutOrStdout(), result, operatorCommandScopeFromCommand(cmd, target, "target"))
 			}
 			return renderOutboxQuarantineShow(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the quarantined outbox file as JSON.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the quarantined outbox file with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
@@ -1154,8 +1154,8 @@ func renderOutboxQuarantineShow(w io.Writer, result outboxQuarantineShowResult, 
 	return nil
 }
 
-func renderOutboxQuarantineCommands(w io.Writer, result outboxQuarantineShowResult) error {
-	return renderActionCommands(w, commandActionsOnly(outboxQuarantineShowActions(result)))
+func renderOutboxQuarantineCommands(w io.Writer, result outboxQuarantineShowResult, scope operatorCommandScope) error {
+	return renderOperatorActionCommands(w, outboxQuarantineShowActions(result), scope)
 }
 
 func outboxQuarantineShowActions(result outboxQuarantineShowResult) []string {

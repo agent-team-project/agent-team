@@ -247,14 +247,14 @@ func newQueueQuarantineShowCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			if commands {
-				return renderQueueQuarantineCommands(cmd.OutOrStdout(), result)
+				return renderQueueQuarantineCommands(cmd.OutOrStdout(), result, operatorCommandScopeFromCommand(cmd, target, "target"))
 			}
 			return renderQueueQuarantineShow(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the quarantined queue file as JSON.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the quarantined queue file with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
@@ -1171,8 +1171,8 @@ func renderQueueQuarantineShow(w io.Writer, result queueQuarantineShowResult, js
 	return nil
 }
 
-func renderQueueQuarantineCommands(w io.Writer, result queueQuarantineShowResult) error {
-	return renderActionCommands(w, commandActionsOnly(queueQuarantineShowActions(result)))
+func renderQueueQuarantineCommands(w io.Writer, result queueQuarantineShowResult, scope operatorCommandScope) error {
+	return renderOperatorActionCommands(w, queueQuarantineShowActions(result), scope)
 }
 
 func queueQuarantineShowActions(result queueQuarantineShowResult) []string {

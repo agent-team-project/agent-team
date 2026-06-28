@@ -151,14 +151,14 @@ func newTeamOutboxShowCmd() *cobra.Command {
 			}
 			actions := teamOutboxActionResolver(args[0])
 			if commands {
-				return renderOutboxItemCommands(cmd.OutOrStdout(), item, actions)
+				return renderOutboxItemCommands(cmd.OutOrStdout(), item, actions, operatorCommandScopeFromCommand(cmd, repo, "repo"))
 			}
 			return renderOutboxItemResultWithActions(cmd.OutOrStdout(), item, jsonOut, tmpl, actions)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the team-owned outbox item as JSON.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the team-owned outbox item with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
@@ -664,14 +664,14 @@ func newTeamOutboxQuarantineShowCmd() *cobra.Command {
 			}
 			result.Team = args[0]
 			if commands {
-				return renderOutboxQuarantineCommands(cmd.OutOrStdout(), result)
+				return renderOutboxQuarantineCommands(cmd.OutOrStdout(), result, operatorCommandScopeFromCommand(cmd, repo, "repo"))
 			}
 			return renderOutboxQuarantineShow(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the team-owned quarantined outbox file as JSON.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the team-owned quarantined outbox file with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }

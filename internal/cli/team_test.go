@@ -7644,7 +7644,11 @@ instances = ["other"]
 	if err := showCommands.Execute(); err != nil {
 		t.Fatalf("team queue show --commands: %v\nstderr=%s", err, showCommandsErr.String())
 	}
-	if got, want := showCommandsOut.String(), "agent-team team queue retry delivery q-team-claude\nagent-team team queue drop delivery q-team-claude\n"; got != want {
+	wantCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team team queue retry delivery q-team-claude",
+		"agent-team team queue drop delivery q-team-claude",
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := showCommandsOut.String(), wantCommands; got != want {
 		t.Fatalf("team queue show --commands = %q, want %q", got, want)
 	}
 
@@ -7850,9 +7854,12 @@ instances = ["other"]
 	if err := showQuarantineCommands.Execute(); err != nil {
 		t.Fatalf("team queue quarantine show --commands: %v\nstderr=%s", err, showQuarantineCommandsErr.String())
 	}
-	wantCommands := "agent-team team queue quarantine restore delivery " + teamQuarantinePath + "\nagent-team team queue quarantine drop delivery " + teamQuarantinePath + "\n"
-	if got := showQuarantineCommandsOut.String(); got != wantCommands {
-		t.Fatalf("team queue quarantine show --commands = %q, want %q", got, wantCommands)
+	wantQuarantineShowCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team team queue quarantine restore delivery " + teamQuarantinePath,
+		"agent-team team queue quarantine drop delivery " + teamQuarantinePath,
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got := showQuarantineCommandsOut.String(); got != wantQuarantineShowCommands {
+		t.Fatalf("team queue quarantine show --commands = %q, want %q", got, wantQuarantineShowCommands)
 	}
 
 	restoreAllDry := NewRootCmd()

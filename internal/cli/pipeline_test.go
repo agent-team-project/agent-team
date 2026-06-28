@@ -7904,7 +7904,11 @@ target = "worker"
 	if err := showCommands.Execute(); err != nil {
 		t.Fatalf("pipeline queue show --commands: %v\nstderr=%s", err, showCommandsErr.String())
 	}
-	if got, want := showCommandsOut.String(), "agent-team pipeline queue retry ticket_to_pr q-pipeline-dead\nagent-team pipeline queue drop ticket_to_pr q-pipeline-dead\n"; got != want {
+	wantCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team pipeline queue retry ticket_to_pr q-pipeline-dead",
+		"agent-team pipeline queue drop ticket_to_pr q-pipeline-dead",
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := showCommandsOut.String(), wantCommands; got != want {
 		t.Fatalf("pipeline queue show --commands = %q, want %q", got, want)
 	}
 
@@ -9451,7 +9455,10 @@ target = "worker"
 	if err := showCommands.Execute(); err != nil {
 		t.Fatalf("pipeline queue quarantine show --commands: %v\nstderr=%s", err, showCommandsErr.String())
 	}
-	wantCommands := "agent-team pipeline queue quarantine restore ticket_to_pr " + restorePath + "\nagent-team pipeline queue quarantine drop ticket_to_pr " + restorePath + "\n"
+	wantCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team pipeline queue quarantine restore ticket_to_pr " + restorePath,
+		"agent-team pipeline queue quarantine drop ticket_to_pr " + restorePath,
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
 	if got := showCommandsOut.String(); got != wantCommands {
 		t.Fatalf("pipeline queue quarantine show --commands = %q, want %q", got, wantCommands)
 	}

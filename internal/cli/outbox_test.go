@@ -76,7 +76,11 @@ func TestOutboxListShowRetryDrop(t *testing.T) {
 	}
 
 	showCommands := runRootForOutboxTest(t, "outbox", "show", "--target", target, "outbox-b", "--commands")
-	if got, want := showCommands.String(), "agent-team job outbox retry squ-502 outbox-b\nagent-team job outbox drop squ-502 outbox-b --dry-run\n"; got != want {
+	wantShowCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team job outbox retry squ-502 outbox-b",
+		"agent-team job outbox drop squ-502 outbox-b --dry-run",
+	}, operatorCommandScope{Repo: target, Set: true}), "\n") + "\n"
+	if got, want := showCommands.String(), wantShowCommands; got != want {
 		t.Fatalf("outbox show --commands = %q, want %q", got, want)
 	}
 
@@ -787,7 +791,11 @@ func TestOutboxQuarantineListShowRestoreDrop(t *testing.T) {
 	}
 
 	showCommands := runRootForOutboxTest(t, "outbox", "quarantine", "show", "--target", target, restorablePath, "--commands")
-	if got, want := showCommands.String(), "agent-team outbox quarantine restore "+restorablePath+"\nagent-team outbox quarantine drop "+restorablePath+"\n"; got != want {
+	wantShowCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team outbox quarantine restore " + restorablePath,
+		"agent-team outbox quarantine drop " + restorablePath,
+	}, operatorCommandScope{Repo: target, Set: true}), "\n") + "\n"
+	if got, want := showCommands.String(), wantShowCommands; got != want {
 		t.Fatalf("outbox quarantine show --commands = %q, want %q", got, want)
 	}
 
@@ -1217,7 +1225,11 @@ instances = ["other"]
 	}
 
 	showCommands := runRootForOutboxTest(t, "team", "outbox", "show", "delivery", "outbox-delivery-failed", "--repo", root, "--commands")
-	if got, want := showCommands.String(), "agent-team team outbox retry delivery outbox-delivery-failed\nagent-team team outbox drop delivery outbox-delivery-failed --dry-run\n"; got != want {
+	wantShowCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team team outbox retry delivery outbox-delivery-failed",
+		"agent-team team outbox drop delivery outbox-delivery-failed --dry-run",
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := showCommands.String(), wantShowCommands; got != want {
 		t.Fatalf("team outbox show --commands = %q, want %q", got, want)
 	}
 
@@ -1443,7 +1455,11 @@ pipelines = ["ops_review"]
 	}
 
 	showCommands := runRootForOutboxTest(t, "team", "outbox", "quarantine", "show", "delivery", restorePath, "--repo", root, "--commands")
-	if got, want := showCommands.String(), "agent-team team outbox quarantine restore delivery "+restorePath+"\nagent-team team outbox quarantine drop delivery "+restorePath+"\n"; got != want {
+	wantShowCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team team outbox quarantine restore delivery " + restorePath,
+		"agent-team team outbox quarantine drop delivery " + restorePath,
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := showCommands.String(), wantShowCommands; got != want {
 		t.Fatalf("team outbox quarantine show --commands = %q, want %q", got, want)
 	}
 
@@ -1637,7 +1653,11 @@ target = "worker"
 	}
 
 	showCommands := runRootForOutboxTest(t, "pipeline", "outbox", "show", "ticket_to_pr", "outbox-ticket-failed", "--repo", root, "--commands")
-	if got, want := showCommands.String(), "agent-team pipeline outbox retry ticket_to_pr outbox-ticket-failed\nagent-team pipeline outbox drop ticket_to_pr outbox-ticket-failed --dry-run\n"; got != want {
+	wantShowCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team pipeline outbox retry ticket_to_pr outbox-ticket-failed",
+		"agent-team pipeline outbox drop ticket_to_pr outbox-ticket-failed --dry-run",
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := showCommands.String(), wantShowCommands; got != want {
 		t.Fatalf("pipeline outbox show --commands = %q, want %q", got, want)
 	}
 
@@ -1851,7 +1871,11 @@ target = "worker"
 	}
 
 	showCommands := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "show", "ticket_to_pr", restorePath, "--repo", root, "--commands")
-	if got, want := showCommands.String(), "agent-team pipeline outbox quarantine restore ticket_to_pr "+restorePath+"\nagent-team pipeline outbox quarantine drop ticket_to_pr "+restorePath+"\n"; got != want {
+	wantShowCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team pipeline outbox quarantine restore ticket_to_pr " + restorePath,
+		"agent-team pipeline outbox quarantine drop ticket_to_pr " + restorePath,
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := showCommands.String(), wantShowCommands; got != want {
 		t.Fatalf("pipeline outbox quarantine show --commands = %q, want %q", got, want)
 	}
 
@@ -2019,7 +2043,11 @@ func TestJobOutboxScopesItemsAndActions(t *testing.T) {
 	}
 
 	showCommands := runRootForOutboxTest(t, "job", "outbox", "show", "squ-903", "outbox-job-failed", "--repo", root, "--commands")
-	if got, want := showCommands.String(), "agent-team job outbox retry squ-903 outbox-job-failed\nagent-team job outbox drop squ-903 outbox-job-failed --dry-run\n"; got != want {
+	wantShowCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team job outbox retry squ-903 outbox-job-failed",
+		"agent-team job outbox drop squ-903 outbox-job-failed --dry-run",
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := showCommands.String(), wantShowCommands; got != want {
 		t.Fatalf("job outbox show --commands = %q, want %q", got, want)
 	}
 
@@ -2317,7 +2345,11 @@ func TestJobOutboxQuarantineScopesRestoreAndDrop(t *testing.T) {
 	}
 
 	showCommands := runRootForOutboxTest(t, "job", "outbox", "quarantine", "show", "squ-905", restorePath, "--repo", root, "--commands")
-	if got, want := showCommands.String(), "agent-team job outbox quarantine restore squ-905 "+restorePath+"\nagent-team job outbox quarantine drop squ-905 "+restorePath+"\n"; got != want {
+	wantShowCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team job outbox quarantine restore squ-905 " + restorePath,
+		"agent-team job outbox quarantine drop squ-905 " + restorePath,
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := showCommands.String(), wantShowCommands; got != want {
 		t.Fatalf("job outbox quarantine show --commands = %q, want %q", got, want)
 	}
 

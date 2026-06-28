@@ -2903,14 +2903,14 @@ func newTeamQueueShowCmd() *cobra.Command {
 			}
 			actions := teamQueueActionResolver(args[0])
 			if commands {
-				return renderQueueItemCommands(cmd.OutOrStdout(), item, actions)
+				return renderQueueItemCommands(cmd.OutOrStdout(), item, actions, operatorCommandScopeFromCommand(cmd, repo, "repo"))
 			}
 			return renderQueueItemResultWithActions(cmd.OutOrStdout(), item, jsonOut, tmpl, actions, queueRuntimeMap(teamDir))
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the queue item as JSON.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
 }
@@ -3040,14 +3040,14 @@ func newTeamQueueQuarantineShowCmd() *cobra.Command {
 			}
 			result.Team = args[0]
 			if commands {
-				return renderQueueQuarantineCommands(cmd.OutOrStdout(), result)
+				return renderQueueQuarantineCommands(cmd.OutOrStdout(), result, operatorCommandScopeFromCommand(cmd, repo, "repo"))
 			}
 			return renderQueueQuarantineShow(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the team-owned quarantined queue file as JSON.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only recommended follow-up commands. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the team-owned quarantined queue file with a Go template, e.g. '{{.Team}} {{.ID}}'.")
 	return cmd
 }
