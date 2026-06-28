@@ -2303,6 +2303,19 @@ pipelines = ["platform_ops"]
 		t.Fatalf("team retry payload = %+v", retryPayload)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "retry", "delivery", "--repo", root, "--dispatch", "--workspace", "repo", "--runtime", "codex", "--runtime-bin", "codex-dev", "--step", "implement", "--limit", "1", "--force", "--message", "delivery retry approved", "--dry-run", "--preview-routes", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team retry commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "retry", "delivery", "--repo", root, "--dispatch", "--workspace", "repo", "--runtime", "codex", "--runtime-bin", "codex-dev", "--step", "implement", "--limit", "1", "--force", "--message", "delivery retry approved"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("team retry commands = %q, want %q", got, wantCommand)
+	}
+
 	format := NewRootCmd()
 	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	format.SetOut(formatOut)
@@ -4458,6 +4471,9 @@ func TestTeamRetryValidation(t *testing.T) {
 		{[]string{"team", "retry", "delivery", "--wait-timeout", "-1s", "--wait"}, "--wait-timeout must be >= 0"},
 		{[]string{"team", "retry", "delivery", "--wait", "--wait-next-state", "missing"}, "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all"},
 		{[]string{"team", "retry", "delivery", "--format", "{{.JobID}}", "--json"}, "--format cannot be combined with --json"},
+		{[]string{"team", "retry", "delivery", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"team", "retry", "delivery", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"team", "retry", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"}, "--commands cannot be combined with --format"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

@@ -253,7 +253,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline outbox quarantine drop <pipeline> <path>` | Drop one pipeline-owned quarantined outbox file after inspection |
 | `agent-team pipeline outbox quarantine drop <pipeline> --all` | Drop matching pipeline-owned quarantined outbox files; filter by state, job, restorable state, or age before deleting |
 | `agent-team pipeline timeout <pipeline>` | Mark stale running steps failed; add `--target-agent` to scope by role |
-| `agent-team pipeline retry <pipeline>` | Retry failed steps, honoring step `max_attempts` caps; add `--dispatch --wait-next-state`/`--wait-step` for stage-aware recovery handoff |
+| `agent-team pipeline retry <pipeline>` | Retry failed steps, honoring step `max_attempts` caps; add `--dry-run --commands` for the apply command or `--dispatch --wait-next-state`/`--wait-step` for stage-aware recovery handoff |
 | `agent-team pipeline tick <pipeline>` | Run or preview one scoped queue drain and ready-step advance cycle for one pipeline; add `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |
 | `agent-team pipeline repair <pipeline>` | Scoped repair loop for one pipeline: queue retry, optional timeout/retry, ready-step advance, and `--wait-next-state`/`--wait-step` stage-aware bounded handoff |
 | `agent-team pipeline drain <pipeline>` | Run scoped queue drain and ready-step advance cycles until one pipeline is idle; add `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |
@@ -319,7 +319,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team skip <team> --step <id>` | Scoped intentional step skip |
 | `agent-team team cancel <team>` | Cancel non-terminal team pipeline jobs without stopping instances |
 | `agent-team team adopt <team> <job-id>` | Adopt a live external process for a job after verifying team ownership; output includes scoped follow-up actions and `--commands` |
-| `agent-team team retry <team>` | Scoped failed-step retry, honoring step `max_attempts` caps; add `--dispatch --wait-next-state`/`--wait-step` for stage-aware recovery handoff |
+| `agent-team team retry <team>` | Scoped failed-step retry, honoring step `max_attempts` caps; add `--dry-run --commands` for the apply command or `--dispatch --wait-next-state`/`--wait-step` for stage-aware recovery handoff |
 | `agent-team team cleanup <team>` | Scoped job cleanup, optionally verifying PRs with `gh` |
 | `agent-team team snapshot <team>` | Scoped diagnostic artifact with command provenance, queue/outbox quarantine inventory, and formatted summary fields |
 

@@ -2408,6 +2408,7 @@ func newTeamRetryCmd() *cobra.Command {
 		messageFile   string
 		force         bool
 		dryRun        bool
+		commands      bool
 		previewRoutes bool
 		wait          bool
 		waitStatuses  []string
@@ -2430,6 +2431,18 @@ func newTeamRetryCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team retry: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team retry: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team retry: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team retry: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if limit < 0 {
@@ -2492,6 +2505,28 @@ func newTeamRetryCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team retry: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				return renderPipelineRetryApplyCommand(cmd.OutOrStdout(), pipelineRetryResultsHaveDryRunApplyAction(results), pipelineRetryApplyCommandOptions{
+					BaseArgs:       []string{"agent-team", "team", "retry", args[0]},
+					Repo:           repo,
+					RepoSet:        cmd.Flags().Changed("repo"),
+					Dispatch:       dispatchNow,
+					Workspace:      workspace,
+					WorkspaceSet:   cmd.Flags().Changed("workspace"),
+					RuntimeKind:    runtimeKind,
+					RuntimeKindSet: cmd.Flags().Changed("runtime"),
+					RuntimeBin:     runtimeBin,
+					RuntimeBinSet:  cmd.Flags().Changed("runtime-bin"),
+					Step:           step,
+					StepSet:        cmd.Flags().Changed("step"),
+					Limit:          limit,
+					Force:          force,
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+				})
+			}
 			if wait {
 				results, err = waitForPipelineRetryResults(cmd, teamDir, results, waitFilters.statuses, waitFilters.events, waitFilters.nextStates, waitFilters.nextStateSet, waitFilters.step, waitTimeout, waitInterval, "agent-team team retry")
 				if err != nil {
@@ -2521,6 +2556,7 @@ func newTeamRetryCmd() *cobra.Command {
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read retry message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&force, "force", false, "Ignore step max_attempts caps for this explicit team retry.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview failed-step resets and optional dispatches without writing job or daemon state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team retry apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run --dispatch, include local topology route and dispatch payload previews.")
 	cmd.Flags().BoolVar(&wait, "wait", false, "After retrying or dispatching, wait for retried jobs to reach a lifecycle status, event, or next-step state.")
 	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")

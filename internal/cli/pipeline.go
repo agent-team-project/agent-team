@@ -3830,6 +3830,7 @@ func newPipelineRetryCmd() *cobra.Command {
 		messageFile   string
 		force         bool
 		dryRun        bool
+		commands      bool
 		previewRoutes bool
 		wait          bool
 		waitStatuses  []string
@@ -3852,6 +3853,18 @@ func newPipelineRetryCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if all && len(args) > 0 {
@@ -3921,6 +3934,33 @@ func newPipelineRetryCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline retry: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				baseArgs := []string{"agent-team", "pipeline", "retry"}
+				if !all {
+					baseArgs = append(baseArgs, pipelineName)
+				}
+				return renderPipelineRetryApplyCommand(cmd.OutOrStdout(), pipelineRetryResultsHaveDryRunApplyAction(results), pipelineRetryApplyCommandOptions{
+					BaseArgs:       baseArgs,
+					Repo:           repo,
+					RepoSet:        cmd.Flags().Changed("repo"),
+					All:            all,
+					Dispatch:       dispatchNow,
+					Workspace:      workspace,
+					WorkspaceSet:   cmd.Flags().Changed("workspace"),
+					RuntimeKind:    runtimeKind,
+					RuntimeKindSet: cmd.Flags().Changed("runtime"),
+					RuntimeBin:     runtimeBin,
+					RuntimeBinSet:  cmd.Flags().Changed("runtime-bin"),
+					Step:           step,
+					StepSet:        cmd.Flags().Changed("step"),
+					Limit:          limit,
+					Force:          force,
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+				})
+			}
 			if wait {
 				results, err = waitForPipelineRetryResults(cmd, teamDir, results, waitFilters.statuses, waitFilters.events, waitFilters.nextStates, waitFilters.nextStateSet, waitFilters.step, waitTimeout, waitInterval, "agent-team pipeline retry")
 				if err != nil {
@@ -3951,6 +3991,7 @@ func newPipelineRetryCmd() *cobra.Command {
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read retry message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&force, "force", false, "Ignore step max_attempts caps for this explicit retry.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview failed-step resets and optional dispatches without writing job or daemon state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching retry apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run --dispatch, include route and payload previews.")
 	cmd.Flags().BoolVar(&wait, "wait", false, "After retrying or dispatching, wait for retried jobs to reach a lifecycle status, event, or next-step state.")
 	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
@@ -11041,6 +11082,28 @@ type pipelineUnblockApplyCommandOptions struct {
 	MessageArgs    []string
 }
 
+type pipelineRetryApplyCommandOptions struct {
+	BaseArgs       []string
+	Repo           string
+	RepoSet        bool
+	All            bool
+	Dispatch       bool
+	Workspace      string
+	WorkspaceSet   bool
+	RuntimeKind    string
+	RuntimeKindSet bool
+	RuntimeBin     string
+	RuntimeBinSet  bool
+	Step           string
+	StepSet        bool
+	Limit          int
+	Force          bool
+	Message        string
+	MessageSet     bool
+	MessageFile    string
+	MessageFileSet bool
+}
+
 func renderPipelineApplyCommand(w io.Writer, hasAction bool, opts pipelineApplyCommandOptions) error {
 	if !hasAction {
 		return nil
@@ -11116,6 +11179,52 @@ func pipelineUnblockApplyCommandArgs(opts pipelineUnblockApplyCommandOptions) []
 	return args
 }
 
+func renderPipelineRetryApplyCommand(w io.Writer, hasAction bool, opts pipelineRetryApplyCommandOptions) error {
+	if !hasAction {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(pipelineRetryApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func pipelineRetryApplyCommandArgs(opts pipelineRetryApplyCommandOptions) []string {
+	args := append([]string{}, opts.BaseArgs...)
+	if opts.RepoSet && strings.TrimSpace(opts.Repo) != "" {
+		args = append(args, "--repo", opts.Repo)
+	}
+	if opts.All {
+		args = append(args, "--all")
+	}
+	if opts.Dispatch {
+		args = append(args, "--dispatch")
+	}
+	if opts.WorkspaceSet && strings.TrimSpace(opts.Workspace) != "" {
+		args = append(args, "--workspace", opts.Workspace)
+	}
+	if opts.RuntimeKindSet && strings.TrimSpace(opts.RuntimeKind) != "" {
+		args = append(args, "--runtime", opts.RuntimeKind)
+	}
+	if opts.RuntimeBinSet && strings.TrimSpace(opts.RuntimeBin) != "" {
+		args = append(args, "--runtime-bin", opts.RuntimeBin)
+	}
+	if opts.StepSet && strings.TrimSpace(opts.Step) != "" {
+		args = append(args, "--step", opts.Step)
+	}
+	if opts.Limit > 0 {
+		args = append(args, "--limit", fmt.Sprint(opts.Limit))
+	}
+	if opts.Force {
+		args = append(args, "--force")
+	}
+	if opts.MessageSet && strings.TrimSpace(opts.Message) != "" {
+		args = append(args, "--message", opts.Message)
+	}
+	if opts.MessageFileSet && strings.TrimSpace(opts.MessageFile) != "" {
+		args = append(args, "--message-file", opts.MessageFile)
+	}
+	return args
+}
+
 func pipelineApproveResultsHaveDryRunAction(results []pipelineApproveResult, action string) bool {
 	for _, result := range results {
 		if result.DryRun && strings.TrimSpace(result.Action) == action {
@@ -11138,6 +11247,18 @@ func pipelineCancelResultsHaveDryRunAction(results []pipelineCancelResult, actio
 	for _, result := range results {
 		if result.DryRun && strings.TrimSpace(result.Action) == action {
 			return true
+		}
+	}
+	return false
+}
+
+func pipelineRetryResultsHaveDryRunApplyAction(results []pipelineRetryResult) bool {
+	for _, result := range results {
+		if result.DryRun {
+			switch strings.TrimSpace(result.Action) {
+			case "would_retry", "would_dispatch":
+				return true
+			}
 		}
 	}
 	return false

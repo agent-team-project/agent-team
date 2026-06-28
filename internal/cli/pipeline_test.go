@@ -10698,6 +10698,19 @@ func TestPipelineRetryFailedSteps(t *testing.T) {
 		t.Fatalf("preview payload = %+v", payload)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"pipeline", "retry", "ticket_triage", "--repo", target, "--limit", "1", "--step", "triage", "--dispatch", "--workspace", "repo", "--runtime", "codex", "--runtime-bin", "codex-dev", "--force", "--message", "operator retry approved", "--dry-run", "--preview-routes", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("pipeline retry commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "retry", "ticket_triage", "--repo", target, "--dispatch", "--workspace", "repo", "--runtime", "codex", "--runtime-bin", "codex-dev", "--step", "triage", "--limit", "1", "--force", "--message", "operator retry approved"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("pipeline retry commands = %q, want %q", got, wantCommand)
+	}
+
 	format := NewRootCmd()
 	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	format.SetOut(formatOut)
@@ -11124,6 +11137,9 @@ func TestPipelineRetryValidation(t *testing.T) {
 		{[]string{"pipeline", "retry", "ticket_triage", "--wait-timeout", "-1s", "--wait"}, "--wait-timeout must be >= 0"},
 		{[]string{"pipeline", "retry", "ticket_triage", "--wait", "--wait-next-state", "missing"}, "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all"},
 		{[]string{"pipeline", "retry", "ticket_triage", "--format", "{{.JobID}}", "--json"}, "--format cannot be combined with --json"},
+		{[]string{"pipeline", "retry", "ticket_triage", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"pipeline", "retry", "ticket_triage", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"pipeline", "retry", "ticket_triage", "--dry-run", "--commands", "--format", "{{.JobID}}"}, "--commands cannot be combined with --format"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

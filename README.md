@@ -298,6 +298,8 @@ agent-team pipeline skip <pipeline>|--all --step <id> [--message "..."] [--messa
                                                 # mark matching non-running pipeline steps intentionally skipped
 agent-team pipeline cancel <pipeline>|--all [--message "..."] [--message-file <path|->] [--actor cli] [--limit N] [--dry-run] [--commands] [--format '{{.JobID}} {{.Action}}'] [--json]
                                                 # cancel non-terminal pipeline jobs without stopping instances
+agent-team pipeline retry <pipeline>|--all [--step <id>] [--dispatch] [--workspace auto|worktree|repo] [--runtime claude|codex] [--runtime-bin <path>] [--message "..."] [--message-file <path|->] [--force] [--limit N] [--dry-run] [--commands] [--preview-routes] [--format '{{.JobID}} {{.Action}}'] [--json]
+                                                # reset failed pipeline steps for another attempt
 agent-team pipeline adopt <pipeline> <job-id> [--step <id>] [--instance <name>] [--pid <pid>|--pid-file <path>] [--workspace <path>] [--runtime claude|codex] [--runtime-bin <path>] [--dry-run] [--format '{{.Job.ID}} {{.Metadata.Instance}}'] [--json]
                                                 # adopt a live external process for a pipeline-owned job after checking pipeline ownership
 agent-team pipeline resume-plan [<pipeline>|--all] [--step <id>] [--status crashed] [--runtime codex] [--action start|attach|resume|logs] [--runtime-stale|--unhealthy] [--sort stale] [--limit N] [--summary] [--commands] [--format '{{.Instance}} {{.RecommendedAction}}'] [--json]
@@ -330,6 +332,7 @@ agent-team team reject <team> [--step <id>] [--message "..."] [--message-file <p
 agent-team team unblock <team> [answer...] [--message "..."] [--message-file <path|->] [--step <id>] [--status running|queued] [--limit N] [--allow-missing] [--dry-run] [--commands] [--format '{{.JobID}} {{.Action}}'] [--json]
 agent-team team skip <team> --step <id> [--message "..."] [--message-file <path|->] [--limit N] [--dry-run] [--commands] [--format '{{.JobID}} {{.Action}}'] [--json]
 agent-team team cancel <team> [--message "..."] [--message-file <path|->] [--actor cli] [--limit N] [--dry-run] [--commands] [--format '{{.JobID}} {{.Action}}'] [--json]
+agent-team team retry <team> [--step <id>] [--dispatch] [--workspace auto|worktree|repo] [--runtime claude|codex] [--runtime-bin <path>] [--message "..."] [--message-file <path|->] [--force] [--limit N] [--dry-run] [--commands] [--preview-routes] [--format '{{.JobID}} {{.Action}}'] [--json]
                                                 # inspect declared teams and summarize team-owned instances, jobs, queue, schedules, pipelines, and scoped queue pruning
 agent-team team queue retry|drop <team> <id>|--all [--state pending|dead] [--job SQU-42] [--event-type agent.dispatch] [--runtime codex] [--ready] [--sort attempts] [--limit N] [--dry-run] [--commands] [--format '{{.ID}} {{.Action}}'] [--json]
                                                 # retry or drop only team-owned active queue entries
@@ -424,7 +427,9 @@ Use `job create <ticket> --dry-run --dispatch`, `team run <team> <ticket> --dry-
 
 For pipeline or team unblock dry-runs, add `--commands` when scripts should print only the matching apply command for the selected blocked owners.
 
-Add `--dry-run --commands` to global, job, pipeline, or team queue and outbox retry/drop/prune, to job, pipeline, or team hold/release, timeout, and cleanup, or to pipeline/team reject, unblock, skip, and cancel, when automation should print only the matching apply command for actionable previews.
+For pipeline or team retry dry-runs, add `--commands` when scripts should print only the matching apply command for eligible failed-step resets.
+
+Add `--dry-run --commands` to global, job, pipeline, or team queue and outbox retry/drop/prune, to job, pipeline, or team hold/release, timeout, and cleanup, or to pipeline/team reject, unblock, retry, skip, and cancel, when automation should print only the matching apply command for actionable previews.
 
 `job create --dispatch`, `job dispatch`, `job retry --dispatch`, `job advance`, `job update --advance`, `job step --advance`, `job approve --advance`, `job reconcile github --advance`, `intake github --reconcile-job --advance`, `pipeline run --dispatch`, `team run --dispatch`, `pipeline advance`, `team advance`, `pipeline approve --dispatch`, `team approve --dispatch`, `pipeline retry --dispatch`, `team retry --dispatch`, `repair`, `pipeline repair`, `team repair <team>`, one-shot `tick`, `pipeline tick <pipeline>`, or `team tick`, and finite `drain`, `pipeline drain <pipeline>`, or `team drain <team>` also accept `--wait`, `--wait-status`, `--wait-event`, `--wait-timeout`, and `--fail-on-failed` for bounded handoffs; single-job pipeline handoffs, GitHub intake PR-gate handoffs, pipeline/team run, advance, approve, retry, global/pipeline/team repair, and maintenance tick/drain also accept `--wait-next-state` and `--wait-step`.
 

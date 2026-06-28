@@ -5276,6 +5276,7 @@ Flags:
 
 ```text
       --all                       Retry failed steps across all pipelines.
+      --commands                  With --dry-run, print the matching retry apply command when the preview has actionable work.
       --dispatch                  Dispatch each reset failed step immediately.
       --dry-run                   Preview failed-step resets and optional dispatches without writing job or daemon state.
       --fail-on-failed            With --wait, exit 1 if any retried job resolves to failed.
@@ -8474,6 +8475,7 @@ agent-team team retry <team> [flags]
 Flags:
 
 ```text
+      --commands                  With --dry-run, print the matching team retry apply command when the preview has actionable work.
       --dispatch                  Dispatch each reset failed step immediately.
       --dry-run                   Preview failed-step resets and optional dispatches without writing job or daemon state.
       --fail-on-failed            With --wait, exit 1 if any retried job resolves to failed.
