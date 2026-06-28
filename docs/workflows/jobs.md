@@ -526,6 +526,11 @@ Use `--summary` to aggregate the visible event set by type, status, actor, and
 instance after `--type`, `--status`, `--actor`, `--instance`, `--since`, and
 `--tail` have been applied.
 
+Use `agent-team job timeline squ-42` when you need the durable audit log and
+matching daemon lifecycle events in one ordered view. Add `--source job` or
+`--source lifecycle` to isolate one side, `--tail N --sort newest` for the
+latest handoff rows, or `--json` / `--format` for scripts.
+
 ## Code Areas
 
 Job behavior lives mostly in:

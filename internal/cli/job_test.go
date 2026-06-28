@@ -518,6 +518,72 @@ func TestJobCreateListShowClose(t *testing.T) {
 		t.Fatalf("job events newest = %q", newestOut.String())
 	}
 
+	exitCode := 0
+	timelineTS := time.Now().UTC().Add(time.Minute)
+	if err := daemon.AppendLifecycleEvent(daemon.DaemonRoot(filepath.Join(tmp, ".agent_team")), &daemon.LifecycleEvent{
+		TS:       timelineTS,
+		Action:   "exit",
+		Instance: "worker-squ-42",
+		Agent:    "worker",
+		Job:      "squ-42",
+		Status:   daemon.StatusExited,
+		PID:      1234,
+		ExitCode: &exitCode,
+		Message:  "worker exited",
+	}); err != nil {
+		t.Fatalf("append lifecycle event: %v", err)
+	}
+
+	timelineCmd := NewRootCmd()
+	timelineOut, timelineErr := &bytes.Buffer{}, &bytes.Buffer{}
+	timelineCmd.SetOut(timelineOut)
+	timelineCmd.SetErr(timelineErr)
+	timelineCmd.SetArgs([]string{"job", "timeline", "SQU-42", "--repo", tmp, "--sort", "newest", "--json"})
+	if err := timelineCmd.Execute(); err != nil {
+		t.Fatalf("job timeline: %v\nstderr=%s", err, timelineErr.String())
+	}
+	var timeline []jobTimelineEntry
+	if err := json.Unmarshal(timelineOut.Bytes(), &timeline); err != nil {
+		t.Fatalf("decode timeline json: %v\nbody=%s", err, timelineOut.String())
+	}
+	if len(timeline) != 3 || timeline[0].Source != "lifecycle" || timeline[0].Kind != "exit" || timeline[0].Status != "exited" || timeline[0].Instance != "worker-squ-42" || timeline[1].Kind != "closed" || timeline[2].Kind != "created" {
+		t.Fatalf("job timeline newest = %+v", timeline)
+	}
+
+	timelineTail := NewRootCmd()
+	timelineTailOut, timelineTailErr := &bytes.Buffer{}, &bytes.Buffer{}
+	timelineTail.SetOut(timelineTailOut)
+	timelineTail.SetErr(timelineTailErr)
+	timelineTail.SetArgs([]string{"job", "timeline", "SQU-42", "--repo", tmp, "--tail", "2", "--source", "job", "--format", "{{.Source}} {{.Kind}} {{.Status}}"})
+	if err := timelineTail.Execute(); err != nil {
+		t.Fatalf("job timeline tail: %v\nstderr=%s", err, timelineTailErr.String())
+	}
+	if got := strings.TrimSpace(timelineTailOut.String()); got != "job created queued\njob closed done" {
+		t.Fatalf("job timeline tail = %q", timelineTailOut.String())
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"invalid source", []string{"job", "timeline", "SQU-42", "--repo", tmp, "--source", "runtime"}, "--source must be all, job, or lifecycle"},
+		{"invalid sort", []string{"job", "timeline", "SQU-42", "--repo", tmp, "--sort", "sideways"}, "--sort must be oldest or newest"},
+		{"format json", []string{"job", "timeline", "SQU-42", "--repo", tmp, "--format", "{{.Kind}}", "--json"}, "--format cannot be combined with --json"},
+	} {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("job timeline %s succeeded: stdout=%s", tc.name, out.String())
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("job timeline %s error = %q, want %q", tc.name, stderr.String(), tc.want)
+		}
+	}
+
 	summaryCmd := NewRootCmd()
 	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	summaryCmd.SetOut(summaryOut)

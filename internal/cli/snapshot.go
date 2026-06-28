@@ -27,6 +27,7 @@ func newSnapshotCmd() *cobra.Command {
 		output        string
 		jsonOut       bool
 		noRedact      bool
+		commandsOnly  bool
 		eventLimit    int
 		eventSortBy   string
 		intakeLimit   int
@@ -60,6 +61,10 @@ func newSnapshotCmd() *cobra.Command {
 			}
 			if jsonOut && output != "" && output != "-" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot: choose one of --json or --output.")
+				return exitErr(2)
+			}
+			if commandsOnly && (jsonOut || output != "" || format != "") {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team snapshot: --commands cannot be combined with --json, --output, or --format.")
 				return exitErr(2)
 			}
 			if format != "" && (jsonOut || output != "") {
@@ -99,6 +104,8 @@ func newSnapshotCmd() *cobra.Command {
 				Redacted:         !noRedact,
 			})
 			switch {
+			case commandsOnly:
+				return renderSnapshotCommands(cmd.OutOrStdout(), snapshot, operatorCommandScopeFromCommand(cmd, target, "target"))
 			case jsonOut || output == "-":
 				return writeSnapshotJSON(cmd.OutOrStdout(), snapshot)
 			case output != "":
@@ -120,6 +127,7 @@ func newSnapshotCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write the full JSON snapshot to this file. Use '-' for stdout.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the full snapshot JSON to stdout.")
 	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "Include raw payload values instead of redacting sensitive keys.")
+	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print snapshot next-action commands, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the snapshot with a Go template, e.g. '{{.Repo}} {{len .Jobs}}'.")
 	cmd.Flags().IntVar(&eventLimit, "events", 50, "Recent lifecycle events to include. Use -1 for all events or 0 to skip events.")
 	cmd.Flags().StringVar(&eventSortBy, "events-sort", "oldest", "Sort included lifecycle events by oldest or newest after applying --events.")
@@ -1084,6 +1092,13 @@ func renderSnapshotSummary(w io.Writer, snapshot *snapshotResult) {
 			fmt.Fprintf(w, "  %s: %s\n", key, snapshot.SectionErrors[key])
 		}
 	}
+}
+
+func renderSnapshotCommands(w io.Writer, snapshot *snapshotResult, scope operatorCommandScope) error {
+	if snapshot == nil || snapshot.Next == nil {
+		return nil
+	}
+	return renderOperatorActionCommands(w, snapshot.Next.Actions, scope)
 }
 
 func parseSnapshotFormat(name, format string) (*template.Template, error) {

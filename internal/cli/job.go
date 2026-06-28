@@ -42,6 +42,7 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobQueueCmd())
 	cmd.AddCommand(newJobOutboxCmd())
 	cmd.AddCommand(newJobEventsCmd())
+	cmd.AddCommand(newJobTimelineCmd())
 	cmd.AddCommand(newJobWaitCmd())
 	cmd.AddCommand(newJobStartCmd())
 	cmd.AddCommand(newJobAdoptCmd())
@@ -1182,6 +1183,73 @@ func newJobEventsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON. With --follow, emit one JSON object per line.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching job events by type, status, actor, and instance.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each event with a Go template, e.g. '{{.TS}} {{.Type}} {{.Message}}'.")
+	return cmd
+}
+
+func newJobTimelineCmd() *cobra.Command {
+	var (
+		repo    string
+		tail    string
+		source  string
+		sortBy  string
+		jsonOut bool
+		format  string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "timeline <job-id>",
+		Short: "Show a combined job audit and lifecycle timeline.",
+		Long: "Show one durable job's audit events together with matching daemon lifecycle events. " +
+			"Timeline rows are read-only and sorted across both sources by event time.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeline: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			sortMode, err := parseEventSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeline: %v\n", err)
+				return exitErr(2)
+			}
+			tailEvents, err := parseLogTail(tail)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeline: %v\n", err)
+				return exitErr(2)
+			}
+			sourceMode, err := parseJobTimelineSource(source)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeline: %v\n", err)
+				return exitErr(2)
+			}
+			tmpl, err := parseJobTimelineFormat(format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeline: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, repo)
+			if err != nil {
+				return err
+			}
+			j, err := job.Read(teamDir, args[0])
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeline: %v\n", err)
+				return exitErr(1)
+			}
+			entries, err := collectJobTimeline(teamDir, j, sourceMode, tailEvents, sortMode)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeline: %v\n", err)
+				return exitErr(1)
+			}
+			return renderJobTimeline(cmd.OutOrStdout(), entries, jsonOut, tmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&tail, "tail", "0", "Show only the last N combined events before sorting for display (0 or all = all).")
+	cmd.Flags().StringVar(&source, "source", "all", "Timeline source to include: all, job, or lifecycle.")
+	cmd.Flags().StringVar(&sortBy, "sort", "oldest", "Sort returned timeline rows by oldest or newest after applying --tail.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render each timeline row with a Go template, e.g. '{{.TS}} {{.Source}} {{.Kind}} {{.Message}}'.")
 	return cmd
 }
 
@@ -8005,6 +8073,213 @@ func sortJobEvents(events []job.Event) {
 	})
 }
 
+type jobTimelineEntry struct {
+	TS       time.Time         `json:"ts"`
+	Source   string            `json:"source"`
+	JobID    string            `json:"job_id,omitempty"`
+	Kind     string            `json:"kind"`
+	Status   string            `json:"status,omitempty"`
+	Instance string            `json:"instance,omitempty"`
+	Actor    string            `json:"actor,omitempty"`
+	Agent    string            `json:"agent,omitempty"`
+	Ticket   string            `json:"ticket,omitempty"`
+	Branch   string            `json:"branch,omitempty"`
+	PR       string            `json:"pr,omitempty"`
+	PID      int               `json:"pid,omitempty"`
+	ExitCode *int              `json:"exit_code,omitempty"`
+	Message  string            `json:"message,omitempty"`
+	Data     map[string]string `json:"data,omitempty"`
+}
+
+func parseJobTimelineSource(raw string) (string, error) {
+	source := strings.ToLower(strings.TrimSpace(raw))
+	switch source {
+	case "", "all":
+		return "all", nil
+	case "job", "jobs", "audit", "job-event", "job-events":
+		return "job", nil
+	case "lifecycle", "daemon":
+		return "lifecycle", nil
+	default:
+		return "", fmt.Errorf("--source must be all, job, or lifecycle")
+	}
+}
+
+func collectJobTimeline(teamDir string, j *job.Job, source string, tail int, sortMode string) ([]jobTimelineEntry, error) {
+	if j == nil {
+		return nil, errors.New("job is nil")
+	}
+	entries := []jobTimelineEntry{}
+	if source == "all" || source == "job" {
+		events, err := job.ListEvents(teamDir, j.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, ev := range events {
+			entries = append(entries, jobTimelineEntryFromJobEvent(ev))
+		}
+	}
+	if source == "all" || source == "lifecycle" {
+		events, err := daemon.ListLifecycleEvents(daemon.DaemonRoot(teamDir))
+		if err != nil {
+			return nil, err
+		}
+		for _, ev := range events {
+			if !jobSnapshotLifecycleEventMatches(ev, j, jobSnapshotInstance(j, nil)) {
+				continue
+			}
+			entries = append(entries, jobTimelineEntryFromLifecycleEvent(*ev, j.ID))
+		}
+	}
+	sortJobTimelineEntries(entries)
+	entries = tailJobTimelineEntries(entries, tail)
+	sortJobTimelineEntriesForDisplay(entries, sortMode)
+	return entries, nil
+}
+
+func jobTimelineEntryFromJobEvent(ev job.Event) jobTimelineEntry {
+	return jobTimelineEntry{
+		TS:       ev.TS,
+		Source:   "job",
+		JobID:    ev.JobID,
+		Kind:     ev.Type,
+		Status:   string(ev.Status),
+		Instance: ev.Instance,
+		Actor:    ev.Actor,
+		Message:  ev.Message,
+		Data:     ev.Data,
+	}
+}
+
+func jobTimelineEntryFromLifecycleEvent(ev daemon.LifecycleEvent, fallbackJobID string) jobTimelineEntry {
+	jobID := strings.TrimSpace(ev.Job)
+	if jobID == "" {
+		jobID = fallbackJobID
+	}
+	return jobTimelineEntry{
+		TS:       ev.TS,
+		Source:   "lifecycle",
+		JobID:    job.NormalizeID(jobID),
+		Kind:     ev.Action,
+		Status:   string(ev.Status),
+		Instance: ev.Instance,
+		Agent:    ev.Agent,
+		Ticket:   ev.Ticket,
+		Branch:   ev.Branch,
+		PR:       ev.PR,
+		PID:      ev.PID,
+		ExitCode: ev.ExitCode,
+		Message:  ev.Message,
+	}
+}
+
+func sortJobTimelineEntries(entries []jobTimelineEntry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		return jobTimelineEntryOldestFirstLess(entries[i], entries[j])
+	})
+}
+
+func sortJobTimelineEntriesForDisplay(entries []jobTimelineEntry, sortMode string) {
+	if sortMode != "newest" {
+		return
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return jobTimelineEntryNewestFirstLess(entries[i], entries[j])
+	})
+}
+
+func tailJobTimelineEntries(entries []jobTimelineEntry, tail int) []jobTimelineEntry {
+	if tail <= 0 || len(entries) <= tail {
+		return entries
+	}
+	return entries[len(entries)-tail:]
+}
+
+func jobTimelineEntryOldestFirstLess(left, right jobTimelineEntry) bool {
+	if !left.TS.Equal(right.TS) {
+		if left.TS.IsZero() {
+			return false
+		}
+		if right.TS.IsZero() {
+			return true
+		}
+		return left.TS.Before(right.TS)
+	}
+	if left.Source != right.Source {
+		return left.Source < right.Source
+	}
+	if left.JobID != right.JobID {
+		return left.JobID < right.JobID
+	}
+	if left.Kind != right.Kind {
+		return left.Kind < right.Kind
+	}
+	if left.Instance != right.Instance {
+		return left.Instance < right.Instance
+	}
+	return left.Message < right.Message
+}
+
+func jobTimelineEntryNewestFirstLess(left, right jobTimelineEntry) bool {
+	if !left.TS.Equal(right.TS) {
+		if left.TS.IsZero() {
+			return false
+		}
+		if right.TS.IsZero() {
+			return true
+		}
+		return left.TS.After(right.TS)
+	}
+	if left.Source != right.Source {
+		return left.Source < right.Source
+	}
+	if left.JobID != right.JobID {
+		return left.JobID < right.JobID
+	}
+	if left.Kind != right.Kind {
+		return left.Kind < right.Kind
+	}
+	if left.Instance != right.Instance {
+		return left.Instance < right.Instance
+	}
+	return left.Message < right.Message
+}
+
+func renderJobTimeline(w io.Writer, entries []jobTimelineEntry, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(entries)
+	}
+	if tmpl != nil {
+		for _, entry := range entries {
+			if err := tmpl.Execute(w, entry); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if len(entries) == 0 {
+		fmt.Fprintln(w, "(no job timeline events)")
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "TIME\tSOURCE\tKIND\tSTATUS\tINSTANCE\tACTOR\tAGENT\tMESSAGE")
+	for _, entry := range entries {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			entry.TS.Format(time.RFC3339),
+			entry.Source,
+			entry.Kind,
+			emptyDash(entry.Status),
+			emptyDash(entry.Instance),
+			emptyDash(entry.Actor),
+			emptyDash(entry.Agent),
+			emptyDash(entry.Message))
+	}
+	return tw.Flush()
+}
+
 func renderJobEventTableWithJob(w io.Writer, events []job.Event) {
 	renderJobEventTableWithJobHeader(w, events, true)
 }
@@ -13226,6 +13501,17 @@ func parseJobEventFormat(format string) (*template.Template, error) {
 		return nil, nil
 	}
 	tmpl, err := template.New("job-event-format").Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func parseJobTimelineFormat(format string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New("job-timeline-format").Parse(format)
 	if err != nil {
 		return nil, fmt.Errorf("invalid --format template: %w", err)
 	}

@@ -1895,6 +1895,7 @@ Subcommands:
 - `agent-team job stats` - Show CPU and memory usage for a job&#39;s instances.
 - `agent-team job step` - Update a pipeline job step status.
 - `agent-team job stop` - Stop a job&#39;s owning instance.
+- `agent-team job timeline` - Show a combined job audit and lifecycle timeline.
 - `agent-team job timeout` - Mark stale running job work failed.
 - `agent-team job triage` - Show jobs that need operator attention.
 - `agent-team job unblock` - Answer a blocked job and mark it ready to continue.
@@ -3360,6 +3361,7 @@ agent-team job snapshot <job-id> [flags]
 Flags:
 
 ```text
+      --commands             Print snapshot follow-up commands, one per line. agent-team follow-ups preserve the selected repo scope.
       --events int           Recent job and lifecycle events to include. Use -1 for all events or 0 to skip events. (default 20)
       --events-sort string   Sort included job and lifecycle events by oldest or newest after applying --events. (default "oldest")
       --format string        Render the job snapshot with a Go template, e.g. '{{.Job.ID}} {{.Job.Status}}'.
@@ -3490,6 +3492,27 @@ Flags:
       --timeout duration        Grace before --force kills. With --wait and no --wait-timeout, also used as the wait deadline.
       --wait                    Wait for the owning instance to reach a terminal state.
       --wait-timeout duration   Maximum time to wait for terminal state with --wait.
+```
+
+## `agent-team job timeline`
+
+Show a combined job audit and lifecycle timeline.
+
+Show one durable job&#39;s audit events together with matching daemon lifecycle events. Timeline rows are read-only and sorted across both sources by event time.
+
+```text
+agent-team job timeline <job-id> [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render each timeline row with a Go template, e.g. '{{.TS}} {{.Source}} {{.Kind}} {{.Message}}'.
+      --json            Emit machine-readable JSON.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
+      --sort string     Sort returned timeline rows by oldest or newest after applying --tail. (default "oldest")
+      --source string   Timeline source to include: all, job, or lifecycle. (default "all")
+      --tail string     Show only the last N combined events before sorting for display (0 or all = all). (default "0")
 ```
 
 ## `agent-team job timeout`
@@ -7024,6 +7047,7 @@ agent-team snapshot [flags]
 Flags:
 
 ```text
+      --commands                Print snapshot next-action commands, one per line. agent-team follow-ups preserve the selected repo scope.
       --events int              Recent lifecycle events to include. Use -1 for all events or 0 to skip events. (default 50)
       --events-sort string      Sort included lifecycle events by oldest or newest after applying --events. (default "oldest")
       --format string           Render the snapshot with a Go template, e.g. '{{.Repo}} {{len .Jobs}}'.
@@ -8943,6 +8967,7 @@ agent-team team snapshot <team> [flags]
 Flags:
 
 ```text
+      --commands             Print snapshot next-action commands, one per line. agent-team follow-ups preserve the selected repo scope.
       --events int           Recent matching team lifecycle events to include. Use -1 for all matching events or 0 to skip events. (default 50)
       --events-sort string   Sort included team lifecycle events by oldest or newest after applying --events. (default "oldest")
       --format string        Render the team snapshot with a Go template, e.g. '{{.Team.Name}} {{len .Jobs}}'.

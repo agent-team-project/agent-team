@@ -107,7 +107,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job top <job-id>` | `agent-team job stats <job-id>` |
 | `agent-team job exec <job-id>` | `agent-team job attach <job-id>` |
 | `agent-team job start|stop|kill <job-id>` | Control a job's owning instance; add `--step` for a pipeline stage and `--dry-run --commands` for the selected lifecycle apply command |
-| `agent-team job snapshot <job-id>` | Capture one job's post-mortem metadata, provenance, event tails ordered with `--events-sort`, inboxes, queue/outbox ownership including quarantine, state files, optional log tails, and formatted summary fields |
+| `agent-team job snapshot <job-id>` | Capture one job's post-mortem metadata, provenance, event tails ordered with `--events-sort`, inboxes, queue/outbox ownership including quarantine, state files, optional log tails, formatted summary fields, or follow-up commands with `--commands` |
 | `agent-team job explain <job-id>` | Explain or watch pipeline step readiness, blockers, gates, and next actions; add `--state` or `--step` to focus one state or stage, or `--commands` for repo-scoped nested action commands |
 | `agent-team job watch <job-id>` | Continuous job explanation shortcut for next-step readiness, blockers, gates, and actions |
 | `agent-team job approve <job-id>` | Approve a blocked manual pipeline gate; add `--dry-run --commands` for the apply command or `--advance --wait --wait-next-state`/`--wait-step` for stage-aware handoff |
@@ -133,6 +133,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job advance <job-id>` | Advance a pipeline step; add `--dry-run --commands` for the apply command or `--wait --wait-next-state`/`--wait-step` for stage-aware handoff |
 | `agent-team job reconcile github` | Reconcile GitHub PR payloads into jobs; add `--dry-run --commands` for the apply command or `--advance --wait --wait-next-state`/`--wait-step` for PR-gate handoff |
 | `agent-team job events <job-id>\|--all` | Show, follow, sort, or summarize job event logs |
+| `agent-team job timeline <job-id>` | Merge one job's durable audit log with matching daemon lifecycle events; filter by `--source`, tail before display sorting, or emit JSON/templates for handoffs |
 
 ## Job Queue
 
@@ -332,7 +333,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team adopt <team> <job-id>` | Adopt a live external process for a job after verifying team ownership; output includes job, pipeline, and team follow-up actions scoped to the adopted step, plus `--commands` |
 | `agent-team team retry <team>` | Scoped failed-step retry, honoring step `max_attempts` caps; add `--dry-run --commands` for the apply command or `--dispatch --wait-next-state`/`--wait-step` for stage-aware recovery handoff |
 | `agent-team team cleanup <team>` | Scoped job cleanup, optionally verifying PRs with `gh` |
-| `agent-team team snapshot <team>` | Scoped diagnostic artifact with command provenance, queue/outbox quarantine inventory, event tails ordered with `--events-sort`, and formatted summary fields |
+| `agent-team team snapshot <team>` | Scoped diagnostic artifact with command provenance, queue/outbox quarantine inventory, event tails ordered with `--events-sort`, formatted summary fields, or scoped next-action commands with `--commands` |
 
 ## Intake and Schedules
 
@@ -364,7 +365,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team health` | Scriptable health check with queue, job, and outbox quarantine warnings plus scoped recovery actions; add `--last-message` when runtime remediation should prefer clean Codex final-message fallbacks, or `--commands` for one remediation command per line while preserving selected repo scope |
 | `agent-team monitor` | Operator dashboard with health, job/queue/outbox recovery, inbox, instances, resources, and optional lifecycle events; add `--events N --events-sort newest` to show latest events first, `--last-message` when Codex log fallback hints should prefer clean final responses, or `--commands` for one command per line from visible recovery sections |
 | `agent-team watch` | Continuous monitor with health, job/queue/outbox recovery, inbox, instances, resources, and optional lifecycle events; add `--events N --events-sort newest` to show latest events first, or `--last-message` for the same Codex final-message preference |
-| `agent-team snapshot` | Redacted diagnostic artifact with command provenance, job/queue/outbox quarantine inventory, event tails ordered with `--events-sort`, and formatted summary fields |
+| `agent-team snapshot` | Redacted diagnostic artifact with command provenance, job/queue/outbox quarantine inventory, event tails ordered with `--events-sort`, formatted summary fields, or next-action commands with `--commands` |
 | `agent-team snapshot diff <before.json> <after.json>` | Compare saved global, team, pipeline, or job diagnostic artifacts, or compare one saved artifact with the current repo state using `--current-after` / `--current-before`; includes provenance, git/runtime context, health, plan, triage, next-action hints, job state, job quarantine, inboxes, outbox, outbox quarantine, queue, queue quarantine, schedules, intake, events, pipeline state, saved JSON output, action filters, summary-only output, sorted/bounded detail rows, and formatted counters for scripts |
 | `agent-team repair` | Start/reconcile/timeout/retry/tick recovery loop; timeout repair accepts filters, and failed-step retry accepts pipeline/step filters, `--retry-force`, runtime overrides, `--last-message` health hints, and `--wait-next-state`/`--wait-step` stage-aware bounded handoff |
 

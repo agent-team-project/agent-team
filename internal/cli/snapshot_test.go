@@ -543,6 +543,75 @@ pipelines = ["ticket_to_pr"]
 	}
 }
 
+func TestSnapshotCommands(t *testing.T) {
+	target := t.TempDir()
+	initInto(t, target)
+	scope := operatorCommandScope{Repo: target, Set: true}
+
+	global := NewRootCmd()
+	globalOut, globalErr := &bytes.Buffer{}, &bytes.Buffer{}
+	global.SetOut(globalOut)
+	global.SetErr(globalErr)
+	global.SetArgs([]string{"--repo", target, "snapshot", "--events", "0", "--commands"})
+	if err := global.Execute(); err != nil {
+		t.Fatalf("snapshot --commands: %v\nstderr=%s", err, globalErr.String())
+	}
+	globalBody := globalOut.String()
+	if !strings.Contains(globalBody, scopedOperatorAction("agent-team daemon start", scope)) ||
+		!strings.Contains(globalBody, scopedOperatorAction("agent-team sync --dry-run", scope)) ||
+		strings.Contains(globalBody, "snapshot:") ||
+		strings.Contains(globalBody, "next:") {
+		t.Fatalf("snapshot --commands output = %q", globalBody)
+	}
+
+	team := NewRootCmd()
+	teamOut, teamErr := &bytes.Buffer{}, &bytes.Buffer{}
+	team.SetOut(teamOut)
+	team.SetErr(teamErr)
+	team.SetArgs([]string{"team", "snapshot", "delivery", "--repo", target, "--events", "0", "--commands"})
+	if err := team.Execute(); err != nil {
+		t.Fatalf("team snapshot --commands: %v\nstderr=%s", err, teamErr.String())
+	}
+	teamBody := teamOut.String()
+	if !strings.Contains(teamBody, scopedOperatorAction("agent-team daemon start", scope)) ||
+		!strings.Contains(teamBody, scopedOperatorAction("agent-team team sync delivery --dry-run", scope)) ||
+		strings.Contains(teamBody, "snapshot:") ||
+		strings.Contains(teamBody, "next:") {
+		t.Fatalf("team snapshot --commands output = %q", teamBody)
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "global json conflict",
+			args: []string{"--repo", target, "snapshot", "--commands", "--json"},
+			want: "agent-team snapshot: --commands cannot be combined with --json, --output, or --format.",
+		},
+		{
+			name: "team format conflict",
+			args: []string{"team", "snapshot", "delivery", "--repo", target, "--commands", "--format", "{{.Team.Name}}"},
+			want: "agent-team team snapshot: --commands cannot be combined with --json, --output, or --format.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err == nil {
+				t.Fatalf("%s succeeded", tc.name)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("%s stderr = %q, want %q", tc.name, stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestSnapshotDiffCommandReportsChanges(t *testing.T) {
 	tmp := t.TempDir()
 	beforePath := filepath.Join(tmp, "before.json")

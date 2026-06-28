@@ -314,6 +314,34 @@ func TestJobSnapshotHumanSummaryAndOutputFile(t *testing.T) {
 		t.Fatalf("output snapshot = %+v", snapshot)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "snapshot", "squ-161", "--repo", tmp, "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("job snapshot --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team job outbox squ-161 --summary",
+		"agent-team job show squ-161 --events all",
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
+	if got := commandsOut.String(); got != wantCommands {
+		t.Fatalf("job snapshot --commands = %q, want %q", got, wantCommands)
+	}
+
+	commandsConflict := NewRootCmd()
+	commandsConflictOut, commandsConflictErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commandsConflict.SetOut(commandsConflictOut)
+	commandsConflict.SetErr(commandsConflictErr)
+	commandsConflict.SetArgs([]string{"job", "snapshot", "squ-161", "--repo", tmp, "--commands", "--json"})
+	if err := commandsConflict.Execute(); err == nil {
+		t.Fatalf("job snapshot --commands --json succeeded")
+	}
+	if !strings.Contains(commandsConflictErr.String(), "--commands cannot be combined with --json, --output, or --format") {
+		t.Fatalf("commands conflict stderr = %q", commandsConflictErr.String())
+	}
+
 	invalid := NewRootCmd()
 	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
 	invalid.SetOut(invalidOut)

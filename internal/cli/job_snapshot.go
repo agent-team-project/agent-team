@@ -23,6 +23,7 @@ func newJobSnapshotCmd() *cobra.Command {
 		output     string
 		jsonOut    bool
 		noRedact   bool
+		commands   bool
 		eventLimit int
 		eventSort  string
 		logTail    int
@@ -51,6 +52,10 @@ func newJobSnapshotCmd() *cobra.Command {
 			}
 			if jsonOut && output != "" && output != "-" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job snapshot: choose one of --json or --output.")
+				return exitErr(2)
+			}
+			if commands && (jsonOut || output != "" || format != "") {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job snapshot: --commands cannot be combined with --json, --output, or --format.")
 				return exitErr(2)
 			}
 			if format != "" && (jsonOut || output != "") {
@@ -88,6 +93,8 @@ func newJobSnapshotCmd() *cobra.Command {
 				Redacted:  !noRedact,
 			})
 			switch {
+			case commands:
+				return renderJobSnapshotCommands(cmd.OutOrStdout(), snapshot, operatorCommandScopeFromCommand(cmd, repo, "repo"))
 			case jsonOut || output == "-":
 				return writeJobSnapshotJSON(cmd.OutOrStdout(), snapshot)
 			case output != "":
@@ -109,6 +116,7 @@ func newJobSnapshotCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write the full JSON snapshot to this file. Use '-' for stdout.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the full job snapshot JSON to stdout.")
 	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "Include raw queue/outbox payload values and latest inbox bodies instead of redacting them.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print snapshot follow-up commands, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the job snapshot with a Go template, e.g. '{{.Job.ID}} {{.Job.Status}}'.")
 	cmd.Flags().IntVar(&eventLimit, "events", 20, "Recent job and lifecycle events to include. Use -1 for all events or 0 to skip events.")
 	cmd.Flags().StringVar(&eventSort, "events-sort", "oldest", "Sort included job and lifecycle events by oldest or newest after applying --events.")
@@ -432,6 +440,11 @@ func jobSnapshotLifecycleEventMatches(ev *daemon.LifecycleEvent, j *job.Job, ins
 	if instance != "" && ev.Instance == instance {
 		return true
 	}
+	for _, step := range j.Steps {
+		if step.Instance != "" && ev.Instance == step.Instance {
+			return true
+		}
+	}
 	if strings.TrimSpace(ev.Ticket) != "" {
 		return job.NormalizeID(ev.Ticket) == j.ID || strings.EqualFold(strings.TrimSpace(ev.Ticket), strings.TrimSpace(j.Ticket))
 	}
@@ -693,4 +706,11 @@ func renderJobSnapshotSummary(w io.Writer, snapshot *jobSnapshotResult) {
 			fmt.Fprintf(w, "  %s: %s\n", key, snapshot.SectionErrors[key])
 		}
 	}
+}
+
+func renderJobSnapshotCommands(w io.Writer, snapshot *jobSnapshotResult, scope operatorCommandScope) error {
+	if snapshot == nil {
+		return nil
+	}
+	return renderOperatorActionCommands(w, snapshot.Actions, scope)
 }
