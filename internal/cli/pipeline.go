@@ -3641,6 +3641,7 @@ func newPipelineTimeoutCmd() *cobra.Command {
 		message     string
 		messageFile string
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -3654,6 +3655,18 @@ func newPipelineTimeoutCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if all && len(args) > 0 {
@@ -3695,6 +3708,27 @@ func newPipelineTimeoutCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline timeout: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				baseArgs := []string{"agent-team", "pipeline", "timeout"}
+				if !all {
+					baseArgs = append(baseArgs, pipelineName)
+				}
+				return renderTimeoutApplyCommands(cmd.OutOrStdout(), results, timeoutCommandOptions{
+					BaseArgs:       baseArgs,
+					Repo:           repo,
+					RepoSet:        cmd.Flags().Changed("repo"),
+					All:            all,
+					Step:           step,
+					StepSet:        cmd.Flags().Changed("step"),
+					TargetAgent:    target,
+					TargetAgentSet: cmd.Flags().Changed("target-agent"),
+					Limit:          limit,
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+				})
+			}
 			return renderPipelineTimeoutResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 		},
 	}
@@ -3706,6 +3740,7 @@ func newPipelineTimeoutCmd() *cobra.Command {
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each timed-out job.")
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read timeout message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview stale-step failures without writing job state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching timeout apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit timeout results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each timeout result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd

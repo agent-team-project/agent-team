@@ -3496,6 +3496,19 @@ func TestJobTimeoutMarksStaleRunningStepsAndJobs(t *testing.T) {
 		t.Fatalf("dry-run mutated job = %+v", unchanged)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "timeout", "squ-840", "--repo", root, "--message", "operator timeout", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("job timeout dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "timeout", "squ-840", "--repo", root, "--message", "operator timeout"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("job timeout dry-run commands = %q, want %q", got, wantCommand)
+	}
+
 	applyStep := NewRootCmd()
 	applyStepOut, applyStepErr := &bytes.Buffer{}, &bytes.Buffer{}
 	applyStep.SetOut(applyStepOut)
@@ -3612,6 +3625,19 @@ func TestJobTimeoutAllMarksStaleRunningWork(t *testing.T) {
 	}
 	if len(limitedRows) != 1 || limitedRows[0].Action != "would_fail" {
 		t.Fatalf("limited rows = %+v", limitedRows)
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "timeout", "--all", "--repo", root, "--dry-run", "--commands", "--limit", "1", "--message", "batch timeout"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("job timeout --all dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "timeout", "--repo", root, "--all", "--limit", "1", "--message", "batch timeout"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("job timeout --all dry-run commands = %q, want %q", got, wantCommand)
 	}
 
 	apply := NewRootCmd()
@@ -3753,6 +3779,19 @@ func TestJobTimeoutAllFiltersByPipelineAndTargetAgent(t *testing.T) {
 		t.Fatalf("pipeline rows = %+v", pipelineRows)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "timeout", "--all", "--repo", root, "--pipeline", "ticket_to_pr", "--target-agent", "manager", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("job timeout filtered dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "timeout", "--repo", root, "--all", "--pipeline", "ticket_to_pr", "--target-agent", "manager"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("job timeout filtered dry-run commands = %q, want %q", got, wantCommand)
+	}
+
 	apply := NewRootCmd()
 	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	apply.SetOut(applyOut)
@@ -3821,6 +3860,21 @@ func TestJobTimeoutRejectsInvalidArgs(t *testing.T) {
 			name: "format with json",
 			args: []string{"job", "timeout", "squ-1", "--json", "--format", "{{.JobID}}"},
 			want: "--format cannot be combined with --json",
+		},
+		{
+			name: "commands without dry-run",
+			args: []string{"job", "timeout", "squ-1", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "commands with json",
+			args: []string{"job", "timeout", "squ-1", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "commands with format",
+			args: []string{"job", "timeout", "squ-1", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
 		},
 		{
 			name: "pipeline without all",

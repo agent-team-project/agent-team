@@ -3415,6 +3415,7 @@ func newJobTimeoutCmd() *cobra.Command {
 		all         bool
 		limit       int
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -3447,6 +3448,18 @@ func newJobTimeoutCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			tmpl, err := parsePipelineTimeoutFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeout: %v\n", err)
@@ -3462,6 +3475,29 @@ func newJobTimeoutCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeout: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				baseArgs := []string{"agent-team", "job", "timeout"}
+				if !all {
+					baseArgs = append(baseArgs, args[0])
+				}
+				return renderTimeoutApplyCommands(cmd.OutOrStdout(), results, timeoutCommandOptions{
+					BaseArgs:       baseArgs,
+					Repo:           repo,
+					RepoSet:        cmd.Flags().Changed("repo"),
+					All:            all,
+					Step:           step,
+					StepSet:        cmd.Flags().Changed("step"),
+					Pipeline:       pipeline,
+					PipelineSet:    cmd.Flags().Changed("pipeline"),
+					TargetAgent:    targetAgent,
+					TargetAgentSet: cmd.Flags().Changed("target-agent"),
+					Limit:          limit,
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+				})
+			}
 			return renderPipelineTimeoutResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 		},
 	}
@@ -3474,6 +3510,7 @@ func newJobTimeoutCmd() *cobra.Command {
 	cmd.Flags().StringVar(&targetAgent, "target-agent", "", "With --all, mark only stale work targeting this agent.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "With --all, mark at most this many stale running jobs or steps failed; 0 means no limit.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview stale-work failure without writing job state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching timeout apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit timeout results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd
@@ -3642,6 +3679,74 @@ func jobTimeoutMessage(jobID string, age, timeout time.Duration, override string
 		return strings.TrimSpace(override)
 	}
 	return fmt.Sprintf("timed out job %s after %s (threshold %s)", jobID, roundedDurationString(age), roundedDurationString(timeout))
+}
+
+type timeoutCommandOptions struct {
+	BaseArgs       []string
+	Repo           string
+	RepoSet        bool
+	All            bool
+	IncludeJobs    bool
+	Step           string
+	StepSet        bool
+	Pipeline       string
+	PipelineSet    bool
+	TargetAgent    string
+	TargetAgentSet bool
+	Limit          int
+	Message        string
+	MessageSet     bool
+	MessageFile    string
+	MessageFileSet bool
+}
+
+func renderTimeoutApplyCommands(w io.Writer, results []pipelineTimeoutResult, opts timeoutCommandOptions) error {
+	if !timeoutResultsHaveApplyCommand(results) {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(timeoutApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func timeoutResultsHaveApplyCommand(results []pipelineTimeoutResult) bool {
+	for _, result := range results {
+		if result.DryRun && strings.TrimSpace(result.Action) == "would_fail" {
+			return true
+		}
+	}
+	return false
+}
+
+func timeoutApplyCommandArgs(opts timeoutCommandOptions) []string {
+	args := append([]string{}, opts.BaseArgs...)
+	if opts.RepoSet && strings.TrimSpace(opts.Repo) != "" {
+		args = append(args, "--repo", opts.Repo)
+	}
+	if opts.All {
+		args = append(args, "--all")
+	}
+	if opts.IncludeJobs {
+		args = append(args, "--jobs")
+	}
+	if opts.StepSet && strings.TrimSpace(opts.Step) != "" {
+		args = append(args, "--step", opts.Step)
+	}
+	if opts.PipelineSet && strings.TrimSpace(opts.Pipeline) != "" {
+		args = append(args, "--pipeline", opts.Pipeline)
+	}
+	if opts.TargetAgentSet && strings.TrimSpace(opts.TargetAgent) != "" {
+		args = append(args, "--target-agent", opts.TargetAgent)
+	}
+	if opts.Limit > 0 {
+		args = append(args, "--limit", fmt.Sprint(opts.Limit))
+	}
+	if opts.MessageSet && strings.TrimSpace(opts.Message) != "" {
+		args = append(args, "--message", opts.Message)
+	}
+	if opts.MessageFileSet && strings.TrimSpace(opts.MessageFile) != "" {
+		args = append(args, "--message-file", opts.MessageFile)
+	}
+	return args
 }
 
 func newJobUpdateCmd() *cobra.Command {

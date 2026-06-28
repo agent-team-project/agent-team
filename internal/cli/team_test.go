@@ -2702,6 +2702,19 @@ pipelines = ["ticket_to_pr"]
 		t.Fatalf("team timeout dry-run leaked unrelated job:\n%s", dryOut.String())
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "timeout", "delivery", "--repo", root, "--message", "team timed out stale step", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team timeout dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "timeout", "delivery", "--repo", root, "--message", "team timed out stale step"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("team timeout dry-run commands = %q, want %q", got, wantCommand)
+	}
+
 	apply := NewRootCmd()
 	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	apply.SetOut(applyOut)
@@ -2858,6 +2871,19 @@ pipelines = ["ticket_to_pr"]
 		t.Fatalf("dry jobs = %+v", dryJobs)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "timeout", "delivery", "--repo", root, "--jobs", "--limit", "1", "--message", "team timeout sweep", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team timeout --jobs dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "timeout", "delivery", "--repo", root, "--jobs", "--limit", "1", "--message", "team timeout sweep"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("team timeout --jobs dry-run commands = %q, want %q", got, wantCommand)
+	}
+
 	apply := NewRootCmd()
 	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	apply.SetOut(applyOut)
@@ -3009,6 +3035,42 @@ pipelines = ["ticket_to_pr"]
 	}
 	if managerLifecycle.Status != job.StatusFailed || managerLifecycle.LastEvent != "job_timeout" || managerLifecycle.LastStatus != "manager team timeout" {
 		t.Fatalf("manager lifecycle job = %+v", managerLifecycle)
+	}
+}
+
+func TestTeamTimeoutCommandsValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "without dry-run",
+			args: []string{"team", "timeout", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "json",
+			args: []string{"team", "timeout", "delivery", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "format",
+			args: []string{"team", "timeout", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tt.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("team timeout --commands with %s succeeded", tt.name)
+		}
+		if !strings.Contains(stderr.String(), tt.want) {
+			t.Fatalf("team timeout --commands with %s stderr = %q, want %q", tt.name, stderr.String(), tt.want)
+		}
 	}
 }
 

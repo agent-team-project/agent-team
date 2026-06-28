@@ -2427,6 +2427,7 @@ func newTeamTimeoutCmd() *cobra.Command {
 		messageFile string
 		includeJobs bool
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -2441,6 +2442,18 @@ func newTeamTimeoutCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeout: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeout: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeout: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeout: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if limit < 0 {
@@ -2471,6 +2484,23 @@ func newTeamTimeoutCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeout: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				return renderTimeoutApplyCommands(cmd.OutOrStdout(), results, timeoutCommandOptions{
+					BaseArgs:       []string{"agent-team", "team", "timeout", args[0]},
+					Repo:           repo,
+					RepoSet:        cmd.Flags().Changed("repo"),
+					IncludeJobs:    includeJobs,
+					Step:           step,
+					StepSet:        cmd.Flags().Changed("step"),
+					TargetAgent:    targetAgent,
+					TargetAgentSet: cmd.Flags().Changed("target-agent"),
+					Limit:          limit,
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+				})
+			}
 			return renderPipelineTimeoutResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 		},
 	}
@@ -2482,6 +2512,7 @@ func newTeamTimeoutCmd() *cobra.Command {
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read timeout message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&includeJobs, "jobs", false, "Include stale step-less jobs whose target instance belongs to the team.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview stale-work failures without writing job state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching timeout apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit timeout results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd

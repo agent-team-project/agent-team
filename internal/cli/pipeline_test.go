@@ -1715,6 +1715,19 @@ timeout = "1h"
 		t.Fatalf("dry-run mutated job: %+v", unchanged)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"pipeline", "timeout", "ticket_to_pr", "--repo", root, "--message", "operator timed out stale step", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("pipeline timeout dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "timeout", "ticket_to_pr", "--repo", root, "--message", "operator timed out stale step"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("pipeline timeout dry-run commands = %q, want %q", got, wantCommand)
+	}
+
 	apply := NewRootCmd()
 	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	apply.SetOut(applyOut)
@@ -1832,6 +1845,42 @@ func TestPipelineTimeoutFiltersByTargetAgent(t *testing.T) {
 	}
 	if manager.Status != job.StatusFailed || manager.Steps[0].Status != job.StatusFailed || manager.Steps[0].Instance != "" || manager.LastStatus != "manager timeout" {
 		t.Fatalf("manager job = %+v", manager)
+	}
+}
+
+func TestPipelineTimeoutCommandsValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "without dry-run",
+			args: []string{"pipeline", "timeout", "ticket_to_pr", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "json",
+			args: []string{"pipeline", "timeout", "ticket_to_pr", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "format",
+			args: []string{"pipeline", "timeout", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tt.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("pipeline timeout --commands with %s succeeded", tt.name)
+		}
+		if !strings.Contains(stderr.String(), tt.want) {
+			t.Fatalf("pipeline timeout --commands with %s stderr = %q, want %q", tt.name, stderr.String(), tt.want)
+		}
 	}
 }
 
