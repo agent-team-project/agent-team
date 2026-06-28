@@ -1452,6 +1452,35 @@ func TestJobCreateDryRunDoesNotWrite(t *testing.T) {
 		}
 	}
 
+	commandsCmd := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commandsCmd.SetOut(commandsOut)
+	commandsCmd.SetErr(commandsErr)
+	commandsCmd.SetArgs([]string{
+		"job", "create", "SQU-47",
+		"review", "the", "runner",
+		"--repo", tmp,
+		"--target", "worker",
+		"--id", "SQU 47 Custom",
+		"--ticket-url", "https://linear.app/squirtlesquad/issue/SQU-47/review-runner",
+		"--dry-run",
+		"--commands",
+	})
+	if err := commandsCmd.Execute(); err != nil {
+		t.Fatalf("job create --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCreateCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "job", "create", "SQU-47",
+		"--repo", tmp,
+		"--target", "worker",
+		"--id", "SQU 47 Custom",
+		"--ticket-url", "https://linear.app/squirtlesquad/issue/SQU-47/review-runner",
+		"review", "the", "runner",
+	}), " ") + "\n"
+	if got := commandsOut.String(); got != wantCreateCommand {
+		t.Fatalf("job create --commands = %q, want %q", got, wantCreateCommand)
+	}
+
 	dispatchCmd := NewRootCmd()
 	dispatchOut, dispatchErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dispatchCmd.SetOut(dispatchOut)
@@ -1476,6 +1505,59 @@ func TestJobCreateDryRunDoesNotWrite(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".agent_team", "jobs", "squ-45.toml")); !os.IsNotExist(err) {
 		t.Fatalf("dispatch dry-run wrote job file, err=%v", err)
+	}
+
+	dispatchCommandsCmd := NewRootCmd()
+	dispatchCommandsOut, dispatchCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dispatchCommandsCmd.SetOut(dispatchCommandsOut)
+	dispatchCommandsCmd.SetErr(dispatchCommandsErr)
+	dispatchCommandsCmd.SetArgs([]string{
+		"job", "create", "SQU-48",
+		"--repo", tmp,
+		"--pipeline", "ticket_to_pr",
+		"--dispatch",
+		"--workspace", "repo",
+		"--runtime", "codex",
+		"--runtime-bin", "codex-dev",
+		"--kickoff", "quote 'this' safely",
+		"--dry-run",
+		"--commands",
+	})
+	if err := dispatchCommandsCmd.Execute(); err != nil {
+		t.Fatalf("job create --dispatch --commands: %v\nstderr=%s", err, dispatchCommandsErr.String())
+	}
+	wantDispatchCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "job", "create", "SQU-48",
+		"--repo", tmp,
+		"--pipeline", "ticket_to_pr",
+		"--dispatch",
+		"--workspace", "repo",
+		"--runtime", "codex",
+		"--runtime-bin", "codex-dev",
+		"--kickoff", "quote 'this' safely",
+	}), " ") + "\n"
+	if got := dispatchCommandsOut.String(); got != wantDispatchCommand {
+		t.Fatalf("job create --dispatch --commands = %q, want %q", got, wantDispatchCommand)
+	}
+
+	stdinCommandsCmd := NewRootCmd()
+	stdinCommandsOut, stdinCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	stdinCommandsCmd.SetOut(stdinCommandsOut)
+	stdinCommandsCmd.SetErr(stdinCommandsErr)
+	oldInput := sendMessageInput
+	sendMessageInput = strings.NewReader("stdin kickoff")
+	defer func() { sendMessageInput = oldInput }()
+	stdinCommandsCmd.SetArgs([]string{"job", "create", "SQU-49", "--repo", tmp, "--kickoff-file", "-", "--dry-run", "--commands"})
+	if err := stdinCommandsCmd.Execute(); err != nil {
+		t.Fatalf("job create stdin --commands: %v\nstderr=%s", err, stdinCommandsErr.String())
+	}
+	wantStdinCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "job", "create", "SQU-49",
+		"--repo", tmp,
+		"--kickoff", "SQU-49: stdin kickoff",
+	}), " ") + "\n"
+	if got := stdinCommandsOut.String(); got != wantStdinCommand {
+		t.Fatalf("job create stdin --commands = %q, want %q", got, wantStdinCommand)
 	}
 
 	pipelineCmd := NewRootCmd()
@@ -5239,6 +5321,21 @@ func TestJobHandoffWaitFlagValidation(t *testing.T) {
 			name: "create invalid wait next-state",
 			args: []string{"job", "create", "SQU-1", "--dispatch", "--wait", "--wait-next-state", "missing"},
 			want: "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all",
+		},
+		{
+			name: "create commands without dry run",
+			args: []string{"job", "create", "SQU-1", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "create commands with json",
+			args: []string{"job", "create", "SQU-1", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "create commands with format",
+			args: []string{"job", "create", "SQU-1", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
 		},
 		{
 			name: "dispatch next-state flag without wait",

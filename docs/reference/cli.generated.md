@@ -2117,6 +2117,7 @@ agent-team job create <ticket> [kickoff...] [flags]
 Flags:
 
 ```text
+      --commands                  With --dry-run, print the matching job create apply command.
       --dispatch                  Dispatch the created job immediately using the running daemon.
       --dry-run                   Preview the job that would be created without writing it.
       --fail-on-failed            With --wait, exit 1 if the job resolves to failed.
