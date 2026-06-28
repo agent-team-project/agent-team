@@ -399,7 +399,11 @@ agent-team template run <ref> <agent> [--target <dir>] [--keep] [--runtime claud
 
 agent-team instance ls                          # list instance state dirs (.agent_team/state/*)
 agent-team instance show <name>                 # show an instance's state files
-agent-team instance rm [<name>...] [--all] [--finished] [--latest | --last N] [--runtime codex] [--status stopped] [--phase done] [--stale] [--runtime-stale] [--unhealthy] [--agent manager] [--dry-run] [--summary] [-f] [--json]
+agent-team instance up [<name>...] [--all] [--latest | --last N] [--agent manager] [--status stopped] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--prompt "..."] [--prompt-file <path|->] [--dry-run] [--commands] [--summary] [--format '{{.Instance}} {{.Action}}'] [--json]
+                                                # start or resume selected instances; dry-run can print the matching apply command
+agent-team instance down [<name>...] [--latest | --last N] [--agent manager] [--status running] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [-f] [--rm] [--dry-run] [--commands] [--summary] [--format '{{.Instance}} {{.Action}}'] [--json]
+                                                # stop selected instances; dry-run can print the matching apply command
+agent-team instance rm [<name>...] [--all] [--finished] [--latest | --last N] [--runtime codex] [--status stopped] [--phase done] [--stale] [--runtime-stale] [--unhealthy] [--agent manager] [--dry-run] [--commands] [--summary] [-f] [--json]
                                                 # delete instance state and daemon metadata
 ```
 

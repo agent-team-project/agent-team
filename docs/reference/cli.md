@@ -59,6 +59,7 @@ as the output directory instead.
 | `agent-team stats` | Show CPU/RSS data |
 | `agent-team attach <instance>` | Interactive runtime resume handoff; `exec` is a Docker-like alias |
 | `agent-team wait [instances...]` | Wait for lifecycle or phase conditions |
+| `agent-team instance up|down|rm` | Namespaced lifecycle controls; add `--dry-run --commands` to print matching `instance` apply commands for actionable previews |
 | `agent-team rm [instances...]` | Remove state and metadata; add `--dry-run --commands` to print the matching remove command when the preview has actionable work |
 | `agent-team prune` | Remove finished old metadata/state; add `--dry-run --commands` to print the matching prune apply command when the preview has actionable work |
 

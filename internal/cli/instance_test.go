@@ -1219,6 +1219,29 @@ func TestInstanceUpLastDryRunSelectsNewestStoppedMetadata(t *testing.T) {
 	if len(rows) != 2 || rows[0].Instance != "new" || rows[1].Instance != "mid" {
 		t.Fatalf("rows = %+v, want newest two stopped metadata resumes", rows)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"instance", "up", "--last", "2", "--status", "stopped", "--dry-run", "--commands", "--target", tmp})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("instance up --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team",
+		"instance",
+		"up",
+		"--target",
+		tmp,
+		"--last",
+		"2",
+		"--status",
+		"stopped",
+	}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("instance up --dry-run --commands = %q, want %q", got, wantCommand)
+	}
 }
 
 func TestInstanceUpWaitJSONHonorsAgentFilterHealth(t *testing.T) {
@@ -1307,6 +1330,32 @@ func TestInstanceDownLastDryRunSelectsNewestRunningMetadata(t *testing.T) {
 	if len(rows) != 2 || rows[0].Instance != "new" || rows[1].Instance != "mid" {
 		t.Fatalf("rows = %+v, want newest two running metadata targets", rows)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"instance", "down", "--last", "2", "--status", "running", "--dry-run", "--commands", "--rm", "--timeout", "10s", "--target", tmp})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("instance down --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team",
+		"instance",
+		"down",
+		"--target",
+		tmp,
+		"--last",
+		"2",
+		"--status",
+		"running",
+		"--rm",
+		"--timeout",
+		"10s",
+	}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("instance down --dry-run --commands = %q, want %q", got, wantCommand)
+	}
 }
 
 func TestInstanceUpDownRejectInvalidLatestLastOptions(t *testing.T) {
@@ -1319,9 +1368,18 @@ func TestInstanceUpDownRejectInvalidLatestLastOptions(t *testing.T) {
 		{[]string{"instance", "up", "manager", "--dry-run", "--last", "2"}, "--last cannot be combined with instance names"},
 		{[]string{"instance", "up", "--timeout", "-1s"}, "--timeout must be >= 0"},
 		{[]string{"instance", "up", "--dry-run", "--wait"}, "--dry-run cannot be combined with --wait"},
+		{[]string{"instance", "up", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"instance", "up", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"instance", "up", "--dry-run", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
+		{[]string{"instance", "up", "--dry-run", "--commands", "--format", "{{.Instance}}"}, "--commands cannot be combined with --format"},
+		{[]string{"instance", "up", "--dry-run", "--commands", "--attach", "manager"}, "--commands cannot be combined with --attach"},
 		{[]string{"instance", "down", "--last", "-1"}, "--last must be >= 0"},
 		{[]string{"instance", "down", "--latest", "--last", "2"}, "choose one of --latest or --last"},
 		{[]string{"instance", "down", "manager", "--last", "2"}, "--last cannot be combined with instance names"},
+		{[]string{"instance", "down", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"instance", "down", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"instance", "down", "--dry-run", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
+		{[]string{"instance", "down", "--dry-run", "--commands", "--format", "{{.Instance}}"}, "--commands cannot be combined with --format"},
 	} {
 		cmd := NewRootCmd()
 		stderr := &bytes.Buffer{}
@@ -1420,6 +1478,43 @@ func TestRmTopLevelDryRunCommands(t *testing.T) {
 	}
 	if _, err := os.Stat(stateDir); err != nil {
 		t.Fatalf("state should remain after dry-run: %v", err)
+	}
+}
+
+func TestInstanceRmDryRunCommands(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	stateDir := filepath.Join(tmp, ".agent_team", "state", "ephemeral")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"instance", "rm", "ephemeral", "--target", tmp, "--force", "--dry-run", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("instance rm --dry-run --commands: %v\nstderr=%s", err, stderr.String())
+	}
+	want := strings.Join(shellQuoteArgs([]string{"agent-team", "instance", "rm", "--target", tmp, "ephemeral", "--force"}), " ")
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Fatalf("instance rm --dry-run --commands = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(stateDir); err != nil {
+		t.Fatalf("state should remain after dry-run: %v", err)
+	}
+
+	noAction := NewRootCmd()
+	noActionOut, noActionErr := &bytes.Buffer{}, &bytes.Buffer{}
+	noAction.SetOut(noActionOut)
+	noAction.SetErr(noActionErr)
+	noAction.SetArgs([]string{"instance", "rm", "--all", "--target", tmp, "--runtime", "codex", "--dry-run", "--commands"})
+	if err := noAction.Execute(); err != nil {
+		t.Fatalf("instance rm --dry-run --commands no action: %v\nstderr=%s", err, noActionErr.String())
+	}
+	if got := strings.TrimSpace(noActionOut.String()); got != "" {
+		t.Fatalf("instance rm no-action commands = %q, want empty", got)
 	}
 }
 
@@ -2397,6 +2492,26 @@ func TestRemoveCommandsRejectInvalidRenderModes(t *testing.T) {
 			name: "rm json",
 			args: []string{"rm", "ephemeral", "--dry-run", "--commands", "--json"},
 			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "instance rm requires dry run",
+			args: []string{"instance", "rm", "ephemeral", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "instance rm json",
+			args: []string{"instance", "rm", "ephemeral", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "instance rm summary",
+			args: []string{"instance", "rm", "ephemeral", "--dry-run", "--commands", "--summary"},
+			want: "--commands cannot be combined with --summary",
+		},
+		{
+			name: "instance rm format",
+			args: []string{"instance", "rm", "ephemeral", "--dry-run", "--commands", "--format", "{{.Instance}}"},
+			want: "--commands cannot be combined with --format",
 		},
 		{
 			name: "prune summary",
