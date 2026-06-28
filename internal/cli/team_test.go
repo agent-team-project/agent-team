@@ -9621,6 +9621,31 @@ schedules = ["platform_due"]
 		t.Fatalf("team tick format = %q", formatOut.String())
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "tick", "delivery", "--repo", root, "--workspace", "repo", "--dry-run", "--preview-routes", "--runtime", "codex", "--runtime-bin", "codex-dev", "--limit", "2", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team tick dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "tick", "delivery", "--repo", root, "--workspace", "repo", "--runtime", "codex", "--runtime-bin", "codex-dev", "--limit", "2"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("team tick dry-run commands = %q, want %q", got, wantCommand)
+	}
+
+	idleCommands := NewRootCmd()
+	idleCommandsOut, idleCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	idleCommands.SetOut(idleCommandsOut)
+	idleCommands.SetErr(idleCommandsErr)
+	idleCommands.SetArgs([]string{"team", "tick", "delivery", "--repo", root, "--dry-run", "--skip-schedules", "--skip-drain", "--skip-advance", "--commands"})
+	if err := idleCommands.Execute(); err != nil {
+		t.Fatalf("idle team tick dry-run commands: %v\nstderr=%s", err, idleCommandsErr.String())
+	}
+	if got := strings.TrimSpace(idleCommandsOut.String()); got != "" {
+		t.Fatalf("idle team tick dry-run commands = %q, want no output", got)
+	}
+
 	invalid := NewRootCmd()
 	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
 	invalid.SetOut(invalidOut)
@@ -10220,6 +10245,26 @@ func TestTeamTickRejectsInvalidLoopFlags(t *testing.T) {
 			name: "max cycles without until idle",
 			args: []string{"team", "tick", "delivery", "--max-cycles", "2"},
 			want: "--max-cycles requires --until-idle",
+		},
+		{
+			name: "commands requires dry run",
+			args: []string{"team", "tick", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "commands rejects json",
+			args: []string{"team", "tick", "delivery", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "commands rejects format",
+			args: []string{"team", "tick", "delivery", "--dry-run", "--commands", "--format", "{{.Team.Name}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "commands rejects watch",
+			args: []string{"team", "tick", "delivery", "--dry-run", "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
 		},
 	}
 	for _, tc := range cases {

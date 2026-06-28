@@ -153,6 +153,7 @@ agent-team repair --retry-pipelines --retry-step review --dry-run --preview-rout
 agent-team tick --dry-run --preview-routes --commands
 agent-team tick --wait --wait-status running --wait-timeout 30s
 agent-team tick --wait --wait-next-state running --wait-step implement --wait-timeout 30s
+agent-team team tick delivery --dry-run --preview-routes --commands
 agent-team team tick delivery --wait --wait-status running --wait-timeout 30s
 agent-team team tick delivery --wait --wait-next-state running --wait-step implement --wait-timeout 30s
 ```
@@ -277,7 +278,7 @@ agent-team team retry delivery --force --message "operator override after fixing
 agent-team team timeout delivery --dry-run
 agent-team team timeout delivery --jobs --dry-run
 agent-team team timeout delivery --jobs --target-agent worker --dry-run
-agent-team team tick delivery --runtime codex --dry-run --preview-routes
+agent-team team tick delivery --runtime codex --dry-run --preview-routes --commands
 agent-team team tick delivery --all-ready-steps --dry-run
 agent-team team tick delivery --wait --wait-status running --wait-timeout 30s
 agent-team team tick delivery --wait --wait-next-state running --wait-step implement --wait-timeout 30s

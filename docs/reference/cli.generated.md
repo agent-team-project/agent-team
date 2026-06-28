@@ -8875,6 +8875,7 @@ Flags:
 
 ```text
       --all-ready-steps           Advance every currently ready independent team pipeline step in this tick.
+      --commands                  With --dry-run, print the matching team tick apply command when the preview has actionable work.
       --dry-run                   Preview team-owned maintenance work without mutating state.
       --fail-on-failed            With --wait, exit 1 if any advanced team pipeline job resolves to failed.
       --format string             Render the team tick result with a Go template, e.g. '{{.Team.Name}} {{.Tick.Queue.WouldDispatch}}'.

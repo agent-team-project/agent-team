@@ -5060,6 +5060,7 @@ func newTeamTickCmd() *cobra.Command {
 		previewRoutes bool
 		watch         bool
 		untilIdle     bool
+		commands      bool
 		wait          bool
 		waitStatuses  []string
 		waitEvents    []string
@@ -5080,6 +5081,22 @@ func newTeamTickCmd() *cobra.Command {
 		Long:  "Run or preview one team's due schedules, drainable queue items, and ready pipeline steps.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --commands cannot be combined with --watch.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -5211,6 +5228,22 @@ func newTeamTickCmd() *cobra.Command {
 					return err
 				}
 			}
+			if commands {
+				return renderTeamTickCommands(cmd.OutOrStdout(), result, teamTickApplyCommandOptions{
+					Team:          args[0],
+					Repo:          repo,
+					RepoSet:       cmd.Flags().Changed("repo"),
+					Workspace:     workspace,
+					WorkspaceSet:  cmd.Flags().Changed("workspace"),
+					RuntimeKind:   runtimeKind,
+					RuntimeBin:    runtimeBin,
+					Limit:         limit,
+					SkipSchedules: skipSchedules,
+					SkipDrain:     skipDrain,
+					SkipAdvance:   skipAdvance,
+					AllReadySteps: allReadySteps,
+				})
+			}
 			if err := renderTeamTickResult(cmd.OutOrStdout(), result, jsonOut, tmpl); err != nil {
 				return err
 			}
@@ -5233,6 +5266,7 @@ func newTeamTickCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include route and dispatch payload previews for ready pipeline steps.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Run the team tick repeatedly until interrupted.")
 	cmd.Flags().BoolVar(&untilIdle, "until-idle", false, "Run team tick cycles until no immediate team schedule, queue, or pipeline work remains.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team tick apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&wait, "wait", false, "After one team tick, wait for advanced team pipeline jobs to reach a lifecycle status, event, or next-step state.")
 	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&waitEvents, "wait-event", nil, "With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.")
@@ -9775,6 +9809,61 @@ func renderTeamTickResult(w io.Writer, result *teamTickResult, jsonOut bool, tmp
 	}
 	fmt.Fprintln(w, "Pipeline advance: skipped")
 	return nil
+}
+
+type teamTickApplyCommandOptions struct {
+	Team          string
+	Repo          string
+	RepoSet       bool
+	Workspace     string
+	WorkspaceSet  bool
+	RuntimeKind   string
+	RuntimeBin    string
+	Limit         int
+	SkipSchedules bool
+	SkipDrain     bool
+	SkipAdvance   bool
+	AllReadySteps bool
+}
+
+func renderTeamTickCommands(w io.Writer, result *teamTickResult, opts teamTickApplyCommandOptions) error {
+	if result == nil || !result.Tick.DryRun || tickResultIsIdle(&result.Tick) {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(teamTickApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func teamTickApplyCommandArgs(opts teamTickApplyCommandOptions) []string {
+	args := []string{"agent-team", "team", "tick", opts.Team}
+	if opts.RepoSet {
+		args = append(args, "--repo", opts.Repo)
+	}
+	if opts.WorkspaceSet {
+		args = append(args, "--workspace", opts.Workspace)
+	}
+	if strings.TrimSpace(opts.RuntimeKind) != "" {
+		args = append(args, "--runtime", opts.RuntimeKind)
+	}
+	if strings.TrimSpace(opts.RuntimeBin) != "" {
+		args = append(args, "--runtime-bin", opts.RuntimeBin)
+	}
+	if opts.Limit > 0 {
+		args = append(args, "--limit", fmt.Sprintf("%d", opts.Limit))
+	}
+	if opts.SkipSchedules {
+		args = append(args, "--skip-schedules")
+	}
+	if opts.SkipDrain {
+		args = append(args, "--skip-drain")
+	}
+	if opts.SkipAdvance {
+		args = append(args, "--skip-advance")
+	}
+	if opts.AllReadySteps {
+		args = append(args, "--all-ready-steps")
+	}
+	return args
 }
 
 func renderTeamTickUntilIdleResult(w io.Writer, result *teamTickUntilIdleResult, jsonOut bool, tmpl *template.Template) error {

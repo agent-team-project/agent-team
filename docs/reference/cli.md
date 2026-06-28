@@ -286,7 +286,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team send <team>` | Send a mailbox message to team-owned daemon-known instances; add `--dry-run --commands` to print the matching scoped send apply command |
 | `agent-team team jobs <team>` | Scoped job list, summary, or watch view; filter held state, mixed-runtime ownership, and cap output with `--limit` |
 | `agent-team team wait-jobs <team>` | Wait for team-owned jobs to reach a lifecycle status, event, or next-step state/stage |
-| `agent-team team tick <team>` | Scoped maintenance cycle; use `--workspace`/`--runtime` for advanced steps and `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |
+| `agent-team team tick <team>` | Scoped maintenance cycle; add `--dry-run --commands` for the scoped apply command, use `--workspace`/`--runtime` for advanced steps, and use `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |
 | `agent-team team drain <team>` | Scoped drain-until-idle maintenance loop; add `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |
 | `agent-team team repair <team>` | Scoped repair loop, including stale-work timeout with `--timeout-jobs`; failed-step retry accepts pipeline/step filters, `--retry-force`, workspace/runtime overrides, and `--wait-next-state`/`--wait-step` stage-aware bounded handoff |
 | `agent-team team queue <team>` | Scoped queue list; filter queued dispatches with `--runtime`, sort rows with `--sort`, and cap output with `--limit` |
