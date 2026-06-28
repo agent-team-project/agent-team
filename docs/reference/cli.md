@@ -58,8 +58,8 @@ as the output directory instead.
 | `agent-team stats` | Show CPU/RSS data |
 | `agent-team attach <instance>` | Interactive runtime resume handoff; `exec` is a Docker-like alias |
 | `agent-team wait [instances...]` | Wait for lifecycle or phase conditions |
-| `agent-team rm [instances...]` | Remove state and metadata |
-| `agent-team prune` | Remove finished old metadata/state |
+| `agent-team rm [instances...]` | Remove state and metadata; add `--dry-run --commands` to print the matching remove command when the preview has actionable work |
+| `agent-team prune` | Remove finished old metadata/state; add `--dry-run --commands` to print the matching prune apply command when the preview has actionable work |
 
 Shortcuts:
 
@@ -278,6 +278,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team restart <team>` | Restart or resume a team's declared persistent instances; add `--dry-run --commands` to print the matching team restart apply command when the preview has actionable work |
 | `agent-team team plan <team>` | Preview one team's desired instance state; add `--commands` to print the matching dry-run team sync command when the selected plan has actionable work |
 | `agent-team team sync <team>` | Reconcile one team's declared persistent instances; add `--dry-run --commands` to print the matching team sync apply command when the preview has actionable work |
+| `agent-team team prune <team>` | Remove finished team-owned instances; add `--dry-run --commands` to print the matching team prune apply command when the preview has actionable work |
 | `agent-team team jobs <team>` | Scoped job list, summary, or watch view; filter held state, mixed-runtime ownership, and cap output with `--limit` |
 | `agent-team team wait-jobs <team>` | Wait for team-owned jobs to reach a lifecycle status, event, or next-step state/stage |
 | `agent-team team tick <team>` | Scoped maintenance cycle; use `--workspace`/`--runtime` for advanced steps and `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |

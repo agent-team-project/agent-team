@@ -671,6 +671,7 @@ type instanceRmOptions struct {
 	All            bool
 	Force          bool
 	DryRun         bool
+	Commands       bool
 	Finished       bool
 	Latest         bool
 	Limit          int
@@ -687,6 +688,7 @@ type instanceRmOptions struct {
 	JSON           bool
 	Summary        bool
 	Format         *template.Template
+	Command        lifecycleCommandOptions
 }
 
 type instanceRmResult struct {
@@ -751,6 +753,26 @@ func runInstanceRmWithOptions(cmd *cobra.Command, target string, names []string,
 	}
 	if opts.OlderThanSet && opts.OlderThan < 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --older-than must be >= 0.")
+		return exitErr(2)
+	}
+	if opts.Commands && !opts.DryRun {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands requires --dry-run.")
+		return exitErr(2)
+	}
+	if opts.Commands && opts.JSON {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands cannot be combined with --json.")
+		return exitErr(2)
+	}
+	if opts.Commands && opts.Summary {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands cannot be combined with --summary.")
+		return exitErr(2)
+	}
+	if opts.Commands && opts.Quiet {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands cannot be combined with --quiet.")
+		return exitErr(2)
+	}
+	if opts.Commands && opts.Format != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands cannot be combined with --format.")
 		return exitErr(2)
 	}
 	if len(opts.AgentFilters) > 0 {
@@ -873,6 +895,9 @@ func runInstanceRmWithOptions(cmd *cobra.Command, target string, names []string,
 			names = latestRmTargetsLimit(names, daemonByName, opts.Limit)
 		}
 		if len(names) == 0 {
+			if opts.Commands {
+				return nil
+			}
 			if opts.JSON {
 				if opts.Summary {
 					return json.NewEncoder(cmd.OutOrStdout()).Encode(lifecycleActionSummaryResult{Summary: summarizeInstanceRmResults(nil, opts.DryRun)})
@@ -926,7 +951,7 @@ func runInstanceRmWithOptions(cmd *cobra.Command, target string, names []string,
 				Detail:        detail,
 				DryRun:        true,
 			})
-			if !opts.JSON && !opts.Quiet && opts.Format == nil && !opts.Summary {
+			if !opts.Commands && !opts.JSON && !opts.Quiet && opts.Format == nil && !opts.Summary {
 				label := rel
 				if label == "" {
 					label = name
@@ -991,6 +1016,9 @@ func runInstanceRmWithOptions(cmd *cobra.Command, target string, names []string,
 			fmt.Fprintf(cmd.OutOrStdout(), "  removed %s\n", name)
 		}
 	}
+	if opts.Commands {
+		return renderInstanceRmCommands(cmd.OutOrStdout(), results, opts.Command)
+	}
 	if opts.JSON {
 		if opts.Summary {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(lifecycleActionSummaryResult{Summary: summarizeInstanceRmResults(results, opts.DryRun)})
@@ -1004,6 +1032,23 @@ func runInstanceRmWithOptions(cmd *cobra.Command, target string, names []string,
 		renderLifecycleActionSummary(cmd.OutOrStdout(), summarizeInstanceRmResults(results, opts.DryRun))
 	}
 	return nil
+}
+
+func renderInstanceRmCommands(w fmtWriter, rows []instanceRmResult, opts lifecycleCommandOptions) error {
+	if !instanceRmResultsHaveApplyCommand(rows) {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(lifecycleApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func instanceRmResultsHaveApplyCommand(rows []instanceRmResult) bool {
+	for _, row := range rows {
+		if row.Action == "remove" && (row.StateRemoved || row.DaemonRemoved) {
+			return true
+		}
+	}
+	return false
 }
 
 func rmDryRunDetail(stateExists, daemonKnown bool) string {
@@ -1855,6 +1900,7 @@ type lifecycleCommandOptions struct {
 	TargetSet       bool
 	Names           []string
 	All             bool
+	Finished        bool
 	Latest          bool
 	Limit           int
 	AgentFilters    []string
@@ -1872,6 +1918,8 @@ type lifecycleCommandOptions struct {
 	Remove          bool
 	Timeout         time.Duration
 	TimeoutSet      bool
+	OlderThan       time.Duration
+	OlderThanSet    bool
 	ReadyTimeout    time.Duration
 	ReadyTimeoutSet bool
 }
@@ -1902,6 +1950,9 @@ func lifecycleApplyCommandArgs(opts lifecycleCommandOptions) []string {
 	args = append(args, opts.Names...)
 	if opts.All {
 		args = append(args, "--all")
+	}
+	if opts.Finished {
+		args = append(args, "--finished")
 	}
 	if opts.Latest {
 		args = append(args, "--latest")
@@ -1936,6 +1987,9 @@ func lifecycleApplyCommandArgs(opts lifecycleCommandOptions) []string {
 	}
 	if opts.TimeoutSet {
 		args = append(args, "--timeout", opts.Timeout.String())
+	}
+	if opts.OlderThanSet {
+		args = append(args, "--older-than", opts.OlderThan.String())
 	}
 	if opts.ReadyTimeoutSet {
 		args = append(args, "--ready-timeout", opts.ReadyTimeout.String())

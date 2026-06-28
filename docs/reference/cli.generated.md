@@ -5636,6 +5636,7 @@ Flags:
 
 ```text
       --agent strings         Only remove matching instances for this agent. Can repeat or comma-separate.
+      --commands              With --dry-run, print the matching prune apply command when the preview has actionable work.
       --dry-run               Preview matching instances that would be pruned without deleting state or daemon metadata.
       --format string         Render each removal result with a Go template, e.g. '{{.Instance}} {{.Path}}'.
       --json                  Emit machine-readable JSON.
@@ -6260,6 +6261,7 @@ Flags:
 ```text
       --agent strings     With --all, --finished, --latest, --last, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy, only remove daemon-known instances for this agent. Can repeat or comma-separate.
   -a, --all               Remove every daemon-known instance. Can combine with --agent, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy.
+      --commands          With --dry-run, print the matching remove command when the preview has actionable work.
       --dry-run           Preview matching removals without deleting state or daemon metadata.
       --finished          Remove every daemon-known exited or crashed instance.
   -f, --force             Skip confirmation; if the daemon is running, stop a running instance before removal.
@@ -7942,6 +7944,7 @@ agent-team team prune <team> [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching team prune apply command when the preview has actionable work.
       --dry-run               Preview matching team-owned instances that would be pruned without deleting state or daemon metadata.
       --format string         Render each removal result with a Go template, e.g. '{{.Instance}} {{.Path}}'.
       --json                  Emit machine-readable JSON.

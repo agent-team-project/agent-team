@@ -5850,6 +5850,30 @@ instances = ["other", "build-worker"]
 		t.Fatalf("team prune runtime preview names = %v", got)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "prune", "delivery", "--repo", root, "--runtime", "codex", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team prune commands dry-run: %v\nstderr=%s", err, commandsErr.String())
+	}
+	if got, want := strings.TrimSpace(commandsOut.String()), strings.Join(shellQuoteArgs([]string{"agent-team", "team", "prune", "delivery", "--repo", root, "--runtime", "codex"}), " "); got != want {
+		t.Fatalf("team prune commands = %q, want %q", got, want)
+	}
+
+	noActionCommands := NewRootCmd()
+	noActionCommandsOut, noActionCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	noActionCommands.SetOut(noActionCommandsOut)
+	noActionCommands.SetErr(noActionCommandsErr)
+	noActionCommands.SetArgs([]string{"team", "prune", "delivery", "--repo", root, "--runtime", "codex", "--status", "exited", "--dry-run", "--commands"})
+	if err := noActionCommands.Execute(); err != nil {
+		t.Fatalf("team prune no-action commands dry-run: %v\nstderr=%s", err, noActionCommandsErr.String())
+	}
+	if got := strings.TrimSpace(noActionCommandsOut.String()); got != "" {
+		t.Fatalf("team prune no-action commands = %q, want empty", got)
+	}
+
 	badRuntime := NewRootCmd()
 	badRuntime.SetOut(&bytes.Buffer{})
 	badRuntimeErr := &bytes.Buffer{}
@@ -5886,6 +5910,54 @@ instances = ["other", "build-worker"]
 		if _, err := os.Stat(filepath.Join(teamDir, "state", name)); err != nil {
 			t.Fatalf("state %s should remain: %v", name, err)
 		}
+	}
+}
+
+func TestTeamPruneCommandsRejectsInvalidRenderModes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "requires dry run",
+			args: []string{"team", "prune", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "json",
+			args: []string{"team", "prune", "delivery", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "summary",
+			args: []string{"team", "prune", "delivery", "--dry-run", "--commands", "--summary"},
+			want: "--commands cannot be combined with --summary",
+		},
+		{
+			name: "quiet",
+			args: []string{"team", "prune", "delivery", "--dry-run", "--commands", "--quiet"},
+			want: "--commands cannot be combined with --quiet",
+		},
+		{
+			name: "format",
+			args: []string{"team", "prune", "delivery", "--dry-run", "--commands", "--format", "{{.Instance}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err == nil {
+				t.Fatalf("command succeeded\nstdout=%s\nstderr=%s", out.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 

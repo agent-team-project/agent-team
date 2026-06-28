@@ -223,6 +223,13 @@ def main(argv: list[str]) -> int:
         run(binary, "wait", worker, "--target", repo, "--until", "terminal", "--timeout", "10s", "--json", parse_json=True)
         run(binary, "tick", "--target", repo, "--skip-schedules", "--skip-drain", "--skip-advance", "--json", parse_json=True)
 
+        step("verify command-only prune apply hints")
+        prune_commands = run(binary, "prune", "--target", repo, "--dry-run", "--commands")
+        require_command(prune_commands, f"agent-team prune --target {repo}")
+        team_prune_commands = run(binary, "team", "prune", "delivery", "--repo", repo, "--dry-run", "--commands")
+        require_command(team_prune_commands, f"agent-team team prune delivery --repo {repo}")
+        print("prune commands verified: prune apply, team prune apply")
+
         step("inspect operator views")
         job_detail = run(binary, "job", "show", "demo-1", "--repo", repo, "--json", parse_json=True)
         print(f"job status: {field(job_detail, 'status', 'Status')} last={field(job_detail, 'last_status', 'LastStatus')}")

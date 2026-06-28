@@ -1398,6 +1398,31 @@ func TestRmTopLevel_Force(t *testing.T) {
 	}
 }
 
+func TestRmTopLevelDryRunCommands(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	stateDir := filepath.Join(tmp, ".agent_team", "state", "ephemeral")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"rm", "ephemeral", "--target", tmp, "--force", "--dry-run", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("rm --dry-run --commands: %v\nstderr=%s", err, stderr.String())
+	}
+	want := strings.Join(shellQuoteArgs([]string{"agent-team", "rm", "--target", tmp, "ephemeral", "--force"}), " ")
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Fatalf("rm --dry-run --commands = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(stateDir); err != nil {
+		t.Fatalf("state should remain after dry-run: %v", err)
+	}
+}
+
 func TestRmTopLevelJSONForce(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -2324,6 +2349,84 @@ func TestPruneRuntimeNarrowsFinishedInstances(t *testing.T) {
 		if _, err := daemon.ReadMetadata(root, name); err != nil {
 			t.Fatalf("%s metadata should remain after dry-run: %v", name, err)
 		}
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"prune", "--runtime", "codex", "--status", "crashed", "--dry-run", "--commands", "--target", tmp})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("prune --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	want := strings.Join(shellQuoteArgs([]string{"agent-team", "prune", "--target", tmp, "--runtime", "codex", "--status", "crashed"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != want {
+		t.Fatalf("prune --dry-run --commands = %q, want %q", got, want)
+	}
+}
+
+func TestPruneDryRunCommandsNoActionIsSilent(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"prune", "--target", tmp, "--dry-run", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("prune --dry-run --commands no action: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "" {
+		t.Fatalf("prune --dry-run --commands no action = %q, want empty", got)
+	}
+}
+
+func TestRemoveCommandsRejectInvalidRenderModes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "rm requires dry run",
+			args: []string{"rm", "ephemeral", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "rm json",
+			args: []string{"rm", "ephemeral", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "prune summary",
+			args: []string{"prune", "--dry-run", "--commands", "--summary"},
+			want: "--commands cannot be combined with --summary",
+		},
+		{
+			name: "prune quiet",
+			args: []string{"prune", "--dry-run", "--commands", "--quiet"},
+			want: "--commands cannot be combined with --quiet",
+		},
+		{
+			name: "prune format",
+			args: []string{"prune", "--dry-run", "--commands", "--format", "{{.Instance}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err == nil {
+				t.Fatalf("command succeeded\nstdout=%s\nstderr=%s", out.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 

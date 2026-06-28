@@ -3890,6 +3890,7 @@ func newTeamPruneCmd() *cobra.Command {
 		runtimeStale   bool
 		unhealthyOnly  bool
 		dryRun         bool
+		commands       bool
 		olderThan      time.Duration
 		quiet          bool
 		jsonOut        bool
@@ -3910,6 +3911,26 @@ func newTeamPruneCmd() *cobra.Command {
 			}
 			if format != "" && (quiet || jsonOut || summary) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --format cannot be combined with --quiet, --json, or --summary.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --commands cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && quiet {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --commands cannot be combined with --quiet.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			olderThanSet := cmd.Flags().Changed("older-than")
@@ -3945,15 +3966,33 @@ func newTeamPruneCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			if len(names) == 0 {
+				if commands {
+					return nil
+				}
 				return renderTeamPruneNoTargets(cmd.OutOrStdout(), dryRun, quiet, jsonOut, summary, formatTemplate)
 			}
 			return runInstanceRmWithOptions(cmd, repo, names, instanceRmOptions{
-				Force:   true,
-				DryRun:  dryRun,
-				Quiet:   quiet,
-				JSON:    jsonOut,
-				Summary: summary,
-				Format:  formatTemplate,
+				Force:    true,
+				DryRun:   dryRun,
+				Commands: commands,
+				Quiet:    quiet,
+				JSON:     jsonOut,
+				Summary:  summary,
+				Format:   formatTemplate,
+				Command: lifecycleCommandOptions{
+					BaseArgs:       []string{"agent-team", "team", "prune", args[0]},
+					TargetFlag:     "--repo",
+					Target:         repo,
+					TargetSet:      cmd.Flags().Changed("repo"),
+					RuntimeFilters: runtimeFilters,
+					StatusFilters:  statusFilters,
+					PhaseFilters:   phaseFilters,
+					Stale:          staleOnly,
+					RuntimeStale:   runtimeStale,
+					Unhealthy:      unhealthyOnly,
+					OlderThan:      olderThan,
+					OlderThanSet:   olderThanSet,
+				},
 			})
 		},
 	}
@@ -3965,6 +4004,7 @@ func newTeamPruneCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Also remove team-owned running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only remove crashed finished team-owned instances, finished status-stale instances, or runtime-stale running instances.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching team-owned instances that would be pruned without deleting state or daemon metadata.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team prune apply command when the preview has actionable work.")
 	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "Only prune finished team-owned instances whose terminal timestamp is older than this duration (for example 24h).")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")

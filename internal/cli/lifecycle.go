@@ -1479,6 +1479,7 @@ func newRmCmd() *cobra.Command {
 		all            bool
 		force          bool
 		dryRun         bool
+		commands       bool
 		finished       bool
 		latest         bool
 		last           int
@@ -1510,6 +1511,26 @@ func newRmCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --format cannot be combined with --quiet, --json, or --summary.")
 				return exitErr(2)
 			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && quiet {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands cannot be combined with --quiet.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			formatTemplate, err := parseRmFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
@@ -1519,6 +1540,7 @@ func newRmCmd() *cobra.Command {
 				All:            all,
 				Force:          force,
 				DryRun:         dryRun,
+				Commands:       commands,
 				Finished:       finished,
 				Latest:         latest,
 				Limit:          last,
@@ -1533,6 +1555,25 @@ func newRmCmd() *cobra.Command {
 				JSON:           jsonOut,
 				Summary:        summary,
 				Format:         formatTemplate,
+				Command: lifecycleCommandOptions{
+					BaseArgs:       []string{"agent-team", "rm"},
+					TargetFlag:     "--target",
+					Target:         target,
+					TargetSet:      cmd.Flags().Changed("target"),
+					Names:          args,
+					All:            all,
+					Finished:       finished,
+					Latest:         latest,
+					Limit:          last,
+					AgentFilters:   agents,
+					RuntimeFilters: runtimeFilters,
+					StatusFilters:  statusFilters,
+					PhaseFilters:   phaseFilters,
+					Stale:          staleOnly,
+					RuntimeStale:   runtimeStale,
+					Unhealthy:      unhealthyOnly,
+					Force:          force,
+				},
 			})
 		},
 	}
@@ -1540,6 +1581,7 @@ func newRmCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "Remove every daemon-known instance. Can combine with --agent, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy.")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Skip confirmation; if the daemon is running, stop a running instance before removal.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching removals without deleting state or daemon metadata.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching remove command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&finished, "finished", false, "Remove every daemon-known exited or crashed instance.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Remove the most recently started daemon-known instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Remove the N most recently started daemon-known instances after other filters (0 = all).")
@@ -1568,6 +1610,7 @@ func newPruneCmd() *cobra.Command {
 		runtimeStale   bool
 		unhealthyOnly  bool
 		dryRun         bool
+		commands       bool
 		olderThan      time.Duration
 		quiet          bool
 		jsonOut        bool
@@ -1589,6 +1632,26 @@ func newPruneCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --format cannot be combined with --quiet, --json, or --summary.")
 				return exitErr(2)
 			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && quiet {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands cannot be combined with --quiet.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			if cmd.Flags().Changed("older-than") && olderThan < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --older-than must be >= 0.")
 				return exitErr(2)
@@ -1605,6 +1668,7 @@ func newPruneCmd() *cobra.Command {
 			return runInstanceRmWithOptions(cmd, target, nil, instanceRmOptions{
 				Force:          true,
 				DryRun:         dryRun,
+				Commands:       commands,
 				Finished:       true,
 				Stale:          staleOnly,
 				RuntimeStale:   runtimeStale,
@@ -1619,6 +1683,21 @@ func newPruneCmd() *cobra.Command {
 				JSON:           jsonOut,
 				Summary:        summary,
 				Format:         formatTemplate,
+				Command: lifecycleCommandOptions{
+					BaseArgs:       []string{"agent-team", "prune"},
+					TargetFlag:     "--target",
+					Target:         target,
+					TargetSet:      cmd.Flags().Changed("target"),
+					AgentFilters:   agents,
+					RuntimeFilters: runtimeFilters,
+					StatusFilters:  statusFilters,
+					PhaseFilters:   phaseFilters,
+					Stale:          staleOnly,
+					RuntimeStale:   runtimeStale,
+					Unhealthy:      unhealthyOnly,
+					OlderThan:      olderThan,
+					OlderThanSet:   cmd.Flags().Changed("older-than"),
+				},
 			})
 		},
 	}
@@ -1631,6 +1710,7 @@ func newPruneCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&runtimeStale, "runtime-stale", false, "Also remove daemon-known running instances whose recorded runtime PID is no longer live.")
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only remove crashed finished instances, finished status-stale instances, or runtime-stale running instances.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching instances that would be pruned without deleting state or daemon metadata.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching prune apply command when the preview has actionable work.")
 	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "Only prune finished instances whose terminal timestamp is older than this duration (for example 24h).")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
