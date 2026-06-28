@@ -2006,6 +2006,7 @@ func newTeamRejectCmd() *cobra.Command {
 		message     string
 		messageFile string
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -2019,6 +2020,18 @@ func newTeamRejectCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team reject: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team reject: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team reject: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team reject: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if limit < 0 {
@@ -2049,6 +2062,20 @@ func newTeamRejectCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team reject: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				return renderPipelineApplyCommand(cmd.OutOrStdout(), pipelineApproveResultsHaveDryRunAction(results, "would_reject"), pipelineApplyCommandOptions{
+					BaseArgs:       []string{"agent-team", "team", "reject", args[0]},
+					Repo:           repo,
+					RepoSet:        cmd.Flags().Changed("repo"),
+					Step:           step,
+					StepSet:        cmd.Flags().Changed("step"),
+					Limit:          limit,
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+				})
+			}
 			return renderPipelineApproveResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 		},
 	}
@@ -2058,6 +2085,7 @@ func newTeamRejectCmd() *cobra.Command {
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on each rejected team job.")
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read rejection reason from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview manual gate rejections without writing job state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team reject apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit rejection results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd
@@ -2151,6 +2179,7 @@ func newTeamSkipCmd() *cobra.Command {
 		message     string
 		messageFile string
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -2164,6 +2193,18 @@ func newTeamSkipCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team skip: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team skip: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team skip: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team skip: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if strings.TrimSpace(step) == "" {
@@ -2198,6 +2239,20 @@ func newTeamSkipCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team skip: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				return renderPipelineApplyCommand(cmd.OutOrStdout(), pipelineSkipResultsHaveDryRunAction(results, "would_skip"), pipelineApplyCommandOptions{
+					BaseArgs:       []string{"agent-team", "team", "skip", args[0]},
+					Repo:           repo,
+					RepoSet:        cmd.Flags().Changed("repo"),
+					Step:           step,
+					StepSet:        cmd.Flags().Changed("step"),
+					Limit:          limit,
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+				})
+			}
 			return renderPipelineSkipResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 		},
 	}
@@ -2207,6 +2262,7 @@ func newTeamSkipCmd() *cobra.Command {
 	cmd.Flags().StringVar(&message, "message", "", "Skip reason recorded on each updated team job.")
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read skip reason from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview skipped team steps without writing job state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team skip apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit skip results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.")
 	return cmd
@@ -2220,6 +2276,7 @@ func newTeamCancelCmd() *cobra.Command {
 		messageFile string
 		limit       int
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -2233,6 +2290,18 @@ func newTeamCancelCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cancel: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cancel: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cancel: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cancel: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if limit < 0 {
@@ -2263,6 +2332,20 @@ func newTeamCancelCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team cancel: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				return renderPipelineApplyCommand(cmd.OutOrStdout(), pipelineCancelResultsHaveDryRunAction(results, "would_cancel"), pipelineApplyCommandOptions{
+					BaseArgs:       []string{"agent-team", "team", "cancel", args[0]},
+					Repo:           repo,
+					RepoSet:        cmd.Flags().Changed("repo"),
+					Limit:          limit,
+					Actor:          actor,
+					ActorSet:       cmd.Flags().Changed("actor"),
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+				})
+			}
 			return renderPipelineCancelResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 		},
 	}
@@ -2272,6 +2355,7 @@ func newTeamCancelCmd() *cobra.Command {
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read cancellation reason from a file, or '-' for stdin.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Cancel at most this many non-terminal team jobs; 0 means no limit.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview team cancellations without writing job state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team cancel apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit cancellation results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StatusAfter}}'.")
 	return cmd

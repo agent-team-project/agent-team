@@ -4882,6 +4882,19 @@ gate = "manual"
 	if unchanged.Status != job.StatusRunning || unchanged.Steps[1].Status != job.StatusBlocked {
 		t.Fatalf("dry-run mutated manual gate = %+v", unchanged)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"pipeline", "reject", "ticket_to_pr", "--repo", root, "--message", "manual batch rejected", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("pipeline reject dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "reject", "ticket_to_pr", "--repo", root, "--message", "manual batch rejected"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("pipeline reject dry-run commands = %q, want %q", got, wantCommand)
+	}
 	rejectionFile := filepath.Join(root, "rejection.txt")
 	if err := os.WriteFile(rejectionFile, []byte("manual batch rejected from file\n"), 0o644); err != nil {
 		t.Fatalf("write rejection file: %v", err)
@@ -5145,6 +5158,19 @@ after = ["implement"]
 	if unchanged.Status != job.StatusBlocked || unchanged.Steps[1].Status != job.StatusBlocked || unchanged.Steps[1].Skipped {
 		t.Fatalf("dry-run mutated skipped job = %+v", unchanged)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"pipeline", "skip", "ticket_to_pr", "--repo", root, "--step", "review", "--limit", "1", "--message", "review covered elsewhere", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("pipeline skip dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "skip", "ticket_to_pr", "--repo", root, "--step", "review", "--limit", "1", "--message", "review covered elsewhere"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("pipeline skip dry-run commands = %q, want %q", got, wantCommand)
+	}
 	skipFile := filepath.Join(root, "skip-reason.txt")
 	if err := os.WriteFile(skipFile, []byte("review covered from file\n"), 0o644); err != nil {
 		t.Fatalf("write skip reason file: %v", err)
@@ -5257,6 +5283,19 @@ target = "worker"
 	if unchanged.Status != job.StatusRunning || unchanged.LastEvent == "cancelled" {
 		t.Fatalf("dry-run mutated job = %+v", unchanged)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"pipeline", "cancel", "ticket_to_pr", "--repo", root, "--message", "duplicate ticket", "--actor", "ops", "--limit", "1", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("pipeline cancel dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "cancel", "ticket_to_pr", "--repo", root, "--limit", "1", "--actor", "ops", "--message", "duplicate ticket"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("pipeline cancel dry-run commands = %q, want %q", got, wantCommand)
+	}
 	cancelFile := filepath.Join(root, "cancel-reason.txt")
 	if err := os.WriteFile(cancelFile, []byte("duplicate ticket from file\n"), 0o644); err != nil {
 		t.Fatalf("write cancel reason file: %v", err)
@@ -5293,6 +5332,72 @@ target = "worker"
 	}
 	if len(events) == 0 || events[len(events)-1].Type != "cancelled" || events[len(events)-1].Message != "duplicate ticket from file" || events[len(events)-1].Data["instance"] != "worker-squ-907" {
 		t.Fatalf("cancel events = %+v", events)
+	}
+}
+
+func TestPipelineBatchMutationCommandsValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "reject without dry-run",
+			args: []string{"pipeline", "reject", "ticket_to_pr", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "reject with json",
+			args: []string{"pipeline", "reject", "ticket_to_pr", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "reject with format",
+			args: []string{"pipeline", "reject", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "skip without dry-run",
+			args: []string{"pipeline", "skip", "ticket_to_pr", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "skip with json",
+			args: []string{"pipeline", "skip", "ticket_to_pr", "--step", "review", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "skip with format",
+			args: []string{"pipeline", "skip", "ticket_to_pr", "--step", "review", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "cancel without dry-run",
+			args: []string{"pipeline", "cancel", "ticket_to_pr", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "cancel with json",
+			args: []string{"pipeline", "cancel", "ticket_to_pr", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "cancel with format",
+			args: []string{"pipeline", "cancel", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tt.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("%s succeeded unexpectedly; stdout=%s", tt.name, out.String())
+		}
+		if !strings.Contains(stderr.String(), tt.want) {
+			t.Fatalf("%s stderr = %q, want %q", tt.name, stderr.String(), tt.want)
+		}
 	}
 }
 

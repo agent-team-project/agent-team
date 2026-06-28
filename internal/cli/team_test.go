@@ -3709,6 +3709,19 @@ pipelines = ["ticket_to_pr"]
 	if unchanged.Status != job.StatusBlocked || unchanged.Steps[1].Status != job.StatusBlocked {
 		t.Fatalf("dry-run mutated delivery job = %+v", unchanged)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "reject", "delivery", "--repo", root, "--step", "review", "--limit", "1", "--message", "delivery manual rejection", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team reject dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "reject", "delivery", "--repo", root, "--step", "review", "--limit", "1", "--message", "delivery manual rejection"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("team reject dry-run commands = %q, want %q", got, wantCommand)
+	}
 	rejectionFile := filepath.Join(root, "team-rejection.txt")
 	if err := os.WriteFile(rejectionFile, []byte("delivery manual rejection from file\n"), 0o644); err != nil {
 		t.Fatalf("write team rejection file: %v", err)
@@ -3992,6 +4005,19 @@ pipelines = ["ticket_to_pr"]
 	if unchanged.Status != job.StatusBlocked || unchanged.Steps[1].Status != job.StatusBlocked || unchanged.Steps[1].Skipped {
 		t.Fatalf("dry-run mutated delivery job = %+v", unchanged)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "skip", "delivery", "--repo", root, "--step", "review", "--limit", "1", "--message", "delivery review bypassed", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team skip dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "skip", "delivery", "--repo", root, "--step", "review", "--limit", "1", "--message", "delivery review bypassed"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("team skip dry-run commands = %q, want %q", got, wantCommand)
+	}
 	skipFile := filepath.Join(root, "team-skip-reason.txt")
 	if err := os.WriteFile(skipFile, []byte("delivery review bypassed from file\n"), 0o644); err != nil {
 		t.Fatalf("write team skip reason file: %v", err)
@@ -4114,6 +4140,19 @@ pipelines = ["ticket_to_pr"]
 	if unchanged.Status != job.StatusQueued || unchanged.LastEvent == "cancelled" {
 		t.Fatalf("dry-run mutated delivery job = %+v", unchanged)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "cancel", "delivery", "--repo", root, "--message", "superseded", "--actor", "ops", "--limit", "1", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team cancel dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "cancel", "delivery", "--repo", root, "--limit", "1", "--actor", "ops", "--message", "superseded"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("team cancel dry-run commands = %q, want %q", got, wantCommand)
+	}
 	cancelFile := filepath.Join(root, "team-cancel-reason.txt")
 	if err := os.WriteFile(cancelFile, []byte("superseded from file\n"), 0o644); err != nil {
 		t.Fatalf("write team cancel reason file: %v", err)
@@ -4147,6 +4186,72 @@ pipelines = ["ticket_to_pr"]
 	}
 	if foreign.Status != job.StatusQueued || foreign.LastEvent == "cancelled" {
 		t.Fatalf("foreign job changed = %+v", foreign)
+	}
+}
+
+func TestTeamBatchMutationCommandsValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "reject without dry-run",
+			args: []string{"team", "reject", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "reject with json",
+			args: []string{"team", "reject", "delivery", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "reject with format",
+			args: []string{"team", "reject", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "skip without dry-run",
+			args: []string{"team", "skip", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "skip with json",
+			args: []string{"team", "skip", "delivery", "--step", "review", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "skip with format",
+			args: []string{"team", "skip", "delivery", "--step", "review", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "cancel without dry-run",
+			args: []string{"team", "cancel", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "cancel with json",
+			args: []string{"team", "cancel", "delivery", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "cancel with format",
+			args: []string{"team", "cancel", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tt.args)
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("%s succeeded unexpectedly; stdout=%s", tt.name, out.String())
+		}
+		if !strings.Contains(stderr.String(), tt.want) {
+			t.Fatalf("%s stderr = %q, want %q", tt.name, stderr.String(), tt.want)
+		}
 	}
 }
 
