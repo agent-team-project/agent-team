@@ -9122,7 +9122,11 @@ agent-team template pull <ref> [flags]
 Flags:
 
 ```text
-      --as string   Cache key to store under (defaults to <name>@<version> from manifest, or basename).
+      --as string       Cache key to store under (defaults to <name>@<version> from manifest, or basename).
+      --commands        With --dry-run, print the matching template pull apply command when the preview has actionable work.
+      --dry-run         Preview template pull without copying or cloning into the cache.
+      --format string   Render the pull result with a Go template, e.g. '{{.CacheKey}} {{.Action}}'.
+      --json            Emit machine-readable JSON.
 ```
 
 Inherited Flags:

@@ -283,6 +283,26 @@ func TestTemplateOutputFlagValidation(t *testing.T) {
 			want: "invalid --format template",
 		},
 		{
+			name: "pull commands without dry-run",
+			args: []string{"template", "pull", "sample", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "pull commands json",
+			args: []string{"template", "pull", "sample", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "pull commands format",
+			args: []string{"template", "pull", "sample", "--dry-run", "--commands", "--format", "{{.Ref}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "pull format json",
+			args: []string{"template", "pull", "sample", "--json", "--format", "{{.Ref}}"},
+			want: "--format cannot be combined with --json",
+		},
+		{
 			name: "rm commands without dry-run",
 			args: []string{"template", "rm", "sample", "--commands"},
 			want: "--commands requires --dry-run",
@@ -336,6 +356,67 @@ func TestTemplatePull_DefaultAliasNoop(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "bundled template needs no pull") {
 		t.Fatalf("pull default output = %s", out.String())
+	}
+}
+
+func TestTemplatePullLocalDryRunCommandsAndJSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	tmplDir := t.TempDir()
+	writeTinyTemplateFiles(t, tmplDir, "pull-local", "0.2.0", map[string]string{
+		"agents/worker/agent.md": "worker",
+	})
+
+	formatCmd := NewRootCmd()
+	formatOut, formatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	formatCmd.SetOut(formatOut)
+	formatCmd.SetErr(formatErr)
+	formatCmd.SetArgs([]string{"template", "pull", tmplDir, "--dry-run", "--format", "{{.Source}} {{.CacheKey}} {{.Action}} {{.DryRun}} {{.Pulled}}"})
+	if err := formatCmd.Execute(); err != nil {
+		t.Fatalf("template pull local --dry-run --format: %v\nstderr=%s", err, formatErr.String())
+	}
+	if got, want := strings.TrimSpace(formatOut.String()), "local pull-local@0.2.0 would-pull true true"; got != want {
+		t.Fatalf("pull dry-run format = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".agent-team", "cache", "pull-local@0.2.0")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run should not create inferred cache dir, stat err=%v", err)
+	}
+
+	cacheRef := "fixtures/pull local@0.2.0"
+	commandsCmd := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commandsCmd.SetOut(commandsOut)
+	commandsCmd.SetErr(commandsErr)
+	commandsCmd.SetArgs([]string{"template", "pull", tmplDir, "--as", cacheRef, "--dry-run", "--commands"})
+	if err := commandsCmd.Execute(); err != nil {
+		t.Fatalf("template pull local --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "template", "pull", tmplDir, "--as", cacheRef}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("pull commands = %q, want %q", got, wantCommand)
+	}
+	cachedDir := filepath.Join(home, ".agent-team", "cache", filepath.FromSlash(cacheRef))
+	if _, err := os.Stat(cachedDir); !os.IsNotExist(err) {
+		t.Fatalf("commands dry-run should not create cache dir, stat err=%v", err)
+	}
+
+	jsonCmd := NewRootCmd()
+	jsonOut, jsonErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jsonCmd.SetOut(jsonOut)
+	jsonCmd.SetErr(jsonErr)
+	jsonCmd.SetArgs([]string{"template", "pull", tmplDir, "--as", cacheRef, "--json"})
+	if err := jsonCmd.Execute(); err != nil {
+		t.Fatalf("template pull local --json: %v\nstderr=%s", err, jsonErr.String())
+	}
+	var result templatePullResult
+	if err := json.Unmarshal(jsonOut.Bytes(), &result); err != nil {
+		t.Fatalf("decode pull json: %v\nbody=%s", err, jsonOut.String())
+	}
+	if result.Ref != tmplDir || result.Source != "local" || result.CacheKey != cacheRef || result.DryRun || !result.Pulled || result.Action != "pulled" || result.Path == "" || result.SourcePath == "" {
+		t.Fatalf("unexpected local pull json result: %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(cachedDir, "template.toml")); err != nil {
+		t.Fatalf("template.toml should be cached after pull: %v", err)
 	}
 }
 
@@ -602,9 +683,16 @@ version = "1.0.0"
 	pullOut, pullErr := &bytes.Buffer{}, &bytes.Buffer{}
 	pull.SetOut(pullOut)
 	pull.SetErr(pullErr)
-	pull.SetArgs([]string{"template", "pull", gitURL, "--as", cacheRef})
+	pull.SetArgs([]string{"template", "pull", gitURL, "--as", cacheRef, "--json"})
 	if err := pull.Execute(); err != nil {
 		t.Fatalf("template pull git ref: %v\nstdout=%s\nstderr=%s", err, pullOut.String(), pullErr.String())
+	}
+	var pullResult templatePullResult
+	if err := json.Unmarshal(pullOut.Bytes(), &pullResult); err != nil {
+		t.Fatalf("decode template pull git json: %v\nbody=%s", err, pullOut.String())
+	}
+	if pullResult.Ref != gitURL || pullResult.Source != "git" || pullResult.CacheKey != cacheRef || pullResult.CloneURL == "" || pullResult.Revision != "v1.0.0" || pullResult.Action != "pulled" || !pullResult.Pulled || pullResult.DryRun {
+		t.Fatalf("unexpected git pull result: %+v", pullResult)
 	}
 	cached := filepath.Join(home, ".agent-team", "cache", filepath.FromSlash(cacheRef))
 	if _, err := os.Stat(filepath.Join(cached, "template.toml")); err != nil {

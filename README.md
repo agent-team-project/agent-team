@@ -388,7 +388,8 @@ agent-team template ls [--format '{{.Ref}}'] [--json]
                                                 # list bundled + cached templates
 agent-team template show [<ref>] [--format '{{.Ref}} {{.ContentHash}}'] [--json]
                                                 # print manifest (default: bundled)
-agent-team template pull <ref> [--as <n>]       # copy a local template or clone a git ref into the cache
+agent-team template pull <ref> [--as <n>] [--dry-run] [--commands] [--format '{{.CacheKey}} {{.Action}}'] [--json]
+                                                # copy a local template or clone a git ref into the cache
 agent-team template rm <ref> [--dry-run] [--commands] [--format '{{.Ref}} {{.Action}}'] [--json]
                                                 # remove a cached template
 agent-team template smoke [<ref>] [--set k=v]... [--strict-runtime] [--strict-daemon] [--strict-template] [--keep] [--json]

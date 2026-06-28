@@ -640,7 +640,13 @@ func listChildDirs(srcFS fs.FS, dir string) []string {
 }
 
 func newTemplatePullCmd() *cobra.Command {
-	var asRef string
+	var (
+		asRef    string
+		dryRun   bool
+		commands bool
+		jsonOut  bool
+		format   string
+	)
 	c := &cobra.Command{
 		Use:   "pull <ref>",
 		Short: "Fetch a template into the cache so it can be referenced later.",
@@ -649,10 +655,36 @@ func newTemplatePullCmd() *cobra.Command {
 			"are cloned at the requested revision. Bundled templates need no pull because they are embedded in the binary.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team template pull: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team template pull: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team template pull: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team template pull: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseTemplateCLIFormat("template-pull-format", format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team template pull: %v\n", err)
+				return exitErr(2)
+			}
 			ref := args[0]
 			if template.IsBundledRef(ref) {
-				fmt.Fprintln(cmd.OutOrStdout(), "bundled template needs no pull (embedded in the binary)")
-				return nil
+				return renderTemplatePull(cmd.OutOrStdout(), templatePullResult{
+					Ref:     template.BundledRef,
+					Source:  "bundled",
+					Bundled: true,
+					DryRun:  dryRun,
+					Action:  "noop",
+				}, jsonOut, tmpl)
 			}
 			r := newResolver()
 
@@ -672,10 +704,27 @@ func newTemplatePullCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 					return exitErr(2)
 				}
-				if err := copyDirAll(rt.OnDiskRoot, dst); err != nil {
+				result := templatePullResult{
+					Ref:        ref,
+					Source:     "local",
+					CacheKey:   cacheKey,
+					Path:       filepath.ToSlash(dst),
+					SourcePath: filepath.ToSlash(rt.OnDiskRoot),
+					DryRun:     dryRun,
+					Pulled:     true,
+					Action:     "pulled",
+				}
+				if dryRun {
+					result.Action = "would-pull"
+				} else if err := copyDirAll(rt.OnDiskRoot, dst); err != nil {
 					return fmt.Errorf("copy to cache: %w", err)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "pulled %s into %s\n", ref, dst)
+				if commands {
+					return renderTemplatePullApplyCommand(cmd.OutOrStdout(), true, ref, asRef)
+				}
+				if err := renderTemplatePull(cmd.OutOrStdout(), result, jsonOut, tmpl); err != nil {
+					return err
+				}
 				return nil
 			}
 
@@ -697,18 +746,99 @@ func newTemplatePullCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 				return exitErr(2)
 			}
-			if isMutableGitRevision(gitRef.Revision) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: warning: pulling mutable git revision %q; prefer an immutable tag or commit\n", gitRef.Revision)
+			result := templatePullResult{
+				Ref:      ref,
+				Source:   "git",
+				CacheKey: cacheKey,
+				Path:     filepath.ToSlash(dst),
+				CloneURL: gitRef.CloneURL,
+				Revision: gitRef.Revision,
+				DryRun:   dryRun,
+				Pulled:   true,
+				Action:   "pulled",
 			}
-			if err := cloneGitTemplate(gitRef, r.CacheRoot, dst); err != nil {
+			if isMutableGitRevision(gitRef.Revision) {
+				result.MutableRevision = true
+				result.Warning = fmt.Sprintf("pulling mutable git revision %q; prefer an immutable tag or commit", gitRef.Revision)
+				if !jsonOut && tmpl == nil && !commands {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: warning: %s\n", result.Warning)
+				}
+			}
+			if dryRun {
+				result.Action = "would-pull"
+			} else if err := cloneGitTemplate(gitRef, r.CacheRoot, dst); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "pulled %s into %s\n", ref, dst)
+			if commands {
+				return renderTemplatePullApplyCommand(cmd.OutOrStdout(), true, ref, asRef)
+			}
+			if err := renderTemplatePull(cmd.OutOrStdout(), result, jsonOut, tmpl); err != nil {
+				return err
+			}
 			return nil
 		},
 	}
 	c.Flags().StringVar(&asRef, "as", "", "Cache key to store under (defaults to <name>@<version> from manifest, or basename).")
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "Preview template pull without copying or cloning into the cache.")
+	c.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching template pull apply command when the preview has actionable work.")
+	c.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	c.Flags().StringVar(&format, "format", "", "Render the pull result with a Go template, e.g. '{{.CacheKey}} {{.Action}}'.")
 	return c
+}
+
+type templatePullResult struct {
+	Ref             string `json:"ref"`
+	Source          string `json:"source"`
+	CacheKey        string `json:"cache_key,omitempty"`
+	Path            string `json:"path,omitempty"`
+	SourcePath      string `json:"source_path,omitempty"`
+	CloneURL        string `json:"clone_url,omitempty"`
+	Revision        string `json:"revision,omitempty"`
+	Bundled         bool   `json:"bundled,omitempty"`
+	MutableRevision bool   `json:"mutable_revision,omitempty"`
+	Warning         string `json:"warning,omitempty"`
+	DryRun          bool   `json:"dry_run"`
+	Pulled          bool   `json:"pulled"`
+	Action          string `json:"action"`
+}
+
+func renderTemplatePull(w io.Writer, result templatePullResult, jsonOut bool, tmpl *texttemplate.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(result)
+	}
+	if tmpl != nil {
+		if err := tmpl.Execute(w, result); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(w)
+		return err
+	}
+	if result.Action == "noop" {
+		fmt.Fprintln(w, "bundled template needs no pull (embedded in the binary)")
+		return nil
+	}
+	if result.DryRun {
+		fmt.Fprintf(w, "would pull %s into %s\n", result.Ref, result.Path)
+		return nil
+	}
+	fmt.Fprintf(w, "pulled %s into %s\n", result.Ref, result.Path)
+	return nil
+}
+
+func renderTemplatePullApplyCommand(w io.Writer, hasAction bool, ref, asRef string) error {
+	if !hasAction {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(templatePullApplyCommandArgs(ref, asRef)), " "))
+	return err
+}
+
+func templatePullApplyCommandArgs(ref, asRef string) []string {
+	args := []string{"agent-team", "template", "pull", ref}
+	if asRef != "" {
+		args = append(args, "--as", asRef)
+	}
+	return args
 }
 
 type gitTemplateRef struct {
