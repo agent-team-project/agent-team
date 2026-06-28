@@ -617,7 +617,7 @@ func TestEventPublishDryRunUsesLocalTopology(t *testing.T) {
 		"event",
 		"publish",
 		"user_invocation",
-		"--target",
+		"--repo",
 		target,
 		"--payload",
 		`{"name":"manager"}`,

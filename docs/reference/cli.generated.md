@@ -1568,7 +1568,7 @@ Flags:
 ```text
       --advance                   With --reconcile-job, dispatch the next ready pipeline step after PR metadata is reconciled.
       --cleanup-merged            With --reconcile-job, remove the job-owned worktree and branch after a merged PR event.
-      --commands                  With --dry-run, print the apply command, one per line.
+      --commands                  With --dry-run, print the apply command, one per line. agent-team follow-ups preserve the selected repo scope.
       --dry-run                   Normalize and print the event without publishing to the daemon.
       --fail-on-failed            With --wait, exit 1 if the reconciled job resolves to failed.
       --format string             Render the intake result with a Go template, e.g. '{{.Event.Type}}'.
@@ -1608,7 +1608,7 @@ agent-team intake linear [flags]
 Flags:
 
 ```text
-      --commands              With --dry-run, print the apply command, one per line.
+      --commands              With --dry-run, print the apply command, one per line. agent-team follow-ups preserve the selected repo scope.
       --dry-run               Normalize and print the event without publishing to the daemon.
       --format string         Render the intake result with a Go template, e.g. '{{.Event.Type}}'.
       --json                  Emit normalized event and daemon outcome as JSON.
@@ -1637,7 +1637,7 @@ agent-team intake prune [flags]
 Flags:
 
 ```text
-      --commands               With --dry-run, print the apply command, one per line.
+      --commands               With --dry-run, print the apply command, one per line. agent-team follow-ups preserve the selected repo scope.
       --dry-run                Preview deliveries that would be pruned without rewriting the ledger.
       --format string          Render each prune result with a Go template, e.g. '{{.ID}} {{.Status}} {{.Dropped}}'.
       --json                   Emit prune results as JSON.
@@ -1665,7 +1665,7 @@ Flags:
 
 ```text
       --all                 Replay all matching recorded deliveries.
-      --commands            With --dry-run, print the apply command, one per line.
+      --commands            With --dry-run, print the apply command, one per line. agent-team follow-ups preserve the selected repo scope.
       --dedupe-request-id   With --all, skip later deliveries with the same provider request id.
       --dry-run             Preview the normalized delivery without publishing it.
       --format string       Render the replay result with a Go template, e.g. '{{.Event.Type}}'.
@@ -1694,7 +1694,7 @@ agent-team intake schedule <name> [flags]
 Flags:
 
 ```text
-      --commands                  With --dry-run, print the apply command, one per line.
+      --commands                  With --dry-run, print the apply command, one per line. agent-team follow-ups preserve the selected repo scope.
       --dry-run                   Normalize and print the event without publishing to the daemon.
       --fail-on-failed            With --wait, exit 1 if any schedule-created job resolves to failed.
       --format string             Render the intake result with a Go template, e.g. '{{.Event.Type}}'.

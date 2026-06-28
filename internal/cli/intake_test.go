@@ -1628,7 +1628,7 @@ func TestIntakePruneFiltersAndRewritesLedger(t *testing.T) {
 	if err := commands.Execute(); err != nil {
 		t.Fatalf("intake prune dry-run commands: %v\nstderr=%s", err, commandsErr.String())
 	}
-	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "intake", "prune", "--target", target, "--older-than", "24h0m0s"}), " ")
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "intake", "prune", "--repo", target, "--older-than", "24h0m0s"}), " ")
 	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
 		t.Fatalf("intake prune commands = %q, want %q", commandsOut.String(), wantCommand)
 	}
@@ -1741,7 +1741,7 @@ func TestIntakePruneReplayStatus(t *testing.T) {
 	if err := commands.Execute(); err != nil {
 		t.Fatalf("intake prune replay-status commands: %v\nstderr=%s", err, commandsErr.String())
 	}
-	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "intake", "prune", "--target", target, "--replay-status", "ok"}), " ")
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "intake", "prune", "--repo", target, "--replay-status", "ok"}), " ")
 	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
 		t.Fatalf("intake prune replay-status commands = %q, want %q", commandsOut.String(), wantCommand)
 	}
@@ -1845,7 +1845,7 @@ target = "manager"
 	if err := commands.Execute(); err != nil {
 		t.Fatalf("intake replay dry-run commands: %v\nstderr=%s", err, commandsErr.String())
 	}
-	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "intake", "replay", "replay-preview", "--target", target}), " ")
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "intake", "replay", "replay-preview", "--repo", target}), " ")
 	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
 		t.Fatalf("intake replay dry-run commands = %q, want %q", commandsOut.String(), wantCommand)
 	}
@@ -2018,7 +2018,7 @@ target = "manager"
 	if err := commands.Execute(); err != nil {
 		t.Fatalf("intake replay all dry-run commands: %v\nstderr=%s", err, commandsErr.String())
 	}
-	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "intake", "replay", "--all", "--target", target, "--provider", "linear", "--status", "error", "--limit", "1", "--dedupe-request-id"}), " ")
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "intake", "replay", "--all", "--repo", target, "--provider", "linear", "--status", "error", "--limit", "1", "--dedupe-request-id"}), " ")
 	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
 		t.Fatalf("intake replay all dry-run commands = %q, want %q", commandsOut.String(), wantCommand)
 	}
@@ -2727,7 +2727,7 @@ gate = "pr"
 	}
 	wantCommand := strings.Join(shellQuoteArgs([]string{
 		"agent-team", "intake", "github",
-		"--target", target,
+		"--repo", target,
 		"--payload", payload,
 		"--reconcile-job",
 		"--advance",

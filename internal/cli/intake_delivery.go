@@ -382,7 +382,7 @@ func newIntakeReplayCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dedupeRequest, "dedupe-request-id", false, "With --all, skip later deliveries with the same provider request id.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the normalized delivery without publishing it.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command, one per line.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit replay result as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the replay result with a Go template, e.g. '{{.Event.Type}}'.")
 	return cmd
@@ -623,7 +623,7 @@ func newIntakePruneCmd() *cobra.Command {
 	cmd.Flags().StringVar(&replayStatus, "replay-status", "", "Only prune deliveries with replay status: ok, error, none, or any. Defaults --status to all when set.")
 	cmd.Flags().DurationVar(&olderThan, "older-than", 0, "Only prune deliveries older than this duration.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview deliveries that would be pruned without rewriting the ledger.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command, one per line.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit prune results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each prune result with a Go template, e.g. '{{.ID}} {{.Status}} {{.Dropped}}'.")
 	return cmd
@@ -1616,12 +1616,7 @@ func intakeCommandRepoSet(cmd *cobra.Command) bool {
 }
 
 func intakeCommandRepoFlag(cmd *cobra.Command) string {
-	if cmd != nil {
-		if flag := cmd.Root().PersistentFlags().Lookup(rootRepoFlagName); flag != nil && flag.Changed {
-			return rootRepoFlagName
-		}
-	}
-	return "target"
+	return rootRepoFlagName
 }
 
 func intakeCommandRepo(cmd *cobra.Command, target string) string {

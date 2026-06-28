@@ -254,7 +254,7 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 	cmd.Flags().StringVar(&payloadFile, "payload-file", "", "Read webhook JSON from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Normalize and print the event without publishing to the daemon.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command, one per line.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command, one per line. agent-team follow-ups preserve the selected repo scope.")
 	if provider == "github" {
 		cmd.Flags().BoolVar(&reconcileJob, "reconcile-job", false, "Also reconcile the normalized PR event into the owning durable job.")
 		cmd.Flags().BoolVar(&cleanupMerged, "cleanup-merged", false, "With --reconcile-job, remove the job-owned worktree and branch after a merged PR event.")
@@ -402,7 +402,7 @@ func newIntakeScheduleCmd() *cobra.Command {
 	cmd.Flags().StringVar(&payloadFile, "payload-file", "", "Read additional schedule payload JSON from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Normalize and print the event without publishing to the daemon.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command, one per line.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&wait, "wait", false, "After the schedule publishes pipeline jobs, wait for those jobs to reach a lifecycle status, event, or next-step state.")
 	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&waitEvents, "wait-event", nil, "With --wait, last event to wait for, e.g. pipeline_step, advance_dispatched, closed, or pipeline_done. Can repeat or comma-separate.")
