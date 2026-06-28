@@ -2037,6 +2037,7 @@ Flags:
 
 ```text
       --actor string          Actor label recorded in the close audit event. (default "cli")
+      --commands              With --dry-run, print the matching job close apply command when the preview has actionable work.
       --dry-run               Preview the close without changing job state or writing an audit event.
       --format string         Render the updated job with a Go template, e.g. '{{.ID}} {{.Status}}'.
       --json                  Emit the updated job as JSON.

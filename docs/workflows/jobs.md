@@ -355,6 +355,7 @@ lifecycle control should happen in the same operator pass.
 ## Closing Jobs
 
 ```sh
+agent-team job close squ-42 --status done --dry-run --commands
 agent-team job close squ-42 --status done --dry-run
 agent-team job close squ-42 --status done
 agent-team job close squ-42 --status failed
@@ -366,7 +367,8 @@ Use `--dry-run` to preview the terminal status and message before mutating the
 job. Closing records a job event and updates timestamps. Add a positional
 message, `--message`, or `--message-file <path|->` when the terminal state
 needs an operator-readable reason. Use `--actor` when automation records the
-close.
+close. Add `--commands` to a dry-run when scripts should print only the
+matching close apply command.
 
 ## Cancelling Jobs
 

@@ -3418,6 +3418,7 @@ func newJobCloseCmd() *cobra.Command {
 		message     string
 		messageFile string
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -3429,6 +3430,18 @@ func newJobCloseCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job close: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job close: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job close: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job close: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if status != string(job.StatusDone) && status != string(job.StatusFailed) {
@@ -3454,6 +3467,22 @@ func newJobCloseCmd() *cobra.Command {
 			j.LastStatus = closeMessage
 			j.UpdatedAt = time.Now().UTC()
 			if dryRun {
+				if commands {
+					return renderJobCloseApplyCommand(cmd.OutOrStdout(), true, jobCloseApplyCommandOptions{
+						JobID:             j.ID,
+						Repo:              repo,
+						RepoSet:           cmd.Flags().Changed("repo"),
+						Actor:             actor,
+						ActorSet:          cmd.Flags().Changed("actor"),
+						Status:            job.Status(status),
+						StatusSet:         cmd.Flags().Changed("status"),
+						Message:           message,
+						MessageSet:        cmd.Flags().Changed("message"),
+						MessageFile:       messageFile,
+						MessageFileSet:    cmd.Flags().Changed("message-file"),
+						PositionalMessage: args[1:],
+					})
+				}
 				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
 			closeActor := strings.TrimSpace(actor)
@@ -3472,6 +3501,7 @@ func newJobCloseCmd() *cobra.Command {
 	cmd.Flags().StringVar(&message, "message", "", "Close message recorded on the job.")
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read close message from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the close without changing job state or writing an audit event.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching job close apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the updated job with a Go template, e.g. '{{.ID}} {{.Status}}'.")
 	return cmd
@@ -12970,6 +13000,52 @@ type jobNoteApplyCommandOptions struct {
 	MessageFile       string
 	MessageFileSet    bool
 	PositionalMessage []string
+}
+
+type jobCloseApplyCommandOptions struct {
+	JobID             string
+	Repo              string
+	RepoSet           bool
+	Actor             string
+	ActorSet          bool
+	Status            job.Status
+	StatusSet         bool
+	Message           string
+	MessageSet        bool
+	MessageFile       string
+	MessageFileSet    bool
+	PositionalMessage []string
+}
+
+func renderJobCloseApplyCommand(w io.Writer, hasAction bool, opts jobCloseApplyCommandOptions) error {
+	if !hasAction {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(jobCloseApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func jobCloseApplyCommandArgs(opts jobCloseApplyCommandOptions) []string {
+	args := []string{"agent-team", "job", "close", opts.JobID}
+	if opts.RepoSet && strings.TrimSpace(opts.Repo) != "" {
+		args = append(args, "--repo", opts.Repo)
+	}
+	if opts.ActorSet && strings.TrimSpace(opts.Actor) != "" {
+		args = append(args, "--actor", opts.Actor)
+	}
+	if opts.StatusSet {
+		args = append(args, "--status", string(opts.Status))
+	}
+	if opts.MessageSet {
+		args = append(args, "--message", opts.Message)
+	}
+	if opts.MessageFileSet && strings.TrimSpace(opts.MessageFile) != "" {
+		args = append(args, "--message-file", opts.MessageFile)
+	}
+	if !opts.MessageSet && !opts.MessageFileSet && len(opts.PositionalMessage) > 0 {
+		args = append(args, opts.PositionalMessage...)
+	}
+	return args
 }
 
 func renderJobNoteApplyCommand(w io.Writer, hasAction bool, opts jobNoteApplyCommandOptions) error {
