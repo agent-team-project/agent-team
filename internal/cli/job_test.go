@@ -1004,6 +1004,15 @@ func TestJobAdoptUsesActivePipelineStepDefaults(t *testing.T) {
 	if result.Job.Steps[1].Status != job.StatusRunning || result.Job.Steps[1].Instance != "worker-squ-168-implement" {
 		t.Fatalf("adopted step result = %+v", result.Job.Steps[1])
 	}
+	for _, want := range []string{
+		"agent-team pipeline status ticket_to_pr",
+		"agent-team pipeline logs ticket_to_pr --follow",
+		"agent-team pipeline resume-plan ticket_to_pr --step implement",
+	} {
+		if !containsString(result.Actions, want) {
+			t.Fatalf("job adopt pipeline actions = %+v, missing %q", result.Actions, want)
+		}
+	}
 	updated, err := job.Read(teamDir, "squ-168")
 	if err != nil {
 		t.Fatalf("read job: %v", err)

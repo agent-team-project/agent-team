@@ -1360,7 +1360,7 @@ pipelines = ["ticket_to_pr"]
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"team", "adopt", "delivery", "squ-811", "--repo", root, "--step", "review", "--pid", strconv.Itoa(os.Getpid()), "--json"})
+	cmd.SetArgs([]string{"team", "adopt", "delivery", "squ-811", "--repo", root, "--pid", strconv.Itoa(os.Getpid()), "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("team adopt: %v\nstdout=%s\nstderr=%s", err, out.String(), stderr.String())
 	}
@@ -1390,7 +1390,7 @@ pipelines = ["ticket_to_pr"]
 	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
 	commands.SetOut(commandsOut)
 	commands.SetErr(commandsErr)
-	commands.SetArgs([]string{"team", "adopt", "delivery", "squ-811", "--repo", root, "--step", "review", "--pid", strconv.Itoa(os.Getpid()), "--dry-run", "--commands"})
+	commands.SetArgs([]string{"team", "adopt", "delivery", "squ-811", "--repo", root, "--pid", strconv.Itoa(os.Getpid()), "--dry-run", "--commands"})
 	if err := commands.Execute(); err != nil {
 		t.Fatalf("team adopt --commands: %v\nstdout=%s\nstderr=%s", err, commandsOut.String(), commandsErr.String())
 	}

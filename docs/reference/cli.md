@@ -101,6 +101,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job wait <job-id>` | Wait for lifecycle status, last event, or next-step state/stage with `--next-state` and `--step` |
 | `agent-team job next <job-id>` | Show the next pipeline step without dispatching it; add `--state`, `--step`, or `--commands` when scripts need a compact assertion or repo-scoped next-action commands |
 | `agent-team job resume-plan <job-id>` | Show runtime resume, attach, and log fallback commands for one job; add `--step` for one pipeline stage, `--last-message` for clean Codex sidecars, `--commands` for repo-scoped command lines, or `--sort`/`--limit` for multi-runtime jobs |
+| `agent-team job adopt <job-id>` | Adopt a live external process as a job owner; pipeline jobs infer the active stage and include pipeline-scoped follow-up actions |
 | `agent-team job ps <job-id>` | List daemon-aware instance rows for one job; add `--step` for one pipeline stage |
 | `agent-team job stats <job-id>` | Show CPU and memory usage for one job's instances; add `--step` for one pipeline stage |
 | `agent-team job top <job-id>` | `agent-team job stats <job-id>` |

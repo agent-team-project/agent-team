@@ -257,7 +257,9 @@ to a declared pipeline and you want that ownership checked before metadata is
 written, use `agent-team pipeline adopt <pipeline> <job-id> --step <id>`.
 Adoption text and JSON include follow-up actions for `inspect`, `logs`, and
 `resume-plan`; job-owned adoption also includes the matching job-scoped
-commands so scripts can continue from the durable work unit. Pipeline- and
+commands so scripts can continue from the durable work unit. When the job
+records a pipeline, plain `job adopt` also adds pipeline status, logs, and
+resume-plan actions scoped to the inferred or explicit stage. Pipeline- and
 team-scoped adoption add matching scoped status, logs, and resume-plan actions.
 Add `--commands` when scripts need only those follow-up commands, one per line.
 

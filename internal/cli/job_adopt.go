@@ -150,9 +150,38 @@ func runJobAdoptForJob(cmd *cobra.Command, label, teamDir string, j *job.Job, op
 	if strings.TrimSpace(adopt.PR) == "" {
 		adopt.PR = strings.TrimSpace(j.PR)
 	}
+	selectedStepID := ""
+	if selectedStep != nil {
+		selectedStepID = strings.TrimSpace(selectedStep.ID)
+	}
+	if strings.TrimSpace(adopt.Step) == "" && selectedStepID != "" {
+		adopt.Step = selectedStepID
+	}
+	adopt.FollowUp = jobAdoptFollowUpScopes(j, selectedStepID, adopt.FollowUp)
 	adopt.Job = j.ID
 	adopt.Ticket = j.Ticket
 	return runDaemonAdopt(cmd, repoRoot, selectedInstance, adopt)
+}
+
+func jobAdoptFollowUpScopes(j *job.Job, selectedStepID string, scopes []daemonAdoptFollowUpScope) []daemonAdoptFollowUpScope {
+	selectedStepID = strings.TrimSpace(selectedStepID)
+	out := make([]daemonAdoptFollowUpScope, 0, len(scopes)+1)
+	for _, scope := range scopes {
+		if strings.TrimSpace(scope.Step) == "" && selectedStepID != "" {
+			scope.Step = selectedStepID
+		}
+		out = append(out, scope)
+	}
+	if len(out) == 0 && j != nil {
+		if pipeline := strings.TrimSpace(j.Pipeline); pipeline != "" {
+			out = append(out, daemonAdoptFollowUpScope{
+				Kind: "pipeline",
+				Name: pipeline,
+				Step: selectedStepID,
+			})
+		}
+	}
+	return out
 }
 
 func defaultJobAdoptInstanceForStep(j *job.Job, step *job.Step) string {
