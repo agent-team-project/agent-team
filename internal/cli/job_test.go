@@ -483,6 +483,41 @@ func TestJobCreateListShowClose(t *testing.T) {
 	if got := strings.TrimSpace(tailOut.String()); got != "closed done" {
 		t.Fatalf("tail output = %q", got)
 	}
+
+	summaryCmd := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryCmd.SetOut(summaryOut)
+	summaryCmd.SetErr(summaryErr)
+	summaryCmd.SetArgs([]string{"job", "events", "SQU-42", "--repo", tmp, "--summary"})
+	if err := summaryCmd.Execute(); err != nil {
+		t.Fatalf("job events summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	for _, want := range []string{
+		"job events: job=squ-42 total=2",
+		"types: closed=1 created=1",
+		"statuses: done=1 queued=1",
+		"actors: cli=2",
+	} {
+		if !strings.Contains(summaryOut.String(), want) {
+			t.Fatalf("job events summary missing %q:\n%s", want, summaryOut.String())
+		}
+	}
+
+	summaryJSONCmd := NewRootCmd()
+	summaryJSONOut, summaryJSONErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryJSONCmd.SetOut(summaryJSONOut)
+	summaryJSONCmd.SetErr(summaryJSONErr)
+	summaryJSONCmd.SetArgs([]string{"job", "events", "SQU-42", "--repo", tmp, "--tail", "1", "--summary", "--json"})
+	if err := summaryJSONCmd.Execute(); err != nil {
+		t.Fatalf("job events summary json: %v\nstderr=%s", err, summaryJSONErr.String())
+	}
+	var summary jobEventSummaryJSON
+	if err := json.Unmarshal(summaryJSONOut.Bytes(), &summary); err != nil {
+		t.Fatalf("decode job events summary json: %v\nbody=%s", err, summaryJSONOut.String())
+	}
+	if summary.JobID != "squ-42" || summary.Total != 1 || summary.Types["closed"] != 1 || summary.Statuses["done"] != 1 || summary.Actors["cli"] != 1 {
+		t.Fatalf("job events summary json = %+v", summary)
+	}
 }
 
 func TestJobShowCommandsRenderValidation(t *testing.T) {
@@ -5615,6 +5650,30 @@ func TestJobEventsFilters(t *testing.T) {
 		t.Fatalf("filtered events = %+v", got)
 	}
 
+	summaryCmd := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryCmd.SetOut(summaryOut)
+	summaryCmd.SetErr(summaryErr)
+	summaryCmd.SetArgs([]string{
+		"job", "events", "squ-75",
+		"--repo", tmp,
+		"--type", "closed",
+		"--actor", "cli",
+		"--since", base.Add(-time.Hour).Format(time.RFC3339),
+		"--summary",
+		"--json",
+	})
+	if err := summaryCmd.Execute(); err != nil {
+		t.Fatalf("job events filtered summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var filteredSummary jobEventSummaryJSON
+	if err := json.Unmarshal(summaryOut.Bytes(), &filteredSummary); err != nil {
+		t.Fatalf("decode filtered summary json: %v\nbody=%s", err, summaryOut.String())
+	}
+	if filteredSummary.Total != 1 || filteredSummary.Types["closed"] != 1 || filteredSummary.Actors["cli"] != 1 || filteredSummary.Instances["worker-squ-75"] != 1 {
+		t.Fatalf("filtered summary = %+v", filteredSummary)
+	}
+
 	cmd = NewRootCmd()
 	out, stderr = &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
@@ -5647,6 +5706,43 @@ func TestJobEventsFilters(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--type requires at least one non-empty event type") {
 		t.Fatalf("missing empty filter error:\n%s", stderr.String())
+	}
+}
+
+func TestJobEventsSummaryValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "follow",
+			args: []string{"job", "events", "squ-42", "--summary", "--follow"},
+			want: "--summary cannot be combined with --follow",
+		},
+		{
+			name: "format",
+			args: []string{"job", "events", "squ-42", "--summary", "--format", "{{.Type}}"},
+			want: "--summary cannot be combined with --format",
+		},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%s unexpectedly succeeded", tc.name)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("%s err = %v, want exit 2", tc.name, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%s stderr = %q, want %q", tc.name, stderr.String(), tc.want)
+		}
 	}
 }
 

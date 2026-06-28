@@ -1065,6 +1065,7 @@ func newJobEventsCmd() *cobra.Command {
 		since    string
 		interval time.Duration
 		jsonOut  bool
+		summary  bool
 		format   string
 	)
 	cwd, _ := os.Getwd()
@@ -1075,6 +1076,14 @@ func newJobEventsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job events: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if summary && follow {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job events: --summary cannot be combined with --follow.")
+				return exitErr(2)
+			}
+			if summary && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job events: --summary cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if interval < 0 {
@@ -1105,7 +1114,7 @@ func newJobEventsCmd() *cobra.Command {
 				defer stop()
 				return runJobEventsFollow(ctx, cmd.OutOrStdout(), teamDir, j.ID, tailEvents, interval, filters, jsonOut, tmpl)
 			}
-			return runJobEvents(cmd.OutOrStdout(), teamDir, j.ID, tailEvents, filters, jsonOut, tmpl)
+			return runJobEvents(cmd.OutOrStdout(), teamDir, j.ID, tailEvents, filters, jsonOut, summary, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -1116,6 +1125,7 @@ func newJobEventsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&since, "since", "", "Only show job events since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	cmd.Flags().DurationVar(&interval, "interval", time.Second, "Polling interval for --follow.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON. With --follow, emit one JSON object per line.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching job events by type, status, actor, and instance.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each event with a Go template, e.g. '{{.TS}} {{.Type}} {{.Message}}'.")
 	return cmd
 }
@@ -7401,13 +7411,16 @@ func writeJobWithAudit(teamDir string, j *job.Job, eventType, actor, message str
 	return job.AppendSnapshotEvent(teamDir, j, eventType, actor, message, data)
 }
 
-func runJobEvents(w io.Writer, teamDir, id string, tail int, filters jobEventFilters, jsonOut bool, tmpl *template.Template) error {
+func runJobEvents(w io.Writer, teamDir, id string, tail int, filters jobEventFilters, jsonOut, summary bool, tmpl *template.Template) error {
 	events, err := job.ListEvents(teamDir, id)
 	if err != nil {
 		return err
 	}
 	events = filterJobEvents(events, filters)
 	events = job.TailEvents(events, tail)
+	if summary {
+		return renderJobEventSummary(w, id, events, jsonOut)
+	}
 	return renderJobEvents(w, events, jsonOut, tmpl)
 }
 
@@ -7560,6 +7573,74 @@ func renderJobEventTemplate(w io.Writer, ev job.Event, tmpl *template.Template) 
 	}
 	_, err := fmt.Fprintln(w)
 	return err
+}
+
+type jobEventSummaryJSON struct {
+	JobID     string         `json:"job_id,omitempty"`
+	Total     int            `json:"total"`
+	FirstTS   string         `json:"first_ts,omitempty"`
+	LastTS    string         `json:"last_ts,omitempty"`
+	Types     map[string]int `json:"types,omitempty"`
+	Statuses  map[string]int `json:"statuses,omitempty"`
+	Actors    map[string]int `json:"actors,omitempty"`
+	Instances map[string]int `json:"instances,omitempty"`
+
+	first time.Time
+	last  time.Time
+}
+
+func renderJobEventSummary(w io.Writer, id string, events []job.Event, jsonOut bool) error {
+	summary := collectJobEventSummary(id, events)
+	if jsonOut {
+		return json.NewEncoder(w).Encode(summary)
+	}
+	fmt.Fprintf(w, "job events: job=%s total=%d", summary.JobID, summary.Total)
+	if summary.FirstTS != "" {
+		fmt.Fprintf(w, " first=%s", summary.FirstTS)
+	}
+	if summary.LastTS != "" {
+		fmt.Fprintf(w, " last=%s", summary.LastTS)
+	}
+	fmt.Fprintln(w)
+	renderEventCountLine(w, "types", summary.Types)
+	renderEventCountLine(w, "statuses", summary.Statuses)
+	renderEventCountLine(w, "actors", summary.Actors)
+	renderEventCountLine(w, "instances", summary.Instances)
+	return nil
+}
+
+func collectJobEventSummary(id string, events []job.Event) jobEventSummaryJSON {
+	summary := jobEventSummaryJSON{JobID: job.IDFromInput(id)}
+	for _, ev := range events {
+		summary.add(ev)
+	}
+	summary.finalize()
+	return summary
+}
+
+func (s *jobEventSummaryJSON) add(ev job.Event) {
+	s.Total++
+	if !ev.TS.IsZero() {
+		if s.first.IsZero() || ev.TS.Before(s.first) {
+			s.first = ev.TS
+		}
+		if s.last.IsZero() || ev.TS.After(s.last) {
+			s.last = ev.TS
+		}
+	}
+	addEventCount(&s.Types, ev.Type)
+	addEventCount(&s.Statuses, string(ev.Status))
+	addEventCount(&s.Actors, ev.Actor)
+	addEventCount(&s.Instances, ev.Instance)
+}
+
+func (s *jobEventSummaryJSON) finalize() {
+	if !s.first.IsZero() {
+		s.FirstTS = s.first.Format(time.RFC3339)
+	}
+	if !s.last.IsZero() {
+		s.LastTS = s.last.Format(time.RFC3339)
+	}
 }
 
 func renderJobEventTable(w io.Writer, events []job.Event, header bool) {
