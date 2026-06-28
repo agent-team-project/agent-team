@@ -45,6 +45,7 @@ agent-team queue ls --summary
 agent-team queue ls --state dead
 agent-team queue ls --job SQU-42
 agent-team queue ls --runtime codex
+agent-team queue ls --state dead --commands
 agent-team queue ls --summary --runtime codex
 agent-team queue watch --state dead
 agent-team queue show <id>
@@ -52,7 +53,8 @@ agent-team queue show <id>
 
 Use `--runtime claude|codex` to narrow active queue entries by the runtime recorded in the dispatch payload, falling back to daemon metadata when a queued item already names a concrete instance. Runtime-filtered summaries include a `runtimes` count and exclude quarantined files whose runtime cannot be known from the quarantine index.
 Use `queue watch` when a retry, drain, or repair loop is expected to change active queue rows while you are inspecting them.
-When `queue show`, `queue quarantine show`, `outbox show`, `outbox quarantine show`, or top-level queue/outbox recovery commands are run with an explicit `--repo` or legacy `--target`, `--commands` output preserves that selector in emitted `agent-team` follow-ups so scripts can run from outside the target checkout.
+Add `--commands` to queue list views when scripts should print only the ACTION-column commands for the currently visible rows after filters, sort, and limit are applied.
+When `queue ls`, `queue show`, `queue quarantine show`, `outbox show`, `outbox quarantine show`, or top-level queue/outbox recovery commands are run with an explicit `--repo` or legacy `--target`, `--commands` output preserves that selector in emitted `agent-team` follow-ups so scripts can run from outside the target checkout.
 
 Preview daemon drain work before applying it:
 
@@ -67,6 +69,7 @@ Job-scoped:
 agent-team job queue squ-42
 agent-team job queue squ-42 --summary
 agent-team job queue squ-42 --runtime codex
+agent-team job queue squ-42 --state dead --commands
 agent-team job queue squ-42 --summary --runtime codex
 agent-team job queue show squ-42 <id>
 ```
@@ -77,6 +80,7 @@ Team-scoped:
 agent-team team queue delivery --state dead
 agent-team team queue delivery --summary
 agent-team team queue delivery --runtime codex
+agent-team team queue delivery --state dead --commands
 agent-team team queue delivery --summary --runtime codex
 agent-team team queue show delivery <id>
 ```

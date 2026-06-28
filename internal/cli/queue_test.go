@@ -127,6 +127,25 @@ func TestQueueCommandListShowDropLocal(t *testing.T) {
 		}
 	}
 
+	lsCommands := NewRootCmd()
+	lsCommandsOut, lsCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	lsCommands.SetOut(lsCommandsOut)
+	lsCommands.SetErr(lsCommandsErr)
+	lsCommands.SetArgs([]string{"queue", "ls", "--target", tmp, "--commands"})
+	if err := lsCommands.Execute(); err != nil {
+		t.Fatalf("queue ls --commands: %v\nstderr=%s", err, lsCommandsErr.String())
+	}
+	wantListCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team queue retry q-local",
+		"agent-team queue drop q-local",
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
+	if got, want := lsCommandsOut.String(), wantListCommands; got != want {
+		t.Fatalf("queue ls --commands = %q, want %q", got, want)
+	}
+	if strings.Contains(lsCommandsOut.String(), "ID") || strings.Contains(lsCommandsOut.String(), "ACTION") {
+		t.Fatalf("queue ls --commands included table output:\n%s", lsCommandsOut.String())
+	}
+
 	showText := NewRootCmd()
 	showTextOut, showTextErr := &bytes.Buffer{}, &bytes.Buffer{}
 	showText.SetOut(showTextOut)
@@ -453,6 +472,10 @@ func TestQueueDoctorFormatValidation(t *testing.T) {
 		{[]string{"queue", "doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
 		{[]string{"queue", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
 		{[]string{"queue", "doctor", "--format", "{{"}, "invalid --format template"},
+		{[]string{"queue", "ls", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"queue", "ls", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"queue", "ls", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
+		{[]string{"queue", "watch", "--commands"}, "--commands cannot be combined with --watch"},
 		{[]string{"queue", "show", "q-local", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"queue", "show", "q-local", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
 		{[]string{"queue", "quarantine", "show", "quarantine/pending/q.json", "--commands", "--json"}, "--commands cannot be combined with --json"},

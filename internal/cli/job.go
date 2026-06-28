@@ -93,6 +93,7 @@ func newJobQueueCmd() *cobra.Command {
 		noClear     bool
 		interval    time.Duration
 		summary     bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -109,6 +110,22 @@ func newJobQueueCmd() *cobra.Command {
 			}
 			if format != "" && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue: --commands cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job queue: --commands cannot be combined with --watch.")
 				return exitErr(2)
 			}
 			if summary && (cmd.Flags().Changed("sort") || cmd.Flags().Changed("limit")) {
@@ -150,6 +167,9 @@ func newJobQueueCmd() *cobra.Command {
 				}
 				return runJobQueueListWatch(ctx, cmd.OutOrStdout(), teamDir, j, filters, queueListOptions{Sort: sortMode, Limit: limit}, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
+			if commands {
+				return runJobQueueListCommands(cmd.OutOrStdout(), teamDir, j, filters, queueListOptions{Sort: sortMode, Limit: limit}, operatorCommandScopeFromCommand(cmd, repo, "repo"))
+			}
 			return runJobQueueList(cmd.OutOrStdout(), teamDir, j, filters, queueListOptions{Sort: sortMode, Limit: limit}, summary, jsonOut, tmpl)
 		},
 	}
@@ -164,6 +184,7 @@ func newJobQueueCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate queue counts instead of queue rows.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended commands from the visible job queue rows, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	cmd.AddCommand(newJobQueueShowCmd())
@@ -9742,6 +9763,17 @@ func runJobQueueList(w io.Writer, teamDir string, j *job.Job, filters queueListF
 	}
 	renderQueueTableWithActions(w, filtered, runtimeByInstance, jobQueueActionResolver(j.ID))
 	return nil
+}
+
+func runJobQueueListCommands(w io.Writer, teamDir string, j *job.Job, filters queueListFilters, opts queueListOptions, scope operatorCommandScope) error {
+	items, err := queueItemsForJob(teamDir, j)
+	if err != nil {
+		return err
+	}
+	runtimeByInstance := queueRuntimeMap(teamDir)
+	filtered := filterQueueItems(items, filters.withNow(time.Now().UTC()).withRuntimeByInstance(runtimeByInstance))
+	filtered = prepareQueueListItems(filtered, opts, runtimeByInstance)
+	return renderQueueItemsCommands(w, filtered, jobQueueActionResolver(j.ID), scope)
 }
 
 func runJobQueueListWatch(ctx context.Context, w io.Writer, teamDir string, j *job.Job, filters queueListFilters, opts queueListOptions, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {

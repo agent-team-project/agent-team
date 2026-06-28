@@ -7623,6 +7623,29 @@ instances = ["other"]
 		}
 	}
 
+	textListCommands := NewRootCmd()
+	textListCommandsOut, textListCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	textListCommands.SetOut(textListCommandsOut)
+	textListCommands.SetErr(textListCommandsErr)
+	textListCommands.SetArgs([]string{"team", "queue", "delivery", "--repo", root, "--commands"})
+	if err := textListCommands.Execute(); err != nil {
+		t.Fatalf("team queue --commands: %v\nstderr=%s", err, textListCommandsErr.String())
+	}
+	wantListCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team job queue retry squ-501 q-team-job",
+		"agent-team job queue drop squ-501 q-team-job",
+		"agent-team team queue retry delivery q-team-claude",
+		"agent-team team queue drop delivery q-team-claude",
+		"agent-team team drain delivery",
+		"agent-team team queue drop delivery q-team-target",
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := textListCommandsOut.String(), wantListCommands; got != want {
+		t.Fatalf("team queue --commands = %q, want %q", got, want)
+	}
+	if strings.Contains(textListCommandsOut.String(), "STATE") || strings.Contains(textListCommandsOut.String(), "ACTION") {
+		t.Fatalf("team queue --commands included table output:\n%s", textListCommandsOut.String())
+	}
+
 	runtimeList := NewRootCmd()
 	runtimeListOut, runtimeListErr := &bytes.Buffer{}, &bytes.Buffer{}
 	runtimeList.SetOut(runtimeListOut)
@@ -8737,6 +8760,26 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		args []string
 		want string
 	}{
+		{
+			name: "list commands with json",
+			args: []string{"team", "queue", "delivery", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "list commands with format",
+			args: []string{"team", "queue", "delivery", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "list commands with summary",
+			args: []string{"team", "queue", "delivery", "--commands", "--summary"},
+			want: "--commands cannot be combined with --summary",
+		},
+		{
+			name: "list commands with watch",
+			args: []string{"team", "queue", "delivery", "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
+		},
 		{
 			name: "retry format with json",
 			args: []string{"team", "queue", "retry", "delivery", "--format", "{{.ID}}", "--json"},

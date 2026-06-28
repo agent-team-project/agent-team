@@ -1006,6 +1006,7 @@ func newPipelineQueueCmd() *cobra.Command {
 		watch       bool
 		noClear     bool
 		summary     bool
+		commands    bool
 		jsonOut     bool
 		format      string
 		interval    time.Duration
@@ -1031,6 +1032,22 @@ func newPipelineQueueCmd() *cobra.Command {
 			}
 			if format != "" && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --commands cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --commands cannot be combined with --watch.")
 				return exitErr(2)
 			}
 			if summary && (cmd.Flags().Changed("sort") || cmd.Flags().Changed("limit")) {
@@ -1083,6 +1100,9 @@ func newPipelineQueueCmd() *cobra.Command {
 			if summary {
 				return runPipelineQueueSummary(cmd.OutOrStdout(), teamDir, pipelineName, filters, jsonOut)
 			}
+			if commands {
+				return runPipelineQueueListCommands(cmd.OutOrStdout(), teamDir, pipelineName, filters, queueListOptions{Sort: sortMode, Limit: limit}, operatorCommandScopeFromCommand(cmd, repo, "repo"))
+			}
 			return runPipelineQueueList(cmd.OutOrStdout(), teamDir, pipelineName, filters, queueListOptions{Sort: sortMode, Limit: limit}, jsonOut, tmpl)
 		},
 	}
@@ -1098,6 +1118,7 @@ func newPipelineQueueCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the pipeline queue table until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate queue counts instead of queue rows.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended commands from the visible pipeline queue rows, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline queue rows as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
@@ -7665,6 +7686,20 @@ func runPipelineQueueList(w io.Writer, teamDir, pipeline string, filters queueLi
 	}
 	renderQueueTableWithActions(w, items, runtimeByInstance, actionResolver)
 	return nil
+}
+
+func runPipelineQueueListCommands(w io.Writer, teamDir, pipeline string, filters queueListFilters, opts queueListOptions, scope operatorCommandScope) error {
+	items, err := collectPipelineQueueItems(teamDir, pipeline, filters, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	runtimeByInstance := queueRuntimeMap(teamDir)
+	items = prepareQueueListItems(items, opts, runtimeByInstance)
+	actionResolver, err := pipelineQueueActionResolverForScope(teamDir, pipeline)
+	if err != nil {
+		return err
+	}
+	return renderQueueItemsCommands(w, items, actionResolver, scope)
 }
 
 func runPipelineQueueSummary(w io.Writer, teamDir, pipeline string, filters queueListFilters, jsonOut bool) error {

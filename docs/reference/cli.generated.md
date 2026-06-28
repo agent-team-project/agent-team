@@ -2789,6 +2789,7 @@ agent-team job queue <job-id> [flags]
 Flags:
 
 ```text
+      --commands             Print recommended commands from the visible job queue rows, one per line. agent-team follow-ups preserve the selected repo scope.
       --event-type strings   Filter by event type; repeat or comma-separate values.
       --format string        Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --interval duration    Refresh interval for --watch. (default 2s)
@@ -4972,6 +4973,7 @@ Flags:
 
 ```text
       --all                  List queue items across all pipelines. This is the default when no pipeline is passed.
+      --commands             Print recommended commands from the visible pipeline queue rows, one per line. agent-team follow-ups preserve the selected repo scope.
       --event-type strings   Filter by event type; repeat or comma-separate values.
       --format string        Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --interval duration    Refresh interval for --watch. (default 2s)
@@ -5968,6 +5970,7 @@ Aliases: `watch`
 Flags:
 
 ```text
+      --commands             Print recommended commands from the visible queue rows, one per line. agent-team follow-ups preserve the selected repo scope.
       --event-type strings   Filter by event type; repeat or comma-separate values.
       --format string        Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --instance strings     Filter by target instance name; repeat or comma-separate values.
@@ -8163,6 +8166,7 @@ agent-team team queue <team> [flags]
 Flags:
 
 ```text
+      --commands             Print recommended commands from the visible team queue rows, one per line. agent-team follow-ups preserve the selected repo scope.
       --event-type strings   Filter by event type; repeat or comma-separate values.
       --format string        Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.
       --interval duration    Refresh interval for --watch. (default 2s)

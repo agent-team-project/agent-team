@@ -7876,6 +7876,29 @@ target = "worker"
 		}
 	}
 
+	allCommands := NewRootCmd()
+	allCommandsOut, allCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allCommands.SetOut(allCommandsOut)
+	allCommands.SetErr(allCommandsErr)
+	allCommands.SetArgs([]string{"pipeline", "queue", "--all", "--repo", root, "--sort", "id", "--commands"})
+	if err := allCommands.Execute(); err != nil {
+		t.Fatalf("pipeline queue --all --commands: %v\nstderr=%s", err, allCommandsErr.String())
+	}
+	wantAllCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team pipeline queue retry ops_review q-foreign-dead",
+		"agent-team pipeline queue drop ops_review q-foreign-dead",
+		"agent-team pipeline queue retry ticket_to_pr q-pipeline-dead",
+		"agent-team pipeline queue drop ticket_to_pr q-pipeline-dead",
+		"agent-team queue drain",
+		"agent-team pipeline queue drop ticket_to_pr q-pipeline-pending",
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := allCommandsOut.String(), wantAllCommands; got != want {
+		t.Fatalf("pipeline queue --all --commands = %q, want %q", got, want)
+	}
+	if strings.Contains(allCommandsOut.String(), "STATE") || strings.Contains(allCommandsOut.String(), "ACTION") {
+		t.Fatalf("pipeline queue --all --commands included table output:\n%s", allCommandsOut.String())
+	}
+
 	summary := NewRootCmd()
 	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	summary.SetOut(summaryOut)
@@ -8310,6 +8333,26 @@ func TestPipelineQueueControlRejectsCommandsCombinations(t *testing.T) {
 		args []string
 		want string
 	}{
+		{
+			name: "list commands with json",
+			args: []string{"pipeline", "queue", "ticket_to_pr", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "list commands with format",
+			args: []string{"pipeline", "queue", "ticket_to_pr", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "list commands with summary",
+			args: []string{"pipeline", "queue", "ticket_to_pr", "--commands", "--summary"},
+			want: "--commands cannot be combined with --summary",
+		},
+		{
+			name: "list commands with watch",
+			args: []string{"pipeline", "queue", "ticket_to_pr", "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
+		},
 		{
 			name: "retry commands without dry run",
 			args: []string{"pipeline", "queue", "retry", "ticket_to_pr", "--commands"},

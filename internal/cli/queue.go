@@ -54,6 +54,7 @@ func newQueueLsCmd() *cobra.Command {
 		watch       bool
 		noClear     bool
 		summary     bool
+		commands    bool
 		jsonOut     bool
 		format      string
 		interval    time.Duration
@@ -74,6 +75,22 @@ func newQueueLsCmd() *cobra.Command {
 			}
 			if format != "" && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue ls: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue ls: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue ls: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue ls: --commands cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue ls: --commands cannot be combined with --watch.")
 				return exitErr(2)
 			}
 			if summary && (cmd.Flags().Changed("sort") || cmd.Flags().Changed("limit")) {
@@ -118,6 +135,9 @@ func newQueueLsCmd() *cobra.Command {
 			if summary {
 				return runQueueSummary(cmd.OutOrStdout(), teamDir, filters, jsonOut)
 			}
+			if commands {
+				return runQueueListCommands(cmd.OutOrStdout(), teamDir, filters, queueListOptions{Sort: sortMode, Limit: limit}, nil, operatorCommandScopeFromCommand(cmd, target, "target"))
+			}
 			return runQueueList(cmd.OutOrStdout(), teamDir, filters, queueListOptions{Sort: sortMode, Limit: limit}, jsonOut, tmpl)
 		},
 	}
@@ -133,6 +153,7 @@ func newQueueLsCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh the queue table until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate queue counts instead of queue rows.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended commands from the visible queue rows, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each queue item with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
@@ -1840,6 +1861,17 @@ func runQueueList(w io.Writer, teamDir string, filters queueListFilters, opts qu
 	return nil
 }
 
+func runQueueListCommands(w io.Writer, teamDir string, filters queueListFilters, opts queueListOptions, actions queueActionResolver, scope operatorCommandScope) error {
+	items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return err
+	}
+	runtimeByInstance := queueRuntimeMap(teamDir)
+	filtered := filterQueueItems(items, filters.withNow(time.Now().UTC()).withRuntimeByInstance(runtimeByInstance))
+	filtered = prepareQueueListItems(filtered, opts, runtimeByInstance)
+	return renderQueueItemsCommands(w, filtered, actions, scope)
+}
+
 func runQueueListWatch(ctx context.Context, w io.Writer, teamDir string, filters queueListFilters, opts queueListOptions, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
@@ -1916,6 +1948,15 @@ func renderQueueItemResultWithActions(w io.Writer, item *daemon.QueueItem, jsonO
 
 func renderQueueItemCommands(w io.Writer, item *daemon.QueueItem, actions queueActionResolver, scope operatorCommandScope) error {
 	return renderOperatorActionCommands(w, queueItemResolvedActions(item, time.Now().UTC(), actions), scope)
+}
+
+func renderQueueItemsCommands(w io.Writer, items []*daemon.QueueItem, actions queueActionResolver, scope operatorCommandScope) error {
+	now := time.Now().UTC()
+	out := make([]string, 0, len(items)*2)
+	for _, item := range items {
+		out = append(out, queueItemResolvedActions(item, now, actions)...)
+	}
+	return renderOperatorActionCommands(w, out, scope)
 }
 
 func renderQueueItemTemplate(w io.Writer, item *daemon.QueueItem, tmpl *template.Template) error {

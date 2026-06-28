@@ -136,7 +136,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 
 | Command | Purpose |
 | --- | --- |
-| `agent-team job queue <job-id>` | List or watch active queue entries owned by a job; filter queued dispatches with `--runtime`, sort rows with `--sort`, and cap output with `--limit` |
+| `agent-team job queue <job-id>` | List or watch active queue entries owned by a job; filter queued dispatches with `--runtime`, sort rows with `--sort`, cap output with `--limit`, or print visible row actions with `--commands` |
 | `agent-team job queue show <job-id> <id>` | Inspect one active queue item owned by a job; add `--commands` to print only follow-up commands that preserve an explicit `--repo` selector |
 | `agent-team job queue retry <job-id> <id>` | Retry one job-owned queue item |
 | `agent-team job queue retry <job-id> --all` | Retry matching job-owned queue items; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
@@ -172,7 +172,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 
 | Command | Purpose |
 | --- | --- |
-| `agent-team queue ls` | List active queue entries; filter queued dispatches with `--runtime`, sort rows with `--sort`, and cap output with `--limit` |
+| `agent-team queue ls` | List active queue entries; filter queued dispatches with `--runtime`, sort rows with `--sort`, cap output with `--limit`, or print visible row actions with `--commands` |
 | `agent-team queue watch` | Continuous active queue list shortcut with the same filters and formatting as `queue ls --watch` |
 | `agent-team queue show <id>` | Inspect one active queue item, including resolved runtime metadata; add `--commands` to print only follow-up commands that preserve the selected repo scope |
 | `agent-team queue drain` | Dispatch ready pending entries; add `--dry-run --commands` to print the matching daemon drain command only when work is ready, preserving explicit repo scope |
@@ -245,7 +245,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline logs [<pipeline>]` | Read daemon-captured logs for pipeline-owned instances across all workflows by default |
 | `agent-team pipeline events [<pipeline>]` | Read lifecycle events for pipeline-owned instances across all workflows by default |
 | `agent-team pipeline cleanup <pipeline>` | Scoped job cleanup for done jobs in one pipeline |
-| `agent-team pipeline queue [<pipeline>]` | List or summarize active/quarantined queue items owned by one or all pipelines; subcommands inspect, retry, drop, prune, or recover items owned by one pipeline; `queue show` and `queue quarantine show --commands` preserve an explicit `--repo` selector |
+| `agent-team pipeline queue [<pipeline>]` | List or summarize active/quarantined queue items owned by one or all pipelines; add `--commands` to print visible row actions; subcommands inspect, retry, drop, prune, or recover items owned by one pipeline |
 | `agent-team pipeline outbox [<pipeline>]` | List, summarize, or watch outbox events owned by one or all pipelines; subcommands inspect, retry, drop, or prune events owned by one pipeline; `outbox show --commands` preserves an explicit `--repo` selector |
 | `agent-team pipeline outbox retry <pipeline> --all` | Retry matching pipeline-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--job`, `--sort`, and `--limit` |
 | `agent-team pipeline outbox drop <pipeline> --all` | Drop matching pipeline-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--job`, `--sort`, and `--limit` |
@@ -290,7 +290,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team tick <team>` | Scoped maintenance cycle; add `--dry-run --commands` for the scoped apply command, use `--workspace`/`--runtime` for advanced steps, and use `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |
 | `agent-team team drain <team>` | Scoped drain-until-idle maintenance loop; add `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |
 | `agent-team team repair <team>` | Scoped repair loop, including stale-work timeout with `--timeout-jobs`; failed-step retry accepts pipeline/step filters, `--retry-force`, workspace/runtime overrides, `--last-message` health hints, and `--wait-next-state`/`--wait-step` stage-aware bounded handoff |
-| `agent-team team queue <team>` | Scoped queue list; filter queued dispatches with `--runtime`, sort rows with `--sort`, and cap output with `--limit` |
+| `agent-team team queue <team>` | Scoped queue list; filter queued dispatches with `--runtime`, sort rows with `--sort`, cap output with `--limit`, or print visible row actions with `--commands` |
 | `agent-team team queue show <team> <id>` | Inspect one active queue item owned by a team; add `--commands` to print only follow-up commands that preserve an explicit `--repo` selector |
 | `agent-team team queue retry <team> --all` | Retry matching team-owned entries; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
 | `agent-team team queue drop <team> --all` | Drop matching team-owned entries; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |

@@ -2024,6 +2024,29 @@ func TestJobQueueListsOwnedItems(t *testing.T) {
 		}
 	}
 
+	textListCommands := NewRootCmd()
+	textListCommandsOut, textListCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	textListCommands.SetOut(textListCommandsOut)
+	textListCommands.SetErr(textListCommandsErr)
+	textListCommands.SetArgs([]string{"job", "queue", "SQU-120", "--repo", tmp, "--commands"})
+	if err := textListCommands.Execute(); err != nil {
+		t.Fatalf("job queue --commands: %v\nstderr=%s", err, textListCommandsErr.String())
+	}
+	wantListCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team job queue retry squ-120 q-job-dead",
+		"agent-team job queue drop squ-120 q-job-dead",
+		"agent-team queue drain",
+		"agent-team job queue drop squ-120 q-job-ready",
+		"agent-team job queue show squ-120 q-job-delayed",
+		"agent-team job queue drop squ-120 q-job-delayed",
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
+	if got, want := textListCommandsOut.String(), wantListCommands; got != want {
+		t.Fatalf("job queue --commands = %q, want %q", got, want)
+	}
+	if strings.Contains(textListCommandsOut.String(), "STATE") || strings.Contains(textListCommandsOut.String(), "ACTION") {
+		t.Fatalf("job queue --commands included table output:\n%s", textListCommandsOut.String())
+	}
+
 	runtimeList := NewRootCmd()
 	runtimeListOut, runtimeListErr := &bytes.Buffer{}, &bytes.Buffer{}
 	runtimeList.SetOut(runtimeListOut)
@@ -3227,6 +3250,26 @@ func TestJobQueueRejectsFormatCombinations(t *testing.T) {
 			name: "format with summary",
 			args: []string{"job", "queue", "SQU-120", "--format", "{{.ID}}", "--summary"},
 			want: "--format cannot be combined with --summary",
+		},
+		{
+			name: "commands with json",
+			args: []string{"job", "queue", "SQU-120", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "commands with format",
+			args: []string{"job", "queue", "SQU-120", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "commands with summary",
+			args: []string{"job", "queue", "SQU-120", "--commands", "--summary"},
+			want: "--commands cannot be combined with --summary",
+		},
+		{
+			name: "commands with watch",
+			args: []string{"job", "queue", "SQU-120", "--commands", "--watch"},
+			want: "--commands cannot be combined with --watch",
 		},
 		{
 			name: "invalid format",
