@@ -80,6 +80,36 @@ func TestRepairDryRunPreviewsDeadQueueWithoutDaemon(t *testing.T) {
 	if got, want := formatOut.String(), "true skipped would_retry 1\n"; got != want {
 		t.Fatalf("repair formatted output = %q, want %q", got, want)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--skip-daemon", "--skip-tick", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("repair dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "repair", "--target", tmp, "--skip-daemon", "--skip-tick"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("repair dry-run commands = %q, want %q", got, wantCommand)
+	}
+}
+
+func TestRepairDryRunCommandsSilentWithoutAction(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--skip-daemon", "--skip-queue", "--skip-tick", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("repair dry-run commands without action: %v\nstderr=%s", err, stderr.String())
+	}
+	if got := out.String(); got != "" {
+		t.Fatalf("repair dry-run commands without action = %q, want empty", got)
+	}
 }
 
 func TestRepairDryRunReportsIntakeRecoveryActions(t *testing.T) {
@@ -1205,6 +1235,21 @@ func TestRepairRejectsInvalidFlagCombinations(t *testing.T) {
 			name: "format with json",
 			args: []string{"repair", "--format", "{{.DryRun}}", "--json"},
 			want: "--format cannot be combined",
+		},
+		{
+			name: "commands without dry run",
+			args: []string{"repair", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "commands with json",
+			args: []string{"repair", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "commands with format",
+			args: []string{"repair", "--dry-run", "--commands", "--format", "{{.DryRun}}"},
+			want: "--commands cannot be combined with --format",
 		},
 		{
 			name: "invalid format",

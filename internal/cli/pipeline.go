@@ -3695,6 +3695,7 @@ func newPipelineRepairCmd() *cobra.Command {
 		runtimeBin         string
 		limit              int
 		dryRun             bool
+		commands           bool
 		previewRoutes      bool
 		jsonOut            bool
 		format             string
@@ -3749,6 +3750,18 @@ func newPipelineRepairCmd() *cobra.Command {
 			}
 			if previewRoutes && !dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --preview-routes requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if wait && dryRun {
@@ -3867,6 +3880,43 @@ func newPipelineRepairCmd() *cobra.Command {
 					return err
 				}
 			}
+			if commands {
+				return renderPipelineRepairCommands(cmd.OutOrStdout(), result, repairApplyCommandOptions{
+					BaseArgs:              []string{"agent-team", "pipeline", "repair", args[0]},
+					ScopeFlag:             "--repo",
+					Scope:                 repo,
+					ScopeSet:              cmd.Flags().Changed("repo"),
+					Workspace:             workspace,
+					WorkspaceSet:          cmd.Flags().Changed("workspace"),
+					RuntimeKind:           runtimeKind,
+					RuntimeBin:            runtimeBin,
+					Limit:                 limit,
+					SkipDaemon:            skipDaemon,
+					SkipQueue:             skipQueue,
+					SkipAdvance:           skipAdvance,
+					TimeoutJobs:           timeoutJobs,
+					TimeoutPipelines:      timeoutPipelines,
+					RetryPipelines:        retryPipelines,
+					AllReadySteps:         allReadySteps,
+					TimeoutStep:           timeoutStep,
+					TimeoutStepSet:        cmd.Flags().Changed("timeout-step"),
+					TimeoutMessage:        timeoutMessage,
+					TimeoutMessageSet:     cmd.Flags().Changed("timeout-message"),
+					TimeoutMessageFile:    timeoutMessageFile,
+					TimeoutMessageFileSet: cmd.Flags().Changed("timeout-message-file"),
+					TimeoutTarget:         timeoutTarget,
+					TimeoutTargetSet:      cmd.Flags().Changed("timeout-target-agent"),
+					RetryStep:             retryStep,
+					RetryStepSet:          cmd.Flags().Changed("retry-step"),
+					RetryMessage:          retryMessage,
+					RetryMessageSet:       cmd.Flags().Changed("retry-message"),
+					RetryMessageFile:      retryMessageFile,
+					RetryMessageFileSet:   cmd.Flags().Changed("retry-message-file"),
+					RetryForce:            retryForce,
+					ReadyTimeout:          readyTimeout,
+					ReadyTimeoutSet:       cmd.Flags().Changed("ready-timeout"),
+				})
+			}
 			if err := renderPipelineRepairResult(cmd.OutOrStdout(), result, jsonOut, tmpl); err != nil {
 				return err
 			}
@@ -3882,6 +3932,7 @@ func newPipelineRepairCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtimeBin, "runtime-bin", "", "Runtime binary for retried or advanced step dispatches. Overrides env and repo config.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Retry at most this many pipeline-owned dead-letter queue items or failed pipeline jobs, and advance at most this many ready jobs or ready steps with --all-ready-steps; 0 means no limit.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview pipeline repair actions without mutating state or starting the daemon.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching pipeline repair apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include route and dispatch payload previews for retried or ready pipeline steps.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the pipeline repair result with a Go template, e.g. '{{.Pipeline}} {{.Queue.Action}}'.")

@@ -7983,6 +7983,42 @@ func TestPipelineRepairScopesQueueAndRetry(t *testing.T) {
 	if unchangedRunning.Status != job.StatusRunning || unchangedRunning.Steps[0].Instance != "worker-squ-922" {
 		t.Fatalf("dry-run mutated running job = %+v", unchangedRunning)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{
+		"pipeline", "repair", "ticket_to_pr",
+		"--repo", root,
+		"--dry-run",
+		"--timeout-pipelines",
+		"--timeout-message-file", timeoutMessageFile,
+		"--retry-pipelines",
+		"--retry-message-file", retryMessageFile,
+		"--preview-routes",
+		"--skip-daemon",
+		"--runtime", "codex",
+		"--runtime-bin", "codex-dev",
+		"--commands",
+	})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("pipeline repair dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "pipeline", "repair", "ticket_to_pr",
+		"--repo", root,
+		"--runtime", "codex",
+		"--runtime-bin", "codex-dev",
+		"--skip-daemon",
+		"--timeout-pipelines",
+		"--retry-pipelines",
+		"--timeout-message-file", timeoutMessageFile,
+		"--retry-message-file", retryMessageFile,
+	}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("pipeline repair dry-run commands = %q, want %q", got, wantCommand)
+	}
 }
 
 func TestPipelineRepairWaitsForRepairedJobs(t *testing.T) {
@@ -10598,6 +10634,9 @@ func TestPipelineRepairValidation(t *testing.T) {
 		{[]string{"pipeline", "repair", "ticket_to_pr", "--retry-step", "review"}, "--retry-step requires --retry-pipelines"},
 		{[]string{"pipeline", "repair", "ticket_to_pr", "--retry-force"}, "--retry-force requires --retry-pipelines"},
 		{[]string{"pipeline", "repair", "ticket_to_pr", "--format", "{{.Pipeline}}", "--json"}, "--format cannot be combined with --json"},
+		{[]string{"pipeline", "repair", "ticket_to_pr", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"pipeline", "repair", "ticket_to_pr", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"pipeline", "repair", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.Pipeline}}"}, "--commands cannot be combined with --format"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

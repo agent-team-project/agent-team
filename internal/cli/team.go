@@ -4844,6 +4844,7 @@ func newTeamRepairCmd() *cobra.Command {
 		runtimeBin         string
 		limit              int
 		dryRun             bool
+		commands           bool
 		previewRoutes      bool
 		jsonOut            bool
 		format             string
@@ -4920,6 +4921,18 @@ func newTeamRepairCmd() *cobra.Command {
 			}
 			if wait && dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --wait cannot be combined with --dry-run.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if untilIdle && skipTick {
@@ -5056,6 +5069,48 @@ func newTeamRepairCmd() *cobra.Command {
 					return err
 				}
 			}
+			if commands {
+				return renderTeamRepairCommands(cmd.OutOrStdout(), result, repairApplyCommandOptions{
+					BaseArgs:              []string{"agent-team", "team", "repair", args[0]},
+					ScopeFlag:             "--repo",
+					Scope:                 repo,
+					ScopeSet:              cmd.Flags().Changed("repo"),
+					Workspace:             workspace,
+					WorkspaceSet:          cmd.Flags().Changed("workspace"),
+					RuntimeKind:           runtimeKind,
+					RuntimeBin:            runtimeBin,
+					Limit:                 limit,
+					SkipDaemon:            skipDaemon,
+					SkipQueue:             skipQueue,
+					SkipTick:              skipTick,
+					IncludeJobs:           includeJobs,
+					TimeoutJobs:           timeoutJobs,
+					TimeoutPipelines:      timeoutPipelines,
+					RetryPipelines:        retryPipelines,
+					AllReadySteps:         allReadySteps,
+					TimeoutStep:           timeoutStep,
+					TimeoutStepSet:        cmd.Flags().Changed("timeout-step"),
+					TimeoutMessage:        timeoutMessage,
+					TimeoutMessageSet:     cmd.Flags().Changed("timeout-message"),
+					TimeoutMessageFile:    timeoutMessageFile,
+					TimeoutMessageFileSet: cmd.Flags().Changed("timeout-message-file"),
+					TimeoutPipeline:       timeoutPipeline,
+					TimeoutPipelineSet:    cmd.Flags().Changed("timeout-pipeline"),
+					TimeoutTarget:         timeoutTarget,
+					TimeoutTargetSet:      cmd.Flags().Changed("timeout-target-agent"),
+					RetryPipeline:         retryPipeline,
+					RetryPipelineSet:      cmd.Flags().Changed("retry-pipeline"),
+					RetryStep:             retryStep,
+					RetryStepSet:          cmd.Flags().Changed("retry-step"),
+					RetryMessage:          retryMessage,
+					RetryMessageSet:       cmd.Flags().Changed("retry-message"),
+					RetryMessageFile:      retryMessageFile,
+					RetryMessageFileSet:   cmd.Flags().Changed("retry-message-file"),
+					RetryForce:            retryForce,
+					ReadyTimeout:          readyTimeout,
+					ReadyTimeoutSet:       cmd.Flags().Changed("ready-timeout"),
+				})
+			}
 			if err := renderTeamRepairResult(cmd.OutOrStdout(), result, jsonOut, formatTemplate); err != nil {
 				return err
 			}
@@ -5071,6 +5126,7 @@ func newTeamRepairCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtimeBin, "runtime-bin", "", "Runtime binary for retried or advanced team step dispatches. Overrides env and repo config.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Retry at most this many team dead-letter queue items or failed team pipeline jobs, and advance at most this many ready team pipeline jobs or ready steps with --all-ready-steps; 0 means no limit.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview team repair actions without mutating state or starting the daemon.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team repair apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include route and dispatch payload previews for retried or ready team pipeline steps.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the team repair result with a Go template, e.g. '{{.Team.Name}} {{.Queue.Action}}'.")

@@ -24,6 +24,7 @@ func newRepairCmd() *cobra.Command {
 		runtimeBin         string
 		limit              int
 		dryRun             bool
+		commands           bool
 		previewRoutes      bool
 		jsonOut            bool
 		format             string
@@ -104,6 +105,18 @@ func newRepairCmd() *cobra.Command {
 			}
 			if previewRoutes && !dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --preview-routes requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team repair: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if untilIdle && skipTick {
@@ -237,6 +250,48 @@ func newRepairCmd() *cobra.Command {
 					return err
 				}
 			}
+			if commands {
+				return renderRepairCommands(cmd.OutOrStdout(), result, repairApplyCommandOptions{
+					BaseArgs:              []string{"agent-team", "repair"},
+					ScopeFlag:             "--target",
+					Scope:                 target,
+					ScopeSet:              cmd.Flags().Changed("target"),
+					Workspace:             workspace,
+					WorkspaceSet:          cmd.Flags().Changed("workspace"),
+					RuntimeKind:           runtimeKind,
+					RuntimeBin:            runtimeBin,
+					Limit:                 limit,
+					SkipDaemon:            skipDaemon,
+					SkipQueue:             skipQueue,
+					SkipTick:              skipTick,
+					IncludeJobs:           includeJobs,
+					TimeoutJobs:           timeoutJobs,
+					TimeoutPipelines:      timeoutPipelines,
+					RetryPipelines:        retryPipelines,
+					AllReadySteps:         allReadySteps,
+					TimeoutStep:           timeoutStep,
+					TimeoutStepSet:        cmd.Flags().Changed("timeout-step"),
+					TimeoutMessage:        timeoutMessage,
+					TimeoutMessageSet:     cmd.Flags().Changed("timeout-message"),
+					TimeoutMessageFile:    timeoutMessageFile,
+					TimeoutMessageFileSet: cmd.Flags().Changed("timeout-message-file"),
+					TimeoutPipeline:       timeoutPipeline,
+					TimeoutPipelineSet:    cmd.Flags().Changed("timeout-pipeline"),
+					TimeoutTarget:         timeoutTarget,
+					TimeoutTargetSet:      cmd.Flags().Changed("timeout-target-agent"),
+					RetryPipeline:         retryPipeline,
+					RetryPipelineSet:      cmd.Flags().Changed("retry-pipeline"),
+					RetryStep:             retryStep,
+					RetryStepSet:          cmd.Flags().Changed("retry-step"),
+					RetryMessage:          retryMessage,
+					RetryMessageSet:       cmd.Flags().Changed("retry-message"),
+					RetryMessageFile:      retryMessageFile,
+					RetryMessageFileSet:   cmd.Flags().Changed("retry-message-file"),
+					RetryForce:            retryForce,
+					ReadyTimeout:          readyTimeout,
+					ReadyTimeoutSet:       cmd.Flags().Changed("ready-timeout"),
+				})
+			}
 			if err := renderRepairResult(cmd.OutOrStdout(), result, jsonOut, formatTemplate); err != nil {
 				return err
 			}
@@ -252,6 +307,7 @@ func newRepairCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtimeBin, "runtime-bin", "", "Runtime binary for retried or advanced step dispatches. Overrides env and repo config.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Retry at most this many dead-letter queue items or failed pipeline jobs, and advance at most this many ready pipeline jobs or ready steps with --all-ready-steps; 0 means no limit.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview repair actions without mutating state or starting the daemon.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching repair apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-routes", false, "With --dry-run, include route and dispatch payload previews for retried or ready pipeline steps.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the repair result with a Go template, e.g. '{{.DryRun}} {{.Queue.Action}}'.")
@@ -372,6 +428,209 @@ type repairTickStep struct {
 	Reason    string               `json:"reason,omitempty"`
 	Result    *tickResult          `json:"result,omitempty"`
 	UntilIdle *tickUntilIdleResult `json:"until_idle,omitempty"`
+}
+
+type repairApplyCommandOptions struct {
+	BaseArgs              []string
+	ScopeFlag             string
+	Scope                 string
+	ScopeSet              bool
+	Workspace             string
+	WorkspaceSet          bool
+	RuntimeKind           string
+	RuntimeBin            string
+	Limit                 int
+	SkipDaemon            bool
+	SkipQueue             bool
+	SkipTick              bool
+	SkipAdvance           bool
+	IncludeJobs           bool
+	TimeoutJobs           bool
+	TimeoutPipelines      bool
+	RetryPipelines        bool
+	AllReadySteps         bool
+	TimeoutStep           string
+	TimeoutStepSet        bool
+	TimeoutMessage        string
+	TimeoutMessageSet     bool
+	TimeoutMessageFile    string
+	TimeoutMessageFileSet bool
+	TimeoutPipeline       string
+	TimeoutPipelineSet    bool
+	TimeoutTarget         string
+	TimeoutTargetSet      bool
+	RetryPipeline         string
+	RetryPipelineSet      bool
+	RetryStep             string
+	RetryStepSet          bool
+	RetryMessage          string
+	RetryMessageSet       bool
+	RetryMessageFile      string
+	RetryMessageFileSet   bool
+	RetryForce            bool
+	ReadyTimeout          time.Duration
+	ReadyTimeoutSet       bool
+}
+
+func renderRepairCommands(w fmtWriter, result *repairResult, opts repairApplyCommandOptions) error {
+	if !repairResultHasApplyCommand(result) {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(repairApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func repairResultHasApplyCommand(result *repairResult) bool {
+	if result == nil || !result.DryRun {
+		return false
+	}
+	return repairQueueStepHasApplyCommand(result.Queue) ||
+		repairPipelineTimeoutStepHasApplyCommand(result.JobTimeout) ||
+		repairPipelineTimeoutStepHasApplyCommand(result.PipelineTimeout) ||
+		repairPipelineRetryStepHasApplyCommand(result.PipelineRetry) ||
+		repairTickStepHasApplyCommand(result.Tick)
+}
+
+func repairQueueStepHasApplyCommand(step repairQueueStep) bool {
+	return step.Action == "would_retry" && len(step.Results) > 0
+}
+
+func repairPipelineTimeoutStepHasApplyCommand(step repairPipelineTimeoutStep) bool {
+	return step.Action == "would_fail" && len(step.Results) > 0
+}
+
+func repairPipelineRetryStepHasApplyCommand(step repairPipelineRetryStep) bool {
+	return step.Action == "would_dispatch" && len(step.Results) > 0
+}
+
+func repairTickStepHasApplyCommand(step repairTickStep) bool {
+	return step.Action == "would_tick" && step.Result != nil && !tickResultIsIdle(step.Result)
+}
+
+func pipelineRepairResultHasApplyCommand(result *pipelineRepairResult) bool {
+	if result == nil || !result.DryRun {
+		return false
+	}
+	return repairQueueStepHasApplyCommand(result.Queue) ||
+		repairPipelineTimeoutStepHasApplyCommand(result.JobTimeout) ||
+		repairPipelineTimeoutStepHasApplyCommand(result.PipelineTimeout) ||
+		repairPipelineRetryStepHasApplyCommand(result.PipelineRetry) ||
+		pipelineRepairAdvanceStepHasApplyCommand(result.Advance)
+}
+
+func renderPipelineRepairCommands(w fmtWriter, result *pipelineRepairResult, opts repairApplyCommandOptions) error {
+	if !pipelineRepairResultHasApplyCommand(result) {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(repairApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func pipelineRepairAdvanceStepHasApplyCommand(step pipelineRepairAdvanceStep) bool {
+	return step.Action == "would_advance" && len(step.Results) > 0
+}
+
+func teamRepairResultHasApplyCommand(result *teamRepairResult) bool {
+	if result == nil || !result.DryRun {
+		return false
+	}
+	return repairQueueStepHasApplyCommand(result.Queue) ||
+		repairPipelineTimeoutStepHasApplyCommand(result.JobTimeout) ||
+		repairPipelineTimeoutStepHasApplyCommand(result.PipelineTimeout) ||
+		repairPipelineRetryStepHasApplyCommand(result.PipelineRetry) ||
+		teamRepairTickStepHasApplyCommand(result.Tick)
+}
+
+func renderTeamRepairCommands(w fmtWriter, result *teamRepairResult, opts repairApplyCommandOptions) error {
+	if !teamRepairResultHasApplyCommand(result) {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(repairApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func teamRepairTickStepHasApplyCommand(step teamRepairTickStep) bool {
+	return step.Action == "would_tick" && step.Result != nil && !tickResultIsIdle(&step.Result.Tick)
+}
+
+func repairApplyCommandArgs(opts repairApplyCommandOptions) []string {
+	args := append([]string{}, opts.BaseArgs...)
+	if opts.ScopeSet && strings.TrimSpace(opts.Scope) != "" {
+		args = append(args, opts.ScopeFlag, opts.Scope)
+	}
+	if opts.WorkspaceSet {
+		args = append(args, "--workspace", opts.Workspace)
+	}
+	if strings.TrimSpace(opts.RuntimeKind) != "" {
+		args = append(args, "--runtime", opts.RuntimeKind)
+	}
+	if strings.TrimSpace(opts.RuntimeBin) != "" {
+		args = append(args, "--runtime-bin", opts.RuntimeBin)
+	}
+	if opts.Limit > 0 {
+		args = append(args, "--limit", fmt.Sprintf("%d", opts.Limit))
+	}
+	if opts.SkipDaemon {
+		args = append(args, "--skip-daemon")
+	}
+	if opts.SkipQueue {
+		args = append(args, "--skip-queue")
+	}
+	if opts.SkipTick {
+		args = append(args, "--skip-tick")
+	}
+	if opts.SkipAdvance {
+		args = append(args, "--skip-advance")
+	}
+	if opts.IncludeJobs {
+		args = append(args, "--jobs")
+	}
+	if opts.TimeoutJobs {
+		args = append(args, "--timeout-jobs")
+	}
+	if opts.TimeoutPipelines {
+		args = append(args, "--timeout-pipelines")
+	}
+	if opts.RetryPipelines {
+		args = append(args, "--retry-pipelines")
+	}
+	if opts.AllReadySteps {
+		args = append(args, "--all-ready-steps")
+	}
+	if opts.TimeoutStepSet {
+		args = append(args, "--timeout-step", opts.TimeoutStep)
+	}
+	if opts.TimeoutMessageSet {
+		args = append(args, "--timeout-message", opts.TimeoutMessage)
+	}
+	if opts.TimeoutMessageFileSet {
+		args = append(args, "--timeout-message-file", opts.TimeoutMessageFile)
+	}
+	if opts.TimeoutPipelineSet {
+		args = append(args, "--timeout-pipeline", opts.TimeoutPipeline)
+	}
+	if opts.TimeoutTargetSet {
+		args = append(args, "--timeout-target-agent", opts.TimeoutTarget)
+	}
+	if opts.RetryPipelineSet {
+		args = append(args, "--retry-pipeline", opts.RetryPipeline)
+	}
+	if opts.RetryStepSet {
+		args = append(args, "--retry-step", opts.RetryStep)
+	}
+	if opts.RetryMessageSet {
+		args = append(args, "--retry-message", opts.RetryMessage)
+	}
+	if opts.RetryMessageFileSet {
+		args = append(args, "--retry-message-file", opts.RetryMessageFile)
+	}
+	if opts.RetryForce {
+		args = append(args, "--retry-force")
+	}
+	if opts.ReadyTimeoutSet {
+		args = append(args, "--ready-timeout", opts.ReadyTimeout.String())
+	}
+	return args
 }
 
 func runRepair(cmd *cobra.Command, target, teamDir string, opts repairOptions) (*repairResult, error) {

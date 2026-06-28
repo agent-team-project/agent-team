@@ -9996,6 +9996,19 @@ instances = ["other"]
 		t.Fatalf("team repair format output = %q, want %q", got, want)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "repair", "delivery", "--repo", root, "--dry-run", "--skip-daemon", "--skip-tick", "--jobs", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team repair dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "repair", "delivery", "--repo", root, "--skip-daemon", "--skip-tick", "--jobs"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("team repair dry-run commands = %q, want %q", got, wantCommand)
+	}
+
 	retryPreview := NewRootCmd()
 	retryPreviewOut, retryPreviewErr := &bytes.Buffer{}, &bytes.Buffer{}
 	retryPreview.SetOut(retryPreviewOut)
@@ -10154,6 +10167,21 @@ func TestTeamRepairRejectsInvalidFormatFlags(t *testing.T) {
 			name: "format with json",
 			args: []string{"team", "repair", "delivery", "--format", "{{.Team.Name}}", "--json"},
 			want: "--format cannot be combined",
+		},
+		{
+			name: "commands without dry run",
+			args: []string{"team", "repair", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "commands with json",
+			args: []string{"team", "repair", "delivery", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "commands with format",
+			args: []string{"team", "repair", "delivery", "--dry-run", "--commands", "--format", "{{.Team.Name}}"},
+			want: "--commands cannot be combined with --format",
 		},
 		{
 			name: "invalid format",

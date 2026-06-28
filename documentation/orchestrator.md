@@ -243,7 +243,7 @@ agent-team team doctor <team>|--all [--json]
                                   # validate that team-owned pipelines and schedules route back into the team
 agent-team team drain <team> [--max-cycles N] [--interval 2s] [--limit N] [--workspace auto|worktree|repo] [--skip-schedules] [--skip-drain] [--skip-advance] [--format '{{.Team.Name}} {{.CyclesRun}} {{.Idle}}'] [--json]
                                   # scoped finite maintenance loop until one team's schedule, queue, and pipeline work is idle
-agent-team team repair <team> [--dry-run] [--jobs] [--skip-daemon] [--skip-queue] [--skip-tick] [--until-idle] [--limit N] [--workspace auto|worktree|repo] [--json]
+agent-team team repair <team> [--dry-run] [--commands] [--jobs] [--skip-daemon] [--skip-queue] [--skip-tick] [--until-idle] [--limit N] [--workspace auto|worktree|repo] [--json]
                                   # scoped recovery loop for one team's daemon readiness, dead-letter queue, and tickable work
 agent-team team wait <team> [<instance>...] [-q] [--latest | --last N] [--status running] [--runtime codex] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--until running|terminal|stopped|exited|crashed|removed] [--until-phase done] [--timeout 5m] [--interval 500ms] [--dry-run] [--fail-on-crash] [--summary] [--format '{{.Instance}} {{.Status}} {{.Phase}}'] [--json]
                                   # scoped wait for declared persistent team members and live team-owned ephemeral children
