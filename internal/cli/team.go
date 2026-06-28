@@ -1384,6 +1384,7 @@ func newTeamTimelineCmd() *cobra.Command {
 		sortBy  string
 		since   string
 		jsonOut bool
+		summary bool
 		format  string
 	)
 	cwd, _ := os.Getwd()
@@ -1395,6 +1396,10 @@ func newTeamTimelineCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeline: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if summary && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeline: --summary cannot be combined with --format.")
 				return exitErr(2)
 			}
 			sortMode, err := parseEventSort(sortBy)
@@ -1437,7 +1442,7 @@ func newTeamTimelineCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team timeline: %v\n", err)
 				return exitErr(1)
 			}
-			return renderScopedJobTimeline(cmd.OutOrStdout(), entries, jsonOut, tmpl)
+			return renderScopedJobTimeline(cmd.OutOrStdout(), "team:"+teamName, entries, jsonOut, summary, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -1446,6 +1451,7 @@ func newTeamTimelineCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "oldest", "Sort returned timeline rows by oldest or newest after applying --tail.")
 	cmd.Flags().StringVar(&since, "since", "", "Only show timeline rows since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching timeline rows by job, source, kind, status, actor, instance, and agent.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each timeline row with a Go template, e.g. '{{.JobID}} {{.Source}} {{.Kind}}'.")
 	return cmd
 }

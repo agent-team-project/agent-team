@@ -3513,6 +3513,7 @@ Flags:
       --since string    Only show timeline rows since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --sort string     Sort returned timeline rows by oldest or newest after applying --tail. (default "oldest")
       --source string   Timeline source to include: all, job, or lifecycle. (default "all")
+      --summary         Summarize matching timeline rows by source, kind, status, actor, instance, and agent.
       --tail string     Show only the last N combined events before sorting for display (0 or all = all). (default "0")
 ```
 
@@ -5748,6 +5749,7 @@ Flags:
       --since string    Only show timeline rows since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --sort string     Sort returned timeline rows by oldest or newest after applying --tail. (default "oldest")
       --source string   Timeline source to include: all, job, or lifecycle. (default "all")
+      --summary         Summarize matching timeline rows by job, source, kind, status, actor, instance, and agent.
       --tail string     Show only the last N combined events before sorting for display (0 or all = all). (default "0")
 ```
 
@@ -9154,6 +9156,7 @@ Flags:
       --since string    Only show timeline rows since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --sort string     Sort returned timeline rows by oldest or newest after applying --tail. (default "oldest")
       --source string   Timeline source to include: all, job, or lifecycle. (default "all")
+      --summary         Summarize matching timeline rows by job, source, kind, status, actor, instance, and agent.
       --tail string     Show only the last N combined events before sorting for display (0 or all = all). (default "0")
 ```
 

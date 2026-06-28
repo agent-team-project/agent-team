@@ -1194,6 +1194,7 @@ func newJobTimelineCmd() *cobra.Command {
 		sortBy  string
 		since   string
 		jsonOut bool
+		summary bool
 		format  string
 	)
 	cwd, _ := os.Getwd()
@@ -1206,6 +1207,10 @@ func newJobTimelineCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeline: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if summary && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeline: --summary cannot be combined with --format.")
 				return exitErr(2)
 			}
 			sortMode, err := parseEventSort(sortBy)
@@ -1247,7 +1252,7 @@ func newJobTimelineCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job timeline: %v\n", err)
 				return exitErr(1)
 			}
-			return renderJobTimeline(cmd.OutOrStdout(), entries, jsonOut, tmpl)
+			return renderJobTimeline(cmd.OutOrStdout(), j.ID, entries, jsonOut, summary, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -1256,6 +1261,7 @@ func newJobTimelineCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "oldest", "Sort returned timeline rows by oldest or newest after applying --tail.")
 	cmd.Flags().StringVar(&since, "since", "", "Only show timeline rows since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching timeline rows by source, kind, status, actor, instance, and agent.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each timeline row with a Go template, e.g. '{{.TS}} {{.Source}} {{.Kind}} {{.Message}}'.")
 	return cmd
 }
@@ -8297,7 +8303,28 @@ func jobTimelineEntryNewestFirstLess(left, right jobTimelineEntry) bool {
 	return left.Message < right.Message
 }
 
-func renderJobTimeline(w io.Writer, entries []jobTimelineEntry, jsonOut bool, tmpl *template.Template) error {
+type jobTimelineSummaryJSON struct {
+	Scope     string         `json:"scope,omitempty"`
+	JobID     string         `json:"job_id,omitempty"`
+	Total     int            `json:"total"`
+	FirstTS   string         `json:"first_ts,omitempty"`
+	LastTS    string         `json:"last_ts,omitempty"`
+	Jobs      map[string]int `json:"jobs,omitempty"`
+	Sources   map[string]int `json:"sources,omitempty"`
+	Kinds     map[string]int `json:"kinds,omitempty"`
+	Statuses  map[string]int `json:"statuses,omitempty"`
+	Actors    map[string]int `json:"actors,omitempty"`
+	Instances map[string]int `json:"instances,omitempty"`
+	Agents    map[string]int `json:"agents,omitempty"`
+
+	first time.Time
+	last  time.Time
+}
+
+func renderJobTimeline(w io.Writer, id string, entries []jobTimelineEntry, jsonOut, summary bool, tmpl *template.Template) error {
+	if summary {
+		return renderJobTimelineSummary(w, id, entries, jsonOut)
+	}
 	if jsonOut {
 		return json.NewEncoder(w).Encode(entries)
 	}
@@ -8332,7 +8359,10 @@ func renderJobTimeline(w io.Writer, entries []jobTimelineEntry, jsonOut bool, tm
 	return tw.Flush()
 }
 
-func renderScopedJobTimeline(w io.Writer, entries []jobTimelineEntry, jsonOut bool, tmpl *template.Template) error {
+func renderScopedJobTimeline(w io.Writer, scope string, entries []jobTimelineEntry, jsonOut, summary bool, tmpl *template.Template) error {
+	if summary {
+		return renderScopedJobTimelineSummary(w, scope, entries, jsonOut)
+	}
 	if jsonOut {
 		return json.NewEncoder(w).Encode(entries)
 	}
@@ -8366,6 +8396,87 @@ func renderScopedJobTimeline(w io.Writer, entries []jobTimelineEntry, jsonOut bo
 			emptyDash(entry.Message))
 	}
 	return tw.Flush()
+}
+
+func renderJobTimelineSummary(w io.Writer, id string, entries []jobTimelineEntry, jsonOut bool) error {
+	summary := collectJobTimelineSummary("", id, entries, false)
+	return renderJobTimelineSummaryResult(w, summary, jsonOut)
+}
+
+func renderScopedJobTimelineSummary(w io.Writer, scope string, entries []jobTimelineEntry, jsonOut bool) error {
+	summary := collectJobTimelineSummary(scope, "", entries, true)
+	return renderJobTimelineSummaryResult(w, summary, jsonOut)
+}
+
+func renderJobTimelineSummaryResult(w io.Writer, summary jobTimelineSummaryJSON, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(summary)
+	}
+	fmt.Fprint(w, "job timeline:")
+	if summary.Scope != "" {
+		fmt.Fprintf(w, " scope=%s", summary.Scope)
+	}
+	if summary.JobID != "" {
+		fmt.Fprintf(w, " job=%s", summary.JobID)
+	}
+	fmt.Fprintf(w, " total=%d", summary.Total)
+	if summary.FirstTS != "" {
+		fmt.Fprintf(w, " first=%s", summary.FirstTS)
+	}
+	if summary.LastTS != "" {
+		fmt.Fprintf(w, " last=%s", summary.LastTS)
+	}
+	fmt.Fprintln(w)
+	renderEventCountLine(w, "jobs", summary.Jobs)
+	renderEventCountLine(w, "sources", summary.Sources)
+	renderEventCountLine(w, "kinds", summary.Kinds)
+	renderEventCountLine(w, "statuses", summary.Statuses)
+	renderEventCountLine(w, "actors", summary.Actors)
+	renderEventCountLine(w, "instances", summary.Instances)
+	renderEventCountLine(w, "agents", summary.Agents)
+	return nil
+}
+
+func collectJobTimelineSummary(scope, id string, entries []jobTimelineEntry, includeJobs bool) jobTimelineSummaryJSON {
+	summary := jobTimelineSummaryJSON{
+		Scope: strings.TrimSpace(scope),
+		JobID: job.IDFromInput(id),
+	}
+	for _, entry := range entries {
+		summary.add(entry, includeJobs)
+	}
+	summary.finalize()
+	return summary
+}
+
+func (s *jobTimelineSummaryJSON) add(entry jobTimelineEntry, includeJobs bool) {
+	s.Total++
+	if !entry.TS.IsZero() {
+		if s.first.IsZero() || entry.TS.Before(s.first) {
+			s.first = entry.TS
+		}
+		if s.last.IsZero() || entry.TS.After(s.last) {
+			s.last = entry.TS
+		}
+	}
+	if includeJobs {
+		addEventCount(&s.Jobs, entry.JobID)
+	}
+	addEventCount(&s.Sources, entry.Source)
+	addEventCount(&s.Kinds, entry.Kind)
+	addEventCount(&s.Statuses, entry.Status)
+	addEventCount(&s.Actors, entry.Actor)
+	addEventCount(&s.Instances, entry.Instance)
+	addEventCount(&s.Agents, entry.Agent)
+}
+
+func (s *jobTimelineSummaryJSON) finalize() {
+	if !s.first.IsZero() {
+		s.FirstTS = s.first.Format(time.RFC3339)
+	}
+	if !s.last.IsZero() {
+		s.LastTS = s.last.Format(time.RFC3339)
+	}
 }
 
 func renderJobEventTableWithJob(w io.Writer, events []job.Event) {

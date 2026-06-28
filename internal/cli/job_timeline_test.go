@@ -85,6 +85,28 @@ func TestJobTimelineCombinesAuditAndLifecycle(t *testing.T) {
 		}
 	}
 
+	summaryCmd := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryCmd.SetOut(summaryOut)
+	summaryCmd.SetErr(summaryErr)
+	summaryCmd.SetArgs([]string{"job", "timeline", "squ-170", "--repo", tmp, "--summary", "--json"})
+	if err := summaryCmd.Execute(); err != nil {
+		t.Fatalf("job timeline summary: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var summary jobTimelineSummaryJSON
+	if err := json.Unmarshal(summaryOut.Bytes(), &summary); err != nil {
+		t.Fatalf("decode timeline summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if summary.JobID != j.ID || summary.Total != 3 || summary.FirstTS != now.Format(time.RFC3339) || summary.LastTS != now.Add(2*time.Minute).Format(time.RFC3339) {
+		t.Fatalf("timeline summary = %+v", summary)
+	}
+	if summary.Sources["job"] != 2 || summary.Sources["lifecycle"] != 1 || summary.Kinds["created"] != 1 || summary.Kinds["dispatch"] != 1 || summary.Kinds["note"] != 1 {
+		t.Fatalf("timeline summary counts = %+v", summary)
+	}
+	if summary.Statuses[string(job.StatusRunning)] != 2 || summary.Actors["operator"] != 1 || summary.Instances[j.Instance] != 1 || summary.Agents["worker"] != 1 {
+		t.Fatalf("timeline summary buckets = %+v", summary)
+	}
+
 	formatted := NewRootCmd()
 	formattedOut, formattedErr := &bytes.Buffer{}, &bytes.Buffer{}
 	formatted.SetOut(formattedOut)
@@ -131,6 +153,18 @@ func TestJobTimelineCombinesAuditAndLifecycle(t *testing.T) {
 	}
 	if !strings.Contains(invalidSinceErr.String(), "invalid --since") {
 		t.Fatalf("invalid since stderr = %q", invalidSinceErr.String())
+	}
+
+	invalidSummaryFormat := NewRootCmd()
+	invalidSummaryFormatOut, invalidSummaryFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSummaryFormat.SetOut(invalidSummaryFormatOut)
+	invalidSummaryFormat.SetErr(invalidSummaryFormatErr)
+	invalidSummaryFormat.SetArgs([]string{"job", "timeline", "squ-170", "--repo", tmp, "--summary", "--format", "{{.Kind}}"})
+	if err := invalidSummaryFormat.Execute(); err == nil {
+		t.Fatalf("job timeline accepted summary format: stdout=%s", invalidSummaryFormatOut.String())
+	}
+	if !strings.Contains(invalidSummaryFormatErr.String(), "--summary cannot be combined with --format") {
+		t.Fatalf("summary format stderr = %q", invalidSummaryFormatErr.String())
 	}
 }
 
@@ -218,6 +252,25 @@ func TestScopedTimelineCommands(t *testing.T) {
 		}
 	}
 
+	pipelineSummaryCmd := NewRootCmd()
+	pipelineSummaryOut, pipelineSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pipelineSummaryCmd.SetOut(pipelineSummaryOut)
+	pipelineSummaryCmd.SetErr(pipelineSummaryErr)
+	pipelineSummaryCmd.SetArgs([]string{"pipeline", "timeline", "ticket_to_pr", "--repo", tmp, "--summary", "--json"})
+	if err := pipelineSummaryCmd.Execute(); err != nil {
+		t.Fatalf("pipeline timeline summary: %v\nstderr=%s", err, pipelineSummaryErr.String())
+	}
+	var pipelineSummary jobTimelineSummaryJSON
+	if err := json.Unmarshal(pipelineSummaryOut.Bytes(), &pipelineSummary); err != nil {
+		t.Fatalf("decode pipeline timeline summary: %v\nbody=%s", err, pipelineSummaryOut.String())
+	}
+	if pipelineSummary.Scope != "pipeline:ticket_to_pr" || pipelineSummary.Total != 3 || pipelineSummary.Jobs[j.ID] != 3 || pipelineSummary.Jobs[other.ID] != 0 {
+		t.Fatalf("pipeline timeline summary = %+v", pipelineSummary)
+	}
+	if pipelineSummary.Sources["job"] != 2 || pipelineSummary.Sources["lifecycle"] != 1 || pipelineSummary.Kinds["dispatch"] != 1 {
+		t.Fatalf("pipeline timeline summary counts = %+v", pipelineSummary)
+	}
+
 	teamCmd := NewRootCmd()
 	teamOut, teamErr := &bytes.Buffer{}, &bytes.Buffer{}
 	teamCmd.SetOut(teamOut)
@@ -228,6 +281,29 @@ func TestScopedTimelineCommands(t *testing.T) {
 	}
 	if got, want := teamOut.String(), "squ-181 lifecycle dispatch worker-squ-181\n"; got != want {
 		t.Fatalf("team timeline output = %q, want %q", got, want)
+	}
+
+	teamSummaryCmd := NewRootCmd()
+	teamSummaryOut, teamSummaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	teamSummaryCmd.SetOut(teamSummaryOut)
+	teamSummaryCmd.SetErr(teamSummaryErr)
+	teamSummaryCmd.SetArgs([]string{"team", "timeline", "delivery", "--repo", tmp, "--source", "lifecycle", "--summary"})
+	if err := teamSummaryCmd.Execute(); err != nil {
+		t.Fatalf("team timeline summary: %v\nstderr=%s", err, teamSummaryErr.String())
+	}
+	teamSummary := teamSummaryOut.String()
+	for _, want := range []string{
+		"job timeline: scope=team:delivery total=1 first=2026-06-26T13:01:30Z last=2026-06-26T13:01:30Z\n",
+		"jobs: squ-181=1\n",
+		"sources: lifecycle=1\n",
+		"kinds: dispatch=1\n",
+		"statuses: running=1\n",
+		"instances: worker-squ-181=1\n",
+		"agents: worker=1\n",
+	} {
+		if !strings.Contains(teamSummary, want) {
+			t.Fatalf("team timeline summary missing %q in %q", want, teamSummary)
+		}
 	}
 
 	teamSince := NewRootCmd()
