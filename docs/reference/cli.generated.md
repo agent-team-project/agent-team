@@ -1063,6 +1063,7 @@ Flags:
 
 ```text
       --all             Acknowledge every current message in the inbox.
+      --commands        With --dry-run, print the matching inbox ack apply command when the preview has actionable work.
       --dry-run         Preview the cursor update without writing it.
       --format string   Render the ack result with a Go template, e.g. '{{.Instance}} {{.Acked}}'.
       --json            Emit machine-readable JSON.

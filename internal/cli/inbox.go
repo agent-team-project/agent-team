@@ -123,11 +123,12 @@ func newInboxShowCmd() *cobra.Command {
 
 func newInboxAckCmd() *cobra.Command {
 	var (
-		target  string
-		all     bool
-		dryRun  bool
-		jsonOut bool
-		format  string
+		target   string
+		all      bool
+		dryRun   bool
+		commands bool
+		jsonOut  bool
+		format   string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -135,6 +136,18 @@ func newInboxAckCmd() *cobra.Command {
 		Short: "Advance an instance inbox cursor.",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team inbox ack: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team inbox ack: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team inbox ack: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team inbox ack: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -161,17 +174,22 @@ func newInboxAckCmd() *cobra.Command {
 				id = args[1]
 			}
 			return runInboxAck(cmd.OutOrStdout(), cmd.ErrOrStderr(), teamDir, args[0], inboxAckOptions{
-				All:    all,
-				ID:     id,
-				DryRun: dryRun,
-				JSON:   jsonOut,
-				Format: tmpl,
+				All:      all,
+				ID:       id,
+				DryRun:   dryRun,
+				Commands: commands,
+				RepoFlag: inboxAckRepoFlag(cmd),
+				Repo:     inboxAckRepo(cmd, target),
+				RepoSet:  inboxAckRepoSet(cmd),
+				JSON:     jsonOut,
+				Format:   tmpl,
 			})
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&all, "all", false, "Acknowledge every current message in the inbox.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the cursor update without writing it.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching inbox ack apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the ack result with a Go template, e.g. '{{.Instance}} {{.Acked}}'.")
 	return cmd
@@ -192,11 +210,15 @@ type inboxShowOptions struct {
 }
 
 type inboxAckOptions struct {
-	All    bool
-	ID     string
-	DryRun bool
-	JSON   bool
-	Format *template.Template
+	All      bool
+	ID       string
+	DryRun   bool
+	Commands bool
+	RepoFlag string
+	Repo     string
+	RepoSet  bool
+	JSON     bool
+	Format   *template.Template
 }
 
 type inboxSummaryRow struct {
@@ -435,6 +457,16 @@ func runInboxAck(stdout, stderr io.Writer, teamDir, instance string, opts inboxA
 		CursorAfter:   cursorAfter,
 		CursorChanged: cursorAfter != cursorBefore,
 	}
+	if opts.Commands {
+		return renderInboxAckApplyCommand(stdout, result.CursorChanged && result.Acked > 0, inboxAckApplyCommandOptions{
+			Instance: instance,
+			ID:       opts.ID,
+			All:      opts.All,
+			RepoFlag: opts.RepoFlag,
+			Repo:     opts.Repo,
+			RepoSet:  opts.RepoSet,
+		})
+	}
 	if opts.JSON {
 		return json.NewEncoder(stdout).Encode(result)
 	}
@@ -452,6 +484,70 @@ func runInboxAck(stdout, stderr io.Writer, teamDir, instance string, opts inboxA
 	fmt.Fprintf(stdout, "  %s   %-20s acked=%d unread=%d cursor=%s\n",
 		action, instance, result.Acked, result.UnreadAfter, emptyDash(result.CursorAfter))
 	return nil
+}
+
+type inboxAckApplyCommandOptions struct {
+	Instance string
+	ID       string
+	All      bool
+	RepoFlag string
+	Repo     string
+	RepoSet  bool
+}
+
+func renderInboxAckApplyCommand(w io.Writer, hasAction bool, opts inboxAckApplyCommandOptions) error {
+	if !hasAction {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(inboxAckApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func inboxAckApplyCommandArgs(opts inboxAckApplyCommandOptions) []string {
+	args := []string{"agent-team", "inbox", "ack", opts.Instance}
+	if opts.All {
+		args = append(args, "--all")
+	} else {
+		args = append(args, opts.ID)
+	}
+	if opts.RepoSet && strings.TrimSpace(opts.Repo) != "" {
+		flag := strings.TrimSpace(opts.RepoFlag)
+		if flag == "" {
+			flag = "target"
+		}
+		args = append(args, "--"+flag, opts.Repo)
+	}
+	return args
+}
+
+func inboxAckRepoSet(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	if flag := cmd.Root().PersistentFlags().Lookup(rootRepoFlagName); flag != nil && flag.Changed {
+		return true
+	}
+	return cmd.Flags().Changed("target")
+}
+
+func inboxAckRepoFlag(cmd *cobra.Command) string {
+	if cmd != nil {
+		if flag := cmd.Root().PersistentFlags().Lookup(rootRepoFlagName); flag != nil && flag.Changed {
+			return rootRepoFlagName
+		}
+	}
+	return "target"
+}
+
+func inboxAckRepo(cmd *cobra.Command, target string) string {
+	if cmd != nil {
+		if flag := cmd.Root().PersistentFlags().Lookup(rootRepoFlagName); flag != nil && flag.Changed {
+			if value := strings.TrimSpace(flag.Value.String()); value != "" {
+				return value
+			}
+		}
+	}
+	return target
 }
 
 func listInboxInstances(daemonRoot string) ([]string, map[string]*daemon.Metadata, error) {

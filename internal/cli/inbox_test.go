@@ -117,6 +117,24 @@ func TestInboxShowUnreadAndAckCursor(t *testing.T) {
 		t.Fatalf("cursor after dry-run = %q, want msg-1", cursor)
 	}
 
+	stdout, stderr, err = executeInboxCommand("inbox", "ack", "worker", "msg-2", "--target", tmp, "--dry-run", "--commands")
+	if err != nil {
+		t.Fatalf("inbox ack dry-run commands: %v\nstderr=%s", err, stderr)
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "inbox", "ack", "worker", "msg-2", "--target", tmp}), " ")
+	if got := strings.TrimSpace(stdout); got != wantCommand {
+		t.Fatalf("inbox ack dry-run commands = %q, want %q", got, wantCommand)
+	}
+
+	stdout, stderr, err = executeInboxCommand("--repo", tmp, "inbox", "ack", "worker", "--all", "--dry-run", "--commands")
+	if err != nil {
+		t.Fatalf("inbox ack --repo dry-run commands: %v\nstderr=%s", err, stderr)
+	}
+	wantCommand = strings.Join(shellQuoteArgs([]string{"agent-team", "inbox", "ack", "worker", "--all", "--repo", tmp}), " ")
+	if got := strings.TrimSpace(stdout); got != wantCommand {
+		t.Fatalf("inbox ack --repo dry-run commands = %q, want %q", got, wantCommand)
+	}
+
 	stdout, stderr, err = executeInboxCommand("inbox", "ack", "worker", "msg-2", "--target", tmp, "--json")
 	if err != nil {
 		t.Fatalf("inbox ack: %v\nstderr=%s", err, stderr)
@@ -146,6 +164,14 @@ func TestInboxShowUnreadAndAckCursor(t *testing.T) {
 	if len(messages) != 0 {
 		t.Fatalf("unread after ack = %+v, want none", messages)
 	}
+
+	stdout, stderr, err = executeInboxCommand("inbox", "ack", "worker", "msg-2", "--target", tmp, "--dry-run", "--commands")
+	if err != nil {
+		t.Fatalf("inbox ack no-op dry-run commands: %v\nstderr=%s", err, stderr)
+	}
+	if got := strings.TrimSpace(stdout); got != "" {
+		t.Fatalf("inbox ack no-op dry-run commands = %q, want empty", got)
+	}
 }
 
 func TestInboxAckMissingMessageReturnsUsageError(t *testing.T) {
@@ -163,6 +189,49 @@ func TestInboxAckMissingMessageReturnsUsageError(t *testing.T) {
 	}
 	if !strings.Contains(stderr, `message id "missing" not found`) {
 		t.Fatalf("stderr = %q, want missing message hint", stderr)
+	}
+}
+
+func TestInboxAckCommandsValidation(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	root := daemon.DaemonRoot(filepath.Join(tmp, ".agent_team"))
+	if err := daemon.AppendMessage(root, "worker", &daemon.Message{ID: "msg-1", Body: "hello"}); err != nil {
+		t.Fatalf("append message: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "requires dry run",
+			args: []string{"inbox", "ack", "worker", "msg-1", "--target", tmp, "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "rejects json",
+			args: []string{"inbox", "ack", "worker", "msg-1", "--target", tmp, "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "rejects format",
+			args: []string{"inbox", "ack", "worker", "msg-1", "--target", tmp, "--dry-run", "--commands", "--format", "{{.Acked}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, stderr, err := executeInboxCommand(tt.args...)
+			var code ExitCode
+			if !errors.As(err, &code) || code != 2 {
+				t.Fatalf("err = %v, want exit 2", err)
+			}
+			if !strings.Contains(stderr, tt.want) {
+				t.Fatalf("stderr = %q, want %q", stderr, tt.want)
+			}
+		})
 	}
 }
 
