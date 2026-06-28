@@ -5076,6 +5076,7 @@ func newTeamUpCmd() *cobra.Command {
 		timeout        time.Duration
 		readyTimeout   time.Duration
 		dryRun         bool
+		commands       bool
 		summary        bool
 		attach         bool
 		tail           string
@@ -5096,6 +5097,7 @@ func newTeamUpCmd() *cobra.Command {
 				Timeout:       timeout,
 				ReadyTimeout:  readyTimeout,
 				DryRun:        dryRun,
+				Commands:      commands,
 				Summary:       summary,
 				Attach:        attach,
 				AttachTailSet: cmd.Flags().Changed("tail"),
@@ -5124,7 +5126,7 @@ func newTeamUpCmd() *cobra.Command {
 				return reportTeamLifecycleLoadError(cmd, "agent-team team up", err)
 			}
 			if len(names) == 0 {
-				return writeEmptyTeamLifecycleStart(cmd, args[0], "up", dryRun, wait, summary, quiet, jsonOut, formatTemplate)
+				return writeEmptyTeamLifecycleStart(cmd, args[0], "up", dryRun, commands, wait, summary, quiet, jsonOut, formatTemplate)
 			}
 			if !dryRun {
 				if err := ensureDaemonReadyWithTimeout(cmd, repo, jsonOut || quiet || summary || formatTemplate != nil, readyTimeout); err != nil {
@@ -5142,7 +5144,23 @@ func newTeamUpCmd() *cobra.Command {
 				Quiet:         quiet,
 				JSON:          jsonOut,
 				Format:        formatTemplate,
-				Health:        teamLifecycleHealthOptions(names),
+				Commands:      commands,
+				Command: lifecycleCommandOptions{
+					BaseArgs:        []string{"agent-team", "team", "up", args[0]},
+					TargetFlag:      "--repo",
+					Target:          repo,
+					TargetSet:       cmd.Flags().Changed("repo"),
+					RuntimeFilters:  runtimeFilters,
+					Prompt:          prompt,
+					PromptSet:       cmd.Flags().Changed("prompt"),
+					PromptFile:      promptFile,
+					PromptFileSet:   cmd.Flags().Changed("prompt-file"),
+					Timeout:         timeout,
+					TimeoutSet:      cmd.Flags().Changed("timeout"),
+					ReadyTimeout:    readyTimeout,
+					ReadyTimeoutSet: cmd.Flags().Changed("ready-timeout"),
+				},
+				Health: teamLifecycleHealthOptions(names),
 			})
 		},
 	}
@@ -5153,6 +5171,7 @@ func newTeamUpCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultDaemonReadyTimeout, "Maximum time to wait for implicit daemon readiness (0 = no timeout).")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview planned start/resume actions without changing daemon state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team up apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate action counts instead of per-instance rows.")
 	cmd.Flags().BoolVar(&attach, "attach", false, "Follow the selected instance log after starting or resuming. Requires exactly one selected instance.")
 	cmd.Flags().StringVar(&tail, "tail", "50", "With --attach, show only the last N lines before following (0 or all = all).")
@@ -5171,6 +5190,7 @@ func newTeamDownCmd() *cobra.Command {
 		timeout        time.Duration
 		waitTimeout    time.Duration
 		dryRun         bool
+		commands       bool
 		remove         bool
 		summary        bool
 		runtimeFilters []string
@@ -5190,6 +5210,7 @@ func newTeamDownCmd() *cobra.Command {
 				Timeout:     timeout,
 				WaitTimeout: waitTimeout,
 				DryRun:      dryRun,
+				Commands:    commands,
 				Summary:     summary,
 				Quiet:       quiet,
 				JSON:        jsonOut,
@@ -5211,7 +5232,7 @@ func newTeamDownCmd() *cobra.Command {
 				return reportTeamLifecycleLoadError(cmd, "agent-team team down", err)
 			}
 			if len(names) == 0 {
-				return writeEmptyTeamLifecycleDown(cmd, args[0], "stop", dryRun, summary, quiet, jsonOut, formatTemplate)
+				return writeEmptyTeamLifecycleDown(cmd, args[0], "stop", dryRun, commands, summary, quiet, jsonOut, formatTemplate)
 			}
 			return runInstanceDownWithOptions(cmd, repo, names, instanceDownOptions{
 				Force:          force,
@@ -5225,6 +5246,18 @@ func newTeamDownCmd() *cobra.Command {
 				Quiet:          quiet,
 				JSON:           jsonOut,
 				Format:         formatTemplate,
+				Commands:       commands,
+				Command: lifecycleCommandOptions{
+					BaseArgs:       []string{"agent-team", "team", "down", args[0]},
+					TargetFlag:     "--repo",
+					Target:         repo,
+					TargetSet:      cmd.Flags().Changed("repo"),
+					RuntimeFilters: runtimeFilters,
+					Force:          force,
+					Remove:         remove,
+					Timeout:        timeout,
+					TimeoutSet:     cmd.Flags().Changed("timeout"),
+				},
 			})
 		},
 	}
@@ -5234,6 +5267,7 @@ func newTeamDownCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Grace before --force kills. With --wait and no --wait-timeout, also used as the wait deadline (0 = no wait deadline; force defaults to 10s).")
 	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 0, "Maximum time to wait for terminal state with --wait. Defaults to --timeout when unset; set 0 explicitly for no wait timeout.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview planned stop actions without changing daemon state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team down apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&remove, "rm", false, "Remove selected instance state and daemon metadata after stopping.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate action counts instead of per-instance rows.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only target team-owned daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.")
@@ -5254,6 +5288,7 @@ func newTeamRestartCmd() *cobra.Command {
 		waitTimeout    time.Duration
 		force          bool
 		dryRun         bool
+		commands       bool
 		summary        bool
 		attach         bool
 		tail           string
@@ -5274,6 +5309,7 @@ func newTeamRestartCmd() *cobra.Command {
 				Wait:          wait,
 				WaitTimeout:   waitTimeout,
 				DryRun:        dryRun,
+				Commands:      commands,
 				Summary:       summary,
 				Attach:        attach,
 				AttachTailSet: cmd.Flags().Changed("tail"),
@@ -5302,7 +5338,7 @@ func newTeamRestartCmd() *cobra.Command {
 				return reportTeamLifecycleLoadError(cmd, "agent-team team restart", err)
 			}
 			if len(names) == 0 {
-				return writeEmptyTeamLifecycleStart(cmd, args[0], "restart", dryRun, wait, summary, quiet, jsonOut, formatTemplate)
+				return writeEmptyTeamLifecycleStart(cmd, args[0], "restart", dryRun, commands, wait, summary, quiet, jsonOut, formatTemplate)
 			}
 			if !dryRun {
 				if err := ensureDaemonReadyWithTimeout(cmd, repo, jsonOut || quiet || summary || formatTemplate != nil, readyTimeout); err != nil {
@@ -5322,6 +5358,23 @@ func newTeamRestartCmd() *cobra.Command {
 				Quiet:         quiet,
 				JSON:          jsonOut,
 				Format:        formatTemplate,
+				Commands:      commands,
+				Command: lifecycleCommandOptions{
+					BaseArgs:        []string{"agent-team", "team", "restart", args[0]},
+					TargetFlag:      "--repo",
+					Target:          repo,
+					TargetSet:       cmd.Flags().Changed("repo"),
+					RuntimeFilters:  runtimeFilters,
+					Prompt:          prompt,
+					PromptSet:       cmd.Flags().Changed("prompt"),
+					PromptFile:      promptFile,
+					PromptFileSet:   cmd.Flags().Changed("prompt-file"),
+					Force:           force,
+					Timeout:         timeout,
+					TimeoutSet:      cmd.Flags().Changed("timeout"),
+					ReadyTimeout:    readyTimeout,
+					ReadyTimeoutSet: cmd.Flags().Changed("ready-timeout"),
+				},
 			})
 		},
 	}
@@ -5334,6 +5387,7 @@ func newTeamRestartCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 0, "Maximum time to wait for health with --wait (0 = no timeout).")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Escalate to SIGKILL if a running instance does not stop within --timeout before restarting.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview planned restart/resume actions without changing daemon state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team restart apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate action counts instead of per-instance rows.")
 	cmd.Flags().BoolVar(&attach, "attach", false, "Follow the selected instance log after restarting or resuming. Requires exactly one selected instance.")
 	cmd.Flags().StringVar(&tail, "tail", "50", "With --attach, show only the last N lines before following (0 or all = all).")
@@ -6611,6 +6665,7 @@ type teamLifecycleUpOptions struct {
 	Timeout       time.Duration
 	ReadyTimeout  time.Duration
 	DryRun        bool
+	Commands      bool
 	Summary       bool
 	Attach        bool
 	AttachTailSet bool
@@ -6625,6 +6680,7 @@ type teamLifecycleDownOptions struct {
 	Timeout     time.Duration
 	WaitTimeout time.Duration
 	DryRun      bool
+	Commands    bool
 	Summary     bool
 	Quiet       bool
 	JSON        bool
@@ -6637,6 +6693,7 @@ type teamLifecycleRestartOptions struct {
 	Wait          bool
 	WaitTimeout   time.Duration
 	DryRun        bool
+	Commands      bool
 	Summary       bool
 	Attach        bool
 	AttachTailSet bool
@@ -6769,6 +6826,24 @@ func validateTeamUpOptions(cmd *cobra.Command, prefix string, opts teamLifecycle
 	if opts.DryRun && opts.Wait {
 		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--dry-run cannot be combined with --wait")
 	}
+	if opts.Commands && !opts.DryRun {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands requires --dry-run")
+	}
+	if opts.Commands && opts.JSON {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --json")
+	}
+	if opts.Commands && opts.Summary {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --summary")
+	}
+	if opts.Commands && opts.Quiet {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --quiet")
+	}
+	if opts.Commands && opts.Format != "" {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --format")
+	}
+	if opts.Commands && opts.Attach {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --attach")
+	}
 	if opts.Attach && opts.JSON {
 		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--attach cannot be combined with --json")
 	}
@@ -6817,6 +6892,21 @@ func validateTeamDownOptions(cmd *cobra.Command, prefix string, opts teamLifecyc
 	if opts.DryRun && opts.Wait {
 		return nil, teamLifecycleUsageError(cmd, prefix, "--dry-run cannot be combined with --wait")
 	}
+	if opts.Commands && !opts.DryRun {
+		return nil, teamLifecycleUsageError(cmd, prefix, "--commands requires --dry-run")
+	}
+	if opts.Commands && opts.JSON {
+		return nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --json")
+	}
+	if opts.Commands && opts.Summary {
+		return nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --summary")
+	}
+	if opts.Commands && opts.Quiet {
+		return nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --quiet")
+	}
+	if opts.Commands && opts.Format != "" {
+		return nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --format")
+	}
 	if opts.Quiet && opts.JSON {
 		return nil, teamLifecycleUsageError(cmd, prefix, "choose one of --quiet or --json")
 	}
@@ -6845,6 +6935,24 @@ func validateTeamRestartOptions(cmd *cobra.Command, prefix string, opts teamLife
 	}
 	if opts.DryRun && opts.Wait {
 		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--dry-run cannot be combined with --wait")
+	}
+	if opts.Commands && !opts.DryRun {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands requires --dry-run")
+	}
+	if opts.Commands && opts.JSON {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --json")
+	}
+	if opts.Commands && opts.Summary {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --summary")
+	}
+	if opts.Commands && opts.Quiet {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --quiet")
+	}
+	if opts.Commands && opts.Format != "" {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --format")
+	}
+	if opts.Commands && opts.Attach {
+		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --attach")
 	}
 	if opts.Attach && opts.JSON {
 		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--attach cannot be combined with --json")
@@ -6902,8 +7010,11 @@ func teamLifecycleHealthOptions(names []string) healthOptions {
 	return healthOptions{filters: psOptions{instances: instances}}
 }
 
-func writeEmptyTeamLifecycleStart(cmd *cobra.Command, teamName, verb string, dryRun, wait, summary, quiet, jsonOut bool, formatTemplate *template.Template) error {
+func writeEmptyTeamLifecycleStart(cmd *cobra.Command, teamName, verb string, dryRun, commands, wait, summary, quiet, jsonOut bool, formatTemplate *template.Template) error {
 	out := cmd.OutOrStdout()
+	if commands {
+		return nil
+	}
 	if jsonOut {
 		if summary {
 			return json.NewEncoder(out).Encode(lifecycleActionSummaryResult{
@@ -6926,8 +7037,11 @@ func writeEmptyTeamLifecycleStart(cmd *cobra.Command, teamName, verb string, dry
 	return nil
 }
 
-func writeEmptyTeamLifecycleDown(cmd *cobra.Command, teamName, verb string, dryRun, summary, quiet, jsonOut bool, formatTemplate *template.Template) error {
+func writeEmptyTeamLifecycleDown(cmd *cobra.Command, teamName, verb string, dryRun, commands, summary, quiet, jsonOut bool, formatTemplate *template.Template) error {
 	out := cmd.OutOrStdout()
+	if commands {
+		return nil
+	}
 	if jsonOut {
 		if summary {
 			return json.NewEncoder(out).Encode(lifecycleActionSummaryResult{

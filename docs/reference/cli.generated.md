@@ -7309,6 +7309,7 @@ Aliases: `stop`
 Flags:
 
 ```text
+      --commands                With --dry-run, print the matching team down apply command when the preview has actionable work.
       --dry-run                 Preview planned stop actions without changing daemon state.
   -f, --force                   Escalate to SIGKILL if an instance does not stop within --timeout.
       --format string           Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.
@@ -8348,6 +8349,7 @@ Flags:
 
 ```text
       --attach                   Follow the selected instance log after restarting or resuming. Requires exactly one selected instance.
+      --commands                 With --dry-run, print the matching team restart apply command when the preview has actionable work.
       --dry-run                  Preview planned restart/resume actions without changing daemon state.
   -f, --force                    Escalate to SIGKILL if a running instance does not stop within --timeout before restarting.
       --format string            Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.
@@ -8840,6 +8842,7 @@ Flags:
 
 ```text
       --attach                   Follow the selected instance log after starting or resuming. Requires exactly one selected instance.
+      --commands                 With --dry-run, print the matching team up apply command when the preview has actionable work.
       --dry-run                  Preview planned start/resume actions without changing daemon state.
       --format string            Render each action result with a Go template, e.g. '{{.Instance}} {{.Action}}'.
       --json                     Emit machine-readable JSON.

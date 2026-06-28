@@ -5426,6 +5426,79 @@ instances = ["other", "build-worker"]
 		t.Fatalf("team restart runtime instances = %v", got)
 	}
 
+	upCommandsRoot := t.TempDir()
+	upCommandsTeamDir := filepath.Join(upCommandsRoot, ".agent_team")
+	if err := os.MkdirAll(upCommandsTeamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(upCommandsTeamDir, "instances.toml"), []byte(topoFixture+`
+[instances.ticket-manager]
+agent = "ticket-manager"
+
+[teams.delivery]
+instances = ["manager", "ticket-manager"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(upCommandsTeamDir), &daemon.Metadata{
+		Instance:  "manager",
+		Agent:     "manager",
+		Runtime:   string(runtimebin.KindClaude),
+		Status:    daemon.StatusStopped,
+		SessionID: "session-manager",
+		Workspace: upCommandsRoot,
+		StartedAt: now,
+	}); err != nil {
+		t.Fatalf("write stopped manager metadata: %v", err)
+	}
+	upCommands := NewRootCmd()
+	upCommandsOut, upCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	upCommands.SetOut(upCommandsOut)
+	upCommands.SetErr(upCommandsErr)
+	upCommands.SetArgs([]string{"team", "up", "delivery", "--repo", upCommandsRoot, "--runtime", "claude", "--dry-run", "--commands"})
+	if err := upCommands.Execute(); err != nil {
+		t.Fatalf("team up commands dry-run: %v\nstderr=%s", err, upCommandsErr.String())
+	}
+	if got, want := strings.TrimSpace(upCommandsOut.String()), strings.Join(shellQuoteArgs([]string{"agent-team", "team", "up", "delivery", "--repo", upCommandsRoot, "--runtime", "claude"}), " "); got != want {
+		t.Fatalf("team up commands = %q, want %q", got, want)
+	}
+
+	upNoActionCommands := NewRootCmd()
+	upNoActionCommandsOut, upNoActionCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	upNoActionCommands.SetOut(upNoActionCommandsOut)
+	upNoActionCommands.SetErr(upNoActionCommandsErr)
+	upNoActionCommands.SetArgs([]string{"team", "up", "delivery", "--repo", root, "--runtime", "claude", "--dry-run", "--commands"})
+	if err := upNoActionCommands.Execute(); err != nil {
+		t.Fatalf("team up no-action commands dry-run: %v\nstderr=%s", err, upNoActionCommandsErr.String())
+	}
+	if got := strings.TrimSpace(upNoActionCommandsOut.String()); got != "" {
+		t.Fatalf("team up no-action commands = %q, want empty", got)
+	}
+
+	downCommands := NewRootCmd()
+	downCommandsOut, downCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	downCommands.SetOut(downCommandsOut)
+	downCommands.SetErr(downCommandsErr)
+	downCommands.SetArgs([]string{"team", "down", "delivery", "--repo", root, "--runtime", "codex", "--rm", "--dry-run", "--commands"})
+	if err := downCommands.Execute(); err != nil {
+		t.Fatalf("team down commands dry-run: %v\nstderr=%s", err, downCommandsErr.String())
+	}
+	if got, want := strings.TrimSpace(downCommandsOut.String()), strings.Join(shellQuoteArgs([]string{"agent-team", "team", "down", "delivery", "--repo", root, "--runtime", "codex", "--rm"}), " "); got != want {
+		t.Fatalf("team down commands = %q, want %q", got, want)
+	}
+
+	restartCommands := NewRootCmd()
+	restartCommandsOut, restartCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restartCommands.SetOut(restartCommandsOut)
+	restartCommands.SetErr(restartCommandsErr)
+	restartCommands.SetArgs([]string{"team", "restart", "delivery", "--repo", root, "--runtime", "claude", "--force", "--timeout", "5s", "--dry-run", "--commands"})
+	if err := restartCommands.Execute(); err != nil {
+		t.Fatalf("team restart commands dry-run: %v\nstderr=%s", err, restartCommandsErr.String())
+	}
+	if got, want := strings.TrimSpace(restartCommandsOut.String()), strings.Join(shellQuoteArgs([]string{"agent-team", "team", "restart", "delivery", "--repo", root, "--runtime", "claude", "--force", "--timeout", "5s"}), " "); got != want {
+		t.Fatalf("team restart commands = %q, want %q", got, want)
+	}
+
 	invalid := NewRootCmd()
 	invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
 	invalid.SetOut(invalidOut)
@@ -5436,6 +5509,59 @@ instances = ["other", "build-worker"]
 	}
 	if !strings.Contains(invalidErr.String(), "unknown --runtime") {
 		t.Fatalf("invalid runtime stderr = %q", invalidErr.String())
+	}
+}
+
+func TestTeamLifecycleCommandsRejectsInvalidRenderModes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "requires dry run",
+			args: []string{"team", "up", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "json",
+			args: []string{"team", "up", "delivery", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "summary",
+			args: []string{"team", "down", "delivery", "--dry-run", "--commands", "--summary"},
+			want: "--commands cannot be combined with --summary",
+		},
+		{
+			name: "quiet",
+			args: []string{"team", "down", "delivery", "--dry-run", "--commands", "--quiet"},
+			want: "--commands cannot be combined with --quiet",
+		},
+		{
+			name: "format",
+			args: []string{"team", "restart", "delivery", "--dry-run", "--commands", "--format", "{{.Instance}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "attach",
+			args: []string{"team", "restart", "delivery", "--dry-run", "--commands", "--attach"},
+			want: "--commands cannot be combined with --attach",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err == nil {
+				t.Fatalf("command succeeded\nstdout=%s\nstderr=%s", out.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 

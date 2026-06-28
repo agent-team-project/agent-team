@@ -273,6 +273,9 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team watch <team>` | Continuous scoped dashboard with team-owned queue/outbox recovery signals |
 | `agent-team team top <team>` | `agent-team team stats <team>` |
 | `agent-team team run <team> <ticket>` | Create a team-owned job; `--dispatch` accepts workspace/runtime overrides and `--wait-next-state`/`--wait-step` can block for the first stage handoff |
+| `agent-team team up <team>` | Start or resume a team's declared persistent instances; add `--dry-run --commands` to print the matching team up apply command when the preview has actionable work |
+| `agent-team team down <team>` | Stop a team's persistent instances and active ephemeral children; add `--dry-run --commands` to print the matching team down apply command when the preview has actionable work |
+| `agent-team team restart <team>` | Restart or resume a team's declared persistent instances; add `--dry-run --commands` to print the matching team restart apply command when the preview has actionable work |
 | `agent-team team plan <team>` | Preview one team's desired instance state; add `--commands` to print the matching dry-run team sync command when the selected plan has actionable work |
 | `agent-team team sync <team>` | Reconcile one team's declared persistent instances; add `--dry-run --commands` to print the matching team sync apply command when the preview has actionable work |
 | `agent-team team jobs <team>` | Scoped job list, summary, or watch view; filter held state, mixed-runtime ownership, and cap output with `--limit` |
