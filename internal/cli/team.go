@@ -3099,6 +3099,7 @@ func newTeamQueueRetryCmd() *cobra.Command {
 		format      string
 		retryAll    bool
 		dryRun      bool
+		commands    bool
 		stateFilter string
 		eventTypes  []string
 		jobs        []string
@@ -3114,6 +3115,18 @@ func newTeamQueueRetryCmd() *cobra.Command {
 		Long:  "Retry one team-owned queue item by id, or retry a filtered team-owned batch with --all. Batch retries default to dead-letter items.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue retry: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue retry: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue retry: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue retry: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -3153,6 +3166,27 @@ func newTeamQueueRetryCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue retry: %v\n", err)
 					return exitErr(2)
 				}
+				if commands {
+					results, err := teamQueueRetryResults(teamDir, args[0], filters, sortMode, limit, true)
+					if err != nil {
+						return err
+					}
+					return renderQueueApplyCommand(cmd.OutOrStdout(), queueRetryResultsHaveDryRunAction(results, "would_retry"), queueApplyCommandOptions{
+						BaseArgs:   []string{"agent-team", "team", "queue", "retry", args[0]},
+						Repo:       repo,
+						RepoSet:    cmd.Flags().Changed("repo"),
+						All:        true,
+						State:      stateFilter,
+						StateSet:   cmd.Flags().Changed("state"),
+						EventTypes: eventTypes,
+						Jobs:       jobs,
+						Runtimes:   runtimes,
+						Ready:      readyOnly,
+						Sort:       sortBy,
+						SortSet:    cmd.Flags().Changed("sort"),
+						Limit:      limit,
+					})
+				}
 				return runTeamQueueRetryAll(cmd.OutOrStdout(), teamDir, args[0], filters, sortMode, limit, dryRun, jsonOut, tmpl)
 			}
 			if len(args) != 2 {
@@ -3167,6 +3201,13 @@ func newTeamQueueRetryCmd() *cobra.Command {
 			item, err := readTeamQueueItem(cmd, teamDir, teamName, id, "retry")
 			if err != nil {
 				return err
+			}
+			if commands {
+				return renderQueueApplyCommand(cmd.OutOrStdout(), item != nil, queueApplyCommandOptions{
+					BaseArgs: []string{"agent-team", "team", "queue", "retry", teamName, id},
+					Repo:     repo,
+					RepoSet:  cmd.Flags().Changed("repo"),
+				})
 			}
 			if dryRun {
 				return renderQueueRetryResults(cmd.OutOrStdout(), []queueRetryResult{{
@@ -3226,6 +3267,7 @@ func newTeamQueueRetryCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "", "Render each retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	cmd.Flags().BoolVar(&retryAll, "all", false, "Retry all matching team-owned queue items instead of one id.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching team-owned queue items without retrying them.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team queue retry command when the preview has actionable work.")
 	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.")
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
@@ -3243,6 +3285,7 @@ func newTeamQueueDropCmd() *cobra.Command {
 		format      string
 		dropAll     bool
 		dryRun      bool
+		commands    bool
 		stateFilter string
 		eventTypes  []string
 		jobs        []string
@@ -3258,6 +3301,18 @@ func newTeamQueueDropCmd() *cobra.Command {
 		Long:  "Drop one team-owned queue item by id, or drop a filtered team-owned batch with --all. Batch drops default to dead-letter items.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue drop: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue drop: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue drop: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue drop: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -3297,6 +3352,27 @@ func newTeamQueueDropCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team queue drop: %v\n", err)
 					return exitErr(2)
 				}
+				if commands {
+					results, err := teamQueueDropResults(teamDir, args[0], filters, sortMode, limit, true)
+					if err != nil {
+						return err
+					}
+					return renderQueueApplyCommand(cmd.OutOrStdout(), queueDropResultsHaveDryRunAction(results, "would_drop"), queueApplyCommandOptions{
+						BaseArgs:   []string{"agent-team", "team", "queue", "drop", args[0]},
+						Repo:       repo,
+						RepoSet:    cmd.Flags().Changed("repo"),
+						All:        true,
+						State:      stateFilter,
+						StateSet:   cmd.Flags().Changed("state"),
+						EventTypes: eventTypes,
+						Jobs:       jobs,
+						Runtimes:   runtimes,
+						Ready:      readyOnly,
+						Sort:       sortBy,
+						SortSet:    cmd.Flags().Changed("sort"),
+						Limit:      limit,
+					})
+				}
 				return runTeamQueueDropAll(cmd.OutOrStdout(), teamDir, args[0], filters, sortMode, limit, dryRun, jsonOut, tmpl)
 			}
 			if len(args) != 2 {
@@ -3311,6 +3387,13 @@ func newTeamQueueDropCmd() *cobra.Command {
 			item, err := readTeamQueueItem(cmd, teamDir, teamName, id, "drop")
 			if err != nil {
 				return err
+			}
+			if commands {
+				return renderQueueApplyCommand(cmd.OutOrStdout(), item != nil, queueApplyCommandOptions{
+					BaseArgs: []string{"agent-team", "team", "queue", "drop", teamName, id},
+					Repo:     repo,
+					RepoSet:  cmd.Flags().Changed("repo"),
+				})
 			}
 			if dryRun {
 				return renderQueueDropResults(cmd.OutOrStdout(), []queueDropResult{{
@@ -3358,6 +3441,7 @@ func newTeamQueueDropCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "", "Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	cmd.Flags().BoolVar(&dropAll, "all", false, "Drop all matching team-owned queue items instead of one id.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching team-owned queue items without dropping them.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team queue drop command when the preview has actionable work.")
 	cmd.Flags().StringVar(&stateFilter, "state", "", "With --all, filter by queue state: pending or dead. Defaults to dead, or pending with --ready.")
 	cmd.Flags().StringSliceVar(&eventTypes, "event-type", nil, "With --all, filter by event type; repeat or comma-separate values.")
 	cmd.Flags().StringSliceVar(&jobs, "job", nil, "With --all, filter by job id or ticket; repeat or comma-separate values.")
@@ -3374,6 +3458,7 @@ func newTeamQueuePruneCmd() *cobra.Command {
 		stateFlag  string
 		olderThan  time.Duration
 		dryRun     bool
+		commands   bool
 		jsonOut    bool
 		format     string
 		eventTypes []string
@@ -3389,6 +3474,18 @@ func newTeamQueuePruneCmd() *cobra.Command {
 		Long:  "Prune team-owned queue items. By default this removes dead-letter items owned by the selected team.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue prune: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue prune: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue prune: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue prune: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -3420,6 +3517,26 @@ func newTeamQueuePruneCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if commands {
+				results, err := teamQueuePruneResults(teamDir, args[0], state, olderThan, filters, limit, time.Now().UTC(), true)
+				if err != nil {
+					return err
+				}
+				return renderQueueApplyCommand(cmd.OutOrStdout(), queuePruneResultsHaveDryRunAction(results), queueApplyCommandOptions{
+					BaseArgs:     []string{"agent-team", "team", "queue", "prune", args[0]},
+					Repo:         repo,
+					RepoSet:      cmd.Flags().Changed("repo"),
+					State:        stateFlag,
+					StateSet:     cmd.Flags().Changed("state"),
+					EventTypes:   eventTypes,
+					Jobs:         jobs,
+					Runtimes:     runtimes,
+					Ready:        readyOnly,
+					Limit:        limit,
+					OlderThan:    olderThan,
+					OlderThanSet: cmd.Flags().Changed("older-than"),
+				})
+			}
 			return runTeamQueuePrune(cmd.OutOrStdout(), teamDir, args[0], state, olderThan, filters, limit, time.Now().UTC(), dryRun, jsonOut, tmpl)
 		},
 	}
@@ -3432,6 +3549,7 @@ func newTeamQueuePruneCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&readyOnly, "ready", false, "Only prune pending queue items whose next retry is due now. Defaults --state to pending when --state is omitted.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Prune at most this many matching team-owned queue items; 0 means no limit.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview team-owned queue items that would be pruned without dropping them.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team queue prune command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit prune results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each prune result with a Go template, e.g. '{{.ID}} {{.State}}'.")
 	return cmd
@@ -8082,50 +8200,34 @@ func readTeamQueueItem(cmd *cobra.Command, teamDir, name, id, verb string) (*dae
 }
 
 func runTeamQueueDropAll(w io.Writer, teamDir, name string, filters queueListFilters, sortMode string, limit int, dryRun, jsonOut bool, tmpl *template.Template) error {
-	matches, err := collectTeamQueueItems(teamDir, name, filters, time.Now().UTC())
+	results, err := teamQueueDropResults(teamDir, name, filters, sortMode, limit, dryRun)
 	if err != nil {
 		return err
-	}
-	matches = prepareQueueActionMatches(matches, sortMode, limit, queueRuntimeMap(teamDir))
-	var dc *daemonClient
-	if !dryRun {
-		client, err := newDaemonClient(teamDir)
-		if err == nil {
-			dc = client
-		} else if !errors.Is(err, errDaemonNotRunning) {
-			return err
-		}
-	}
-	results := make([]queueDropResult, 0, len(matches))
-	for _, item := range matches {
-		result := queueDropResult{
-			ID:         item.ID,
-			State:      item.State,
-			Instance:   item.Instance,
-			InstanceID: item.InstanceID,
-		}
-		if dryRun {
-			result.Action = "would_drop"
-			result.DryRun = true
-		} else {
-			if dc != nil {
-				if err := dc.QueueDrop(item.ID); err != nil {
-					return err
-				}
-			} else if err := daemon.RemoveQueueItem(daemon.DaemonRoot(teamDir), item.ID); err != nil {
-				return err
-			}
-			result.Action = "dropped"
-		}
-		results = append(results, result)
 	}
 	return renderQueueDropResults(w, results, jsonOut, tmpl)
 }
 
+func teamQueueDropResults(teamDir, name string, filters queueListFilters, sortMode string, limit int, dryRun bool) ([]queueDropResult, error) {
+	matches, err := collectTeamQueueItems(teamDir, name, filters, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	matches = prepareQueueActionMatches(matches, sortMode, limit, queueRuntimeMap(teamDir))
+	return dropQueueItemMatches(teamDir, matches, dryRun)
+}
+
 func runTeamQueuePrune(w io.Writer, teamDir, name, state string, olderThan time.Duration, filters queueListFilters, limit int, now time.Time, dryRun, jsonOut bool, tmpl *template.Template) error {
-	items, err := collectTeamQueueItems(teamDir, name, filters, now)
+	results, err := teamQueuePruneResults(teamDir, name, state, olderThan, filters, limit, now, dryRun)
 	if err != nil {
 		return err
+	}
+	return renderQueuePruneResults(w, results, jsonOut, tmpl)
+}
+
+func teamQueuePruneResults(teamDir, name, state string, olderThan time.Duration, filters queueListFilters, limit int, now time.Time, dryRun bool) ([]queuePruneResult, error) {
+	items, err := collectTeamQueueItems(teamDir, name, filters, now)
+	if err != nil {
+		return nil, err
 	}
 	matches := make([]*daemon.QueueItem, 0, len(items))
 	for _, item := range items {
@@ -8134,11 +8236,7 @@ func runTeamQueuePrune(w io.Writer, teamDir, name, state string, olderThan time.
 		}
 	}
 	matches = prepareQueuePruneMatches(matches, limit)
-	results, err := pruneQueueItemMatches(teamDir, matches, dryRun)
-	if err != nil {
-		return err
-	}
-	return renderQueuePruneResults(w, results, jsonOut, tmpl)
+	return pruneQueueItemMatches(teamDir, matches, dryRun)
 }
 
 func runTeamQueueRetryAll(w io.Writer, teamDir, name string, filters queueListFilters, sortMode string, limit int, dryRun, jsonOut bool, tmpl *template.Template) error {

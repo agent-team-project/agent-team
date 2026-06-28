@@ -7824,6 +7824,32 @@ target = "worker"
 		t.Fatalf("retry rows = %+v", retryRows)
 	}
 
+	retryCommands := NewRootCmd()
+	retryCommandsOut, retryCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	retryCommands.SetOut(retryCommandsOut)
+	retryCommands.SetErr(retryCommandsErr)
+	retryCommands.SetArgs([]string{"pipeline", "queue", "retry", "ticket_to_pr", "--all", "--repo", root, "--runtime", "codex", "--limit", "1", "--dry-run", "--commands"})
+	if err := retryCommands.Execute(); err != nil {
+		t.Fatalf("pipeline queue retry commands: %v\nstderr=%s", err, retryCommandsErr.String())
+	}
+	wantRetryCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "queue", "retry", "ticket_to_pr", "--repo", root, "--all", "--runtime", "codex", "--limit", "1"}), " ")
+	if got := strings.TrimSpace(retryCommandsOut.String()); got != wantRetryCommand {
+		t.Fatalf("pipeline queue retry commands = %q, want %q", got, wantRetryCommand)
+	}
+
+	retryOneCommands := NewRootCmd()
+	retryOneCommandsOut, retryOneCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	retryOneCommands.SetOut(retryOneCommandsOut)
+	retryOneCommands.SetErr(retryOneCommandsErr)
+	retryOneCommands.SetArgs([]string{"pipeline", "queue", "retry", "ticket_to_pr", "q-pipeline-dead", "--repo", root, "--dry-run", "--commands"})
+	if err := retryOneCommands.Execute(); err != nil {
+		t.Fatalf("pipeline queue retry single commands: %v\nstderr=%s", err, retryOneCommandsErr.String())
+	}
+	wantRetryOneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "queue", "retry", "ticket_to_pr", "q-pipeline-dead", "--repo", root}), " ")
+	if got := strings.TrimSpace(retryOneCommandsOut.String()); got != wantRetryOneCommand {
+		t.Fatalf("pipeline queue retry single commands = %q, want %q", got, wantRetryOneCommand)
+	}
+
 	drop := NewRootCmd()
 	dropOut, dropErr := &bytes.Buffer{}, &bytes.Buffer{}
 	drop.SetOut(dropOut)
@@ -7834,6 +7860,45 @@ target = "worker"
 	}
 	if got, want := dropOut.String(), "q-pipeline-dead would_drop\n"; got != want {
 		t.Fatalf("drop format = %q, want %q", got, want)
+	}
+
+	dropCommands := NewRootCmd()
+	dropCommandsOut, dropCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropCommands.SetOut(dropCommandsOut)
+	dropCommands.SetErr(dropCommandsErr)
+	dropCommands.SetArgs([]string{"pipeline", "queue", "drop", "ticket_to_pr", "--all", "--repo", root, "--dry-run", "--commands"})
+	if err := dropCommands.Execute(); err != nil {
+		t.Fatalf("pipeline queue drop commands: %v\nstderr=%s", err, dropCommandsErr.String())
+	}
+	wantDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "queue", "drop", "ticket_to_pr", "--repo", root, "--all"}), " ")
+	if got := strings.TrimSpace(dropCommandsOut.String()); got != wantDropCommand {
+		t.Fatalf("pipeline queue drop commands = %q, want %q", got, wantDropCommand)
+	}
+
+	dropOneCommands := NewRootCmd()
+	dropOneCommandsOut, dropOneCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropOneCommands.SetOut(dropOneCommandsOut)
+	dropOneCommands.SetErr(dropOneCommandsErr)
+	dropOneCommands.SetArgs([]string{"pipeline", "queue", "drop", "ticket_to_pr", "q-pipeline-dead", "--repo", root, "--dry-run", "--commands"})
+	if err := dropOneCommands.Execute(); err != nil {
+		t.Fatalf("pipeline queue drop single commands: %v\nstderr=%s", err, dropOneCommandsErr.String())
+	}
+	wantDropOneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "queue", "drop", "ticket_to_pr", "q-pipeline-dead", "--repo", root}), " ")
+	if got := strings.TrimSpace(dropOneCommandsOut.String()); got != wantDropOneCommand {
+		t.Fatalf("pipeline queue drop single commands = %q, want %q", got, wantDropOneCommand)
+	}
+
+	pruneCommands := NewRootCmd()
+	pruneCommandsOut, pruneCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pruneCommands.SetOut(pruneCommandsOut)
+	pruneCommands.SetErr(pruneCommandsErr)
+	pruneCommands.SetArgs([]string{"pipeline", "queue", "prune", "ticket_to_pr", "--repo", root, "--dry-run", "--commands"})
+	if err := pruneCommands.Execute(); err != nil {
+		t.Fatalf("pipeline queue prune commands: %v\nstderr=%s", err, pruneCommandsErr.String())
+	}
+	wantPruneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "queue", "prune", "ticket_to_pr", "--repo", root}), " ")
+	if got := strings.TrimSpace(pruneCommandsOut.String()); got != wantPruneCommand {
+		t.Fatalf("pipeline queue prune commands = %q, want %q", got, wantPruneCommand)
 	}
 
 	prune := NewRootCmd()
@@ -8084,6 +8149,79 @@ func TestPipelineQueuePruneRejectsNegativeLimit(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--limit must be >= 0") {
 		t.Fatalf("stderr = %q, want negative limit message", stderr.String())
+	}
+}
+
+func TestPipelineQueueControlRejectsCommandsCombinations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "retry commands without dry run",
+			args: []string{"pipeline", "queue", "retry", "ticket_to_pr", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "retry commands with json",
+			args: []string{"pipeline", "queue", "retry", "ticket_to_pr", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "retry commands with format",
+			args: []string{"pipeline", "queue", "retry", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "drop commands without dry run",
+			args: []string{"pipeline", "queue", "drop", "ticket_to_pr", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "drop commands with json",
+			args: []string{"pipeline", "queue", "drop", "ticket_to_pr", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "drop commands with format",
+			args: []string{"pipeline", "queue", "drop", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "prune commands without dry run",
+			args: []string{"pipeline", "queue", "prune", "ticket_to_pr", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "prune commands with json",
+			args: []string{"pipeline", "queue", "prune", "ticket_to_pr", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "prune commands with format",
+			args: []string{"pipeline", "queue", "prune", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("pipeline queue validation succeeded: stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("pipeline queue err = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
 	}
 }
 

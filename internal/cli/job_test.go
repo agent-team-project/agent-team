@@ -2108,6 +2108,19 @@ func TestJobQueueRetryDropScopesOwnedItems(t *testing.T) {
 		t.Fatalf("retry dry-run changed item=%+v err=%v", item, err)
 	}
 
+	retryCommands := NewRootCmd()
+	retryCommandsOut, retryCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	retryCommands.SetOut(retryCommandsOut)
+	retryCommands.SetErr(retryCommandsErr)
+	retryCommands.SetArgs([]string{"job", "queue", "retry", "SQU-121", "--repo", tmp, "--all", "--runtime", "codex", "--limit", "1", "--dry-run", "--commands"})
+	if err := retryCommands.Execute(); err != nil {
+		t.Fatalf("job queue retry --all commands: %v\nstderr=%s", err, retryCommandsErr.String())
+	}
+	wantRetryCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "queue", "retry", "SQU-121", "--repo", tmp, "--all", "--runtime", "codex", "--limit", "1"}), " ")
+	if got := strings.TrimSpace(retryCommandsOut.String()); got != wantRetryCommand {
+		t.Fatalf("job queue retry --all commands = %q, want %q", got, wantRetryCommand)
+	}
+
 	dropDryAll := NewRootCmd()
 	dropDryAllOut, dropDryAllErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dropDryAll.SetOut(dropDryAllOut)
@@ -2122,6 +2135,32 @@ func TestJobQueueRetryDropScopesOwnedItems(t *testing.T) {
 	}
 	if len(dropDryAllResults) != 1 || dropDryAllResults[0].ID != "q-job-pending" || dropDryAllResults[0].Action != "would_drop" || !dropDryAllResults[0].DryRun {
 		t.Fatalf("drop all dry-run results = %+v", dropDryAllResults)
+	}
+
+	dropCommands := NewRootCmd()
+	dropCommandsOut, dropCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropCommands.SetOut(dropCommandsOut)
+	dropCommands.SetErr(dropCommandsErr)
+	dropCommands.SetArgs([]string{"job", "queue", "drop", "SQU-121", "--repo", tmp, "--all", "--state", "pending", "--runtime", "codex", "--limit", "1", "--dry-run", "--commands"})
+	if err := dropCommands.Execute(); err != nil {
+		t.Fatalf("job queue drop --all commands: %v\nstderr=%s", err, dropCommandsErr.String())
+	}
+	wantDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "queue", "drop", "SQU-121", "--repo", tmp, "--all", "--state", "pending", "--runtime", "codex", "--limit", "1"}), " ")
+	if got := strings.TrimSpace(dropCommandsOut.String()); got != wantDropCommand {
+		t.Fatalf("job queue drop --all commands = %q, want %q", got, wantDropCommand)
+	}
+
+	retryOneCommands := NewRootCmd()
+	retryOneCommandsOut, retryOneCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	retryOneCommands.SetOut(retryOneCommandsOut)
+	retryOneCommands.SetErr(retryOneCommandsErr)
+	retryOneCommands.SetArgs([]string{"job", "queue", "retry", "SQU-121", "q-job-dead", "--repo", tmp, "--dry-run", "--commands"})
+	if err := retryOneCommands.Execute(); err != nil {
+		t.Fatalf("job queue retry single commands: %v\nstderr=%s", err, retryOneCommandsErr.String())
+	}
+	wantRetryOneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "queue", "retry", "SQU-121", "q-job-dead", "--repo", tmp}), " ")
+	if got := strings.TrimSpace(retryOneCommandsOut.String()); got != wantRetryOneCommand {
+		t.Fatalf("job queue retry single commands = %q, want %q", got, wantRetryOneCommand)
 	}
 
 	retry := NewRootCmd()
@@ -2155,6 +2194,19 @@ func TestJobQueueRetryDropScopesOwnedItems(t *testing.T) {
 	}
 	if !strings.Contains(dropOtherErr.String(), "not owned by job") {
 		t.Fatalf("drop unrelated stderr = %q", dropOtherErr.String())
+	}
+
+	dropOneCommands := NewRootCmd()
+	dropOneCommandsOut, dropOneCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropOneCommands.SetOut(dropOneCommandsOut)
+	dropOneCommands.SetErr(dropOneCommandsErr)
+	dropOneCommands.SetArgs([]string{"job", "queue", "drop", "SQU-121", "q-job-pending", "--repo", tmp, "--dry-run", "--commands"})
+	if err := dropOneCommands.Execute(); err != nil {
+		t.Fatalf("job queue drop single commands: %v\nstderr=%s", err, dropOneCommandsErr.String())
+	}
+	wantDropOneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "queue", "drop", "SQU-121", "q-job-pending", "--repo", tmp}), " ")
+	if got := strings.TrimSpace(dropOneCommandsOut.String()); got != wantDropOneCommand {
+		t.Fatalf("job queue drop single commands = %q, want %q", got, wantDropOneCommand)
 	}
 
 	drop := NewRootCmd()
@@ -2592,6 +2644,19 @@ func TestJobQueuePruneScopesOwnedItems(t *testing.T) {
 		t.Fatalf("dry-run removed queue item: %v", err)
 	}
 
+	pruneCommands := NewRootCmd()
+	pruneCommandsOut, pruneCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pruneCommands.SetOut(pruneCommandsOut)
+	pruneCommands.SetErr(pruneCommandsErr)
+	pruneCommands.SetArgs([]string{"job", "queue", "prune", "SQU-122", "--repo", tmp, "--older-than", "24h", "--dry-run", "--commands"})
+	if err := pruneCommands.Execute(); err != nil {
+		t.Fatalf("job queue prune commands: %v\nstderr=%s", err, pruneCommandsErr.String())
+	}
+	wantPruneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "queue", "prune", "SQU-122", "--repo", tmp, "--older-than", "24h0m0s"}), " ")
+	if got := strings.TrimSpace(pruneCommandsOut.String()); got != wantPruneCommand {
+		t.Fatalf("job queue prune commands = %q, want %q", got, wantPruneCommand)
+	}
+
 	prune := NewRootCmd()
 	pruneOut, pruneErr := &bytes.Buffer{}, &bytes.Buffer{}
 	prune.SetOut(pruneOut)
@@ -2979,6 +3044,21 @@ func TestJobQueuePruneRejectsFormatCombinations(t *testing.T) {
 			want: "--format cannot be combined with --json",
 		},
 		{
+			name: "commands without dry run",
+			args: []string{"job", "queue", "prune", "SQU-122", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "commands with json",
+			args: []string{"job", "queue", "prune", "SQU-122", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "commands with format",
+			args: []string{"job", "queue", "prune", "SQU-122", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
 			name: "invalid format",
 			args: []string{"job", "queue", "prune", "SQU-122", "--format", "{{"},
 			want: "invalid --format template",
@@ -3032,6 +3112,21 @@ func TestJobQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 			want: "--format cannot be combined with --json",
 		},
 		{
+			name: "retry commands without dry run",
+			args: []string{"job", "queue", "retry", "SQU-121", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "retry commands with json",
+			args: []string{"job", "queue", "retry", "SQU-121", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "retry commands with format",
+			args: []string{"job", "queue", "retry", "SQU-121", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
 			name: "retry invalid format",
 			args: []string{"job", "queue", "retry", "SQU-121", "--format", "{{"},
 			want: "invalid --format template",
@@ -3055,6 +3150,21 @@ func TestJobQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 			name: "drop format with json",
 			args: []string{"job", "queue", "drop", "SQU-121", "--format", "{{.ID}}", "--json"},
 			want: "--format cannot be combined with --json",
+		},
+		{
+			name: "drop commands without dry run",
+			args: []string{"job", "queue", "drop", "SQU-121", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "drop commands with json",
+			args: []string{"job", "queue", "drop", "SQU-121", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "drop commands with format",
+			args: []string{"job", "queue", "drop", "SQU-121", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
 		},
 		{
 			name: "drop invalid format",

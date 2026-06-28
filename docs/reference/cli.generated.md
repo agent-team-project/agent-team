@@ -2740,6 +2740,7 @@ Flags:
 
 ```text
       --all                  Drop all matching job-owned queue items instead of one id.
+      --commands             With --dry-run, print the matching job queue drop command when the preview has actionable work.
       --dry-run              Preview matching job-owned queue items without dropping them.
       --event-type strings   With --all, filter by event type; repeat or comma-separate values.
       --format string        Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -2765,6 +2766,7 @@ agent-team job queue prune <job-id> [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching job queue prune command when the preview has actionable work.
       --dry-run               Preview job-owned queue items that would be pruned without dropping them.
       --event-type strings    Filter by event type before pruning; repeat or comma-separate values.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.State}}'.
@@ -2891,6 +2893,7 @@ Flags:
 
 ```text
       --all                  Retry all matching job-owned queue items instead of one id.
+      --commands             With --dry-run, print the matching job queue retry command when the preview has actionable work.
       --dry-run              Preview matching job-owned queue items without retrying them.
       --event-type strings   With --all, filter by event type; repeat or comma-separate values.
       --format string        Render each retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -4894,6 +4897,7 @@ Flags:
 
 ```text
       --all                  Drop all matching pipeline-owned queue items instead of one id.
+      --commands             With --dry-run, print the matching pipeline queue drop command when the preview has actionable work.
       --dry-run              Preview matching pipeline-owned queue items without dropping them.
       --event-type strings   With --all, filter by event type; repeat or comma-separate values.
       --format string        Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -4920,6 +4924,7 @@ agent-team pipeline queue prune <pipeline> [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching pipeline queue prune command when the preview has actionable work.
       --dry-run               Preview pipeline-owned queue items that would be pruned without dropping them.
       --event-type strings    Filter by event type before pruning; repeat or comma-separate values.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.State}}'.
@@ -5051,6 +5056,7 @@ Flags:
 
 ```text
       --all                  Retry all matching pipeline-owned queue items instead of one id.
+      --commands             With --dry-run, print the matching pipeline queue retry command when the preview has actionable work.
       --dry-run              Preview matching pipeline-owned queue items without retrying them.
       --event-type strings   With --all, filter by event type; repeat or comma-separate values.
       --format string        Render each retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -8051,6 +8057,7 @@ Flags:
 
 ```text
       --all                  Drop all matching team-owned queue items instead of one id.
+      --commands             With --dry-run, print the matching team queue drop command when the preview has actionable work.
       --dry-run              Preview matching team-owned queue items without dropping them.
       --event-type strings   With --all, filter by event type; repeat or comma-separate values.
       --format string        Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -8077,6 +8084,7 @@ agent-team team queue prune <team> [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching team queue prune command when the preview has actionable work.
       --dry-run               Preview team-owned queue items that would be pruned without dropping them.
       --event-type strings    Filter by event type before pruning; repeat or comma-separate values.
       --format string         Render each prune result with a Go template, e.g. '{{.ID}} {{.State}}'.
@@ -8205,6 +8213,7 @@ Flags:
 
 ```text
       --all                  Retry all matching team-owned queue items instead of one id.
+      --commands             With --dry-run, print the matching team queue retry command when the preview has actionable work.
       --dry-run              Preview matching team-owned queue items without retrying them.
       --event-type strings   With --all, filter by event type; repeat or comma-separate values.
       --format string        Render each retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.

@@ -1127,6 +1127,8 @@ type queueRetryResult struct {
 
 type queueApplyCommandOptions struct {
 	BaseArgs     []string
+	Repo         string
+	RepoSet      bool
 	Target       string
 	TargetSet    bool
 	All          bool
@@ -1309,6 +1311,9 @@ func renderQueueApplyCommand(w io.Writer, hasAction bool, opts queueApplyCommand
 
 func queueApplyCommandArgs(opts queueApplyCommandOptions) []string {
 	args := append([]string{}, opts.BaseArgs...)
+	if opts.RepoSet {
+		args = append(args, "--repo", opts.Repo)
+	}
 	if opts.TargetSet {
 		args = append(args, "--target", opts.Target)
 	}

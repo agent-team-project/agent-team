@@ -7902,6 +7902,19 @@ instances = ["other"]
 		t.Fatalf("retry dry-run changed item=%+v err=%v", item, err)
 	}
 
+	retryCommands := NewRootCmd()
+	retryCommandsOut, retryCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	retryCommands.SetOut(retryCommandsOut)
+	retryCommands.SetErr(retryCommandsErr)
+	retryCommands.SetArgs([]string{"team", "queue", "retry", "delivery", "--repo", root, "--all", "--job", "SQU-501", "--runtime", "codex", "--limit", "1", "--dry-run", "--commands"})
+	if err := retryCommands.Execute(); err != nil {
+		t.Fatalf("team queue retry commands: %v\nstderr=%s", err, retryCommandsErr.String())
+	}
+	wantRetryCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "queue", "retry", "delivery", "--repo", root, "--all", "--job", "SQU-501", "--runtime", "codex", "--limit", "1"}), " ")
+	if got := strings.TrimSpace(retryCommandsOut.String()); got != wantRetryCommand {
+		t.Fatalf("team queue retry commands = %q, want %q", got, wantRetryCommand)
+	}
+
 	retryRuntimeDry := NewRootCmd()
 	retryRuntimeDryOut, retryRuntimeDryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	retryRuntimeDry.SetOut(retryRuntimeDryOut)
@@ -7940,6 +7953,19 @@ instances = ["other"]
 	}
 	if !strings.Contains(otherRetryErr.String(), "not owned by team") {
 		t.Fatalf("team queue retry unrelated stderr = %q stdout=%q", otherRetryErr.String(), otherRetryOut.String())
+	}
+
+	retryOneCommands := NewRootCmd()
+	retryOneCommandsOut, retryOneCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	retryOneCommands.SetOut(retryOneCommandsOut)
+	retryOneCommands.SetErr(retryOneCommandsErr)
+	retryOneCommands.SetArgs([]string{"team", "queue", "retry", "delivery", "--repo", root, "q-team-job", "--dry-run", "--commands"})
+	if err := retryOneCommands.Execute(); err != nil {
+		t.Fatalf("team queue retry single commands: %v\nstderr=%s", err, retryOneCommandsErr.String())
+	}
+	wantRetryOneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "queue", "retry", "delivery", "q-team-job", "--repo", root}), " ")
+	if got := strings.TrimSpace(retryOneCommandsOut.String()); got != wantRetryOneCommand {
+		t.Fatalf("team queue retry single commands = %q, want %q", got, wantRetryOneCommand)
 	}
 
 	retryApply := NewRootCmd()
@@ -7984,6 +8010,19 @@ instances = ["other"]
 		t.Fatalf("drop ready results = %+v", dropReadyResults)
 	}
 
+	dropCommands := NewRootCmd()
+	dropCommandsOut, dropCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropCommands.SetOut(dropCommandsOut)
+	dropCommands.SetErr(dropCommandsErr)
+	dropCommands.SetArgs([]string{"team", "queue", "drop", "delivery", "--repo", root, "--all", "--ready", "--runtime", "codex", "--limit", "2", "--dry-run", "--commands"})
+	if err := dropCommands.Execute(); err != nil {
+		t.Fatalf("team queue drop commands: %v\nstderr=%s", err, dropCommandsErr.String())
+	}
+	wantDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "queue", "drop", "delivery", "--repo", root, "--all", "--runtime", "codex", "--ready", "--limit", "2"}), " ")
+	if got := strings.TrimSpace(dropCommandsOut.String()); got != wantDropCommand {
+		t.Fatalf("team queue drop commands = %q, want %q", got, wantDropCommand)
+	}
+
 	dropReadyFormat := NewRootCmd()
 	dropReadyFormatOut, dropReadyFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dropReadyFormat.SetOut(dropReadyFormatOut)
@@ -7995,6 +8034,19 @@ instances = ["other"]
 	dropFormatLines := strings.Split(strings.TrimSpace(dropReadyFormatOut.String()), "\n")
 	if got := strings.Join(dropFormatLines, ","); got != "q-team-job would_drop true,q-team-target would_drop true" {
 		t.Fatalf("team queue drop ready dry-run format = %q", dropReadyFormatOut.String())
+	}
+
+	dropOneCommands := NewRootCmd()
+	dropOneCommandsOut, dropOneCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropOneCommands.SetOut(dropOneCommandsOut)
+	dropOneCommands.SetErr(dropOneCommandsErr)
+	dropOneCommands.SetArgs([]string{"team", "queue", "drop", "delivery", "--repo", root, "q-team-target", "--dry-run", "--commands"})
+	if err := dropOneCommands.Execute(); err != nil {
+		t.Fatalf("team queue drop single commands: %v\nstderr=%s", err, dropOneCommandsErr.String())
+	}
+	wantDropOneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "queue", "drop", "delivery", "q-team-target", "--repo", root}), " ")
+	if got := strings.TrimSpace(dropOneCommandsOut.String()); got != wantDropOneCommand {
+		t.Fatalf("team queue drop single commands = %q, want %q", got, wantDropOneCommand)
 	}
 
 	dropApply := NewRootCmd()
@@ -8171,6 +8223,19 @@ instances = ["other"]
 	}
 	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-team-old"); err != nil {
 		t.Fatalf("dry-run removed team queue item: %v", err)
+	}
+
+	pruneCommands := NewRootCmd()
+	pruneCommandsOut, pruneCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pruneCommands.SetOut(pruneCommandsOut)
+	pruneCommands.SetErr(pruneCommandsErr)
+	pruneCommands.SetArgs([]string{"team", "queue", "prune", "delivery", "--repo", root, "--older-than", "24h", "--dry-run", "--commands"})
+	if err := pruneCommands.Execute(); err != nil {
+		t.Fatalf("team queue prune commands: %v\nstderr=%s", err, pruneCommandsErr.String())
+	}
+	wantPruneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "queue", "prune", "delivery", "--repo", root, "--older-than", "24h0m0s"}), " ")
+	if got := strings.TrimSpace(pruneCommandsOut.String()); got != wantPruneCommand {
+		t.Fatalf("team queue prune commands = %q, want %q", got, wantPruneCommand)
 	}
 
 	prune := NewRootCmd()
@@ -8416,6 +8481,21 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 			want: "--format cannot be combined",
 		},
 		{
+			name: "retry commands without dry run",
+			args: []string{"team", "queue", "retry", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "retry commands with json",
+			args: []string{"team", "queue", "retry", "delivery", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "retry commands with format",
+			args: []string{"team", "queue", "retry", "delivery", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
 			name: "retry invalid format",
 			args: []string{"team", "queue", "retry", "delivery", "--format", "{{"},
 			want: "invalid --format template",
@@ -8426,9 +8506,39 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 			want: "--format cannot be combined",
 		},
 		{
+			name: "drop commands without dry run",
+			args: []string{"team", "queue", "drop", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "drop commands with json",
+			args: []string{"team", "queue", "drop", "delivery", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "drop commands with format",
+			args: []string{"team", "queue", "drop", "delivery", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
 			name: "drop invalid format",
 			args: []string{"team", "queue", "drop", "delivery", "--format", "{{"},
 			want: "invalid --format template",
+		},
+		{
+			name: "prune commands without dry run",
+			args: []string{"team", "queue", "prune", "delivery", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "prune commands with json",
+			args: []string{"team", "queue", "prune", "delivery", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "prune commands with format",
+			args: []string{"team", "queue", "prune", "delivery", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
 		},
 		{
 			name: "show commands with json",
