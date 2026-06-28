@@ -230,6 +230,45 @@ func TestRuntimeProbeCommands(t *testing.T) {
 	}
 }
 
+func TestRuntimeProbeActionsPreferHTTPCheckWhenAvailable(t *testing.T) {
+	result := &runtimeProbeResult{
+		Runtime: runtimeInfo{Runtime: "codex"},
+		Daemon: &daemonStatusJSON{
+			Running: true,
+			Ready:   true,
+			HTTPURL: "http://127.0.0.1:49152",
+			Socket:  "/tmp/agent-team.sock",
+		},
+	}
+
+	actions := runtimeProbeActions(result)
+	if !containsString(actions, "agent-team runtime probe --runtime codex --exec-http-check --timeout 2m") {
+		t.Fatalf("actions = %+v, want HTTP exec check", actions)
+	}
+	if containsString(actions, "agent-team runtime probe --runtime codex --exec-socket-check --timeout 2m") {
+		t.Fatalf("actions = %+v, did not expect socket exec check when HTTP URL is available", actions)
+	}
+}
+
+func TestRuntimeProbeActionsUseSocketCheckWithoutHTTP(t *testing.T) {
+	result := &runtimeProbeResult{
+		Runtime: runtimeInfo{Runtime: "codex"},
+		Daemon: &daemonStatusJSON{
+			Running: true,
+			Ready:   true,
+			Socket:  "/tmp/agent-team.sock",
+		},
+	}
+
+	actions := runtimeProbeActions(result)
+	if !containsString(actions, "agent-team runtime probe --runtime codex --exec-socket-check --timeout 2m") {
+		t.Fatalf("actions = %+v, want socket exec check fallback", actions)
+	}
+	if !containsString(actions, "agent-team runtime probe --runtime codex --start-daemon --daemon-http-addr 127.0.0.1:0 --exec-http-check --timeout 2m") {
+		t.Fatalf("actions = %+v, want HTTP daemon-start probe hint", actions)
+	}
+}
+
 func TestRuntimeProbeFormat(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "codex")
 	t.Setenv(runtimebin.EnvBinary, "")

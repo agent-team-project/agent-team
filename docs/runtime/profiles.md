@@ -37,8 +37,8 @@ agent-team runtime probe --runtime codex --require-daemon --wait-daemon --timeou
 agent-team runtime probe --runtime codex --start-daemon --require-daemon
 agent-team runtime probe --runtime codex --format '{{.OK}} {{len .Issues}}'
 agent-team runtime probe --runtime codex --exec --timeout 2m
-agent-team runtime probe --runtime codex --start-daemon --exec-socket-check --timeout 2m
 agent-team runtime probe --runtime codex --start-daemon --daemon-http-addr 127.0.0.1:0 --exec-http-check --timeout 2m
+agent-team runtime probe --runtime codex --start-daemon --exec-socket-check --timeout 2m
 agent-team runtime probe --runtime codex --exec --timeout 2m --output runtime-probe.json
 ```
 
@@ -57,15 +57,18 @@ diagnostics. Add `--start-daemon` when the preflight should start the detached
 repo daemon if it is not ready; without that flag the probe remains read-only.
 `--exec` is opt-in because it spends a real runtime call: for Codex it runs
 `codex exec -`, sends a short prompt over stdin, and verifies that
-`--output-last-message` produced a sidecar. Add `--exec-socket-check` when the
-probe should spend a Codex call specifically verifying that commands inside the
-Codex sandbox can reach `agent-teamd` through `AGENT_TEAM_DAEMON_SOCKET`; it
-implies `--exec` and `--require-daemon`, and combines naturally with
-`--start-daemon`. Add `--daemon-http-addr 127.0.0.1:0 --exec-http-check` when
-Unix sockets are blocked and the daemon should expose an opt-in loopback HTTP
-URL for the probe through `AGENT_TEAM_DAEMON_URL`. Add `--output <file>` to
-write the full structured probe result as pretty JSON while still printing the
-normal text or `--json` response.
+`--output-last-message` produced a sidecar. Prefer
+`--daemon-http-addr 127.0.0.1:0 --exec-http-check` when validating Codex sandbox
+access to the daemon; it exposes an opt-in loopback HTTP URL for the probe
+through `AGENT_TEAM_DAEMON_URL` and avoids Unix socket policy differences. Add
+`--exec-socket-check` when the probe should instead spend a Codex call
+specifically verifying that commands inside the Codex sandbox can reach
+`agent-teamd` through `AGENT_TEAM_DAEMON_SOCKET`; it implies `--exec` and
+`--require-daemon`, and combines naturally with `--start-daemon`. Runtime probe
+action hints recommend HTTP checks first when the daemon exposes a URL and fall
+back to socket checks when it does not. Add `--output <file>` to write the full
+structured probe result as pretty JSON while still printing the normal text or
+`--json` response.
 Exec probe failures are classified into actionable IDs such as
 `provider_unreachable`, `auth_failed`, `sandbox_blocked`, `socket_check_failed`,
 `http_check_failed`, `exec_timeout`, and last-message sidecar failures.

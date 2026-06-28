@@ -954,11 +954,10 @@ func runtimeProbeActions(result *runtimeProbeResult) []string {
 		if result.ExecProbe == nil {
 			add("agent-team runtime probe --runtime codex --exec --timeout 2m")
 		}
-		if result.Daemon != nil && result.Daemon.Ready && (result.ExecProbe == nil || !result.ExecProbe.SocketCheck) {
-			add("agent-team runtime probe --runtime codex --exec-socket-check --timeout 2m")
-		}
 		if result.Daemon != nil && result.Daemon.Ready && result.Daemon.HTTPURL != "" && (result.ExecProbe == nil || !result.ExecProbe.HTTPCheck) {
 			add("agent-team runtime probe --runtime codex --exec-http-check --timeout 2m")
+		} else if result.Daemon != nil && result.Daemon.Ready && (result.ExecProbe == nil || !result.ExecProbe.SocketCheck) {
+			add("agent-team runtime probe --runtime codex --exec-socket-check --timeout 2m")
 		}
 		if result.Daemon == nil || !result.Daemon.Ready || result.Daemon.HTTPURL == "" {
 			add("agent-team runtime probe --runtime codex --start-daemon --daemon-http-addr 127.0.0.1:0 --exec-http-check --timeout 2m")
