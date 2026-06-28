@@ -267,6 +267,11 @@ func newPipelineJobsCmd() *cobra.Command {
 	var (
 		repo           string
 		status         string
+		targetFilter   string
+		instance       string
+		ticket         string
+		branch         string
+		pr             string
 		runtimeFilters []string
 		all            bool
 		watch          bool
@@ -343,7 +348,7 @@ func newPipelineJobsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: pipeline name is required.")
 				return exitErr(2)
 			}
-			filters, err := newJobListFilters(status, "", "", pipelineName, "", "", "", runtimeFilters)
+			filters, err := newJobListFilters(status, targetFilter, instance, pipelineName, ticket, branch, pr, runtimeFilters)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline jobs: %v\n", err)
 				return exitErr(2)
@@ -385,6 +390,11 @@ func newPipelineJobsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&status, "status", "", "Filter by job status: queued, running, blocked, done, or failed.")
+	cmd.Flags().StringVar(&targetFilter, "target-agent", "", "Only show jobs targeting this agent.")
+	cmd.Flags().StringVar(&instance, "instance", "", "Only show jobs owned by this instance.")
+	cmd.Flags().StringVar(&ticket, "ticket", "", "Only show jobs whose ticket id or URL contains this value.")
+	cmd.Flags().StringVar(&branch, "branch", "", "Only show jobs owning this branch.")
+	cmd.Flags().StringVar(&pr, "pr", "", "Only show jobs whose PR URL contains this value.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&all, "all", false, "List jobs across all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh pipeline jobs until interrupted.")

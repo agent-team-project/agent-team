@@ -2153,6 +2153,8 @@ instances = ["platform-worker"]
 			Target:    "worker",
 			Instance:  "worker-squ-901",
 			Status:    job.StatusRunning,
+			Branch:    "worktree-worker-squ-901",
+			PR:        "https://github.com/acme/repo/pull/901",
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
@@ -2203,6 +2205,38 @@ instances = ["platform-worker"]
 	}
 	if len(jobs) != 1 || jobs[0].ID != "squ-901" {
 		t.Fatalf("team jobs runtime = %+v", jobs)
+	}
+
+	ownerFilters := NewRootCmd()
+	ownerFiltersOut, ownerFiltersErr := &bytes.Buffer{}, &bytes.Buffer{}
+	ownerFilters.SetOut(ownerFiltersOut)
+	ownerFilters.SetErr(ownerFiltersErr)
+	ownerFilters.SetArgs([]string{"team", "jobs", "delivery", "--repo", root, "--target-agent", "manager", "--instance", "manager", "--ticket", "SQU-902", "--json"})
+	if err := ownerFilters.Execute(); err != nil {
+		t.Fatalf("team jobs owner filters: %v\nstderr=%s", err, ownerFiltersErr.String())
+	}
+	jobs = nil
+	if err := json.Unmarshal(ownerFiltersOut.Bytes(), &jobs); err != nil {
+		t.Fatalf("decode team jobs owner filters: %v\nbody=%s", err, ownerFiltersOut.String())
+	}
+	if len(jobs) != 1 || jobs[0].ID != "squ-902" {
+		t.Fatalf("team jobs owner filter rows = %+v", jobs)
+	}
+
+	branchPR := NewRootCmd()
+	branchPROut, branchPRErr := &bytes.Buffer{}, &bytes.Buffer{}
+	branchPR.SetOut(branchPROut)
+	branchPR.SetErr(branchPRErr)
+	branchPR.SetArgs([]string{"team", "jobs", "delivery", "--repo", root, "--branch", "worktree-worker-squ-901", "--pr", "/901", "--json"})
+	if err := branchPR.Execute(); err != nil {
+		t.Fatalf("team jobs branch/pr filters: %v\nstderr=%s", err, branchPRErr.String())
+	}
+	jobs = nil
+	if err := json.Unmarshal(branchPROut.Bytes(), &jobs); err != nil {
+		t.Fatalf("decode team jobs branch/pr filters: %v\nbody=%s", err, branchPROut.String())
+	}
+	if len(jobs) != 1 || jobs[0].ID != "squ-901" {
+		t.Fatalf("team jobs branch/pr rows = %+v", jobs)
 	}
 
 	runtimeSort := NewRootCmd()

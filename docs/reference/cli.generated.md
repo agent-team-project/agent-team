@@ -4643,22 +4643,27 @@ agent-team pipeline jobs [<pipeline>|--all] [flags]
 Flags:
 
 ```text
-      --active-hold         Only show held jobs whose hold is still active or has no deadline.
-      --all                 List jobs across all pipelines. This is the default when no pipeline is passed.
-      --expired-hold        Only show held jobs whose hold_until has passed.
-      --format string       Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.
-      --held                Only show held jobs.
-      --interval duration   Refresh interval for --watch. (default 2s)
-      --json                Emit jobs as JSON.
-      --limit int           Limit rows after filtering and sorting; 0 means no limit.
-      --no-clear            With --watch, append snapshots instead of redrawing the terminal.
-      --repo string         Repo root containing .agent_team. (default "<repo>")
-      --runtime strings     Only show jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.
-      --sort string         Sort jobs by id, status, target, ticket, created, updated, instance, runtime, branch, or pr. (default "id")
-      --status string       Filter by job status: queued, running, blocked, done, or failed.
-      --summary             Show aggregate pipeline job counts instead of job rows.
-      --unheld              Only show jobs that are not held.
-  -w, --watch               Refresh pipeline jobs until interrupted.
+      --active-hold           Only show held jobs whose hold is still active or has no deadline.
+      --all                   List jobs across all pipelines. This is the default when no pipeline is passed.
+      --branch string         Only show jobs owning this branch.
+      --expired-hold          Only show held jobs whose hold_until has passed.
+      --format string         Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.
+      --held                  Only show held jobs.
+      --instance string       Only show jobs owned by this instance.
+      --interval duration     Refresh interval for --watch. (default 2s)
+      --json                  Emit jobs as JSON.
+      --limit int             Limit rows after filtering and sorting; 0 means no limit.
+      --no-clear              With --watch, append snapshots instead of redrawing the terminal.
+      --pr string             Only show jobs whose PR URL contains this value.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --runtime strings       Only show jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.
+      --sort string           Sort jobs by id, status, target, ticket, created, updated, instance, runtime, branch, or pr. (default "id")
+      --status string         Filter by job status: queued, running, blocked, done, or failed.
+      --summary               Show aggregate pipeline job counts instead of job rows.
+      --target-agent string   Only show jobs targeting this agent.
+      --ticket string         Only show jobs whose ticket id or URL contains this value.
+      --unheld                Only show jobs that are not held.
+  -w, --watch                 Refresh pipeline jobs until interrupted.
 ```
 
 ## `agent-team pipeline logs`
@@ -7753,21 +7758,26 @@ agent-team team jobs <team> [flags]
 Flags:
 
 ```text
-      --active-hold         Only show held jobs whose hold is still active or has no deadline.
-      --expired-hold        Only show held jobs whose hold_until has passed.
-      --format string       Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.
-      --held                Only show held jobs.
-      --interval duration   Refresh interval for --watch. (default 2s)
-      --json                Emit team jobs as JSON.
-      --limit int           Limit rows after filtering and sorting; 0 means no limit.
-      --no-clear            With --watch, append snapshots instead of redrawing the terminal.
-      --repo string         Repo root containing .agent_team. (default "<repo>")
-      --runtime strings     Only show team-owned jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.
-      --sort string         Sort jobs by id, status, target, ticket, created, updated, instance, runtime, branch, or pr. (default "id")
-      --status string       Filter by job status: queued, running, blocked, done, or failed.
-      --summary             Show aggregate team job counts instead of job rows.
-      --unheld              Only show jobs that are not held.
-  -w, --watch               Refresh team jobs until interrupted.
+      --active-hold           Only show held jobs whose hold is still active or has no deadline.
+      --branch string         Only show jobs owning this branch.
+      --expired-hold          Only show held jobs whose hold_until has passed.
+      --format string         Render each job with a Go template, e.g. '{{.ID}} {{.Status}}'.
+      --held                  Only show held jobs.
+      --instance string       Only show jobs owned by this instance.
+      --interval duration     Refresh interval for --watch. (default 2s)
+      --json                  Emit team jobs as JSON.
+      --limit int             Limit rows after filtering and sorting; 0 means no limit.
+      --no-clear              With --watch, append snapshots instead of redrawing the terminal.
+      --pr string             Only show jobs whose PR URL contains this value.
+      --repo string           Repo root containing .agent_team. (default "<repo>")
+      --runtime strings       Only show team-owned jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.
+      --sort string           Sort jobs by id, status, target, ticket, created, updated, instance, runtime, branch, or pr. (default "id")
+      --status string         Filter by job status: queued, running, blocked, done, or failed.
+      --summary               Show aggregate team job counts instead of job rows.
+      --target-agent string   Only show jobs targeting this agent.
+      --ticket string         Only show jobs whose ticket id or URL contains this value.
+      --unheld                Only show jobs that are not held.
+  -w, --watch                 Refresh team jobs until interrupted.
 ```
 
 ## `agent-team team logs`

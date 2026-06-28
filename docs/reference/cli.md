@@ -228,7 +228,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline snapshot <pipeline>` | Capture one pipeline's status, provenance, explained jobs, inboxes, queue/outbox ownership including quarantine, dry-run advance previews, and formatted summary fields |
 | `agent-team pipeline next` | Print or watch recommended pipeline actions; use `--commands` for one selected repo-scoped action command per line |
 | `agent-team pipeline wait [<pipeline>]` | Wait for pipeline jobs to reach a lifecycle status, event, or next-step state/stage |
-| `agent-team pipeline jobs [<pipeline>]` | List, summarize, or watch pipeline jobs; filter held state, hold deadlines, mixed-runtime ownership, sort rows, and cap output with `--limit` |
+| `agent-team pipeline jobs [<pipeline>]` | List, summarize, or watch pipeline jobs; filter ownership metadata, held state, hold deadlines, mixed-runtime ownership, sort rows, and cap output with `--limit` |
 | `agent-team pipeline ready` | List or watch ready steps; filter by `--step`, sort by `--sort`, cap rows with `--limit`, or print one scoped action per line with `--commands` |
 | `agent-team pipeline hold <pipeline>` | Hold matching pipeline jobs without changing lifecycle status; add `--for` or `--until` for a deadline, or `--dry-run --commands` for the apply command |
 | `agent-team pipeline release <pipeline>` | Release held jobs in a pipeline; add `--expired` to release only elapsed deadlines or `--dry-run --commands` for the apply command |
@@ -289,7 +289,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team sync <team>` | Reconcile one team's declared persistent instances; add `--dry-run --commands` to print the matching team sync apply command when the preview has actionable work |
 | `agent-team team prune <team>` | Remove finished team-owned instances; add `--dry-run --commands` to print the matching team prune apply command when the preview has actionable work |
 | `agent-team team send <team>` | Send a mailbox message to team-owned daemon-known instances; add `--dry-run --commands` to print the matching scoped send apply command |
-| `agent-team team jobs <team>` | Scoped job list, summary, or watch view; filter held state, mixed-runtime ownership, and cap output with `--limit` |
+| `agent-team team jobs <team>` | Scoped job list, summary, or watch view; filter ownership metadata, held state, mixed-runtime ownership, and cap output with `--limit` |
 | `agent-team team job-events <team>` | Read or follow durable job audit events for team-owned jobs |
 | `agent-team team wait <team>` | Wait for team-owned instance lifecycle or phase conditions; add `--dry-run --commands` to print the scoped replay command for the selected instances |
 | `agent-team team wait-jobs <team>` | Wait for team-owned jobs to reach a lifecycle status, event, or next-step state/stage |

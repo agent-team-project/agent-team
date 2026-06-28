@@ -846,7 +846,7 @@ func TestPipelineJobsListsMatchingJobs(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	for _, j := range []*job.Job{
-		{ID: "squ-301", Ticket: "SQU-301", Target: "worker", Instance: "worker-squ-301", Pipeline: "ticket_to_pr", Status: job.StatusRunning, CreatedAt: now, UpdatedAt: now},
+		{ID: "squ-301", Ticket: "SQU-301", Target: "worker", Instance: "worker-squ-301", Pipeline: "ticket_to_pr", Status: job.StatusRunning, Branch: "worktree-worker-squ-301", PR: "https://github.com/acme/repo/pull/301", CreatedAt: now, UpdatedAt: now},
 		{ID: "squ-302", Ticket: "SQU-302", Target: "manager", Instance: "manager-squ-302", Pipeline: "nightly", Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now},
 		{ID: "squ-303", Ticket: "SQU-303", Target: "manager", Instance: "manager-squ-303", Pipeline: "ticket_to_pr", Status: job.StatusDone, CreatedAt: now, UpdatedAt: now},
 		{ID: "adhoc-301", Ticket: "ADHOC-301", Target: "worker", Instance: "worker-adhoc-301", Status: job.StatusRunning, CreatedAt: now, UpdatedAt: now},
@@ -915,6 +915,54 @@ func TestPipelineJobsListsMatchingJobs(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].ID != "squ-302" {
 		t.Fatalf("pipeline --all queued rows = %+v", rows)
+	}
+
+	allTicketCmd := NewRootCmd()
+	allTicketOut, allTicketErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allTicketCmd.SetOut(allTicketOut)
+	allTicketCmd.SetErr(allTicketErr)
+	allTicketCmd.SetArgs([]string{"pipeline", "jobs", "--all", "--repo", root, "--ticket", "SQU-302", "--json"})
+	if err := allTicketCmd.Execute(); err != nil {
+		t.Fatalf("pipeline jobs --ticket: %v\nstderr=%s", err, allTicketErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(allTicketOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline jobs ticket json: %v\nbody=%s", err, allTicketOut.String())
+	}
+	if len(rows) != 1 || rows[0].ID != "squ-302" {
+		t.Fatalf("pipeline ticket rows = %+v", rows)
+	}
+
+	ownerFiltersCmd := NewRootCmd()
+	ownerFiltersOut, ownerFiltersErr := &bytes.Buffer{}, &bytes.Buffer{}
+	ownerFiltersCmd.SetOut(ownerFiltersOut)
+	ownerFiltersCmd.SetErr(ownerFiltersErr)
+	ownerFiltersCmd.SetArgs([]string{"pipeline", "jobs", "ticket_to_pr", "--repo", root, "--target-agent", "manager", "--instance", "manager-squ-303", "--ticket", "303", "--json"})
+	if err := ownerFiltersCmd.Execute(); err != nil {
+		t.Fatalf("pipeline jobs owner filters: %v\nstderr=%s", err, ownerFiltersErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(ownerFiltersOut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline jobs owner filters json: %v\nbody=%s", err, ownerFiltersOut.String())
+	}
+	if len(rows) != 1 || rows[0].ID != "squ-303" {
+		t.Fatalf("pipeline owner filter rows = %+v", rows)
+	}
+
+	branchPRCmd := NewRootCmd()
+	branchPROut, branchPRErr := &bytes.Buffer{}, &bytes.Buffer{}
+	branchPRCmd.SetOut(branchPROut)
+	branchPRCmd.SetErr(branchPRErr)
+	branchPRCmd.SetArgs([]string{"pipeline", "jobs", "ticket_to_pr", "--repo", root, "--branch", "worktree-worker-squ-301", "--pr", "/301", "--json"})
+	if err := branchPRCmd.Execute(); err != nil {
+		t.Fatalf("pipeline jobs branch/pr filters: %v\nstderr=%s", err, branchPRErr.String())
+	}
+	rows = nil
+	if err := json.Unmarshal(branchPROut.Bytes(), &rows); err != nil {
+		t.Fatalf("decode pipeline jobs branch/pr json: %v\nbody=%s", err, branchPROut.String())
+	}
+	if len(rows) != 1 || rows[0].ID != "squ-301" {
+		t.Fatalf("pipeline branch/pr rows = %+v", rows)
 	}
 
 	formatCmd := NewRootCmd()

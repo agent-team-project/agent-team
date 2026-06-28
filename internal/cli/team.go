@@ -1133,6 +1133,11 @@ func newTeamJobsCmd() *cobra.Command {
 	var (
 		repo           string
 		status         string
+		targetFilter   string
+		instance       string
+		ticket         string
+		branch         string
+		pr             string
 		sortBy         string
 		runtimeFilters []string
 		watch          bool
@@ -1191,19 +1196,15 @@ func newTeamJobsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team jobs: %v\n", err)
 				return exitErr(2)
 			}
-			var statusFilter job.Status
-			if strings.TrimSpace(status) != "" {
-				statusFilter, err = job.ParseStatus(status)
-				if err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team jobs: %v\n", err)
-					return exitErr(2)
-				}
-			}
-			runtimes, err := lifecycleRuntimeFilterSet(runtimeFilters)
+			filters, err := newJobListFilters(status, targetFilter, instance, "", ticket, branch, pr, runtimeFilters)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team jobs: %v\n", err)
 				return exitErr(2)
 			}
+			filters.Held = jobHeldFilter(held, unheld)
+			filters.HoldExpired = jobHoldExpiredFilter(expiredHold, activeHold)
+			filters.Sort = sortMode
+			filters.Limit = limit
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -1211,9 +1212,9 @@ func newTeamJobsCmd() *cobra.Command {
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
-				return runTeamJobsWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], statusFilter, sortMode, limit, runtimes, jobHeldFilter(held, unheld), jobHoldExpiredFilter(expiredHold, activeHold), summary, jsonOut, tmpl, interval, !noClear && !jsonOut)
+				return runTeamJobsWatch(ctx, cmd.OutOrStdout(), teamDir, args[0], filters, summary, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
-			if err := runTeamJobs(cmd.OutOrStdout(), teamDir, args[0], statusFilter, sortMode, limit, runtimes, jobHeldFilter(held, unheld), jobHoldExpiredFilter(expiredHold, activeHold), summary, jsonOut, tmpl); err != nil {
+			if err := runTeamJobs(cmd.OutOrStdout(), teamDir, args[0], filters, summary, jsonOut, tmpl); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team jobs: %v\n", err)
 				return exitErr(1)
 			}
@@ -1222,6 +1223,11 @@ func newTeamJobsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&status, "status", "", "Filter by job status: queued, running, blocked, done, or failed.")
+	cmd.Flags().StringVar(&targetFilter, "target-agent", "", "Only show jobs targeting this agent.")
+	cmd.Flags().StringVar(&instance, "instance", "", "Only show jobs owned by this instance.")
+	cmd.Flags().StringVar(&ticket, "ticket", "", "Only show jobs whose ticket id or URL contains this value.")
+	cmd.Flags().StringVar(&branch, "branch", "", "Only show jobs owning this branch.")
+	cmd.Flags().StringVar(&pr, "pr", "", "Only show jobs whose PR URL contains this value.")
 	cmd.Flags().StringVar(&sortBy, "sort", "id", "Sort jobs by id, status, target, ticket, created, updated, instance, runtime, branch, or pr.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show team-owned jobs whose instance metadata has this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh team jobs until interrupted.")
@@ -1297,7 +1303,7 @@ func newTeamJobEventsCmd() *cobra.Command {
 			}
 			teamName := strings.TrimSpace(args[0])
 			loadJobs := func() ([]*job.Job, error) {
-				return collectTeamJobs(teamDir, teamName, "", "id", 0, nil, nil, nil)
+				return collectTeamJobs(teamDir, teamName, jobListFilters{Sort: "id"})
 			}
 			if follow {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -8294,7 +8300,7 @@ func addTeamJobHealth(result *healthResult, teamDir string, top *topology.Topolo
 	return nil
 }
 
-func collectTeamJobs(teamDir, name string, status job.Status, sortMode string, limit int, runtimes map[string]bool, heldFilter *bool, holdExpiredFilter *bool) ([]*job.Job, error) {
+func collectTeamJobs(teamDir, name string, filters jobListFilters) ([]*job.Job, error) {
 	top, team, err := loadTopologyTeam(teamDir, name)
 	if err != nil {
 		return nil, err
@@ -8304,57 +8310,26 @@ func collectTeamJobs(teamDir, name string, status job.Status, sortMode string, l
 		return nil, err
 	}
 	owned := teamJobs(top, team, jobs)
-	if status != "" {
-		filtered := owned[:0]
-		for _, j := range owned {
-			if j.Status == status {
-				filtered = append(filtered, j)
-			}
-		}
-		owned = filtered
+	filters.Now = time.Now().UTC()
+	runtimeByInstance, err := jobRuntimeIndex(teamDir, filters)
+	if err != nil {
+		return nil, err
 	}
-	if heldFilter != nil {
-		filtered := owned[:0]
-		for _, j := range owned {
-			if j.Held == *heldFilter {
-				filtered = append(filtered, j)
-			}
+	filtered := owned[:0]
+	for _, j := range owned {
+		if jobMatchesFilters(j, filters) && jobMatchesRuntimeFilter(j, filters, runtimeByInstance) {
+			filtered = append(filtered, j)
 		}
-		owned = filtered
 	}
-	if holdExpiredFilter != nil {
-		filtered := owned[:0]
-		now := time.Now().UTC()
-		for _, j := range owned {
-			if jobHoldExpirationMatches(j, *holdExpiredFilter, now) {
-				filtered = append(filtered, j)
-			}
-		}
-		owned = filtered
-	}
-	var runtimeByInstance map[string]string
-	if len(runtimes) > 0 {
-		runtimeByInstance, err = jobRuntimeIndex(teamDir, jobListFilters{Runtimes: runtimes})
-		if err != nil {
-			return nil, err
-		}
-		filtered := owned[:0]
-		for _, j := range owned {
-			if jobMatchesRuntimeFilter(j, jobListFilters{Runtimes: runtimes}, runtimeByInstance) {
-				filtered = append(filtered, j)
-			}
-		}
-		owned = filtered
-	}
-	if sortMode == "runtime" {
+	if filters.Sort == "runtime" {
 		if len(runtimeByInstance) == 0 {
 			runtimeByInstance = jobRuntimeMap(teamDir)
 		}
-		sortJobsWithRuntime(owned, sortMode, runtimeByInstance)
+		sortJobsWithRuntime(filtered, filters.Sort, runtimeByInstance)
 	} else {
-		sortJobs(owned, sortMode)
+		sortJobs(filtered, filters.Sort)
 	}
-	return limitJobRows(owned, limit), nil
+	return limitJobRows(filtered, filters.Limit), nil
 }
 
 func selectedTeamWaitJobs(teamDir, name string) ([]*job.Job, error) {
@@ -8404,8 +8379,8 @@ func filterTeamWaitJobs(jobs []*job.Job, filters []string) ([]*job.Job, error) {
 	return out, nil
 }
 
-func runTeamJobs(w io.Writer, teamDir, name string, status job.Status, sortMode string, limit int, runtimes map[string]bool, heldFilter *bool, holdExpiredFilter *bool, summary bool, jsonOut bool, tmpl *template.Template) error {
-	jobs, err := collectTeamJobs(teamDir, name, status, sortMode, limit, runtimes, heldFilter, holdExpiredFilter)
+func runTeamJobs(w io.Writer, teamDir, name string, filters jobListFilters, summary bool, jsonOut bool, tmpl *template.Template) error {
+	jobs, err := collectTeamJobs(teamDir, name, filters)
 	if err != nil {
 		return err
 	}
@@ -8420,7 +8395,7 @@ func runTeamJobs(w io.Writer, teamDir, name string, status job.Status, sortMode 
 	return renderTeamJobs(w, teamDir, jobs, jsonOut, tmpl)
 }
 
-func runTeamJobsWatch(ctx context.Context, w io.Writer, teamDir, name string, status job.Status, sortMode string, limit int, runtimes map[string]bool, heldFilter *bool, holdExpiredFilter *bool, summary bool, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
+func runTeamJobsWatch(ctx context.Context, w io.Writer, teamDir, name string, filters jobListFilters, summary bool, jsonOut bool, tmpl *template.Template, interval time.Duration, clear bool) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
@@ -8432,7 +8407,7 @@ func runTeamJobsWatch(ctx context.Context, w io.Writer, teamDir, name string, st
 				return err
 			}
 		}
-		if err := runTeamJobs(w, teamDir, name, status, sortMode, limit, runtimes, heldFilter, holdExpiredFilter, summary, jsonOut, tmpl); err != nil {
+		if err := runTeamJobs(w, teamDir, name, filters, summary, jsonOut, tmpl); err != nil {
 			return err
 		}
 		if !waitForWatchTick(ctx, ticker.C) {
