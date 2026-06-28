@@ -375,6 +375,22 @@ func TestAttach_DryRunDoesNotStopOrExec(t *testing.T) {
 			t.Fatalf("dry-run output missing %q:\n%s", want, body)
 		}
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"attach", "manager", "--target", env.target, "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("attach --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "attach", "--target", env.target, "manager"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("attach --dry-run --commands = %q, want %q", got, wantCommand)
+	}
+	if cap.called {
+		t.Fatal("execClaudeAttach should not run during commands dry-run")
+	}
 }
 
 func TestAttach_DryRunNoResumePreview(t *testing.T) {
@@ -462,6 +478,23 @@ func TestAttach_DryRunUnsupportedCodexShowsUnmanagedResume(t *testing.T) {
 			t.Fatalf("dry-run output missing %q:\n%s", want, body)
 		}
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"attach", "codex-worker", "--target", env.target, "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("attach codex --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommands := strings.Join([]string{
+		"codex resume legacy-session",
+		strings.Join(shellQuoteArgs([]string{"agent-team", "logs", "--target", env.target, "codex-worker", "--follow"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "logs", "--target", env.target, "codex-worker", "--last-message"}), " "),
+	}, "\n")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommands {
+		t.Fatalf("attach codex --dry-run --commands = %q, want %q", got, wantCommands)
+	}
 	got, err := daemon.ReadMetadata(daemon.DaemonRoot(env.teamDir), "codex-worker")
 	if err != nil {
 		t.Fatalf("read metadata: %v", err)
@@ -487,6 +520,19 @@ func TestAttach_DryRunRequiresDirectAttachMode(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "--dry-run requires an instance name") {
 		t.Fatalf("stderr = %q", errOut.String())
+	}
+
+	commands := NewRootCmd()
+	commandsErr := &bytes.Buffer{}
+	commands.SetOut(&bytes.Buffer{})
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"attach", "manager", "--commands"})
+	err = commands.Execute()
+	if err == nil {
+		t.Fatal("expected commands without dry-run to fail")
+	}
+	if !strings.Contains(commandsErr.String(), "--commands requires --dry-run") {
+		t.Fatalf("stderr = %q", commandsErr.String())
 	}
 }
 

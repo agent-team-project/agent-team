@@ -7642,6 +7642,22 @@ func TestJobAttachResolvesOwningInstance(t *testing.T) {
 	cap, restore := captureAttachExec(t, nil)
 	defer restore()
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "attach", "SQU-55", "--repo", env.target, "--dry-run", "--commands", "--no-resume"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("job attach --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "attach", "--repo", env.target, "squ-55", "--no-resume"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("job attach --dry-run --commands = %q, want %q", got, wantCommand)
+	}
+	if cap.called {
+		t.Fatal("execClaudeAttach should not run during job attach commands dry-run")
+	}
+
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
@@ -7752,6 +7768,23 @@ func TestJobAttachDryRunUnsupportedCodexShowsJobFallbacks(t *testing.T) {
 	if !strings.Contains(aliasOut.String(), "command:              codex resume codex-job-session") {
 		t.Fatalf("job exec alias dry-run missing resume command:\n%s", aliasOut.String())
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "attach", "SQU-57", "--repo", env.target, "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("job attach codex --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommands := strings.Join([]string{
+		"codex resume codex-job-session",
+		strings.Join(shellQuoteArgs([]string{"agent-team", "job", "logs", "--repo", env.target, "squ-57", "--follow"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "job", "logs", "--repo", env.target, "squ-57", "--last-message"}), " "),
+	}, "\n")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommands {
+		t.Fatalf("job attach codex --dry-run --commands = %q, want %q", got, wantCommands)
+	}
 }
 
 func TestJobAttachDryRunStepShowsStepFallbacks(t *testing.T) {
@@ -7827,6 +7860,23 @@ func TestJobAttachDryRunStepShowsStepFallbacks(t *testing.T) {
 			t.Fatalf("job attach step dry-run missing %q:\n%s", want, body)
 		}
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "attach", "SQU-58", "--repo", env.target, "--step", "implement", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("job attach step --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommands := strings.Join([]string{
+		"codex resume codex-step-session",
+		strings.Join(shellQuoteArgs([]string{"agent-team", "job", "logs", "--repo", env.target, "squ-58", "--step", "implement", "--follow"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "job", "logs", "--repo", env.target, "squ-58", "--step", "implement", "--last-message"}), " "),
+	}, "\n")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommands {
+		t.Fatalf("job attach step --dry-run --commands = %q, want %q", got, wantCommands)
+	}
 }
 
 func TestJobAttachLogModeReadsOwningInstanceLog(t *testing.T) {
@@ -7897,6 +7947,19 @@ func TestJobAttachRequiresOwningInstance(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "has no owning instance") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+
+	commands := NewRootCmd()
+	commandsErr := &bytes.Buffer{}
+	commands.SetOut(&bytes.Buffer{})
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "attach", "squ-57", "--repo", tmp, "--commands"})
+	err := commands.Execute()
+	if err == nil {
+		t.Fatalf("job attach --commands without dry-run succeeded unexpectedly")
+	}
+	if !strings.Contains(commandsErr.String(), "--commands requires --dry-run") {
+		t.Fatalf("stderr = %q", commandsErr.String())
 	}
 }
 

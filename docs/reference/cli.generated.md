@@ -193,6 +193,7 @@ Flags:
 ```text
       --agent strings     Log compatibility mode: only attach to instances for this agent. Can repeat or comma-separate.
   -a, --all               Log compatibility mode: attach to every daemon-known instance, prefixed by instance name.
+      --commands          With --dry-run, print the matching attach or unmanaged fallback commands.
       --dry-run           Preview the interactive handoff without stopping or resuming the daemon child.
       --grep string       Log compatibility mode with --no-follow: only print log lines matching this regular expression.
   -n, --last int          Log compatibility mode: attach to the N most recently started instances (0 = disabled).
@@ -2006,6 +2007,7 @@ Aliases: `exec`
 Flags:
 
 ```text
+      --commands       With --dry-run, print the matching job attach or unmanaged fallback commands.
       --dry-run        Preview the owning instance handoff without stopping or resuming the daemon child.
       --grep string    Log mode with --no-follow: only print log lines matching this regular expression.
       --no-follow      Log mode: print the selected log tail and exit instead of following.

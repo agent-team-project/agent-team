@@ -218,10 +218,12 @@ daemon ownership:
 
 ```sh
 agent-team attach <instance> --dry-run
+agent-team attach <instance> --dry-run --commands
 ```
 
 For Codex metadata, the preview includes the unmanaged `codex resume <session>`
-command plus `logs --follow` and `logs --last-message` fallbacks. Non-dry-run
+command plus `logs --follow` and `logs --last-message` fallbacks. Add
+`--commands` when a script should receive only those command lines. Non-dry-run
 `attach` still refuses Codex managed handoff so it does not stop a child it
 cannot later supervise with the same session contract.
 

@@ -3269,6 +3269,7 @@ func newJobAttachCmd() *cobra.Command {
 		stepID   string
 		noResume bool
 		dryRun   bool
+		commands bool
 		noFollow bool
 		tail     string
 		since    string
@@ -3284,6 +3285,10 @@ func newJobAttachCmd() *cobra.Command {
 			"options such as --tail, --no-follow, --since, or --grep follows the daemon-captured log stream instead.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job attach: --commands requires --dry-run.")
+				return exitErr(2)
+			}
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
 			if err != nil {
 				return err
@@ -3317,7 +3322,19 @@ func newJobAttachCmd() *cobra.Command {
 					Grep:     grep,
 				})
 			}
-			if err := runAttach(cmd, repoRoot, instance, noResume, dryRun); err != nil {
+			if commands {
+				plan, _, err := prepareAttach(cmd, repoRoot, instance, true)
+				if err != nil {
+					return err
+				}
+				return renderJobAttachDryRunCommands(cmd.OutOrStdout(), plan, j, selection.StepID, noResume, attachCommandOptions{
+					BaseArgs:   []string{"agent-team", "job", "attach"},
+					TargetFlag: "--repo",
+					Target:     repo,
+					TargetSet:  cmd.Flags().Changed("repo"),
+				})
+			}
+			if err := runAttach(cmd, repoRoot, instance, noResume, dryRun, false, attachCommandOptions{}); err != nil {
 				return err
 			}
 			if dryRun {
@@ -3330,6 +3347,7 @@ func newJobAttachCmd() *cobra.Command {
 	cmd.Flags().StringVar(&stepID, "step", "", "Use this pipeline step's owning instance.")
 	cmd.Flags().BoolVar(&noResume, "no-resume", false, "Leave the owning instance in stopped state when the runtime exits.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the owning instance handoff without stopping or resuming the daemon child.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching job attach or unmanaged fallback commands.")
 	cmd.Flags().BoolVar(&noFollow, "no-follow", false, "Log mode: print the selected log tail and exit instead of following.")
 	cmd.Flags().StringVar(&tail, "tail", "50", "Log mode: show only the last N lines before following (0 or all = all).")
 	cmd.Flags().StringVar(&since, "since", "", "Log mode with --no-follow: only print the log if it was modified since this duration ago (for example 10m, 24h) or RFC3339 timestamp.")
@@ -3354,6 +3372,59 @@ func renderJobAttachDryRunHints(w io.Writer, teamDir string, j *job.Job, instanc
 	if lifecycleMetadataRuntimeKind(meta) == runtimebin.KindCodex {
 		fmt.Fprintf(w, "job_last_message_command: agent-team job logs %s%s --last-message\n", j.ID, stepFlag)
 	}
+}
+
+func renderJobAttachDryRunCommands(w fmtWriter, plan *attachPlan, j *job.Job, stepID string, noResume bool, opts attachCommandOptions) error {
+	if plan == nil || plan.meta == nil || j == nil {
+		return nil
+	}
+	if lifecycleMetadataSupportsManagedResume(plan.meta) {
+		args := jobAttachApplyCommandArgs(j.ID, stepID, noResume, opts)
+		_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(args), " "))
+		return err
+	}
+	if command := attachResumeCommand(plan.meta, plan.bin); command != "" {
+		if _, err := fmt.Fprintln(w, command); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(jobAttachLogsCommandArgs(j.ID, stepID, "--follow", opts)), " ")); err != nil {
+		return err
+	}
+	if lifecycleMetadataRuntimeKind(plan.meta) == runtimebin.KindCodex {
+		if _, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(jobAttachLogsCommandArgs(j.ID, stepID, "--last-message", opts)), " ")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func jobAttachApplyCommandArgs(jobID, stepID string, noResume bool, opts attachCommandOptions) []string {
+	args := append([]string{}, opts.BaseArgs...)
+	if opts.TargetSet && strings.TrimSpace(opts.Target) != "" {
+		args = append(args, attachCommandTargetFlag(opts), opts.Target)
+	}
+	args = append(args, jobID)
+	if stepID = strings.TrimSpace(stepID); stepID != "" {
+		args = append(args, "--step", stepID)
+	}
+	if noResume {
+		args = append(args, "--no-resume")
+	}
+	return args
+}
+
+func jobAttachLogsCommandArgs(jobID, stepID, logFlag string, opts attachCommandOptions) []string {
+	args := []string{"agent-team", "job", "logs"}
+	if opts.TargetSet && strings.TrimSpace(opts.Target) != "" {
+		args = append(args, attachCommandTargetFlag(opts), opts.Target)
+	}
+	args = append(args, jobID)
+	if stepID = strings.TrimSpace(stepID); stepID != "" {
+		args = append(args, "--step", stepID)
+	}
+	args = append(args, logFlag)
+	return args
 }
 
 func newJobStopCmd() *cobra.Command {

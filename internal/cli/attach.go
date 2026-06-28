@@ -36,6 +36,7 @@ func newAttachCmd() *cobra.Command {
 		target           string
 		noResume         bool
 		dryRun           bool
+		commands         bool
 		all              bool
 		latest           bool
 		last             int
@@ -71,6 +72,10 @@ func newAttachCmd() *cobra.Command {
 			"that do not support daemon-managed resume.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team attach: --commands requires --dry-run.")
+				return exitErr(2)
+			}
 			logMode := attachUsesLogMode(args, all, latest, last, statuses, runtimes, agents, phases, staleOnly, runtimeStaleOnly, unhealthy, noFollow, cmd.Flags().Changed("tail"), since, grep)
 			if logMode {
 				if dryRun {
@@ -103,12 +108,18 @@ func newAttachCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team attach: instance is required.")
 				return exitErr(2)
 			}
-			return runAttach(cmd, target, args[0], noResume, dryRun)
+			return runAttach(cmd, target, args[0], noResume, dryRun, commands, attachCommandOptions{
+				BaseArgs:   []string{"agent-team", "attach"},
+				TargetFlag: "--target",
+				Target:     target,
+				TargetSet:  cmd.Flags().Changed("target"),
+			})
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&noResume, "no-resume", false, "Leave the instance in stopped state when the runtime exits (default: re-dispatch via the daemon).")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the interactive handoff without stopping or resuming the daemon child.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching attach or unmanaged fallback commands.")
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "Log compatibility mode: attach to every daemon-known instance, prefixed by instance name.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Log compatibility mode: attach to the most recently started instance.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Log compatibility mode: attach to the N most recently started instances (0 = disabled).")
@@ -248,19 +259,32 @@ func runAttachLogMode(cmd *cobra.Command, target string, args []string, opts att
 	})
 }
 
-func runAttach(cmd *cobra.Command, target, instance string, noResume bool, dryRun bool) error {
+type attachPlan struct {
+	teamDir string
+	meta    *daemon.Metadata
+	bin     string
+}
+
+type attachCommandOptions struct {
+	BaseArgs   []string
+	TargetFlag string
+	Target     string
+	TargetSet  bool
+}
+
+func prepareAttach(cmd *cobra.Command, target, instance string, allowUnsupportedPreview bool) (*attachPlan, *daemonClient, error) {
 	teamDir, err := resolveTeamDir(cmd, target)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	dc, err := newDaemonClient(teamDir)
 	if err != nil {
 		if errors.Is(err, errDaemonNotRunning) {
 			fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: daemon is not running — start it first with `agent-team daemon start`.")
-			return exitErr(2)
+			return nil, nil, exitErr(2)
 		}
-		return err
+		return nil, nil, err
 	}
 
 	// Reject ephemeral instances: they spawn-and-exit by design and have no
@@ -270,29 +294,41 @@ func runAttach(cmd *cobra.Command, target, instance string, noResume bool, dryRu
 			fmt.Fprintf(cmd.ErrOrStderr(),
 				"agent-team: %q is declared ephemeral; cannot attach. Use `agent-team logs %s --follow` to watch its output.\n",
 				instance, instance)
-			return exitErr(2)
+			return nil, nil, exitErr(2)
 		}
 	}
 
 	meta, err := lookupInstanceMeta(dc, instance)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
-		return exitErr(2)
+		return nil, nil, exitErr(2)
 	}
 	if meta.SessionID == "" {
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"agent-team: %q has no session id recorded; cannot attach. Has it been dispatched yet?\n",
 			instance)
-		return exitErr(2)
+		return nil, nil, exitErr(2)
 	}
 
-	bin, err := resolveAttachRuntimeBinary(cmd, teamDir, meta, dryRun)
+	bin, err := resolveAttachRuntimeBinary(cmd, teamDir, meta, allowUnsupportedPreview)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &attachPlan{teamDir: teamDir, meta: meta, bin: bin}, dc, nil
+}
+
+func runAttach(cmd *cobra.Command, target, instance string, noResume bool, dryRun bool, commands bool, commandOpts attachCommandOptions) error {
+	plan, dc, err := prepareAttach(cmd, target, instance, dryRun)
 	if err != nil {
 		return err
 	}
+	meta := plan.meta
 
 	if dryRun {
-		renderAttachDryRun(cmd.OutOrStdout(), instance, meta, bin, noResume)
+		if commands {
+			return renderAttachDryRunCommands(cmd.OutOrStdout(), instance, meta, plan.bin, noResume, commandOpts)
+		}
+		renderAttachDryRun(cmd.OutOrStdout(), instance, meta, plan.bin, noResume)
 		return nil
 	}
 
@@ -307,7 +343,7 @@ func runAttach(cmd *cobra.Command, target, instance string, noResume bool, dryRu
 	fmt.Fprintf(cmd.OutOrStdout(),
 		"agent-team: attaching to %s (session=%s)...\n", instance, meta.SessionID)
 
-	resumeErr := execClaudeAttach(cmd, bin, []string{"--resume", meta.SessionID}, target)
+	resumeErr := execClaudeAttach(cmd, plan.bin, []string{"--resume", meta.SessionID}, target)
 
 	if noResume {
 		fmt.Fprintf(cmd.OutOrStdout(),
@@ -328,6 +364,61 @@ func runAttach(cmd *cobra.Command, target, instance string, noResume bool, dryRu
 	fmt.Fprintf(cmd.OutOrStdout(),
 		"agent-team: %s resumed under daemon.\n", instance)
 	return resumeErr
+}
+
+func renderAttachDryRunCommands(w fmtWriter, instance string, meta *daemon.Metadata, bin string, noResume bool, opts attachCommandOptions) error {
+	if lifecycleMetadataSupportsManagedResume(meta) {
+		args := attachApplyCommandArgs(instance, noResume, opts)
+		_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(args), " "))
+		return err
+	}
+	if command := attachResumeCommand(meta, bin); command != "" {
+		if _, err := fmt.Fprintln(w, command); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(instance) == "" {
+		return nil
+	}
+	logsArgs := attachLogsCommandArgs(instance, "--follow", opts)
+	if _, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(logsArgs), " ")); err != nil {
+		return err
+	}
+	if lifecycleMetadataRuntimeKind(meta) == runtimebin.KindCodex {
+		lastMessageArgs := attachLogsCommandArgs(instance, "--last-message", opts)
+		if _, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(lastMessageArgs), " ")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func attachApplyCommandArgs(instance string, noResume bool, opts attachCommandOptions) []string {
+	args := append([]string{}, opts.BaseArgs...)
+	if opts.TargetSet && strings.TrimSpace(opts.Target) != "" {
+		args = append(args, attachCommandTargetFlag(opts), opts.Target)
+	}
+	args = append(args, instance)
+	if noResume {
+		args = append(args, "--no-resume")
+	}
+	return args
+}
+
+func attachLogsCommandArgs(instance, logFlag string, opts attachCommandOptions) []string {
+	args := []string{"agent-team", "logs"}
+	if opts.TargetSet && strings.TrimSpace(opts.Target) != "" {
+		args = append(args, attachCommandTargetFlag(opts), opts.Target)
+	}
+	args = append(args, instance, logFlag)
+	return args
+}
+
+func attachCommandTargetFlag(opts attachCommandOptions) string {
+	if flag := strings.TrimSpace(opts.TargetFlag); flag != "" {
+		return flag
+	}
+	return "--target"
 }
 
 func resolveAttachRuntimeBinary(cmd *cobra.Command, teamDir string, meta *daemon.Metadata, allowUnsupportedPreview bool) (string, error) {
@@ -413,14 +504,25 @@ func attachRuntimeBinaryFromMetadata(meta *daemon.Metadata) string {
 }
 
 func attachResumeCommand(meta *daemon.Metadata, bin string) string {
+	args := attachResumeCommandArgs(meta, bin)
+	if len(args) == 0 {
+		return ""
+	}
+	return strings.Join(shellQuoteArgs(args), " ")
+}
+
+func attachResumeCommandArgs(meta *daemon.Metadata, bin string) []string {
 	sessionID := ""
 	if meta != nil {
 		sessionID = strings.TrimSpace(meta.SessionID)
 	}
-	if lifecycleMetadataRuntimeKind(meta) == runtimebin.KindCodex {
-		return strings.TrimSpace(bin + " resume " + sessionID)
+	if sessionID == "" {
+		return nil
 	}
-	return strings.TrimSpace(bin + " --resume " + sessionID)
+	if lifecycleMetadataRuntimeKind(meta) == runtimebin.KindCodex {
+		return []string{bin, "resume", sessionID}
+	}
+	return []string{bin, "--resume", sessionID}
 }
 
 // lookupInstanceMeta fetches the daemon's metadata for one instance. Returns a

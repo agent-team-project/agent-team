@@ -238,9 +238,9 @@ agent-team inspect [<instance>...] [--all] [--latest | --last N] [--agent manage
                                                 # show runtime metadata, state, status, and topology; reads persisted runtime metadata if the daemon is down
 agent-team logs [<instance> | --latest | --last N] [--all | --agent manager] [--status running] [--runtime codex] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--no-prefix] [--last-message] [--clean] [--list [--format '{{.Instance}} {{.LogPath}}'] [--json]] [--daemon] [-f] [--tail N|all] [--since 10m] [--grep 'error|panic']
                                                 # list/show/follow instance or daemon logs; --last-message shows the clean Codex final response sidecar, --clean filters known Codex diagnostic noise from raw logs
-agent-team attach <instance> [--dry-run] [--no-resume]
-                                                # preview or run an interactive managed-resume handoff; daemon resumes supervision afterward
-agent-team exec <instance> [--dry-run] [--no-resume]
+agent-team attach <instance> [--dry-run] [--commands] [--no-resume]
+                                                # preview or run an interactive managed-resume handoff; dry-run can print apply or unmanaged fallback commands
+agent-team exec <instance> [--dry-run] [--commands] [--no-resume]
                                                 # Docker-like alias for attach
 agent-team events [-f] [--tail N] [--latest | --last N] [--since 24h] [--summary] [--runtime codex] [--format '{{.Action}} {{.Instance}}'] [--action dispatch] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--json]
                                                 # show/follow lifecycle events; phase/stale/unhealthy narrow by current status.toml; reads local history if the daemon is down

@@ -54,14 +54,17 @@ See [Runtime Profiles](./profiles.md) for the Claude/Codex capability matrix.
 agent-team attach manager
 agent-team exec manager
 agent-team attach manager --dry-run
+agent-team attach manager --dry-run --commands
 agent-team attach manager --no-resume
 agent-team job attach squ-42 --dry-run
+agent-team job attach squ-42 --dry-run --commands
 ```
 
 The daemon stops supervising the child, the CLI execs the runtime in the terminal, and the daemon resumes supervision afterward unless `--no-resume` is provided.
 `agent-team exec` is a Docker-like alias for `agent-team attach`; it does not
 run arbitrary shell commands inside an agent workspace.
 Use `--dry-run` to preview the session id, runtime binary, stop behavior, command, and daemon resume step without changing daemon state.
+Add `--commands` to that dry-run when scripts need only command lines. Managed runtimes print the matching `agent-team attach` or `agent-team job attach` apply command; Codex-managed daemon metadata prints the unmanaged `codex resume <session>` command plus log fallbacks.
 Interactive daemon attach requires a managed-resume-capable runtime. For Codex-managed daemon runs, non-dry-run attach refuses the handoff, while `attach --dry-run` prints the unmanaged `codex resume <session>` command plus `logs --follow` and `logs --last-message` fallbacks.
 When the dry-run starts from `job attach`, the output also includes `job logs`
 and `job logs --last-message` fallbacks so operators can remain in the job
