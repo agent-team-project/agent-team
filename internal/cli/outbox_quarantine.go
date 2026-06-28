@@ -139,6 +139,7 @@ func newOutboxQuarantineLsCmd() *cobra.Command {
 		sortBy       string
 		limit        int
 		summary      bool
+		commands     bool
 		jsonOut      bool
 		format       string
 	)
@@ -158,6 +159,18 @@ func newOutboxQuarantineLsCmd() *cobra.Command {
 			}
 			if summary && format != "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox quarantine ls: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox quarantine ls: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox quarantine ls: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox quarantine ls: --commands cannot be combined with --summary.")
 				return exitErr(2)
 			}
 			if summary && (cmd.Flags().Changed("sort") || limit > 0) {
@@ -193,6 +206,9 @@ func newOutboxQuarantineLsCmd() *cobra.Command {
 				return renderOutboxQuarantineSummary(cmd.OutOrStdout(), summarizeOutboxQuarantineItems(items), jsonOut)
 			}
 			items = prepareOutboxQuarantineItems(items, sortMode, limit)
+			if commands {
+				return renderOutboxQuarantineListCommands(cmd.OutOrStdout(), items, nil, operatorCommandScopeFromCommand(cmd, target, "target"))
+			}
 			return renderOutboxQuarantineList(cmd.OutOrStdout(), items, jsonOut, formatTemplate)
 		},
 	}
@@ -206,6 +222,7 @@ func newOutboxQuarantineLsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "path", outboxQuarantineSortFlagHelp)
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate quarantined outbox-file counts instead of rows.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended commands from the visible quarantined outbox files, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit quarantined outbox files as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each quarantined outbox file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.")
 	return cmd
@@ -1158,6 +1175,38 @@ func renderOutboxQuarantineShow(w io.Writer, result outboxQuarantineShowResult, 
 
 func renderOutboxQuarantineCommands(w io.Writer, result outboxQuarantineShowResult, scope operatorCommandScope) error {
 	return renderOperatorActionCommands(w, outboxQuarantineShowActions(result), scope)
+}
+
+type outboxQuarantineActionResolver func(outboxQuarantineItem) []string
+
+func renderOutboxQuarantineListCommands(w io.Writer, items []outboxQuarantineItem, actions outboxQuarantineActionResolver, scope operatorCommandScope) error {
+	out := make([]string, 0, len(items)*2)
+	for _, item := range items {
+		out = append(out, outboxQuarantineItemResolvedActions(item, actions)...)
+	}
+	return renderOperatorActionCommands(w, out, scope)
+}
+
+func outboxQuarantineItemResolvedActions(item outboxQuarantineItem, actions outboxQuarantineActionResolver) []string {
+	if actions != nil {
+		return actions(item)
+	}
+	return outboxQuarantineItemActions(item)
+}
+
+func outboxQuarantineItemActions(item outboxQuarantineItem) []string {
+	return outboxQuarantineShowActions(outboxQuarantineShowResult{outboxQuarantineItem: item})
+}
+
+func scopedOutboxQuarantineActionResolver(scopeJob, pipeline, team string) outboxQuarantineActionResolver {
+	return func(item outboxQuarantineItem) []string {
+		return outboxQuarantineShowActions(outboxQuarantineShowResult{
+			outboxQuarantineItem: item,
+			ScopeJob:             strings.TrimSpace(scopeJob),
+			Pipeline:             strings.TrimSpace(pipeline),
+			Team:                 strings.TrimSpace(team),
+		})
+	}
 }
 
 func outboxQuarantineShowActions(result outboxQuarantineShowResult) []string {

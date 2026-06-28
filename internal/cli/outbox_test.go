@@ -709,12 +709,24 @@ func TestOutboxDoctorFormatValidation(t *testing.T) {
 		{[]string{"team", "outbox", "delivery", "--commands", "--watch"}, "--commands cannot be combined with --watch"},
 		{[]string{"team", "outbox", "show", "delivery", "outbox-b", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"team", "outbox", "show", "delivery", "outbox-b", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"outbox", "quarantine", "ls", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"outbox", "quarantine", "ls", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"outbox", "quarantine", "ls", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
 		{[]string{"outbox", "quarantine", "show", "quarantine/pending/outbox.json", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"outbox", "quarantine", "show", "quarantine/pending/outbox.json", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"job", "outbox", "quarantine", "squ-1", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"job", "outbox", "quarantine", "squ-1", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"job", "outbox", "quarantine", "squ-1", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
 		{[]string{"job", "outbox", "quarantine", "show", "squ-1", "quarantine/pending/outbox.json", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"job", "outbox", "quarantine", "show", "squ-1", "quarantine/pending/outbox.json", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"pipeline", "outbox", "quarantine", "ticket_to_pr", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"pipeline", "outbox", "quarantine", "ticket_to_pr", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"pipeline", "outbox", "quarantine", "ticket_to_pr", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
 		{[]string{"pipeline", "outbox", "quarantine", "show", "ticket_to_pr", "quarantine/pending/outbox.json", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"pipeline", "outbox", "quarantine", "show", "ticket_to_pr", "quarantine/pending/outbox.json", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"team", "outbox", "quarantine", "delivery", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"team", "outbox", "quarantine", "delivery", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"team", "outbox", "quarantine", "delivery", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
 		{[]string{"team", "outbox", "quarantine", "show", "delivery", "quarantine/pending/outbox.json", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"team", "outbox", "quarantine", "show", "delivery", "quarantine/pending/outbox.json", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
 	}
@@ -773,6 +785,21 @@ func TestOutboxQuarantineListShowRestoreDrop(t *testing.T) {
 	sort.Strings(wantPaths)
 	if len(listed) != 3 || outboxQuarantinePaths(listed) != strings.Join(wantPaths, ",") {
 		t.Fatalf("outbox quarantine list = %+v", listed)
+	}
+
+	listCommands := runRootForOutboxTest(t, "outbox", "quarantine", "ls", "--target", target, "--commands")
+	wantListCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team outbox quarantine restore " + dropPath,
+		"agent-team outbox quarantine drop " + dropPath,
+		"agent-team outbox quarantine restore " + restorablePath,
+		"agent-team outbox quarantine drop " + restorablePath,
+		"agent-team outbox quarantine drop " + invalidPath,
+	}, operatorCommandScope{Repo: target, Set: true}), "\n") + "\n"
+	if got, want := listCommands.String(), wantListCommands; got != want {
+		t.Fatalf("outbox quarantine ls --commands = %q, want %q", got, want)
+	}
+	if strings.Contains(listCommands.String(), "PATH") || strings.Contains(listCommands.String(), "RESTORABLE") {
+		t.Fatalf("outbox quarantine ls --commands included table output:\n%s", listCommands.String())
 	}
 
 	summaryOut := runRootForOutboxTest(t, "outbox", "quarantine", "ls", "--target", target, "--summary", "--json")
@@ -1467,6 +1494,22 @@ pipelines = ["ops_review"]
 		t.Fatalf("team outbox quarantine list = %+v", listed)
 	}
 
+	listCommands := runRootForOutboxTest(t, "team", "outbox", "quarantine", "delivery", "--repo", root, "--sort", "id", "--commands")
+	wantListCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team team outbox quarantine restore delivery " + instancePath,
+		"agent-team team outbox quarantine drop delivery " + instancePath,
+		"agent-team team outbox quarantine restore delivery " + restorePath,
+		"agent-team team outbox quarantine drop delivery " + restorePath,
+		"agent-team team outbox quarantine restore delivery " + filepath.Join(outboxQuarantineDir, stamp, daemon.OutboxStatePending, "outbox-team-quarantine-target.json"),
+		"agent-team team outbox quarantine drop delivery " + filepath.Join(outboxQuarantineDir, stamp, daemon.OutboxStatePending, "outbox-team-quarantine-target.json"),
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := listCommands.String(), wantListCommands; got != want {
+		t.Fatalf("team outbox quarantine --commands = %q, want %q", got, want)
+	}
+	if strings.Contains(listCommands.String(), "PATH") || strings.Contains(listCommands.String(), "RESTORABLE") {
+		t.Fatalf("team outbox quarantine --commands included table output:\n%s", listCommands.String())
+	}
+
 	summary := runRootForOutboxTest(t, "team", "outbox", "quarantine", "delivery", "--repo", root, "--summary", "--json")
 	var summaryBody outboxQuarantineSummary
 	if err := json.Unmarshal(summary.Bytes(), &summaryBody); err != nil {
@@ -1903,6 +1946,20 @@ target = "worker"
 		t.Fatalf("pipeline outbox quarantine list = %+v", listed)
 	}
 
+	listCommands := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "ticket_to_pr", "--repo", root, "--sort", "id", "--commands")
+	wantListCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team pipeline outbox quarantine restore ticket_to_pr " + instancePath,
+		"agent-team pipeline outbox quarantine drop ticket_to_pr " + instancePath,
+		"agent-team pipeline outbox quarantine restore ticket_to_pr " + restorePath,
+		"agent-team pipeline outbox quarantine drop ticket_to_pr " + restorePath,
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := listCommands.String(), wantListCommands; got != want {
+		t.Fatalf("pipeline outbox quarantine --commands = %q, want %q", got, want)
+	}
+	if strings.Contains(listCommands.String(), "PATH") || strings.Contains(listCommands.String(), "RESTORABLE") {
+		t.Fatalf("pipeline outbox quarantine --commands included table output:\n%s", listCommands.String())
+	}
+
 	summary := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "ticket_to_pr", "--repo", root, "--summary", "--json")
 	var summaryBody outboxQuarantineSummary
 	if err := json.Unmarshal(summary.Bytes(), &summaryBody); err != nil {
@@ -1932,6 +1989,22 @@ target = "worker"
 	}
 	if len(allListed) != 3 || allListed[0].ID != "outbox-pipeline-quarantine-instance" || allListed[1].ID != "outbox-pipeline-quarantine-other" || allListed[2].ID != "outbox-pipeline-quarantine-restore" {
 		t.Fatalf("all pipeline outbox quarantine list = %+v", allListed)
+	}
+
+	allCommands := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "--repo", root, "--sort", "id", "--commands")
+	wantAllCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team pipeline outbox quarantine restore ticket_to_pr " + instancePath,
+		"agent-team pipeline outbox quarantine drop ticket_to_pr " + instancePath,
+		"agent-team pipeline outbox quarantine restore ops_review " + otherPath,
+		"agent-team pipeline outbox quarantine drop ops_review " + otherPath,
+		"agent-team pipeline outbox quarantine restore ticket_to_pr " + restorePath,
+		"agent-team pipeline outbox quarantine drop ticket_to_pr " + restorePath,
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := allCommands.String(), wantAllCommands; got != want {
+		t.Fatalf("all pipeline outbox quarantine --commands = %q, want %q", got, want)
+	}
+	if strings.Contains(allCommands.String(), "PATH") || strings.Contains(allCommands.String(), "RESTORABLE") {
+		t.Fatalf("all pipeline outbox quarantine --commands included table output:\n%s", allCommands.String())
 	}
 
 	show := runRootForOutboxTest(t, "pipeline", "outbox", "quarantine", "show", "ticket_to_pr", restorePath, "--repo", root, "--json")
@@ -2398,6 +2471,20 @@ func TestJobOutboxQuarantineScopesRestoreAndDrop(t *testing.T) {
 	}
 	if len(listed) != 2 || listed[0].ID != "outbox-job-quarantine-instance" || listed[1].ID != "outbox-job-quarantine-restore" {
 		t.Fatalf("job outbox quarantine list = %+v", listed)
+	}
+
+	listCommands := runRootForOutboxTest(t, "job", "outbox", "quarantine", "squ-905", "--repo", root, "--sort", "id", "--commands")
+	wantListCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team job outbox quarantine restore squ-905 " + instancePath,
+		"agent-team job outbox quarantine drop squ-905 " + instancePath,
+		"agent-team job outbox quarantine restore squ-905 " + restorePath,
+		"agent-team job outbox quarantine drop squ-905 " + restorePath,
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got, want := listCommands.String(), wantListCommands; got != want {
+		t.Fatalf("job outbox quarantine --commands = %q, want %q", got, want)
+	}
+	if strings.Contains(listCommands.String(), "PATH") || strings.Contains(listCommands.String(), "RESTORABLE") {
+		t.Fatalf("job outbox quarantine --commands included table output:\n%s", listCommands.String())
 	}
 
 	summary := runRootForOutboxTest(t, "job", "outbox", "quarantine", "squ-905", "--repo", root, "--summary", "--json")

@@ -558,6 +558,7 @@ func newJobOutboxQuarantineCmd() *cobra.Command {
 		sortBy       string
 		limit        int
 		summary      bool
+		commands     bool
 		jsonOut      bool
 		format       string
 	)
@@ -578,6 +579,18 @@ func newJobOutboxQuarantineCmd() *cobra.Command {
 			}
 			if summary && format != "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job outbox quarantine: --format cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job outbox quarantine: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job outbox quarantine: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job outbox quarantine: --commands cannot be combined with --summary.")
 				return exitErr(2)
 			}
 			if summary && (cmd.Flags().Changed("sort") || limit > 0) {
@@ -612,6 +625,9 @@ func newJobOutboxQuarantineCmd() *cobra.Command {
 				return renderOutboxQuarantineSummary(cmd.OutOrStdout(), summarizeOutboxQuarantineItems(items), jsonOut)
 			}
 			items = prepareOutboxQuarantineItems(items, sortMode, limit)
+			if commands {
+				return renderOutboxQuarantineListCommands(cmd.OutOrStdout(), items, scopedOutboxQuarantineActionResolver(j.ID, "", ""), operatorCommandScopeFromCommand(cmd, repo, "repo"))
+			}
 			return renderOutboxQuarantineList(cmd.OutOrStdout(), items, jsonOut, formatTemplate)
 		},
 	}
@@ -624,6 +640,7 @@ func newJobOutboxQuarantineCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sortBy, "sort", "path", outboxQuarantineSortFlagHelp)
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit rows after filtering and sorting; 0 means no limit.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate job-owned quarantined outbox-file counts instead of rows.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended commands from the visible job-owned quarantined outbox files, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit quarantined outbox files as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each quarantined outbox file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.")
 	cmd.AddCommand(newJobOutboxQuarantineShowCmd())

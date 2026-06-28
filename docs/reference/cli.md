@@ -161,7 +161,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job outbox drop <job-id> <id>` | Remove one inspected job-owned outbox event |
 | `agent-team job outbox drop <job-id> --all` | Drop matching job-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--sort`, and `--limit` |
 | `agent-team job outbox prune <job-id>` | Remove old job-owned processed outbox events by default; pass `--state failed`, `pending`, or `all` for explicit cleanup and bound with `--older-than`, filters, and `--limit` |
-| `agent-team job outbox quarantine <job-id>` | List or summarize quarantined outbox files owned by one job; filter by state, type, source, or restorable state |
+| `agent-team job outbox quarantine <job-id>` | List or summarize quarantined outbox files owned by one job; filter by state, type, source, or restorable state; add `--commands` to print visible restore/drop actions |
 | `agent-team job outbox quarantine show <job-id> <path>` | Inspect one job-owned quarantined outbox file and its payload when parseable; add `--commands` to print only follow-up commands that preserve an explicit `--repo` selector |
 | `agent-team job outbox quarantine restore <job-id> <path>` | Restore one validated job-owned quarantined outbox file to the active outbox |
 | `agent-team job outbox quarantine restore <job-id> --all` | Restore matching job-owned restorable quarantined outbox files; filter, sort, and limit batch actions |
@@ -198,7 +198,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team outbox show <id>` | Inspect one outbox event and its payload; add `--commands` to print only follow-up commands that preserve the selected repo scope |
 | `agent-team outbox drain` | Ask the daemon to publish pending outbox events through topology; `--dry-run` previews locally if the daemon is down, and `--commands` prints the scoped apply command when work is ready |
 | `agent-team outbox doctor` | Validate persisted outbox files without relying on normal listing paths; `--quarantine --dry-run` previews isolating malformed active files and `--commands` prints recovery commands |
-| `agent-team outbox quarantine ls` | List or summarize quarantined outbox files; filter by state, type, source, job, or restorable state and sort/cap rows |
+| `agent-team outbox quarantine ls` | List or summarize quarantined outbox files; filter by state, type, source, job, or restorable state, sort/cap rows, or print visible restore/drop actions with `--commands` |
 | `agent-team outbox quarantine show <path>` | Inspect one quarantined outbox file and its payload when parseable; add `--commands` to print only follow-up commands that preserve the selected repo scope |
 | `agent-team outbox quarantine restore <path>` | Restore one validated quarantined outbox file to the active outbox; add `--dry-run --commands` to print the scoped apply command |
 | `agent-team outbox quarantine restore --all` | Restore matching restorable quarantined outbox files; filter, sort, and limit batch actions; add `--dry-run --commands` for a scoped apply command |
@@ -250,7 +250,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline outbox retry <pipeline> --all` | Retry matching pipeline-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--job`, `--sort`, and `--limit` |
 | `agent-team pipeline outbox drop <pipeline> --all` | Drop matching pipeline-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--job`, `--sort`, and `--limit` |
 | `agent-team pipeline outbox prune <pipeline>` | Remove old pipeline-owned processed outbox events by default; pass `--state failed`, `pending`, or `all` for explicit cleanup and bound with `--older-than`, filters, and `--limit` |
-| `agent-team pipeline outbox quarantine [<pipeline>]` | List or summarize quarantined outbox files owned by one or all pipelines; filter by state, job, or restorable state |
+| `agent-team pipeline outbox quarantine [<pipeline>]` | List or summarize quarantined outbox files owned by one or all pipelines; filter by state, job, or restorable state; add `--commands` to print visible restore/drop actions |
 | `agent-team pipeline outbox quarantine show <pipeline> <path>` | Inspect one pipeline-owned quarantined outbox file and its payload when parseable; add `--commands` to print only follow-up commands that preserve an explicit `--repo` selector |
 | `agent-team pipeline outbox quarantine restore <pipeline> <path>` | Restore one validated pipeline-owned quarantined outbox file to the active outbox |
 | `agent-team pipeline outbox quarantine restore <pipeline> --all` | Restore matching pipeline-owned restorable quarantined outbox files; filter, sort, and limit batch actions |
@@ -303,7 +303,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team outbox drop <team> <id>` | Remove one inspected team-owned outbox event |
 | `agent-team team outbox drop <team> --all` | Drop matching team-owned outbox events; filter, sort, and limit batch actions with `--state`, `--type`, `--source`, `--job`, `--sort`, and `--limit` |
 | `agent-team team outbox prune <team>` | Remove old team-owned processed outbox events by default; pass `--state failed`, `pending`, or `all` for explicit cleanup and bound with `--older-than`, filters, and `--limit` |
-| `agent-team team outbox quarantine <team>` | List or summarize quarantined outbox files owned by one team; filter by state, job, or restorable state |
+| `agent-team team outbox quarantine <team>` | List or summarize quarantined outbox files owned by one team; filter by state, job, or restorable state; add `--commands` to print visible restore/drop actions |
 | `agent-team team outbox quarantine show <team> <path>` | Inspect one team-owned quarantined outbox file and its payload when parseable; add `--commands` to print only follow-up commands that preserve an explicit `--repo` selector |
 | `agent-team team outbox quarantine restore <team> <path>` | Restore one validated team-owned quarantined outbox file to the active outbox |
 | `agent-team team outbox quarantine restore <team> --all` | Restore matching team-owned restorable quarantined outbox files; filter, sort, and limit batch actions |

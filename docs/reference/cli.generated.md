@@ -2501,6 +2501,7 @@ agent-team job outbox quarantine <job-id> [flags]
 Flags:
 
 ```text
+      --commands         Print recommended commands from the visible job-owned quarantined outbox files, one per line. agent-team follow-ups preserve the selected repo scope.
       --format string    Render each quarantined outbox file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.
       --json             Emit quarantined outbox files as JSON.
       --limit int        Limit rows after filtering and sorting; 0 means no limit.
@@ -4038,6 +4039,7 @@ agent-team outbox quarantine ls [flags]
 Flags:
 
 ```text
+      --commands         Print recommended commands from the visible quarantined outbox files, one per line. agent-team follow-ups preserve the selected repo scope.
       --format string    Render each quarantined outbox file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.
       --job strings      Filter by job id or ticket; repeat or comma-separate values.
       --json             Emit quarantined outbox files as JSON.
@@ -4787,6 +4789,7 @@ Flags:
 
 ```text
       --all              List quarantined outbox files across all pipelines. This is the default when no pipeline is passed.
+      --commands         Print recommended commands from the visible pipeline-owned quarantined outbox files, one per line. agent-team follow-ups preserve the selected repo scope.
       --format string    Render each pipeline-owned quarantined outbox file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.
       --job strings      Filter by job id or ticket; repeat or comma-separate values.
       --json             Emit pipeline-owned quarantined outbox files as JSON.
@@ -7899,6 +7902,7 @@ agent-team team outbox quarantine <team> [flags]
 Flags:
 
 ```text
+      --commands         Print recommended commands from the visible team-owned quarantined outbox files, one per line. agent-team follow-ups preserve the selected repo scope.
       --format string    Render each team-owned quarantined outbox file with a Go template, e.g. '{{.ID}} {{.Restorable}}'.
       --job strings      Filter by job id or ticket; repeat or comma-separate values.
       --json             Emit team-owned quarantined outbox files as JSON.

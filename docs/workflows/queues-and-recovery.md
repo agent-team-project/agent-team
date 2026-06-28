@@ -54,7 +54,7 @@ agent-team queue show <id>
 Use `--runtime claude|codex` to narrow active queue entries by the runtime recorded in the dispatch payload, falling back to daemon metadata when a queued item already names a concrete instance. Runtime-filtered summaries include a `runtimes` count and exclude quarantined files whose runtime cannot be known from the quarantine index.
 Use `queue watch` when a retry, drain, or repair loop is expected to change active queue rows while you are inspecting them.
 Add `--commands` to queue or outbox list views when scripts should print only the ACTION-column commands for the currently visible rows after filters, sort, and limit are applied.
-When `queue ls`, `queue show`, `queue quarantine show`, `outbox ls`, `outbox show`, `outbox quarantine show`, or top-level queue/outbox recovery commands are run with an explicit `--repo` or legacy `--target`, `--commands` output preserves that selector in emitted `agent-team` follow-ups so scripts can run from outside the target checkout.
+When `queue ls`, `queue show`, `queue quarantine show`, `outbox ls`, `outbox show`, `outbox quarantine ls`, `outbox quarantine show`, or top-level queue/outbox recovery commands are run with an explicit `--repo` or legacy `--target`, `--commands` output preserves that selector in emitted `agent-team` follow-ups so scripts can run from outside the target checkout.
 
 Preview daemon drain work before applying it:
 
@@ -248,6 +248,7 @@ Use global quarantine commands when triaging the whole repo:
 ```sh
 agent-team outbox quarantine ls --summary --json
 agent-team outbox quarantine ls --job SQU-42 --restorable
+agent-team outbox quarantine ls --restorable --commands
 agent-team outbox quarantine show quarantine/<timestamp>/failed/<id>.json
 agent-team outbox quarantine restore <path> --dry-run
 agent-team outbox quarantine drop --all --unrestorable --dry-run
@@ -261,6 +262,7 @@ When one durable job owns the files, prefer the scoped command before restoring 
 ```sh
 agent-team job outbox quarantine squ-42 --summary --json
 agent-team job outbox quarantine squ-42
+agent-team job outbox quarantine squ-42 --commands
 agent-team job outbox quarantine show squ-42 <path>
 agent-team job outbox quarantine restore squ-42 <path> --dry-run
 agent-team job outbox quarantine restore squ-42 --all --state failed --dry-run
@@ -273,6 +275,7 @@ When a workflow owns the files, use pipeline-scoped recovery:
 agent-team pipeline outbox quarantine ticket_to_pr --summary --json
 agent-team pipeline outbox quarantine ticket_to_pr
 agent-team pipeline outbox quarantine ticket_to_pr --job SQU-42 --restorable
+agent-team pipeline outbox quarantine ticket_to_pr --restorable --commands
 agent-team pipeline outbox quarantine show ticket_to_pr <path>
 agent-team pipeline outbox quarantine restore ticket_to_pr <path> --dry-run
 agent-team pipeline outbox quarantine restore ticket_to_pr --all --job SQU-42 --dry-run
@@ -285,12 +288,14 @@ When a declared team owns the files, use team-scoped recovery:
 agent-team team outbox quarantine delivery --summary --json
 agent-team team outbox quarantine delivery
 agent-team team outbox quarantine delivery --job SQU-42 --restorable
+agent-team team outbox quarantine delivery --restorable --commands
 agent-team team outbox quarantine show delivery <path>
 agent-team team outbox quarantine restore delivery <path> --dry-run
 agent-team team outbox quarantine restore delivery --all --job SQU-42 --dry-run
 agent-team team outbox quarantine drop delivery --all --unrestorable --dry-run
 ```
 
+Use `--commands` on global, job, pipeline, or team outbox quarantine lists when automation needs restore/drop commands for every visible preserved file without opening each file first.
 Job, pipeline, and team scoping prevent a recovery command for one ticket, workflow, or ownership boundary from restoring or deleting another owner's preserved outbox file.
 
 `health`, `overview`, and `next --source outbox --reason quarantined` surface preserved outbox files as operator actions. Global views prefer `job outbox quarantine <job-id>` when all preserved files resolve to one durable job, `pipeline outbox quarantine <pipeline>` when all preserved files resolve to one workflow, and team views use `team outbox quarantine <team>` while only counting that team's files.
