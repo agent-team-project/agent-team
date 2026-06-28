@@ -26,6 +26,7 @@ func newNextCmd() *cobra.Command {
 		reasons       []string
 		details       bool
 		commandsOnly  bool
+		lastMessage   bool
 		watch         bool
 		noClear       bool
 		interval      time.Duration
@@ -88,10 +89,17 @@ func newNextCmd() *cobra.Command {
 				return err
 			}
 			collect := func(now time.Time) (*overviewResult, error) {
+				var result *overviewResult
+				var err error
 				if strings.TrimSpace(teamName) != "" {
-					return collectTeamOverview(teamDir, teamName, now, scheduleLimit)
+					result, err = collectTeamOverview(teamDir, teamName, now, scheduleLimit)
+				} else {
+					result = collectOverview(teamDir, now, scheduleLimit)
 				}
-				return collectOverview(teamDir, now, scheduleLimit), nil
+				if err != nil {
+					return nil, err
+				}
+				return overviewResultWithLastMessageActions(result, lastMessage), nil
 			}
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -119,6 +127,7 @@ func newNextCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Queue/job/outbox quarantine aliases are supported. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&details, "details", false, "Include source and reason metadata in text output.")
 	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print only recommended commands, one per line. agent-team follow-ups preserve the selected repo scope.")
+	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
@@ -137,6 +146,7 @@ func newTeamNextCmd() *cobra.Command {
 		reasons       []string
 		details       bool
 		commandsOnly  bool
+		lastMessage   bool
 		watch         bool
 		noClear       bool
 		interval      time.Duration
@@ -199,7 +209,11 @@ func newTeamNextCmd() *cobra.Command {
 			}
 			teamName := args[0]
 			collect := func(now time.Time) (*overviewResult, error) {
-				return collectTeamOverview(teamDir, teamName, now, scheduleLimit)
+				result, err := collectTeamOverview(teamDir, teamName, now, scheduleLimit)
+				if err != nil {
+					return nil, err
+				}
+				return overviewResultWithLastMessageActions(result, lastMessage), nil
 			}
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -226,6 +240,7 @@ func newTeamNextCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only show actions with this reason. Values match exactly, or as prefixes before '='. Queue/job/outbox quarantine aliases are supported. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&details, "details", false, "Include source and reason metadata in text output.")
 	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print only recommended commands, one per line. agent-team follow-ups preserve the selected repo scope.")
+	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")

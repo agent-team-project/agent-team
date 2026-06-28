@@ -411,6 +411,25 @@ func TestNextCommandFiltersRuntimeSource(t *testing.T) {
 		t.Fatalf("runtime filtered details = %+v", result.ActionDetails)
 	}
 
+	lastMessage := NewRootCmd()
+	lastMessageOut, lastMessageErr := &bytes.Buffer{}, &bytes.Buffer{}
+	lastMessage.SetOut(lastMessageOut)
+	lastMessage.SetErr(lastMessageErr)
+	lastMessage.SetArgs([]string{"next", "--target", root, "--source", "runtime", "--last-message", "--json"})
+	if err := lastMessage.Execute(); err != nil {
+		t.Fatalf("next runtime last-message json: %v\nstderr=%s", err, lastMessageErr.String())
+	}
+	var lastMessageResult nextActionResult
+	if err := json.Unmarshal(lastMessageOut.Bytes(), &lastMessageResult); err != nil {
+		t.Fatalf("decode runtime last-message next json: %v\nbody=%s", err, lastMessageOut.String())
+	}
+	if len(lastMessageResult.Actions) != 1 || lastMessageResult.Actions[0] != "agent-team resume-plan --status crashed --sort action --limit 10 --last-message" {
+		t.Fatalf("runtime last-message filtered result = %+v", lastMessageResult)
+	}
+	if len(lastMessageResult.ActionDetails) != 1 || lastMessageResult.ActionDetails[0].Source != "runtime" || lastMessageResult.ActionDetails[0].Reason != "crashed=3" {
+		t.Fatalf("runtime last-message filtered details = %+v", lastMessageResult.ActionDetails)
+	}
+
 	team := NewRootCmd()
 	teamOut, teamErr := &bytes.Buffer{}, &bytes.Buffer{}
 	team.SetOut(teamOut)
@@ -428,6 +447,25 @@ func TestNextCommandFiltersRuntimeSource(t *testing.T) {
 	}
 	if len(teamResult.ActionDetails) != 1 || teamResult.ActionDetails[0].Team != "delivery" || teamResult.ActionDetails[0].Source != "runtime" || teamResult.ActionDetails[0].Reason != "crashed=2" {
 		t.Fatalf("team runtime filtered details = %+v", teamResult.ActionDetails)
+	}
+
+	teamLastMessage := NewRootCmd()
+	teamLastMessageOut, teamLastMessageErr := &bytes.Buffer{}, &bytes.Buffer{}
+	teamLastMessage.SetOut(teamLastMessageOut)
+	teamLastMessage.SetErr(teamLastMessageErr)
+	teamLastMessage.SetArgs([]string{"team", "next", "delivery", "--repo", root, "--source", "runtime", "--last-message", "--json"})
+	if err := teamLastMessage.Execute(); err != nil {
+		t.Fatalf("team next runtime last-message json: %v\nstderr=%s", err, teamLastMessageErr.String())
+	}
+	var teamLastMessageResult nextActionResult
+	if err := json.Unmarshal(teamLastMessageOut.Bytes(), &teamLastMessageResult); err != nil {
+		t.Fatalf("decode team runtime last-message next json: %v\nbody=%s", err, teamLastMessageOut.String())
+	}
+	if len(teamLastMessageResult.Actions) != 1 || teamLastMessageResult.Actions[0] != "agent-team team resume-plan delivery --status crashed --sort action --limit 10 --last-message" {
+		t.Fatalf("team runtime last-message filtered result = %+v", teamLastMessageResult)
+	}
+	if len(teamLastMessageResult.ActionDetails) != 1 || teamLastMessageResult.ActionDetails[0].Team != "delivery" || teamLastMessageResult.ActionDetails[0].Source != "runtime" || teamLastMessageResult.ActionDetails[0].Reason != "crashed=2" {
+		t.Fatalf("team runtime last-message filtered details = %+v", teamLastMessageResult.ActionDetails)
 	}
 }
 

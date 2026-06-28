@@ -114,6 +114,67 @@ func TestScopedOperatorActionsPreserveCommandTails(t *testing.T) {
 	}
 }
 
+func TestOperatorActionWithLastMessageOnlyTouchesResumePlan(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "top-level resume plan",
+			in:   "agent-team resume-plan --status crashed",
+			want: "agent-team resume-plan --status crashed --last-message",
+		},
+		{
+			name: "runtime resume plan",
+			in:   "agent-team runtime resume-plan worker --action logs",
+			want: "agent-team runtime resume-plan worker --action logs --last-message",
+		},
+		{
+			name: "job resume plan",
+			in:   "agent-team job resume-plan squ-42 --step implement",
+			want: "agent-team job resume-plan squ-42 --step implement --last-message",
+		},
+		{
+			name: "pipeline resume plan",
+			in:   "agent-team pipeline resume-plan ticket_to_pr --runtime-stale",
+			want: "agent-team pipeline resume-plan ticket_to_pr --runtime-stale --last-message",
+		},
+		{
+			name: "team resume plan",
+			in:   "agent-team team resume-plan delivery --status crashed",
+			want: "agent-team team resume-plan delivery --status crashed --last-message",
+		},
+		{
+			name: "team runtime resume plan",
+			in:   "agent-team team runtime resume-plan delivery --status crashed",
+			want: "agent-team team runtime resume-plan delivery --status crashed --last-message",
+		},
+		{
+			name: "already present",
+			in:   "agent-team resume-plan --status crashed --last-message",
+			want: "agent-team resume-plan --status crashed --last-message",
+		},
+		{
+			name: "repair untouched",
+			in:   "agent-team repair --dry-run",
+			want: "agent-team repair --dry-run",
+		},
+		{
+			name: "foreign command untouched",
+			in:   "git status --short",
+			want: "git status --short",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := operatorActionWithLastMessage(tc.in); got != tc.want {
+				t.Fatalf("operatorActionWithLastMessage(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestOverviewReportsUnreadInboxActions(t *testing.T) {
 	root := t.TempDir()
 	initInto(t, root)
@@ -871,6 +932,26 @@ func TestOverviewReportsRuntimeResumePlanActions(t *testing.T) {
 		t.Fatalf("runtime action detail = %+v ok=%v", detail, ok)
 	}
 
+	lastMessage := NewRootCmd()
+	lastMessageOut, lastMessageErr := &bytes.Buffer{}, &bytes.Buffer{}
+	lastMessage.SetOut(lastMessageOut)
+	lastMessage.SetErr(lastMessageErr)
+	lastMessage.SetArgs([]string{"overview", "--target", root, "--last-message", "--json"})
+	if err := lastMessage.Execute(); err != nil {
+		t.Fatalf("overview runtime last-message json: %v\nstderr=%s", err, lastMessageErr.String())
+	}
+	var lastMessageOverview overviewResult
+	if err := json.Unmarshal(lastMessageOut.Bytes(), &lastMessageOverview); err != nil {
+		t.Fatalf("decode overview runtime last-message: %v\nbody=%s", err, lastMessageOut.String())
+	}
+	lastAction := "agent-team resume-plan --status crashed --sort action --limit 10 --last-message"
+	if !stringSliceContains(lastMessageOverview.Actions, lastAction) {
+		t.Fatalf("last-message actions missing runtime resume plan: %+v", lastMessageOverview.Actions)
+	}
+	if detail, ok := findOperatorActionHint(lastMessageOverview.ActionDetails, lastAction); !ok || detail.Source != "runtime" || detail.Reason != "crashed=3" {
+		t.Fatalf("last-message runtime action detail = %+v ok=%v", detail, ok)
+	}
+
 	text := NewRootCmd()
 	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
 	text.SetOut(textOut)
@@ -900,6 +981,26 @@ func TestOverviewReportsRuntimeResumePlanActions(t *testing.T) {
 	}
 	if !stringSliceContains(teamOverview.Actions, "agent-team team resume-plan delivery --status crashed --sort action --limit 10") {
 		t.Fatalf("team actions missing scoped runtime resume plan: %+v", teamOverview.Actions)
+	}
+
+	teamLastMessage := NewRootCmd()
+	teamLastMessageOut, teamLastMessageErr := &bytes.Buffer{}, &bytes.Buffer{}
+	teamLastMessage.SetOut(teamLastMessageOut)
+	teamLastMessage.SetErr(teamLastMessageErr)
+	teamLastMessage.SetArgs([]string{"team", "overview", "delivery", "--repo", root, "--last-message", "--json"})
+	if err := teamLastMessage.Execute(); err != nil {
+		t.Fatalf("team overview runtime last-message json: %v\nstderr=%s", err, teamLastMessageErr.String())
+	}
+	var teamLastMessageOverview overviewResult
+	if err := json.Unmarshal(teamLastMessageOut.Bytes(), &teamLastMessageOverview); err != nil {
+		t.Fatalf("decode team overview runtime last-message: %v\nbody=%s", err, teamLastMessageOut.String())
+	}
+	teamLastAction := "agent-team team resume-plan delivery --status crashed --sort action --limit 10 --last-message"
+	if !stringSliceContains(teamLastMessageOverview.Actions, teamLastAction) {
+		t.Fatalf("team last-message actions missing scoped runtime resume plan: %+v", teamLastMessageOverview.Actions)
+	}
+	if detail, ok := findOperatorActionHint(teamLastMessageOverview.ActionDetails, teamLastAction); !ok || detail.Team != "delivery" || detail.Source != "runtime" || detail.Reason != "crashed=2" {
+		t.Fatalf("team last-message runtime action detail = %+v ok=%v", detail, ok)
 	}
 }
 

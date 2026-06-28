@@ -3763,6 +3763,7 @@ Flags:
       --format string        Render the next-action result with a Go template, e.g. '{{.State}} {{len .Actions}}'.
       --interval duration    Refresh interval for --watch. (default 2s)
       --json                 Emit recommended actions as JSON.
+      --last-message         When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.
       --limit int            Show at most this many actions; 0 means all.
       --no-clear             With --watch, append snapshots instead of redrawing the terminal.
       --reason strings       Only show actions with this reason. Values match exactly, or as prefixes before '='. Queue/job/outbox quarantine aliases are supported. Can repeat or comma-separate.
@@ -4183,6 +4184,7 @@ Flags:
       --format string        Render the overview result with a Go template, e.g. '{{.State}} {{len .Actions}}'.
       --interval duration    Refresh interval for --watch. (default 2s)
       --json                 Emit overview as JSON.
+      --last-message         When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.
       --no-clear             With --watch, append snapshots instead of redrawing the terminal.
       --schedule-limit int   Upcoming schedules to inspect after ordering; 0 means all. (default 5)
       --target string        Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
@@ -7772,6 +7774,7 @@ Flags:
       --format string        Render the next-action result with a Go template, e.g. '{{.Team.Name}} {{len .Actions}}'.
       --interval duration    Refresh interval for --watch. (default 2s)
       --json                 Emit recommended actions as JSON.
+      --last-message         When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.
       --limit int            Show at most this many actions; 0 means all.
       --no-clear             With --watch, append snapshots instead of redrawing the terminal.
       --reason strings       Only show actions with this reason. Values match exactly, or as prefixes before '='. Queue/job/outbox quarantine aliases are supported. Can repeat or comma-separate.
@@ -8040,6 +8043,7 @@ Flags:
       --format string        Render the team overview result with a Go template, e.g. '{{.Team.Name}} {{.State}}'.
       --interval duration    Refresh interval for --watch. (default 2s)
       --json                 Emit team overview as JSON.
+      --last-message         When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.
       --no-clear             With --watch, append snapshots instead of redrawing the terminal.
       --repo string          Repo root containing .agent_team. (default "<repo>")
       --schedule-limit int   Upcoming team schedules to inspect after ordering; 0 means all. (default 5)

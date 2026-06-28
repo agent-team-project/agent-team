@@ -50,8 +50,9 @@ Resume-plan also probes positive recorded PIDs for `running` metadata; stale
 rows are marked in JSON/text, unhealthy totals count crashed plus stale-running
 rows, and summaries expose both counts before recommending the right start,
 resume, or log fallback.
-Add `--last-message` when Codex log fallbacks should point at the clean final
-response sidecar rather than raw daemon logs.
+Add `--last-message` to `overview`, `team overview`, `next`, `team next`, or
+the resume-plan command itself when Codex log fallbacks should point at the
+clean final response sidecar rather than raw daemon logs.
 When daemon metadata resolves to a durable job, resume-plan recommendations
 prefer job-scoped attach/log commands in text, JSON, templates, and
 `--commands` output. Pipeline step ownership is preserved with `--step` so the
@@ -90,8 +91,10 @@ agent-team team next delivery --source jobs --reason stale_running
 `next` is a compact command-hint view derived from overview. Text output stays
 focused on copyable commands; JSON output also includes `action_details` so
 scripts can group recommendations by source and reason without parsing command
-strings. Add `--commands` when scripts need only the filtered, sorted, and
-limited commands with no headers or reason labels. When `overview`,
+strings. Add `--last-message` when runtime recommendations should carry the
+same clean Codex final-message preference into their `resume-plan` follow-ups.
+Add `--commands` when scripts need only the filtered, sorted, and limited
+commands with no headers or reason labels. When `overview`,
 `team overview`, `next`, or `team next` was scoped with `--target` or `--repo`,
 command-only `agent-team` follow-ups preserve that selected repo.
 

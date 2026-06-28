@@ -23,6 +23,7 @@ func newOverviewCmd() *cobra.Command {
 		target        string
 		jsonOut       bool
 		commands      bool
+		lastMessage   bool
 		watch         bool
 		noClear       bool
 		scheduleLimit int
@@ -74,10 +75,10 @@ func newOverviewCmd() *cobra.Command {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
 				return runOverviewWatch(ctx, cmd.OutOrStdout(), func(now time.Time) (*overviewResult, error) {
-					return collectOverview(teamDir, now, scheduleLimit), nil
+					return overviewResultWithLastMessageActions(collectOverview(teamDir, now, scheduleLimit), lastMessage), nil
 				}, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
-			result := collectOverview(teamDir, time.Now().UTC(), scheduleLimit)
+			result := overviewResultWithLastMessageActions(collectOverview(teamDir, time.Now().UTC(), scheduleLimit), lastMessage)
 			if commands {
 				return renderOverviewCommands(cmd.OutOrStdout(), result, operatorCommandScopeFromCommand(cmd, target, "target"))
 			}
@@ -87,6 +88,7 @@ func newOverviewCmd() *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit overview as JSON.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended actions, one per line. agent-team follow-ups preserve the selected repo scope.")
+	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh overview until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 5, "Upcoming schedules to inspect after ordering; 0 means all.")
@@ -100,6 +102,7 @@ func newTeamOverviewCmd() *cobra.Command {
 		repo          string
 		jsonOut       bool
 		commands      bool
+		lastMessage   bool
 		watch         bool
 		noClear       bool
 		scheduleLimit int
@@ -151,7 +154,11 @@ func newTeamOverviewCmd() *cobra.Command {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
 				return runOverviewWatch(ctx, cmd.OutOrStdout(), func(now time.Time) (*overviewResult, error) {
-					return collectTeamOverview(teamDir, args[0], now, scheduleLimit)
+					result, err := collectTeamOverview(teamDir, args[0], now, scheduleLimit)
+					if err != nil {
+						return nil, err
+					}
+					return overviewResultWithLastMessageActions(result, lastMessage), nil
 				}, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
 			result, err := collectTeamOverview(teamDir, args[0], time.Now().UTC(), scheduleLimit)
@@ -159,6 +166,7 @@ func newTeamOverviewCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team overview: %v\n", err)
 				return exitErr(1)
 			}
+			result = overviewResultWithLastMessageActions(result, lastMessage)
 			if commands {
 				return renderOverviewCommands(cmd.OutOrStdout(), result, operatorCommandScopeFromCommand(cmd, repo, "repo"))
 			}
@@ -168,6 +176,7 @@ func newTeamOverviewCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team overview as JSON.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended team actions, one per line. agent-team follow-ups preserve the selected repo scope.")
+	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh team overview until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 5, "Upcoming team schedules to inspect after ordering; 0 means all.")
@@ -1076,6 +1085,80 @@ func overviewActionCommands(hints []operatorActionHint) []string {
 		commands = append(commands, hint.Command)
 	}
 	return commands
+}
+
+func overviewResultWithLastMessageActions(out *overviewResult, lastMessage bool) *overviewResult {
+	if out == nil || !lastMessage {
+		return out
+	}
+	if len(out.ActionDetails) == 0 {
+		details := make([]operatorActionHint, 0, len(out.Actions))
+		for _, action := range out.Actions {
+			details = append(details, operatorActionHint{Command: action, Source: "overview"})
+		}
+		out.ActionDetails = details
+	}
+	out.ActionDetails = operatorActionHintsWithLastMessage(out.ActionDetails)
+	out.Actions = overviewActionCommands(out.ActionDetails)
+	return out
+}
+
+func operatorActionHintsWithLastMessage(hints []operatorActionHint) []operatorActionHint {
+	if len(hints) == 0 {
+		return nil
+	}
+	out := make([]operatorActionHint, 0, len(hints))
+	for _, hint := range hints {
+		hint.Command = operatorActionWithLastMessage(hint.Command)
+		out = append(out, hint)
+	}
+	return out
+}
+
+func operatorActionWithLastMessage(action string) string {
+	command := strings.TrimSpace(action)
+	if command == "" || strings.Contains(command, "--last-message") || !operatorActionIsResumePlan(command) {
+		return action
+	}
+	return command + " --last-message"
+}
+
+func operatorActionIsResumePlan(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) < 2 || fields[0] != "agent-team" {
+		return false
+	}
+	idx := operatorActionSubcommandIndex(fields)
+	if idx >= len(fields) {
+		return false
+	}
+	switch fields[idx] {
+	case "resume-plan":
+		return true
+	case "runtime", "job", "pipeline":
+		return idx+1 < len(fields) && fields[idx+1] == "resume-plan"
+	case "team":
+		return (idx+1 < len(fields) && fields[idx+1] == "resume-plan") ||
+			(idx+2 < len(fields) && fields[idx+1] == "runtime" && fields[idx+2] == "resume-plan")
+	default:
+		return false
+	}
+}
+
+func operatorActionSubcommandIndex(fields []string) int {
+	idx := 1
+	for idx < len(fields) {
+		field := fields[idx]
+		if !strings.HasPrefix(field, "-") {
+			return idx
+		}
+		if field == "--repo" || field == "--target" {
+			idx += 2
+			continue
+		}
+		idx++
+	}
+	return idx
 }
 
 func overviewOutboxOwnerForItems(items []*daemon.OutboxItem, jobs []*jobstore.Job) *overviewOutboxOwner {
