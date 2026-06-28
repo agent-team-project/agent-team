@@ -552,6 +552,9 @@ func TestHealthCommandJSONExitsUnhealthy(t *testing.T) {
 	if body.Healthy || body.Daemon.Running {
 		t.Fatalf("health json should be unhealthy with daemon down: %+v", body)
 	}
+	if !containsString(body.Actions, "agent-team sync --dry-run") {
+		t.Fatalf("health json actions = %+v, want sync dry-run", body.Actions)
+	}
 }
 
 func TestHealthCommandReportsDeadQueueItems(t *testing.T) {
@@ -605,6 +608,15 @@ func TestHealthCommandReportsDeadQueueItems(t *testing.T) {
 	}
 	if !sawQueueIssue {
 		t.Fatalf("issues = %+v, missing queue_dead_letter", body.Issues)
+	}
+	for _, want := range []string{
+		"agent-team sync --dry-run",
+		"agent-team queue retry --all --sort attempts --limit 10",
+		"agent-team repair --skip-tick",
+	} {
+		if !containsString(body.Actions, want) {
+			t.Fatalf("health json actions missing %q: %+v", want, body.Actions)
+		}
 	}
 
 	text := NewRootCmd()

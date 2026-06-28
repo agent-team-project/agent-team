@@ -244,6 +244,7 @@ type healthResult struct {
 	Issues           []healthIssue              `json:"issues"`
 	CheckedAt        string                     `json:"checked_at"`
 	Instances        []healthInstance           `json:"instances,omitempty"`
+	Actions          []string                   `json:"actions,omitempty"`
 }
 
 type healthDaemon struct {
@@ -387,6 +388,7 @@ func writeHealthResultWithFormat(w io.Writer, result *healthResult, jsonOut bool
 }
 
 func writeHealthResultWithFormatAndCommands(w io.Writer, result *healthResult, jsonOut bool, tmpl *template.Template, commands bool, scope operatorCommandScope) error {
+	result = healthResultWithActions(result)
 	if jsonOut {
 		return json.NewEncoder(w).Encode(result)
 	}
@@ -423,17 +425,38 @@ func renderHealthCommands(w io.Writer, result *healthResult, scope operatorComma
 	if result == nil {
 		return nil
 	}
+	actions := result.Actions
+	if len(actions) == 0 {
+		actions = healthIssueActions(result)
+	}
+	return renderActionCommands(w, scopedOperatorActions(actions, scope))
+}
+
+func healthResultWithActions(result *healthResult) *healthResult {
+	if result == nil {
+		return nil
+	}
+	result.Actions = healthIssueActions(result)
+	return result
+}
+
+func healthIssueActions(result *healthResult) []string {
+	if result == nil {
+		return nil
+	}
+	seen := map[string]bool{}
 	var actions []string
 	for _, issue := range result.Issues {
 		for _, action := range issue.Actions {
 			action = strings.TrimSpace(action)
-			if action == "" {
+			if action == "" || seen[action] {
 				continue
 			}
+			seen[action] = true
 			actions = append(actions, action)
 		}
 	}
-	return renderActionCommands(w, scopedOperatorActions(actions, scope))
+	return actions
 }
 
 func healthResultWithLastMessageActions(result *healthResult, lastMessage bool) *healthResult {
