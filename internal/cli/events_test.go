@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
+	"github.com/jamesaud/agent-team/internal/job"
 )
 
 type fakeEventsClient struct {
@@ -540,6 +541,88 @@ func TestEventsCommandFallsBackToLocalEventLogWhenDaemonStopped(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestEventsCommandFiltersByJobAndStepWhenDaemonStopped(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	base := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-701",
+			Ticket:    "SQU-701",
+			Target:    "worker",
+			Kickoff:   "global event filters",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-701",
+			CreatedAt: base,
+			UpdatedAt: base,
+			Steps: []job.Step{
+				{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-701"},
+				{ID: "review", Target: "manager", Status: job.StatusRunning, Instance: "manager-squ-701", After: []string{"implement"}},
+			},
+		},
+		{
+			ID:        "squ-702",
+			Ticket:    "SQU-702",
+			Target:    "worker",
+			Kickoff:   "foreign",
+			Status:    job.StatusRunning,
+			Instance:  "worker-squ-702",
+			CreatedAt: base,
+			UpdatedAt: base,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	for _, ev := range []*daemon.LifecycleEvent{
+		{TS: base, Action: "dispatch", Instance: "manager-squ-701", Agent: "manager", Status: daemon.StatusRunning, Message: "review"},
+		{TS: base.Add(time.Minute), Action: "dispatch", Instance: "worker-squ-701", Agent: "worker", Status: daemon.StatusRunning, Message: "implement"},
+		{TS: base.Add(2 * time.Minute), Action: "dispatch", Instance: "worker-squ-702", Agent: "worker", Status: daemon.StatusRunning, Message: "foreign"},
+		{TS: base.Add(3 * time.Minute), Action: "start", Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, Message: "persistent"},
+	} {
+		if err := daemon.AppendLifecycleEvent(root, ev); err != nil {
+			t.Fatalf("append event %s: %v", ev.Instance, err)
+		}
+	}
+
+	byJob := NewRootCmd()
+	var jobOut, jobErr bytes.Buffer
+	byJob.SetOut(&jobOut)
+	byJob.SetErr(&jobErr)
+	byJob.SetArgs([]string{
+		"events",
+		"--job", "https://linear.app/squirtlesquad/issue/SQU-701/global-events",
+		"--format", "{{.Instance}}",
+		"--target", tmp,
+	})
+	if err := byJob.Execute(); err != nil {
+		t.Fatalf("events --job fallback: %v\nstderr=%s", err, jobErr.String())
+	}
+	if got, want := jobOut.String(), "manager-squ-701\nworker-squ-701\n"; got != want {
+		t.Fatalf("job-filtered stdout = %q, want %q", got, want)
+	}
+
+	byStep := NewRootCmd()
+	var stepOut, stepErr bytes.Buffer
+	byStep.SetOut(&stepOut)
+	byStep.SetErr(&stepErr)
+	byStep.SetArgs([]string{
+		"events",
+		"--step", "implement",
+		"--format", "{{.Instance}}",
+		"--target", tmp,
+	})
+	if err := byStep.Execute(); err != nil {
+		t.Fatalf("events --step fallback: %v\nstderr=%s", err, stepErr.String())
+	}
+	if got, want := stepOut.String(), "worker-squ-701\n"; got != want {
+		t.Fatalf("step-filtered stdout = %q, want %q", got, want)
 	}
 }
 

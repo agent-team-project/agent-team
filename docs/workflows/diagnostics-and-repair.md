@@ -65,6 +65,9 @@ include crashed rows, status-stale rows, and runtime-stale rows, so
 `agent-team events --unhealthy` all surface missing recorded PIDs consistently.
 Use `--runtime-stale` on those views when you only want stale recorded runtime
 PIDs and do not want crashed or status-stale rows mixed in.
+Use `agent-team events --job SQU-42 --step implement` when lifecycle history
+needs the same work-unit or pipeline-stage scope as job, pipeline, and team log
+views.
 
 Team scoped:
 

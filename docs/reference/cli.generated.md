@@ -967,6 +967,7 @@ Flags:
   -f, --follow             Keep streaming new lifecycle events.
       --format string      Render each event with a Go template, e.g. '{{.Action}} {{.Instance}} {{.Status}}'.
       --instance strings   Only show events for this instance. Can repeat or comma-separate.
+      --job strings        Only show events for this job id or ticket. Can repeat or comma-separate.
       --json               Emit raw JSONL events.
   -n, --last int           Show events for the N most recently started daemon-known instances after other filters (0 = all).
       --latest             Show events for the most recently started daemon-known instance after other filters.
@@ -976,6 +977,7 @@ Flags:
       --since string       Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
       --stale              Only show events for instances whose status.toml is currently stale.
       --status strings     Only show events with this lifecycle status. Can repeat or comma-separate.
+      --step string        Only show events for instances recorded on this pipeline step id.
       --summary            Summarize matching events by action, status, agent, and instance.
       --tail int           Show only the last N events before returning or following (0 = all). With non-following filters, N applies after filtering.
       --target string      Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")

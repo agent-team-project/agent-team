@@ -219,7 +219,7 @@ agent-team logs [<instance> | --latest | --last N] [--all | --agent manager] [--
                                   # list/show/follow instance or daemon logs; reads daemon-managed logs locally if the daemon is down
 agent-team attach <instance> [--dry-run] [--no-resume]
                                   # preview or run interactive `claude --resume` handoff; daemon resumes supervision afterward
-agent-team events [--tail N] [--latest | --last N] [--since 24h] [--summary] [-f] [--format '{{.Action}} {{.Instance}}'] [--action dispatch] [--agent manager] [--instance manager] [--status running] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--json]
+agent-team events [--tail N] [--latest | --last N] [--since 24h] [--summary] [-f] [--format '{{.Action}} {{.Instance}}'] [--action dispatch] [--agent manager] [--instance manager] [--job SQU-42] [--step <id>] [--status running] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--json]
                                   # lifecycle event history or follow stream; phase/stale/unhealthy narrow by current status.toml; reads local history if the daemon is down
 agent-team start [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status stopped] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--dry-run] [--summary] [--format '{{.Instance}} {{.Action}}'] [--ready-timeout 3s] [--wait --timeout 30s] [--attach --tail N|all] [--json]
                                   # start daemon if needed; no args = persistent declarations, --all/--agent include daemon-known names
