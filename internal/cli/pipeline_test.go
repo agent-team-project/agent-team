@@ -5007,6 +5007,20 @@ target = "worker"
 	if len(preview) != 1 || preview[0].JobID != "squ-970" || preview[0].Action != "would_unblock" || preview[0].StepID != "implement" || preview[0].StepStatus != job.StatusRunning || preview[0].Job == nil || preview[0].Job.Status != job.StatusRunning {
 		t.Fatalf("unblock preview = %+v", preview)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"pipeline", "unblock", "ticket_to_pr", "--repo", root, "--step", "implement", "--status", "queued", "--from", "operator", "--limit", "1", "--dry-run", "--commands", "credentials", "configured"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("pipeline unblock commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "unblock", "ticket_to_pr", "--repo", root, "--step", "implement", "--status", "queued", "--from", "operator", "--limit", "1", "credentials", "configured"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("pipeline unblock commands = %q, want %q", got, wantCommand)
+	}
+
 	unchanged, err := job.Read(teamDir, "squ-970")
 	if err != nil {
 		t.Fatalf("read unchanged job: %v", err)
@@ -5384,6 +5398,21 @@ func TestPipelineBatchMutationCommandsValidation(t *testing.T) {
 		{
 			name: "cancel with format",
 			args: []string{"pipeline", "cancel", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "unblock without dry-run",
+			args: []string{"pipeline", "unblock", "ticket_to_pr", "--commands", "ready"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "unblock with json",
+			args: []string{"pipeline", "unblock", "ticket_to_pr", "--dry-run", "--commands", "--json", "ready"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "unblock with format",
+			args: []string{"pipeline", "unblock", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}", "ready"},
 			want: "--commands cannot be combined with --format",
 		},
 	} {

@@ -3845,6 +3845,20 @@ pipelines = ["ticket_to_pr"]
 	if strings.Contains(dryOut.String(), "squ-939") {
 		t.Fatalf("team unblock leaked foreign job:\n%s", dryOut.String())
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "unblock", "delivery", "--repo", root, "--step", "implement", "--status", "queued", "--from", "operator", "--limit", "1", "--allow-missing", "--dry-run", "--commands", "credentials", "configured"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team unblock commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "team", "unblock", "delivery", "--repo", root, "--step", "implement", "--status", "queued", "--from", "operator", "--limit", "1", "--allow-missing", "credentials", "configured"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("team unblock commands = %q, want %q", got, wantCommand)
+	}
+
 	unchanged, err := job.Read(teamDir, "squ-938")
 	if err != nil {
 		t.Fatalf("read unchanged job: %v", err)
@@ -4238,6 +4252,21 @@ func TestTeamBatchMutationCommandsValidation(t *testing.T) {
 		{
 			name: "cancel with format",
 			args: []string{"team", "cancel", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "unblock without dry-run",
+			args: []string{"team", "unblock", "delivery", "--commands", "ready"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "unblock with json",
+			args: []string{"team", "unblock", "delivery", "--dry-run", "--commands", "--json", "ready"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "unblock with format",
+			args: []string{"team", "unblock", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}", "ready"},
 			want: "--commands cannot be combined with --format",
 		},
 	} {

@@ -2102,6 +2102,7 @@ func newTeamUnblockCmd() *cobra.Command {
 		messageFile  string
 		allowMissing bool
 		dryRun       bool
+		commands     bool
 		jsonOut      bool
 		format       string
 	)
@@ -2115,6 +2116,18 @@ func newTeamUnblockCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team unblock: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team unblock: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team unblock: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team unblock: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if limit < 0 {
@@ -2154,6 +2167,26 @@ func newTeamUnblockCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team unblock: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				return renderPipelineUnblockApplyCommand(cmd.OutOrStdout(), pipelineUnblockResultsHaveDryRunAction(results, "would_unblock"), pipelineUnblockApplyCommandOptions{
+					BaseArgs:       []string{"agent-team", "team", "unblock", args[0]},
+					Repo:           repo,
+					RepoSet:        cmd.Flags().Changed("repo"),
+					Step:           step,
+					StepSet:        cmd.Flags().Changed("step"),
+					Status:         status,
+					StatusSet:      cmd.Flags().Changed("status"),
+					From:           from,
+					FromSet:        cmd.Flags().Changed("from"),
+					Limit:          limit,
+					AllowMissing:   allowMissing,
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+					MessageArgs:    args[1:],
+				})
+			}
 			return renderPipelineUnblockResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 		},
 	}
@@ -2166,6 +2199,7 @@ func newTeamUnblockCmd() *cobra.Command {
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read message text from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing messages for owning instances the daemon does not know yet.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview team unblocks without writing job state or mailbox messages.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team unblock apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit unblock results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}} {{.Instance}}'.")
 	return cmd

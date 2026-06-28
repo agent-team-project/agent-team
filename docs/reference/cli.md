@@ -229,6 +229,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline advance <pipeline>` | Advance ready work; use `--workspace`/`--runtime` for dispatched steps and `--wait-next-state`/`--wait-step` for stage-aware handoff |
 | `agent-team pipeline approve <pipeline>` | Approve blocked manual gates; add `--dispatch --wait-next-state`/`--wait-step` for stage-aware approval handoff |
 | `agent-team pipeline reject <pipeline>` | Reject blocked manual gates |
+| `agent-team pipeline unblock <pipeline>` | Answer blocked pipeline workers; add `--dry-run --commands` to print the matching apply command |
 | `agent-team pipeline skip <pipeline> --step <id>` | Mark matching non-running steps intentionally skipped |
 | `agent-team pipeline cancel <pipeline>` | Cancel non-terminal pipeline jobs without stopping instances |
 | `agent-team pipeline adopt <pipeline> <job-id>` | Adopt a live external process for a job after verifying pipeline ownership; output includes scoped follow-up actions and `--commands` |
@@ -314,6 +315,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team advance <team>` | Scoped pipeline advance; use `--runtime` for dispatched steps and `--wait-next-state`/`--wait-step` for stage-aware handoff |
 | `agent-team team approve <team>` | Scoped manual-gate approval; add `--dispatch --wait-next-state`/`--wait-step` for stage-aware approval handoff |
 | `agent-team team reject <team>` | Scoped manual-gate rejection |
+| `agent-team team unblock <team>` | Answer blocked team-owned pipeline workers; add `--dry-run --commands` to print the matching apply command |
 | `agent-team team skip <team> --step <id>` | Scoped intentional step skip |
 | `agent-team team cancel <team>` | Cancel non-terminal team pipeline jobs without stopping instances |
 | `agent-team team adopt <team> <job-id>` | Adopt a live external process for a job after verifying team ownership; output includes scoped follow-up actions and `--commands` |

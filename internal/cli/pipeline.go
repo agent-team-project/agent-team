@@ -2532,6 +2532,7 @@ func newPipelineUnblockCmd() *cobra.Command {
 		messageFile  string
 		allowMissing bool
 		dryRun       bool
+		commands     bool
 		jsonOut      bool
 		format       string
 	)
@@ -2545,6 +2546,18 @@ func newPipelineUnblockCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if len(args) == 0 && !all {
@@ -2593,6 +2606,31 @@ func newPipelineUnblockCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline unblock: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				baseArgs := []string{"agent-team", "pipeline", "unblock"}
+				if !all {
+					baseArgs = append(baseArgs, pipelineName)
+				}
+				return renderPipelineUnblockApplyCommand(cmd.OutOrStdout(), pipelineUnblockResultsHaveDryRunAction(results, "would_unblock"), pipelineUnblockApplyCommandOptions{
+					BaseArgs:       baseArgs,
+					Repo:           repo,
+					RepoSet:        cmd.Flags().Changed("repo"),
+					All:            all,
+					Step:           step,
+					StepSet:        cmd.Flags().Changed("step"),
+					Status:         status,
+					StatusSet:      cmd.Flags().Changed("status"),
+					From:           from,
+					FromSet:        cmd.Flags().Changed("from"),
+					Limit:          limit,
+					AllowMissing:   allowMissing,
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+					MessageArgs:    messageArgs,
+				})
+			}
 			return renderPipelineUnblockResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 		},
 	}
@@ -2606,6 +2644,7 @@ func newPipelineUnblockCmd() *cobra.Command {
 	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read message text from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing messages for owning instances the daemon does not know yet.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching unblocks without writing job state or mailbox messages.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching unblock apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit unblock results as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each unblock result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}} {{.Instance}}'.")
 	return cmd
@@ -10982,6 +11021,26 @@ type pipelineApplyCommandOptions struct {
 	MessageFileSet bool
 }
 
+type pipelineUnblockApplyCommandOptions struct {
+	BaseArgs       []string
+	Repo           string
+	RepoSet        bool
+	All            bool
+	Step           string
+	StepSet        bool
+	Status         string
+	StatusSet      bool
+	From           string
+	FromSet        bool
+	Limit          int
+	AllowMissing   bool
+	Message        string
+	MessageSet     bool
+	MessageFile    string
+	MessageFileSet bool
+	MessageArgs    []string
+}
+
 func renderPipelineApplyCommand(w io.Writer, hasAction bool, opts pipelineApplyCommandOptions) error {
 	if !hasAction {
 		return nil
@@ -11016,6 +11075,47 @@ func pipelineApplyCommandArgs(opts pipelineApplyCommandOptions) []string {
 	return args
 }
 
+func renderPipelineUnblockApplyCommand(w io.Writer, hasAction bool, opts pipelineUnblockApplyCommandOptions) error {
+	if !hasAction {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(pipelineUnblockApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func pipelineUnblockApplyCommandArgs(opts pipelineUnblockApplyCommandOptions) []string {
+	args := append([]string{}, opts.BaseArgs...)
+	if opts.RepoSet && strings.TrimSpace(opts.Repo) != "" {
+		args = append(args, "--repo", opts.Repo)
+	}
+	if opts.All {
+		args = append(args, "--all")
+	}
+	if opts.StepSet && strings.TrimSpace(opts.Step) != "" {
+		args = append(args, "--step", opts.Step)
+	}
+	if opts.StatusSet && strings.TrimSpace(opts.Status) != "" {
+		args = append(args, "--status", opts.Status)
+	}
+	if opts.FromSet && strings.TrimSpace(opts.From) != "" {
+		args = append(args, "--from", opts.From)
+	}
+	if opts.Limit > 0 {
+		args = append(args, "--limit", fmt.Sprint(opts.Limit))
+	}
+	if opts.AllowMissing {
+		args = append(args, "--allow-missing")
+	}
+	if opts.MessageSet && strings.TrimSpace(opts.Message) != "" {
+		args = append(args, "--message", opts.Message)
+	}
+	if opts.MessageFileSet && strings.TrimSpace(opts.MessageFile) != "" {
+		args = append(args, "--message-file", opts.MessageFile)
+	}
+	args = append(args, opts.MessageArgs...)
+	return args
+}
+
 func pipelineApproveResultsHaveDryRunAction(results []pipelineApproveResult, action string) bool {
 	for _, result := range results {
 		if result.DryRun && strings.TrimSpace(result.Action) == action {
@@ -11035,6 +11135,15 @@ func pipelineSkipResultsHaveDryRunAction(results []pipelineSkipResult, action st
 }
 
 func pipelineCancelResultsHaveDryRunAction(results []pipelineCancelResult, action string) bool {
+	for _, result := range results {
+		if result.DryRun && strings.TrimSpace(result.Action) == action {
+			return true
+		}
+	}
+	return false
+}
+
+func pipelineUnblockResultsHaveDryRunAction(results []pipelineUnblockResult, action string) bool {
 	for _, result := range results {
 		if result.DryRun && strings.TrimSpace(result.Action) == action {
 			return true

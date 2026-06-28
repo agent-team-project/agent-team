@@ -5588,6 +5588,7 @@ Flags:
 ```text
       --all                   Unblock matching jobs across all pipelines.
       --allow-missing         Allow queueing messages for owning instances the daemon does not know yet.
+      --commands              With --dry-run, print the matching unblock apply command when the preview has actionable work.
       --dry-run               Preview matching unblocks without writing job state or mailbox messages.
       --format string         Render each unblock result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}} {{.Instance}}'.
       --from string           Sender label recorded with each unblock message. (default "(cli)")
@@ -8882,6 +8883,7 @@ Flags:
 
 ```text
       --allow-missing         Allow queueing messages for owning instances the daemon does not know yet.
+      --commands              With --dry-run, print the matching team unblock apply command when the preview has actionable work.
       --dry-run               Preview team unblocks without writing job state or mailbox messages.
       --format string         Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}} {{.Instance}}'.
       --from string           Sender label recorded with each unblock message. (default "(cli)")
