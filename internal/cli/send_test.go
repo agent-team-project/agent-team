@@ -160,9 +160,21 @@ func TestSendDryRunCommands(t *testing.T) {
 	if err := direct.Execute(); err != nil {
 		t.Fatalf("send direct --dry-run --commands: %v\nstderr=%s", err, directErr.String())
 	}
-	wantDirect := strings.Join(shellQuoteArgs([]string{"agent-team", "send", "manager", "--target", tmp, "--from", "ops", "--message", "hello"}), " ")
+	wantDirect := strings.Join(shellQuoteArgs([]string{"agent-team", "send", "manager", "--repo", tmp, "--from", "ops", "--message", "hello"}), " ")
 	if got := strings.TrimSpace(directOut.String()); got != wantDirect {
 		t.Fatalf("send direct --dry-run --commands = %q, want %q", got, wantDirect)
+	}
+
+	rootScopedDirect := NewRootCmd()
+	rootScopedDirectOut, rootScopedDirectErr := &bytes.Buffer{}, &bytes.Buffer{}
+	rootScopedDirect.SetOut(rootScopedDirectOut)
+	rootScopedDirect.SetErr(rootScopedDirectErr)
+	rootScopedDirect.SetArgs([]string{"--repo", tmp, "send", "manager", "--from", "ops", "--message", "hello", "--dry-run", "--commands"})
+	if err := rootScopedDirect.Execute(); err != nil {
+		t.Fatalf("send direct root --repo --dry-run --commands: %v\nstderr=%s", err, rootScopedDirectErr.String())
+	}
+	if got := strings.TrimSpace(rootScopedDirectOut.String()); got != wantDirect {
+		t.Fatalf("send direct root --repo --dry-run --commands = %q, want %q", got, wantDirect)
 	}
 	if messages, err := daemon.ReadMessages(root, "manager"); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("read manager messages: %v", err)
@@ -178,7 +190,7 @@ func TestSendDryRunCommands(t *testing.T) {
 	if err := emptyMessageFlag.Execute(); err != nil {
 		t.Fatalf("send empty --message --dry-run --commands: %v\nstderr=%s", err, emptyMessageErr.String())
 	}
-	wantEmptyMessage := strings.Join(shellQuoteArgs([]string{"agent-team", "send", "manager", "--target", tmp, "fallback", "text"}), " ")
+	wantEmptyMessage := strings.Join(shellQuoteArgs([]string{"agent-team", "send", "manager", "--repo", tmp, "fallback", "text"}), " ")
 	if got := strings.TrimSpace(emptyMessageOut.String()); got != wantEmptyMessage {
 		t.Fatalf("send empty --message --dry-run --commands = %q, want %q", got, wantEmptyMessage)
 	}
@@ -191,9 +203,21 @@ func TestSendDryRunCommands(t *testing.T) {
 	if err := selection.Execute(); err != nil {
 		t.Fatalf("send selection --dry-run --commands: %v\nstderr=%s", err, selectionErr.String())
 	}
-	wantSelection := strings.Join(shellQuoteArgs([]string{"agent-team", "send", "--target", tmp, "--message", "hello", "--agent", "manager", "--status", "running"}), " ")
+	wantSelection := strings.Join(shellQuoteArgs([]string{"agent-team", "send", "--repo", tmp, "--message", "hello", "--agent", "manager", "--status", "running"}), " ")
 	if got := strings.TrimSpace(selectionOut.String()); got != wantSelection {
 		t.Fatalf("send selection --dry-run --commands = %q, want %q", got, wantSelection)
+	}
+
+	rootScopedSelection := NewRootCmd()
+	rootScopedSelectionOut, rootScopedSelectionErr := &bytes.Buffer{}, &bytes.Buffer{}
+	rootScopedSelection.SetOut(rootScopedSelectionOut)
+	rootScopedSelection.SetErr(rootScopedSelectionErr)
+	rootScopedSelection.SetArgs([]string{"--repo", tmp, "send", "--agent", "manager", "--status", "running", "--message", "hello", "--dry-run", "--commands"})
+	if err := rootScopedSelection.Execute(); err != nil {
+		t.Fatalf("send selection root --repo --dry-run --commands: %v\nstderr=%s", err, rootScopedSelectionErr.String())
+	}
+	if got := strings.TrimSpace(rootScopedSelectionOut.String()); got != wantSelection {
+		t.Fatalf("send selection root --repo --dry-run --commands = %q, want %q", got, wantSelection)
 	}
 
 	badSelection := NewRootCmd()
@@ -250,9 +274,21 @@ func TestSendDryRunCommands(t *testing.T) {
 	if err := allowMissing.Execute(); err != nil {
 		t.Fatalf("send allow-missing --dry-run --commands: %v\nstderr=%s", err, allowMissingErr.String())
 	}
-	wantAllowMissing := strings.Join(shellQuoteArgs([]string{"agent-team", "send", "future", "--target", tmp, "--allow-missing", "queued"}), " ")
+	wantAllowMissing := strings.Join(shellQuoteArgs([]string{"agent-team", "send", "future", "--repo", tmp, "--allow-missing", "queued"}), " ")
 	if got := strings.TrimSpace(allowMissingOut.String()); got != wantAllowMissing {
 		t.Fatalf("send allow-missing --dry-run --commands = %q, want %q", got, wantAllowMissing)
+	}
+
+	rootScopedAllowMissing := NewRootCmd()
+	rootScopedAllowMissingOut, rootScopedAllowMissingErr := &bytes.Buffer{}, &bytes.Buffer{}
+	rootScopedAllowMissing.SetOut(rootScopedAllowMissingOut)
+	rootScopedAllowMissing.SetErr(rootScopedAllowMissingErr)
+	rootScopedAllowMissing.SetArgs([]string{"--repo", tmp, "send", "future", "--allow-missing", "--dry-run", "--commands", "queued"})
+	if err := rootScopedAllowMissing.Execute(); err != nil {
+		t.Fatalf("send allow-missing root --repo --dry-run --commands: %v\nstderr=%s", err, rootScopedAllowMissingErr.String())
+	}
+	if got := strings.TrimSpace(rootScopedAllowMissingOut.String()); got != wantAllowMissing {
+		t.Fatalf("send allow-missing root --repo --dry-run --commands = %q, want %q", got, wantAllowMissing)
 	}
 }
 

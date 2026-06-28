@@ -6895,7 +6895,7 @@ Flags:
       --agent strings         Send to daemon-known instances for this agent. Can repeat or comma-separate.
   -a, --all                   Send to every daemon-known instance.
       --allow-missing         Allow queueing a message for an instance the daemon does not know yet.
-      --commands              With --dry-run, print the matching send apply command when the preview has actionable recipients.
+      --commands              With --dry-run, print the matching send apply command when the preview has actionable recipients. agent-team follow-ups preserve the selected repo scope.
       --dry-run               Preview matching recipients without appending mailbox messages.
       --format string         Render each send result with a Go template, e.g. '{{.To}} {{.ID}}'.
       --from string           Sender label recorded with the message. (default "(cli)")

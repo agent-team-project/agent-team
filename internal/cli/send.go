@@ -133,6 +133,7 @@ func newSendCmd() *cobra.Command {
 				opts.StaleByInstance = staleInstanceSet(teamDir, time.Now())
 			}
 			if commands {
+				scope := operatorCommandScopeFromCommand(cmd, target, "target")
 				if opts.selectingSet() {
 					if allowMissing {
 						fmt.Fprintln(cmd.ErrOrStderr(), "agent-team send: --allow-missing cannot be combined with --all, --latest, --last, --agent, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy.")
@@ -145,9 +146,9 @@ func newSendCmd() *cobra.Command {
 					}
 					return renderScopedSendApplyCommand(cmd.OutOrStdout(), len(targets) > 0, scopedSendApplyCommandOptions{
 						BaseArgs:       []string{"agent-team", "send"},
-						RepoFlag:       "target",
-						Repo:           target,
-						RepoSet:        cmd.Flags().Changed("target"),
+						RepoFlag:       "repo",
+						Repo:           scope.Repo,
+						RepoSet:        scope.Set,
 						From:           from,
 						FromSet:        cmd.Flags().Changed("from"),
 						Message:        message,
@@ -185,9 +186,9 @@ func newSendCmd() *cobra.Command {
 				}
 				return renderScopedSendApplyCommand(cmd.OutOrStdout(), known || allowMissing, scopedSendApplyCommandOptions{
 					BaseArgs:       []string{"agent-team", "send", to},
-					RepoFlag:       "target",
-					Repo:           target,
-					RepoSet:        cmd.Flags().Changed("target"),
+					RepoFlag:       "repo",
+					Repo:           scope.Repo,
+					RepoSet:        scope.Set,
 					From:           from,
 					FromSet:        cmd.Flags().Changed("from"),
 					Message:        message,
@@ -220,7 +221,7 @@ func newSendCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Send to daemon-known instances that are crashed, status-stale, or runtime-stale.")
 	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing a message for an instance the daemon does not know yet.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching recipients without appending mailbox messages.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching send apply command when the preview has actionable recipients.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching send apply command when the preview has actionable recipients. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each send result with a Go template, e.g. '{{.To}} {{.ID}}'.")
 	return cmd
