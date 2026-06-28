@@ -4281,6 +4281,7 @@ func newTeamWaitCmd() *cobra.Command {
 		timeout        time.Duration
 		interval       time.Duration
 		dryRun         bool
+		commands       bool
 		failOnCrash    bool
 		jsonOut        bool
 		quiet          bool
@@ -4353,6 +4354,9 @@ func newTeamWaitCmd() *cobra.Command {
 			if quiet && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: choose one of --quiet or --summary.")
 				return exitErr(2)
+			}
+			if err := validateWaitCommandsFlag(cmd, "agent-team team wait", dryRun, commands, jsonOut, summary, quiet, format); err != nil {
+				return err
 			}
 			if format != "" && (quiet || jsonOut || summary) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team wait: --format cannot be combined with --quiet, --json, or --summary.")
@@ -4436,6 +4440,9 @@ func newTeamWaitCmd() *cobra.Command {
 				return exitErr(2)
 			}
 			if len(names) == 0 {
+				if commands {
+					return nil
+				}
 				if summary {
 					body := waitSummaryResult{Summary: summarizeWaitResults(nil, waitConditionString(until, untilPhaseSet))}
 					if jsonOut {
@@ -4467,6 +4474,20 @@ func newTeamWaitCmd() *cobra.Command {
 						return exitErr(2)
 					}
 					return err
+				}
+				if commands {
+					return renderWaitCommands(cmd.OutOrStdout(), results, waitCommandOptions{
+						BaseArgs:    []string{"agent-team", "team", "wait", args[0]},
+						Scope:       operatorCommandScopeFromCommand(cmd, repo, "repo"),
+						Until:       until,
+						UntilSet:    cmd.Flags().Changed("until"),
+						UntilPhases: untilPhases,
+						Timeout:     timeout,
+						TimeoutSet:  cmd.Flags().Changed("timeout"),
+						Interval:    interval,
+						IntervalSet: cmd.Flags().Changed("interval"),
+						FailOnCrash: failOnCrash,
+					})
 				}
 				if err := renderWaitCommandResults(cmd, results, summary, jsonOut, quiet, formatTemplate, waitConditionString(until, untilPhaseSet), len(untilPhaseSet) > 0); err != nil {
 					return err
@@ -4521,6 +4542,7 @@ func newTeamWaitCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait (0 = no timeout).")
 	cmd.Flags().DurationVar(&interval, "interval", 500*time.Millisecond, "Polling interval.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview selected team instances and current state without waiting.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching team wait command for the selected instances. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&failOnCrash, "fail-on-crash", false, "Exit 1 if any selected instance resolves to crashed.")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate final status and phase counts instead of per-instance rows.")

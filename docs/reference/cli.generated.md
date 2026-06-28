@@ -9085,6 +9085,7 @@ agent-team team wait <team> [<instance>...] [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching team wait command for the selected instances. agent-team follow-ups preserve the selected repo scope.
       --dry-run               Preview selected team instances and current state without waiting.
       --fail-on-crash         Exit 1 if any selected instance resolves to crashed.
       --format string         Render each wait result with a Go template, e.g. '{{.Instance}} {{.Status}} {{.Phase}}'.
@@ -9514,6 +9515,7 @@ Flags:
 ```text
       --agent strings         Wait for every daemon-known instance for this agent. Can repeat or comma-separate.
   -a, --all                   Wait for every daemon-known instance.
+      --commands              With --dry-run, print the matching wait command for the selected instances. agent-team follow-ups preserve the selected repo scope.
       --dry-run               Preview selected instances and current state without waiting.
       --fail-on-crash         Exit 1 if any selected instance resolves to crashed.
       --format string         Render each wait result with a Go template, e.g. '{{.Instance}} {{.Status}} {{.Phase}}'.

@@ -1742,6 +1742,7 @@ func newWaitCmd() *cobra.Command {
 		timeout        time.Duration
 		interval       time.Duration
 		dryRun         bool
+		commands       bool
 		failOnCrash    bool
 		jsonOut        bool
 		quiet          bool
@@ -1825,6 +1826,9 @@ func newWaitCmd() *cobra.Command {
 			if quiet && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: choose one of --quiet or --summary.")
 				return exitErr(2)
+			}
+			if err := validateWaitCommandsFlag(cmd, "agent-team wait", dryRun, commands, jsonOut, summary, quiet, format); err != nil {
+				return err
 			}
 			if format != "" && (quiet || jsonOut || summary) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team: --format cannot be combined with --quiet, --json, or --summary.")
@@ -1910,6 +1914,9 @@ func newWaitCmd() *cobra.Command {
 				}
 			}
 			if len(args) == 0 && len(names) == 0 {
+				if commands {
+					return nil
+				}
 				if summary {
 					body := waitSummaryResult{Summary: summarizeWaitResults(nil, waitConditionString(until, untilPhaseSet))}
 					if jsonOut {
@@ -1941,6 +1948,20 @@ func newWaitCmd() *cobra.Command {
 						return exitErr(2)
 					}
 					return err
+				}
+				if commands {
+					return renderWaitCommands(cmd.OutOrStdout(), results, waitCommandOptions{
+						BaseArgs:    []string{"agent-team", "wait"},
+						Scope:       operatorCommandScopeFromCommand(cmd, target, "target"),
+						Until:       until,
+						UntilSet:    cmd.Flags().Changed("until"),
+						UntilPhases: untilPhases,
+						Timeout:     timeout,
+						TimeoutSet:  cmd.Flags().Changed("timeout"),
+						Interval:    interval,
+						IntervalSet: cmd.Flags().Changed("interval"),
+						FailOnCrash: failOnCrash,
+					})
 				}
 				if err := renderWaitCommandResults(cmd, results, summary, jsonOut, quiet, formatTemplate, waitConditionString(until, untilPhaseSet), len(untilPhaseSet) > 0); err != nil {
 					return err
@@ -1997,6 +2018,7 @@ func newWaitCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Maximum time to wait (0 = no timeout).")
 	cmd.Flags().DurationVar(&interval, "interval", 500*time.Millisecond, "Polling interval.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview selected instances and current state without waiting.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching wait command for the selected instances. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&failOnCrash, "fail-on-crash", false, "Exit 1 if any selected instance resolves to crashed.")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show aggregate final status and phase counts instead of per-instance rows.")
@@ -2025,6 +2047,47 @@ type waitSummary struct {
 	Condition string         `json:"condition,omitempty"`
 	Statuses  map[string]int `json:"statuses"`
 	Phases    map[string]int `json:"phases"`
+}
+
+type waitCommandOptions struct {
+	BaseArgs    []string
+	Scope       operatorCommandScope
+	Names       []string
+	Until       waitUntil
+	UntilSet    bool
+	UntilPhases []string
+	Timeout     time.Duration
+	TimeoutSet  bool
+	Interval    time.Duration
+	IntervalSet bool
+	FailOnCrash bool
+}
+
+func validateWaitCommandsFlag(cmd *cobra.Command, prefix string, dryRun, commands, jsonOut, summary, quiet bool, format string) error {
+	if !commands {
+		return nil
+	}
+	if !dryRun {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands requires --dry-run.\n", prefix)
+		return exitErr(2)
+	}
+	if jsonOut {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --json.\n", prefix)
+		return exitErr(2)
+	}
+	if summary {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --summary.\n", prefix)
+		return exitErr(2)
+	}
+	if quiet {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --quiet.\n", prefix)
+		return exitErr(2)
+	}
+	if format != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --format.\n", prefix)
+		return exitErr(2)
+	}
+	return nil
 }
 
 func parseWaitFormat(format string) (*template.Template, error) {
@@ -2127,6 +2190,52 @@ func renderWaitCommandResults(cmd *cobra.Command, results []waitResult, summary,
 		fmt.Fprintf(out, "  wait   %-20s %s\n", result.Instance, result.Status)
 	}
 	return nil
+}
+
+func renderWaitCommands(w io.Writer, results []waitResult, opts waitCommandOptions) error {
+	names := waitResultNames(results)
+	if len(names) == 0 {
+		return nil
+	}
+	opts.Names = names
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(waitCommandArgs(opts)), " "))
+	return err
+}
+
+func waitCommandArgs(opts waitCommandOptions) []string {
+	args := append([]string{}, opts.BaseArgs...)
+	if opts.Scope.Set && strings.TrimSpace(opts.Scope.Repo) != "" {
+		args = append(args, "--repo", opts.Scope.Repo)
+	}
+	args = append(args, opts.Names...)
+	if opts.UntilSet && opts.Until != waitUntilAny {
+		args = append(args, "--until", string(opts.Until))
+	}
+	args = appendPlanCommandFilterArgs(args, "--until-phase", opts.UntilPhases)
+	if opts.TimeoutSet {
+		args = append(args, "--timeout", opts.Timeout.String())
+	}
+	if opts.IntervalSet {
+		args = append(args, "--interval", opts.Interval.String())
+	}
+	if opts.FailOnCrash {
+		args = append(args, "--fail-on-crash")
+	}
+	return args
+}
+
+func waitResultNames(results []waitResult) []string {
+	names := make([]string, 0, len(results))
+	seen := map[string]bool{}
+	for _, result := range results {
+		name := strings.TrimSpace(result.Instance)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names
 }
 
 func waitResultsHaveStatus(rows []waitResult, status string) bool {

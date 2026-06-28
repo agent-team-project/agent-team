@@ -6020,6 +6020,25 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team wait codex rows = %+v", rows)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{
+		"team", "wait", "delivery", "--repo", root, "--runtime", "codex",
+		"--until", "running", "--timeout", "5s", "--dry-run", "--commands",
+	})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team wait --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "team", "wait", "delivery", "--repo", root, "worker-squ-101",
+		"--until", "running", "--timeout", "5s",
+	}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("team wait --commands = %q, want %q", got, wantCommand)
+	}
+
 	running := NewRootCmd()
 	runningOut, runningErr := &bytes.Buffer{}, &bytes.Buffer{}
 	running.SetOut(runningOut)
@@ -6058,6 +6077,33 @@ since = "2026-06-18T12:00:00Z"
 	}
 	if !strings.Contains(badRuntimeErr.String(), "unknown --runtime") {
 		t.Fatalf("bad runtime stderr = %q", badRuntimeErr.String())
+	}
+}
+
+func TestTeamWaitCommandsRejectsConflictingModes(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"team", "wait", "delivery", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"team", "wait", "delivery", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"team", "wait", "delivery", "--dry-run", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
+		{[]string{"team", "wait", "delivery", "--dry-run", "--commands", "--quiet"}, "--commands cannot be combined with --quiet"},
+		{[]string{"team", "wait", "delivery", "--dry-run", "--commands", "--format", "{{.Instance}}"}, "--commands cannot be combined with --format"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		stderr := &bytes.Buffer{}
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
 	}
 }
 

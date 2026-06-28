@@ -5167,6 +5167,47 @@ func TestWaitDryRunReportsCurrentStateWithoutWaiting(t *testing.T) {
 	if len(rows) != 1 || rows[0].Instance != "manager" || rows[0].Status != "running" || rows[0].PID != 321 {
 		t.Fatalf("rows = %+v, want current running manager", rows)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{
+		"wait", "--agent", "manager", "--dry-run", "--commands", "--target", tmp,
+		"--until", "running", "--timeout", "5s", "--interval", "250ms", "--fail-on-crash",
+	})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("wait --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "wait", "--repo", tmp, "manager", "--until", "running",
+		"--timeout", "5s", "--interval", "250ms", "--fail-on-crash",
+	}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("wait --commands = %q, want %q", got, wantCommand)
+	}
+
+	writeStatus(t, filepath.Join(teamDir, "state", "manager"), `[status]
+phase = "idle"
+description = "ready"
+`, time.Time{})
+	phaseCommands := NewRootCmd()
+	phaseOut, phaseErr := &bytes.Buffer{}, &bytes.Buffer{}
+	phaseCommands.SetOut(phaseOut)
+	phaseCommands.SetErr(phaseErr)
+	phaseCommands.SetArgs([]string{"wait", "manager", "--target", tmp, "--until-phase", "idle", "--dry-run", "--commands"})
+	if err := phaseCommands.Execute(); err != nil {
+		t.Fatalf("wait --until-phase --dry-run --commands: %v\nstderr=%s", err, phaseErr.String())
+	}
+	wantPhaseCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "wait", "--repo", tmp, "manager", "--until-phase", "idle",
+	}), " ")
+	if got := strings.TrimSpace(phaseOut.String()); got != wantPhaseCommand {
+		t.Fatalf("wait phase --commands = %q, want %q", got, wantPhaseCommand)
+	}
+	if strings.Contains(phaseOut.String(), "--until any") {
+		t.Fatalf("wait phase --commands leaked internal until condition: %q", phaseOut.String())
+	}
 }
 
 func TestWaitDryRunSummaryCountsCurrentStatusAndPhase(t *testing.T) {
@@ -5378,6 +5419,11 @@ func TestWaitFormatRejectsConflictingModes(t *testing.T) {
 		{[]string{"wait", "manager", "--format", "{{.Instance}}", "--quiet"}, "--format cannot be combined"},
 		{[]string{"wait", "manager", "--format", "{{.Instance}}", "--summary"}, "--format cannot be combined"},
 		{[]string{"wait", "manager", "--format", "{{"}, "invalid --format template"},
+		{[]string{"wait", "manager", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"wait", "manager", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"wait", "manager", "--dry-run", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
+		{[]string{"wait", "manager", "--dry-run", "--commands", "--quiet"}, "--commands cannot be combined with --quiet"},
+		{[]string{"wait", "manager", "--dry-run", "--commands", "--format", "{{.Instance}}"}, "--commands cannot be combined with --format"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
