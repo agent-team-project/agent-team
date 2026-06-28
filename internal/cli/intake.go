@@ -976,9 +976,10 @@ func intakeServeArgs(opts intakeServiceOptions) []string {
 
 func newIntakeServeCmd() *cobra.Command {
 	var (
-		target string
-		addr   string
-		opts   intakeServeOptions
+		target   string
+		addr     string
+		commands bool
+		opts     intakeServeOptions
 	)
 	opts.PruneOKOlderThan = 7 * 24 * time.Hour
 	opts.PruneRecoveredOlderThan = 7 * 24 * time.Hour
@@ -990,6 +991,14 @@ func newIntakeServeCmd() *cobra.Command {
 		Short: "Run a local HTTP listener for external webhook intake.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !opts.DryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake serve: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && opts.PreviewTriggers {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake serve: --commands cannot be combined with --preview-triggers.")
+				return exitErr(2)
+			}
 			if opts.PreviewTriggers && !opts.DryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake serve: --preview-triggers requires --dry-run.")
 				return exitErr(2)
@@ -1025,6 +1034,14 @@ func newIntakeServeCmd() *cobra.Command {
 			if opts.PruneRecoveredOlderThan < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake serve: --prune-recovered-older-than must be >= 0.")
 				return exitErr(2)
+			}
+			if commands {
+				return renderIntakeServeApplyCommand(cmd.OutOrStdout(), intakeServeApplyCommandOptions{
+					Repo:     intakeCommandRepo(cmd, target),
+					RepoSet:  intakeCommandRepoSet(cmd),
+					RepoFlag: intakeCommandRepoFlag(cmd),
+					Service:  intakeServiceOptionsFromServe(addr, opts),
+				})
 			}
 			opts.LinearSecret = firstNonEmpty(opts.LinearSecret, os.Getenv("LINEAR_WEBHOOK_SECRET"))
 			opts.GitHubSecret = firstNonEmpty(opts.GitHubSecret, os.Getenv("GITHUB_WEBHOOK_SECRET"))
@@ -1074,6 +1091,7 @@ func newIntakeServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8787", "Address for the webhook listener.")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Normalize requests and return previews without publishing to the daemon.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching intake serve command without starting the listener. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&opts.PreviewTriggers, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
 	cmd.Flags().BoolVar(&opts.GitHubReconcileJob, "github-reconcile-job", false, "For GitHub PR events, also reconcile the owning durable job.")
 	cmd.Flags().BoolVar(&opts.GitHubCleanupMerged, "github-cleanup-merged", false, "With --github-reconcile-job, remove the job-owned worktree and branch after a merged PR event.")
@@ -1089,6 +1107,45 @@ func newIntakeServeCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&opts.PruneOKOlderThan, "prune-ok-older-than", opts.PruneOKOlderThan, "Prune successful delivery history older than this duration after each request. Use 0 to disable.")
 	cmd.Flags().DurationVar(&opts.PruneRecoveredOlderThan, "prune-recovered-older-than", opts.PruneRecoveredOlderThan, "Prune recovered failed delivery history older than this duration after each request. Use 0 to disable.")
 	return cmd
+}
+
+type intakeServeApplyCommandOptions struct {
+	Repo     string
+	RepoSet  bool
+	RepoFlag string
+	Service  intakeServiceOptions
+}
+
+func renderIntakeServeApplyCommand(w io.Writer, opts intakeServeApplyCommandOptions) error {
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(intakeServeApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func intakeServeApplyCommandArgs(opts intakeServeApplyCommandOptions) []string {
+	args := []string{"agent-team", "intake", "serve"}
+	args = appendIntakeRepoArgs(args, opts.RepoFlag, opts.Repo, opts.RepoSet)
+	serveArgs := intakeServeArgs(opts.Service)
+	if len(serveArgs) > 2 {
+		args = append(args, serveArgs[2:]...)
+	}
+	return args
+}
+
+func intakeServiceOptionsFromServe(addr string, opts intakeServeOptions) intakeServiceOptions {
+	return intakeServiceOptions{
+		Addr:                    addr,
+		RequireLinearSecret:     opts.RequireLinearSecret,
+		RequireGitHubSecret:     opts.RequireGitHubSecret,
+		GitHubReconcileJob:      opts.GitHubReconcileJob,
+		GitHubCleanupMerged:     opts.GitHubCleanupMerged,
+		GitHubVerifyPR:          opts.GitHubVerifyPR,
+		GitHubAdvanceJob:        opts.GitHubAdvanceJob,
+		LinearMaxAge:            opts.LinearMaxAge,
+		GitHubReplayWindow:      opts.GitHubReplayWindow,
+		MaxBodyBytes:            opts.MaxBodyBytes,
+		PruneOKOlderThan:        opts.PruneOKOlderThan,
+		PruneRecoveredOlderThan: opts.PruneRecoveredOlderThan,
+	}
 }
 
 func validateIntakeRequiredSecrets(opts intakeServeOptions) error {

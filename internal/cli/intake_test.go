@@ -402,6 +402,8 @@ func TestIntakeServeRequiresSecrets(t *testing.T) {
 		{[]string{"intake", "serve", "--require-linear-secret"}, "--require-linear-secret set but Linear webhook secret is empty"},
 		{[]string{"intake", "serve", "--require-github-secret"}, "--require-github-secret set but GitHub webhook secret is empty"},
 		{[]string{"intake", "serve", "--max-body-bytes", "0"}, "--max-body-bytes must be > 0"},
+		{[]string{"intake", "serve", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"intake", "serve", "--dry-run", "--commands", "--preview-triggers"}, "--commands cannot be combined with --preview-triggers"},
 	} {
 		cmd := NewRootCmd()
 		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -419,6 +421,53 @@ func TestIntakeServeRequiresSecrets(t *testing.T) {
 		if !strings.Contains(stderr.String(), tc.want) {
 			t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
 		}
+	}
+}
+
+func TestIntakeServeDryRunCommands(t *testing.T) {
+	target := t.TempDir()
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"intake", "serve", "--target", target, "--dry-run", "--commands",
+		"--addr", "127.0.0.1:9999",
+		"--linear-max-age", "2m",
+		"--github-replay-window", "1h",
+		"--max-body-bytes", "1234",
+		"--prune-ok-older-than", "24h",
+		"--prune-recovered-older-than", "48h",
+		"--github-reconcile-job",
+		"--github-cleanup-merged",
+		"--github-verify-pr",
+		"--github-advance-job",
+		"--require-linear-secret",
+		"--require-github-secret",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake serve --dry-run --commands: %v\nstderr=%s", err, stderr.String())
+	}
+	want := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "intake", "serve", "--repo", target,
+		"--addr", "127.0.0.1:9999",
+		"--linear-max-age", "2m0s",
+		"--github-replay-window", "1h0m0s",
+		"--max-body-bytes", "1234",
+		"--prune-ok-older-than", "24h0m0s",
+		"--prune-recovered-older-than", "48h0m0s",
+		"--github-reconcile-job",
+		"--github-cleanup-merged",
+		"--github-verify-pr",
+		"--github-advance-job",
+		"--require-linear-secret",
+		"--require-github-secret",
+	}), " ")
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Fatalf("intake serve --commands = %q, want %q", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 

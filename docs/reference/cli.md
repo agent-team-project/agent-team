@@ -343,7 +343,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team intake linear` | Normalize Linear payload; add `--commands` to dry-run previews to print the apply command only |
 | `agent-team intake github` | Normalize GitHub payload, reconcile jobs, advance PR-gated work with `--wait-next-state`/`--wait-step`, optionally verify PR cleanup, and add `--commands` to dry-run previews to print the apply command only |
 | `agent-team intake schedule` | Normalize schedule payload; add `--commands` to dry-run previews and `--wait-next-state`/`--wait-step` for schedule-created pipeline jobs |
-| `agent-team intake serve` | Run local intake server with optional GitHub job reconciliation |
+| `agent-team intake serve` | Run local intake server with optional GitHub job reconciliation; add `--dry-run --commands` to print the production serve command without binding a port |
 | `agent-team intake service systemd|launchd|compose|kubernetes` | Print a systemd unit, launchd plist, compose service, or Kubernetes manifests for `intake serve` |
 | `agent-team intake summary` | Summarize delivery history; add `--commands` to print recovery/prune commands only |
 | `agent-team intake duplicates` | List duplicate provider request IDs; add `--commands` to print matching delivery-inspection commands only |

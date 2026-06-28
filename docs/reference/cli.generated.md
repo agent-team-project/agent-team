@@ -1731,6 +1731,7 @@ Flags:
 
 ```text
       --addr string                           Address for the webhook listener. (default "127.0.0.1:8787")
+      --commands                              With --dry-run, print the matching intake serve command without starting the listener. agent-team follow-ups preserve the selected repo scope.
       --dry-run                               Normalize requests and return previews without publishing to the daemon.
       --github-advance-job                    With --github-reconcile-job, dispatch the next ready pipeline step after PR metadata is reconciled.
       --github-cleanup-merged                 With --github-reconcile-job, remove the job-owned worktree and branch after a merged PR event.
