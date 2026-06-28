@@ -152,7 +152,7 @@ func newRuntimeProbeCmd() *cobra.Command {
 					return err
 				}
 			} else if commands {
-				if err := renderRuntimeProbeCommands(cmd.OutOrStdout(), result); err != nil {
+				if err := renderRuntimeProbeCommands(cmd.OutOrStdout(), result, operatorCommandScopeFromCommand(cmd, target, "target")); err != nil {
 					return err
 				}
 			} else if tmpl != nil {
@@ -171,7 +171,7 @@ func newRuntimeProbeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root or any path under a repo.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the probe result with a Go template, e.g. '{{.OK}} {{len .Issues}}'.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile to probe for this invocation (claude or codex). Overrides env and repo config.")
 	cmd.Flags().StringVar(&runtimeBinary, "runtime-bin", "", "Runtime binary to probe for this invocation. Overrides env and repo config.")
 	cmd.Flags().DurationVar(&timeout, "timeout", 20*time.Second, "Maximum time for daemon wait and external runtime diagnostics such as codex doctor --json.")
@@ -1002,20 +1002,11 @@ func renderRuntimeProbeFormat(w io.Writer, result *runtimeProbeResult, tmpl *tem
 	return err
 }
 
-func renderRuntimeProbeCommands(w io.Writer, result *runtimeProbeResult) error {
+func renderRuntimeProbeCommands(w io.Writer, result *runtimeProbeResult, scope operatorCommandScope) error {
 	if result == nil {
 		return nil
 	}
-	for _, action := range result.Actions {
-		action = strings.TrimSpace(action)
-		if action == "" {
-			continue
-		}
-		if _, err := fmt.Fprintln(w, action); err != nil {
-			return err
-		}
-	}
-	return nil
+	return renderActionCommands(w, scopedOperatorActions(result.Actions, scope))
 }
 
 func renderRuntimeProbe(w io.Writer, result *runtimeProbeResult) {

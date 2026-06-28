@@ -1000,7 +1000,7 @@ Flags:
 
 ```text
       --agent strings       Only check declared and daemon-known instances for this agent. Daemon health remains global. Can repeat or comma-separate.
-      --commands            Print issue remediation commands, one per line.
+      --commands            Print issue remediation commands, one per line. agent-team follow-ups preserve the selected repo scope.
       --format string       Render the health result with a Go template, e.g. '{{.Healthy}} {{.Summary.Running}}'.
       --instance strings    Only check instances with this name. Daemon health remains global. Can repeat or comma-separate.
       --interval duration   Refresh interval for --watch or --wait. (default 2s)
@@ -6580,7 +6580,7 @@ Aliases: `check`, `doctor`
 Flags:
 
 ```text
-      --commands                   Print recommended follow-up commands, one per line.
+      --commands                   Print recommended follow-up commands, one per line. agent-team follow-ups preserve the selected repo scope.
       --daemon-http-addr string    With --start-daemon, also expose agent-teamd on this loopback HTTP address, e.g. 127.0.0.1:0.
       --daemon-interval duration   Polling interval for --wait-daemon. (default 200ms)
       --exec                       Run a minimal runtime-native execution probe. Currently supports Codex one-shot execution.
@@ -7595,7 +7595,7 @@ agent-team team health <team> [flags]
 Flags:
 
 ```text
-      --commands          Print issue remediation commands, one per line.
+      --commands          Print issue remediation commands, one per line. agent-team follow-ups preserve the selected repo scope.
       --format string     Render team health with a Go template, e.g. '{{.Team.Name}} {{.Health.Healthy}}'.
       --jobs              Include team-owned job and pipeline health.
       --json              Emit team health as JSON.

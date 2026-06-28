@@ -214,11 +214,11 @@ func TestRuntimeProbeCommands(t *testing.T) {
 		t.Fatalf("runtime probe commands: %v\nstderr=%s", err, stderr.String())
 	}
 	want := strings.Join([]string{
-		"agent-team daemon start",
-		"agent-team run manager --runtime codex --prompt \"probe\" --last-message",
-		"agent-team runtime --json",
-		"agent-team runtime probe --runtime codex --exec --timeout 2m",
-		"agent-team runtime probe --runtime codex --start-daemon --daemon-http-addr 127.0.0.1:0 --exec-http-check --timeout 2m",
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", tmp, "daemon", "start"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", tmp}), " ") + " run manager --runtime codex --prompt \"probe\" --last-message",
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", tmp, "runtime", "--json"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", tmp, "runtime", "probe", "--runtime", "codex", "--exec", "--timeout", "2m"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", tmp, "runtime", "probe", "--runtime", "codex", "--start-daemon", "--daemon-http-addr", "127.0.0.1:0", "--exec-http-check", "--timeout", "2m"}), " "),
 		"codex doctor --summary",
 		"",
 	}, "\n")

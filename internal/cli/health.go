@@ -162,7 +162,8 @@ func newHealthCmd() *cobra.Command {
 				return err
 			}
 			if !quiet {
-				if err := writeHealthResultWithFormatAndCommands(cmd.OutOrStdout(), result, jsonOut, formatTemplate, commands); err != nil {
+				scope := operatorCommandScopeFromCommand(cmd, target, "target")
+				if err := writeHealthResultWithFormatAndCommands(cmd.OutOrStdout(), result, jsonOut, formatTemplate, commands, scope); err != nil {
 					return err
 				}
 			}
@@ -179,7 +180,7 @@ func newHealthCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Poll until the fleet is healthy, then exit.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the health result with a Go template, e.g. '{{.Healthy}} {{.Summary.Running}}'.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print issue remediation commands, one per line.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print issue remediation commands, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Only check the most recently started instance after other filters. Daemon health remains global.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Only check the N most recently started instances after other filters (0 = all). Daemon health remains global.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only check instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
@@ -368,15 +369,15 @@ func writeHealthResult(w io.Writer, result *healthResult, jsonOut bool) error {
 }
 
 func writeHealthResultWithFormat(w io.Writer, result *healthResult, jsonOut bool, tmpl *template.Template) error {
-	return writeHealthResultWithFormatAndCommands(w, result, jsonOut, tmpl, false)
+	return writeHealthResultWithFormatAndCommands(w, result, jsonOut, tmpl, false, operatorCommandScope{})
 }
 
-func writeHealthResultWithFormatAndCommands(w io.Writer, result *healthResult, jsonOut bool, tmpl *template.Template, commands bool) error {
+func writeHealthResultWithFormatAndCommands(w io.Writer, result *healthResult, jsonOut bool, tmpl *template.Template, commands bool, scope operatorCommandScope) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(result)
 	}
 	if commands {
-		return renderHealthCommands(w, result)
+		return renderHealthCommands(w, result, scope)
 	}
 	if tmpl != nil {
 		return renderHealthFormat(w, result, tmpl)
@@ -404,24 +405,21 @@ func renderHealthFormat(w io.Writer, result *healthResult, tmpl *template.Templa
 	return err
 }
 
-func renderHealthCommands(w io.Writer, result *healthResult) error {
+func renderHealthCommands(w io.Writer, result *healthResult, scope operatorCommandScope) error {
 	if result == nil {
 		return nil
 	}
-	seen := map[string]bool{}
+	var actions []string
 	for _, issue := range result.Issues {
 		for _, action := range issue.Actions {
 			action = strings.TrimSpace(action)
-			if action == "" || seen[action] {
+			if action == "" {
 				continue
 			}
-			seen[action] = true
-			if _, err := fmt.Fprintln(w, action); err != nil {
-				return err
-			}
+			actions = append(actions, action)
 		}
 	}
-	return nil
+	return renderActionCommands(w, scopedOperatorActions(actions, scope))
 }
 
 func collectHealth(teamDir string, now time.Time) (*healthResult, error) {

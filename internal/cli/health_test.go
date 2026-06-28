@@ -630,8 +630,13 @@ func TestHealthCommandReportsDeadQueueItems(t *testing.T) {
 	if !errors.As(err, &code) || code != 1 {
 		t.Fatalf("health commands err = %v, want exit 1\nstderr=%s", err, commandsErr.String())
 	}
-	if got, want := commandsOut.String(), "agent-team sync --dry-run\nagent-team queue retry --all --sort attempts --limit 10\nagent-team repair --skip-tick\n"; got != want {
-		t.Fatalf("health commands = %q, want %q", got, want)
+	wantCommands := strings.Join(scopedOperatorActions([]string{
+		"agent-team sync --dry-run",
+		"agent-team queue retry --all --sort attempts --limit 10",
+		"agent-team repair --skip-tick",
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
+	if got := commandsOut.String(); got != wantCommands {
+		t.Fatalf("health commands = %q, want %q", got, wantCommands)
 	}
 }
 

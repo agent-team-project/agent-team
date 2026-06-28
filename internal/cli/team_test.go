@@ -11631,7 +11631,12 @@ pipelines = ["ticket_to_pr"]
 	} else if !errors.As(err, &code) || int(code) != 1 {
 		t.Fatalf("team health commands err = %v, want exit 1\nstderr=%s", err, commandsErr.String())
 	}
-	for _, want := range []string{"agent-team team queue retry delivery --all --job squ-901 --sort attempts --limit 10", "agent-team team retry delivery --dry-run --dispatch --preview-routes", "agent-team team queue quarantine delivery --restorable", "agent-team team outbox quarantine delivery --restorable"} {
+	for _, want := range []string{
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", root, "team", "queue", "retry", "delivery", "--all", "--job", "squ-901", "--sort", "attempts", "--limit", "10"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", root, "team", "retry", "delivery", "--dry-run", "--dispatch", "--preview-routes"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", root, "team", "queue", "quarantine", "delivery", "--restorable"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", root, "team", "outbox", "quarantine", "delivery", "--restorable"}), " "),
+	} {
 		if !strings.Contains(commandsOut.String(), want) {
 			t.Fatalf("team health commands missing %q:\n%s", want, commandsOut.String())
 		}

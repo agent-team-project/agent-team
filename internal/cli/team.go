@@ -6413,7 +6413,8 @@ func newTeamHealthCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			if !quiet {
-				if err := renderTeamHealth(cmd.OutOrStdout(), snapshot, jsonOut, tmpl, commands); err != nil {
+				scope := operatorCommandScopeFromCommand(cmd, repo, "repo")
+				if err := renderTeamHealth(cmd.OutOrStdout(), snapshot, jsonOut, tmpl, commands, scope); err != nil {
 					return err
 				}
 			}
@@ -6427,7 +6428,7 @@ func newTeamHealthCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&includeJobs, "jobs", false, "Include team-owned job and pipeline health.")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output and use only the exit code.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team health as JSON.")
-	cmd.Flags().BoolVar(&commands, "commands", false, "Print issue remediation commands, one per line.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print issue remediation commands, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only check team-owned daemon-known instances for this runtime: claude or codex. Daemon, queue, and job health remain team-scoped. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only check team-owned running instances whose recorded runtime PID is no longer live. Daemon, queue, and job health remain team-scoped.")
 	cmd.Flags().StringVar(&format, "format", "", "Render team health with a Go template, e.g. '{{.Team.Name}} {{.Health.Healthy}}'.")
@@ -11167,7 +11168,7 @@ func renderTeamStatusFormat(w io.Writer, snapshot *teamStatusSnapshot, tmpl *tem
 	return err
 }
 
-func renderTeamHealth(w io.Writer, snapshot *teamHealthSnapshot, jsonOut bool, tmpl *template.Template, commands bool) error {
+func renderTeamHealth(w io.Writer, snapshot *teamHealthSnapshot, jsonOut bool, tmpl *template.Template, commands bool, scope operatorCommandScope) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(snapshot)
 	}
@@ -11175,7 +11176,7 @@ func renderTeamHealth(w io.Writer, snapshot *teamHealthSnapshot, jsonOut bool, t
 		if snapshot == nil {
 			return nil
 		}
-		return renderHealthCommands(w, snapshot.Health)
+		return renderHealthCommands(w, snapshot.Health, scope)
 	}
 	if tmpl != nil {
 		return renderTeamHealthFormat(w, snapshot, tmpl)

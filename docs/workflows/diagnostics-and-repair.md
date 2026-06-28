@@ -121,7 +121,9 @@ Health exits nonzero when unhealthy in one-shot mode.
 With `--jobs`, stuck or failed jobs can make health fail. This is useful in CI or operator dashboards.
 
 Add `--commands` when a script needs only the issue remediation commands, one
-per line, while preserving the same healthy/unhealthy exit code.
+per line, while preserving the same healthy/unhealthy exit code. When `health`
+or `team health` is scoped with `--target` or `--repo`, command-only
+`agent-team` follow-ups preserve that selected repo.
 
 Health also reports job, queue, and outbox quarantine inventory as warning issues with scoped recovery actions when ownership resolves to one job, pipeline, or team.
 

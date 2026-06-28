@@ -40,7 +40,7 @@ as the output directory instead.
 | `agent-team runtime unset` | Remove the repo default runtime profile from `.agent_team/config.toml`; add `--dry-run --commands` for the apply command |
 | `agent-team runtime profile` | Explicit profile view, with `show` as a shorter alias |
 | `agent-team runtime ls` | List supported runtime profiles, availability, and capabilities |
-| `agent-team runtime probe` | Probe runtime selection, daemon readiness, Codex doctor health, optional Codex exec readiness, Codex socket reachability with `--exec-socket-check`, loopback HTTP reachability with `--exec-http-check`, print follow-up commands with `--commands`, and write diagnostics with `--output`; aliases: `doctor`, `check` |
+| `agent-team runtime probe` | Probe runtime selection, daemon readiness, Codex doctor health, optional Codex exec readiness, Codex socket reachability with `--exec-socket-check`, loopback HTTP reachability with `--exec-http-check`, print repo-scoped follow-up commands with `--commands`, and write diagnostics with `--output`; aliases: `doctor`, `check` |
 | `agent-team adopt <instance>` | Adopt a live external runtime process into daemon metadata and return follow-up actions; add `--commands` for one follow-up command per line; `runtime adopt` remains available |
 | `agent-team resume-plan` | Show resume, attach, and log fallback commands from daemon metadata; filter by `--step`, `--action`, `--runtime-stale`, or `--unhealthy`, sort/limit large recovery lists, print repo-scoped commands with `--commands`, or summarize with `--summary`; `runtime resume-plan` remains available |
 
@@ -271,7 +271,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team graph <team>` | Render team-owned instance, schedule, and pipeline wiring |
 | `agent-team team doctor --all` | Validate team-owned workflow wiring; add `--strict-runtime` to fail on unavailable step runtime defaults |
 | `agent-team team overview <team>` | Scoped operator overview; add `--commands` for one scoped action command per line, preserving an explicit `--repo` selector in emitted `agent-team` follow-ups |
-| `agent-team team health <team>` | Scoped health; add `--commands` for one scoped remediation command per line |
+| `agent-team team health <team>` | Scoped health; add `--commands` for one scoped remediation command per line, preserving an explicit `--repo` selector in emitted `agent-team` follow-ups |
 | `agent-team team resume-plan <team>` | Team-scoped runtime recovery commands; filter by `--step`, `--action`, `--runtime-stale`, or `--unhealthy`, sort/limit large recovery lists, print repo-scoped commands with `--commands`, or summarize with `--summary`; `team runtime resume-plan` remains available |
 | `agent-team team status <team>` | Scoped status; add `--commands` for one scoped action command per line |
 | `agent-team team monitor <team>` | Scoped dashboard with team-owned queue/outbox recovery signals |
@@ -355,7 +355,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | --- | --- |
 | `agent-team overview` | Compact state and action hints, including queue/job/outbox quarantine recovery; JSON includes structured `action_details`, and `--commands` prints only action commands while preserving an explicit `--target` or `--repo` selector in emitted `agent-team` follow-ups |
 | `agent-team next` | Recommended next commands with structured JSON `action_details` or one command per line with `--commands` while preserving an explicit `--target` or `--repo` selector; filter quarantine recovery with `--reason quarantined`, `queue_quarantined`, `job_quarantined`, or `outbox_quarantined` |
-| `agent-team health` | Scriptable health check with queue, job, and outbox quarantine warnings plus scoped recovery actions; add `--commands` for one remediation command per line |
+| `agent-team health` | Scriptable health check with queue, job, and outbox quarantine warnings plus scoped recovery actions; add `--commands` for one remediation command per line while preserving an explicit `--target` or `--repo` selector in emitted `agent-team` follow-ups |
 | `agent-team monitor` | Operator dashboard with health, job/queue/outbox recovery, inbox, instances, and resources |
 | `agent-team watch` | Continuous monitor with health, job/queue/outbox recovery, inbox, instances, and resources |
 | `agent-team snapshot` | Redacted diagnostic artifact with command provenance, job/queue/outbox quarantine inventory, and formatted summary fields |

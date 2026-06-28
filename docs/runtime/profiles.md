@@ -48,7 +48,8 @@ timeout, so provider reachability, auth, MCP, and sandbox failures are visible
 before jobs or pipelines queue work against a runtime that cannot start. Text
 output includes a concise action list by default; add `--commands` when scripts
 need only those recommended follow-up commands, one per line, while preserving
-the probe exit code. A stopped daemon is a warning because direct runs can still
+the probe exit code. If the probe was scoped with `--target` or `--repo`,
+command-only `agent-team` follow-ups preserve that selected repo. A stopped daemon is a warning because direct runs can still
 work; add `--require-daemon` when the preflight is for daemon-backed dispatch,
 mailbox, or channel flows and should fail until `agent-teamd` is ready. Add `--wait-daemon`
 to poll readiness first; `--timeout` bounds both that wait and runtime-native
