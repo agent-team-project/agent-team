@@ -31,6 +31,7 @@ func newMonitorCmd() *cobra.Command {
 		summary          bool
 		resources        bool
 		lastMessage      bool
+		commands         bool
 		jsonOut          bool
 		noClear          bool
 		latest           bool
@@ -95,6 +96,22 @@ func newMonitorCmd() *cobra.Command {
 			}
 			if len(actionFilters) > 0 && !plan {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team monitor: --action requires --plan.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team monitor: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team monitor: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && summary {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team monitor: --commands cannot be combined with --summary.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team monitor: --commands cannot be combined with --watch.")
 				return exitErr(2)
 			}
 			if format != "" && (jsonOut || summary) {
@@ -179,6 +196,23 @@ func newMonitorCmd() *cobra.Command {
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(snapshot)
 			}
+			if commands {
+				scope := operatorCommandScopeFromCommand(cmd, target, "target")
+				return renderMonitorCommands(cmd.OutOrStdout(), snapshot, monitorCommandOptions{
+					Scope: scope,
+					Plan: planCommandOptions{
+						BaseArgs:        []string{"agent-team", "sync"},
+						DryRun:          true,
+						StopExtras:      stopExtras,
+						StatusFilters:   statusFilters,
+						RuntimeFilters:  runtimeFilters,
+						AgentFilters:    agentFilters,
+						PhaseFilters:    phaseFilters,
+						InstanceFilters: instanceFilters,
+						ActionFilters:   actionFilters,
+					},
+				})
+			}
 			if formatTemplate != nil {
 				return renderMonitorFormat(cmd.OutOrStdout(), snapshot, formatTemplate)
 			}
@@ -196,6 +230,7 @@ func newMonitorCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&summary, "summary", false, "Show compact non-failing fleet health and optional plan summaries instead of the full monitor.")
 	cmd.Flags().BoolVar(&resources, "resources", false, "With --summary, include aggregate CPU, memory, and RSS totals.")
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recovery and apply commands from the visible monitor sections, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON. With --watch, writes one JSON object per refresh.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Show only the most recently started instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show only the N most recently started instances after other filters (0 = all).")
@@ -793,6 +828,60 @@ func renderMonitorSchedules(w io.Writer, snapshot *scheduleForecast) {
 	}
 	fmt.Fprintln(w)
 	_ = renderScheduleNextRows(w, snapshot.Rows, false, nil, false)
+}
+
+type monitorCommandOptions struct {
+	Scope operatorCommandScope
+	Plan  planCommandOptions
+}
+
+func renderMonitorCommands(w io.Writer, snapshot *monitorSnapshot, opts monitorCommandOptions) error {
+	if snapshot == nil {
+		return nil
+	}
+	actions := monitorCommandActions(snapshot)
+	if snapshot.Plan != nil {
+		var planCommands strings.Builder
+		if err := renderPlanCommands(&planCommands, snapshot.Plan.Instances, opts.Plan); err != nil {
+			return err
+		}
+		actions = append(actions, splitCommandLines(planCommands.String())...)
+	}
+	return renderOperatorActionCommands(w, actions, opts.Scope)
+}
+
+func monitorCommandActions(snapshot *monitorSnapshot) []string {
+	actions := make([]string, 0)
+	if snapshot == nil {
+		return actions
+	}
+	if snapshot.Health != nil {
+		for _, issue := range snapshot.Health.Issues {
+			actions = append(actions, issue.Actions...)
+		}
+	}
+	if snapshot.Jobs != nil {
+		for _, item := range snapshot.Jobs.Attention {
+			actions = append(actions, item.Actions...)
+		}
+		for _, row := range snapshot.Jobs.ReadySteps {
+			actions = append(actions, row.Actions...)
+		}
+	}
+	return actions
+}
+
+func splitCommandLines(body string) []string {
+	lines := strings.Split(body, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 func collectMonitorSnapshot(teamDir string, now time.Time, probe processStatsProbe, opts monitorOptions) (*monitorSnapshot, error) {

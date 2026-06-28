@@ -6543,6 +6543,7 @@ func newTeamMonitorCmd() *cobra.Command {
 		schedules        bool
 		stopExtras       bool
 		lastMessage      bool
+		commands         bool
 		jsonOut          bool
 		noClear          bool
 		latest           bool
@@ -6607,6 +6608,18 @@ func newTeamMonitorCmd() *cobra.Command {
 			}
 			if len(actionFilters) > 0 && !plan {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --action requires --plan.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && watch {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --commands cannot be combined with --watch.")
 				return exitErr(2)
 			}
 			if format != "" && jsonOut {
@@ -6684,6 +6697,19 @@ func newTeamMonitorCmd() *cobra.Command {
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(snapshot)
 			}
+			if commands {
+				scope := operatorCommandScopeFromCommand(cmd, repo, "repo")
+				return renderMonitorCommands(cmd.OutOrStdout(), snapshot, monitorCommandOptions{
+					Scope: scope,
+					Plan: planCommandOptions{
+						BaseArgs:       []string{"agent-team", "team", "sync", args[0]},
+						DryRun:         true,
+						StopExtras:     stopExtras,
+						RuntimeFilters: runtimeFilters,
+						ActionFilters:  actionFilters,
+					},
+				})
+			}
 			if formatTemplate != nil {
 				return renderMonitorFormat(cmd.OutOrStdout(), snapshot, formatTemplate)
 			}
@@ -6699,6 +6725,7 @@ func newTeamMonitorCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&schedules, "schedules", false, "Include due and upcoming team schedules.")
 	cmd.Flags().BoolVar(&stopExtras, "stop-extras", false, "With --plan, preview running team-agent extras as stop actions.")
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recovery and apply commands from the visible team monitor sections, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON. With --watch, writes one JSON object per refresh.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Show only the most recently started team-owned instance after other filters.")
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show only the N most recently started team-owned instances after other filters (0 = all).")

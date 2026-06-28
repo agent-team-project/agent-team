@@ -3711,6 +3711,7 @@ Flags:
       --action strings         With --plan, only show plan rows with this action: start, resume, keep, unsupported, on-demand, stop, or extra. Can repeat or comma-separate.
       --agent strings          Only show instances, stats, and plan rows for this agent. Can repeat or comma-separate.
   -a, --all                    Include stopped, exited, and crashed daemon-managed instances in the stats section.
+      --commands               Print recovery and apply commands from the visible monitor sections, one per line. agent-team follow-ups preserve the selected repo scope.
       --event-action strings   With --events, only show lifecycle events with this action. Can repeat or comma-separate.
       --events int             Include the last N matching daemon lifecycle events in the full monitor (0 = omit).
       --format string          Render monitor snapshots with a Go template, e.g. '{{.Health.Healthy}} {{len .Instances}}'.
@@ -7734,6 +7735,7 @@ Flags:
       --action strings         With --plan, only show plan rows with this action: start, resume, keep, unsupported, on-demand, stop, or extra. Can repeat or comma-separate.
       --agent strings          Only show team-owned instances, stats, and plan rows for this agent. Can repeat or comma-separate.
   -a, --all                    Include stopped, exited, crashed, and missing team-owned instances in the stats section.
+      --commands               Print recovery and apply commands from the visible team monitor sections, one per line. agent-team follow-ups preserve the selected repo scope.
       --event-action strings   With --events, only show lifecycle events with this action. Can repeat or comma-separate.
       --events int             Include the last N matching team lifecycle events in the full monitor (0 = omit).
       --format string          Render team monitor snapshots with a Go template, e.g. '{{.Team.Name}} {{len .Instances}}'.

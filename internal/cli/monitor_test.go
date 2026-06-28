@@ -205,6 +205,173 @@ instances = ["build-worker"]
 	}
 }
 
+func TestMonitorCommandsPrintsVisibleSectionActions(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.manager]
+agent = "manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance:  "runtime-stale",
+		Agent:     "worker",
+		Job:       "SQU-88",
+		Runtime:   "codex",
+		Status:    daemon.StatusRunning,
+		PID:       99999999,
+		Workspace: tmp,
+		StartedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("write runtime metadata: %v", err)
+	}
+	failed := mustNewJob(t, "SQU-701", "worker")
+	failed.Status = job.StatusFailed
+	failed.UpdatedAt = now.Add(-2 * time.Hour)
+	if err := job.Write(teamDir, failed); err != nil {
+		t.Fatalf("write failed job: %v", err)
+	}
+	ready := mustNewJob(t, "SQU-702", "manager")
+	ready.Pipeline = "ticket_to_pr"
+	ready.Steps = []job.Step{
+		{ID: "triage", Target: "ticket-manager", Status: job.StatusDone, StartedAt: now.Add(-2 * time.Hour), FinishedAt: now.Add(-time.Hour)},
+		{ID: "implement", Target: "worker", Status: job.StatusBlocked, After: []string{"triage"}},
+	}
+	if err := job.Write(teamDir, ready); err != nil {
+		t.Fatalf("write ready job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--target", tmp, "--last-message", "--plan", "--jobs", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor --commands: %v\nstderr=%s", err, stderr.String())
+	}
+	body := out.String()
+	scope := operatorCommandScope{Repo: tmp, Set: true}
+	wantCommands := []string{
+		scopedOperatorAction("agent-team job resume-plan squ-88 --runtime-stale --last-message", scope),
+		scopedOperatorAction("agent-team sync --dry-run", scope),
+		scopedOperatorAction("agent-team job retry squ-701 --dispatch", scope),
+		scopedOperatorAction("agent-team job advance squ-702", scope),
+	}
+	for _, want := range wantCommands {
+		if !strings.Contains(body, want) {
+			t.Fatalf("monitor --commands missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "HEALTH") || strings.Contains(body, "INSTANCES") || strings.Contains(body, "Ready pipeline steps:") {
+		t.Fatalf("monitor --commands included dashboard text:\n%s", body)
+	}
+}
+
+func TestTeamMonitorCommandsPrintsScopedSectionActions(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	for _, name := range []string{"manager", "worker"} {
+		if err := os.MkdirAll(filepath.Join(teamDir, "agents", name), 0o755); err != nil {
+			t.Fatalf("mkdir agent %s: %v", name, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.manager]
+agent = "manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[instances.build-worker]
+agent = "worker"
+ephemeral = true
+
+[teams.delivery]
+instances = ["manager", "worker"]
+
+[teams.platform]
+instances = ["build-worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "worker-squ-902", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999999, Workspace: root, StartedAt: now},
+		{Instance: "build-worker-1", Agent: "worker", Runtime: "codex", Status: daemon.StatusRunning, PID: 99999998, Workspace: root, StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+	failed := mustNewJob(t, "SQU-901", "worker")
+	failed.Status = job.StatusFailed
+	failed.UpdatedAt = now.Add(-2 * time.Hour)
+	if err := job.Write(teamDir, failed); err != nil {
+		t.Fatalf("write failed job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "monitor", "delivery", "--repo", root, "--last-message", "--plan", "--jobs", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team monitor --commands: %v\nstderr=%s", err, stderr.String())
+	}
+	body := out.String()
+	scope := operatorCommandScope{Repo: root, Set: true}
+	wantCommands := []string{
+		scopedOperatorAction("agent-team team resume-plan delivery --runtime-stale --sort stale --limit 10 --last-message", scope),
+		scopedOperatorAction("agent-team team sync delivery --dry-run", scope),
+		scopedOperatorAction("agent-team job retry squ-901 --dispatch", scope),
+	}
+	for _, want := range wantCommands {
+		if !strings.Contains(body, want) {
+			t.Fatalf("team monitor --commands missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "build-worker-1") || strings.Contains(body, "agent-team resume-plan worker-squ-902 --runtime-stale") {
+		t.Fatalf("team monitor --commands leaked unscoped or unrelated runtime:\n%s", body)
+	}
+}
+
+func TestMonitorCommandsRejectsIncompatibleOutputModes(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "json", args: []string{"monitor", "--target", tmp, "--commands", "--json"}, want: "--commands cannot be combined with --json"},
+		{name: "summary", args: []string{"monitor", "--target", tmp, "--commands", "--summary"}, want: "--commands cannot be combined with --summary"},
+		{name: "watch", args: []string{"monitor", "--target", tmp, "--commands", "--watch"}, want: "--commands cannot be combined with --watch"},
+		{name: "team watch", args: []string{"team", "watch", "delivery", "--repo", tmp, "--commands"}, want: "--commands cannot be combined with --watch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(stdout)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err == nil {
+				t.Fatalf("%s succeeded; stdout=%s", strings.Join(tc.args, " "), stdout.String())
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestMonitorReportsUnreadInboxSummary(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
