@@ -2654,6 +2654,7 @@ agent-team job quarantine drop <quarantine-path> [flags]
 Flags:
 
 ```text
+      --commands        With --dry-run, print the matching job quarantine drop apply command when the preview has actionable work.
       --dry-run         Preview the quarantined job file drop without deleting it.
       --format string   Render the drop result with a Go template, e.g. '{{.Path}} {{.Action}}'.
       --json            Emit the drop result as JSON.
@@ -2671,6 +2672,7 @@ agent-team job quarantine restore <quarantine-path> [flags]
 Flags:
 
 ```text
+      --commands        With --dry-run, print the matching job quarantine restore apply command when the preview has actionable work.
       --dry-run         Preview the job file restore without moving it.
       --force           Overwrite an existing active job file with the same id.
       --format string   Render the restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.

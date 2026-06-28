@@ -185,11 +185,12 @@ func newJobQuarantineShowCmd() *cobra.Command {
 
 func newJobQuarantineRestoreCmd() *cobra.Command {
 	var (
-		repo    string
-		dryRun  bool
-		force   bool
-		jsonOut bool
-		format  string
+		repo     string
+		dryRun   bool
+		force    bool
+		jsonOut  bool
+		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -197,6 +198,18 @@ func newJobQuarantineRestoreCmd() *cobra.Command {
 		Short: "Restore one validated quarantined job file.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job quarantine restore: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job quarantine restore: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job quarantine restore: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			formatTemplate, err := parseJobQuarantineCommandFormat(cmd, "agent-team job quarantine restore", format, jsonOut)
 			if err != nil {
 				return err
@@ -210,6 +223,16 @@ func newJobQuarantineRestoreCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job quarantine restore: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				args := []string{"agent-team", "job", "quarantine", "restore", result.Path}
+				if cmd.Flags().Changed("repo") {
+					args = append(args, "--repo", repo)
+				}
+				if force {
+					args = append(args, "--force")
+				}
+				return renderJobQuarantineApplyCommand(cmd.OutOrStdout(), result.DryRun && result.Action == "would_restore", args)
+			}
 			return renderJobQuarantineRestore(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
@@ -217,16 +240,18 @@ func newJobQuarantineRestoreCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the job file restore without moving it.")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing active job file with the same id.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the restore result as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching job quarantine restore apply command when the preview has actionable work.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the restore result with a Go template, e.g. '{{.ID}} {{.Action}}'.")
 	return cmd
 }
 
 func newJobQuarantineDropCmd() *cobra.Command {
 	var (
-		repo    string
-		dryRun  bool
-		jsonOut bool
-		format  string
+		repo     string
+		dryRun   bool
+		jsonOut  bool
+		format   string
+		commands bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -234,6 +259,18 @@ func newJobQuarantineDropCmd() *cobra.Command {
 		Short: "Drop one quarantined job file after inspection.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job quarantine drop: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job quarantine drop: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job quarantine drop: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			formatTemplate, err := parseJobQuarantineCommandFormat(cmd, "agent-team job quarantine drop", format, jsonOut)
 			if err != nil {
 				return err
@@ -247,12 +284,20 @@ func newJobQuarantineDropCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job quarantine drop: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				args := []string{"agent-team", "job", "quarantine", "drop", result.Path}
+				if cmd.Flags().Changed("repo") {
+					args = append(args, "--repo", repo)
+				}
+				return renderJobQuarantineApplyCommand(cmd.OutOrStdout(), result.DryRun && result.Action == "would_drop", args)
+			}
 			return renderJobQuarantineDrop(cmd.OutOrStdout(), result, jsonOut, formatTemplate)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the quarantined job file drop without deleting it.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the drop result as JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching job quarantine drop apply command when the preview has actionable work.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the drop result with a Go template, e.g. '{{.Path}} {{.Action}}'.")
 	return cmd
 }
@@ -679,6 +724,14 @@ func renderJobQuarantineShow(w io.Writer, result jobQuarantineShowResult, jsonOu
 
 func renderJobQuarantineCommands(w io.Writer, result jobQuarantineShowResult) error {
 	return renderActionCommands(w, commandActionsOnly(jobQuarantineShowActions(result)))
+}
+
+func renderJobQuarantineApplyCommand(w io.Writer, hasAction bool, args []string) error {
+	if !hasAction {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(args), " "))
+	return err
 }
 
 func renderJobQuarantineRestore(w io.Writer, result jobQuarantineRestoreResult, jsonOut bool, tmpl *template.Template) error {

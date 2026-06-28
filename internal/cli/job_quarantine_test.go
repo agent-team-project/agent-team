@@ -153,6 +153,19 @@ updated_at = 2026-06-27T12:00:00Z
 		t.Fatalf("dry-run should leave quarantined file in place: %v", err)
 	}
 
+	restoreCommands := NewRootCmd()
+	restoreCommandsOut, restoreCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	restoreCommands.SetOut(restoreCommandsOut)
+	restoreCommands.SetErr(restoreCommandsErr)
+	restoreCommands.SetArgs([]string{"job", "quarantine", "restore", restorableRel, "--repo", tmp, "--dry-run", "--commands"})
+	if err := restoreCommands.Execute(); err != nil {
+		t.Fatalf("job quarantine restore commands: %v\nstderr=%s", err, restoreCommandsErr.String())
+	}
+	wantRestoreCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "quarantine", "restore", restorableRel, "--repo", tmp}), " ")
+	if got := strings.TrimSpace(restoreCommandsOut.String()); got != wantRestoreCommand {
+		t.Fatalf("job quarantine restore commands = %q, want %q", got, wantRestoreCommand)
+	}
+
 	restore := NewRootCmd()
 	restoreOut, restoreErr := &bytes.Buffer{}, &bytes.Buffer{}
 	restore.SetOut(restoreOut)
@@ -190,6 +203,19 @@ updated_at = 2026-06-27T12:00:00Z
 		t.Fatalf("dry-run should leave broken file in place: %v", err)
 	}
 
+	dropCommands := NewRootCmd()
+	dropCommandsOut, dropCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dropCommands.SetOut(dropCommandsOut)
+	dropCommands.SetErr(dropCommandsErr)
+	dropCommands.SetArgs([]string{"job", "quarantine", "drop", brokenRel, "--repo", tmp, "--dry-run", "--commands"})
+	if err := dropCommands.Execute(); err != nil {
+		t.Fatalf("job quarantine drop commands: %v\nstderr=%s", err, dropCommandsErr.String())
+	}
+	wantDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "quarantine", "drop", brokenRel, "--repo", tmp}), " ")
+	if got := strings.TrimSpace(dropCommandsOut.String()); got != wantDropCommand {
+		t.Fatalf("job quarantine drop commands = %q, want %q", got, wantDropCommand)
+	}
+
 	drop := NewRootCmd()
 	dropOut, dropErr := &bytes.Buffer{}, &bytes.Buffer{}
 	drop.SetOut(dropOut)
@@ -222,7 +248,7 @@ updated_at = 2026-06-27T12:00:00Z
 	}
 }
 
-func TestJobQuarantineShowRejectsFormatCombinations(t *testing.T) {
+func TestJobQuarantineRejectsCommandsFormatCombinations(t *testing.T) {
 	cases := []struct {
 		name string
 		args []string
@@ -236,6 +262,36 @@ func TestJobQuarantineShowRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "commands with format",
 			args: []string{"job", "quarantine", "show", "quarantine/20260627T120000.000000000Z/broken.toml", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "restore commands without dry run",
+			args: []string{"job", "quarantine", "restore", "quarantine/20260627T120000.000000000Z/squ-402.toml", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "restore commands with json",
+			args: []string{"job", "quarantine", "restore", "quarantine/20260627T120000.000000000Z/squ-402.toml", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "restore commands with format",
+			args: []string{"job", "quarantine", "restore", "quarantine/20260627T120000.000000000Z/squ-402.toml", "--dry-run", "--commands", "--format", "{{.ID}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "drop commands without dry run",
+			args: []string{"job", "quarantine", "drop", "quarantine/20260627T120000.000000000Z/broken.toml", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "drop commands with json",
+			args: []string{"job", "quarantine", "drop", "quarantine/20260627T120000.000000000Z/broken.toml", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "drop commands with format",
+			args: []string{"job", "quarantine", "drop", "quarantine/20260627T120000.000000000Z/broken.toml", "--dry-run", "--commands", "--format", "{{.ID}}"},
 			want: "--commands cannot be combined with --format",
 		},
 	}
