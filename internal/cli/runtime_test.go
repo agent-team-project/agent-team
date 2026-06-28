@@ -274,6 +274,53 @@ func TestRuntimeSetDryRunDoesNotWriteConfig(t *testing.T) {
 	}
 }
 
+func TestRuntimeSetDryRunCommands(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	cfg := filepath.Join(tmp, ".agent_team", "config.toml")
+	before, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"runtime", "set", "--target", tmp, "codex", "--runtime-bin", "codex-dev", "--dry-run", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime set --dry-run --commands failed: %v\nstderr: %s", err, errOut.String())
+	}
+	want := strings.Join(shellQuoteArgs([]string{"agent-team", "runtime", "set", "--target", tmp, "codex", "--runtime-bin", "codex-dev"}), " ") + "\n"
+	if got := out.String(); got != want {
+		t.Fatalf("commands output = %q, want %q", got, want)
+	}
+	after, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatalf("read config after: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("dry-run changed config:\nbefore:\n%s\nafter:\n%s", string(before), string(after))
+	}
+
+	if err := os.WriteFile(cfg, []byte("[runtime]\nkind = \"codex\"\nbinary = \"codex-dev\"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	noop := NewRootCmd()
+	noopOut, noopErr := &bytes.Buffer{}, &bytes.Buffer{}
+	noop.SetOut(noopOut)
+	noop.SetErr(noopErr)
+	noop.SetArgs([]string{"runtime", "set", "--target", tmp, "codex", "--runtime-bin", "codex-dev", "--dry-run", "--commands"})
+	if err := noop.Execute(); err != nil {
+		t.Fatalf("runtime set no-op --dry-run --commands failed: %v\nstderr: %s", err, noopErr.String())
+	}
+	if got := noopOut.String(); got != "" {
+		t.Fatalf("no-op commands output = %q, want empty", got)
+	}
+}
+
 func TestRuntimeSetRejectsInvalidRuntime(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -346,6 +393,38 @@ status_stale_after = "10m"
 	}
 }
 
+func TestRuntimeUnsetDryRunCommandsUsesGlobalRepo(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	cfg := filepath.Join(tmp, ".agent_team", "config.toml")
+	before := "[runtime]\nkind = \"codex\"\nbinary = \"codex-dev\"\n"
+	if err := os.WriteFile(cfg, []byte(before), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"--repo", tmp, "runtime", "unset", "--dry-run", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime unset --dry-run --commands failed: %v\nstderr: %s", err, errOut.String())
+	}
+	want := strings.Join(shellQuoteArgs([]string{"agent-team", "runtime", "unset", "--repo", tmp}), " ") + "\n"
+	if got := out.String(); got != want {
+		t.Fatalf("commands output = %q, want %q", got, want)
+	}
+	after, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatalf("read config after: %v", err)
+	}
+	if string(after) != before {
+		t.Fatalf("dry-run changed config:\nbefore:\n%s\nafter:\n%s", before, string(after))
+	}
+}
+
 func TestRuntimeUnsetDryRunPreservesConfigAndReportsEnvOverride(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "")
 	t.Setenv(runtimebin.EnvBinary, "codex-wrapper")
@@ -385,6 +464,65 @@ extra = "kept"
 	}
 	if strings.Contains(next, `kind = "codex"`) || strings.Contains(next, `binary = "codex-dev"`) {
 		t.Fatalf("unset retained selector keys:\n%s", next)
+	}
+}
+
+func TestRuntimeSetUnsetCommandsRejectInvalidFlagCombos(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "set requires dry run",
+			args: []string{"runtime", "set", "codex", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "set rejects json",
+			args: []string{"runtime", "set", "codex", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "set rejects format",
+			args: []string{"runtime", "set", "codex", "--dry-run", "--commands", "--format", "{{.Changed}}"},
+			want: "--commands cannot be combined with --format",
+		},
+		{
+			name: "unset requires dry run",
+			args: []string{"runtime", "unset", "--commands"},
+			want: "--commands requires --dry-run",
+		},
+		{
+			name: "unset rejects json",
+			args: []string{"runtime", "unset", "--dry-run", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "unset rejects format",
+			args: []string{"runtime", "unset", "--dry-run", "--commands", "--format", "{{.Changed}}"},
+			want: "--commands cannot be combined with --format",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(errOut)
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("%v succeeded", tt.args)
+			}
+			var ec ExitCode
+			if !errors.As(err, &ec) || int(ec) != 2 {
+				t.Fatalf("error = %v, want exit 2", err)
+			}
+			if !strings.Contains(errOut.String(), tt.want) {
+				t.Fatalf("stderr = %q, want %q", errOut.String(), tt.want)
+			}
+		})
 	}
 }
 

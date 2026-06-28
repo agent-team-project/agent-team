@@ -36,8 +36,8 @@ as the output directory instead.
 | `agent-team daemon restart` | Restart daemon |
 | `agent-team daemon reconcile` | Refresh metadata from process table |
 | `agent-team runtime` | Show selected LLM runtime profile; use `--runtime` / `--runtime-bin` to preview one-off overrides |
-| `agent-team runtime set` | Persist the repo default runtime profile in `.agent_team/config.toml` |
-| `agent-team runtime unset` | Remove the repo default runtime profile from `.agent_team/config.toml` |
+| `agent-team runtime set` | Persist the repo default runtime profile in `.agent_team/config.toml`; add `--dry-run --commands` for the apply command |
+| `agent-team runtime unset` | Remove the repo default runtime profile from `.agent_team/config.toml`; add `--dry-run --commands` for the apply command |
 | `agent-team runtime profile` | Explicit profile view, with `show` as a shorter alias |
 | `agent-team runtime ls` | List supported runtime profiles, availability, and capabilities |
 | `agent-team runtime probe` | Probe runtime selection, daemon readiness, Codex doctor health, optional Codex exec readiness, Codex socket reachability with `--exec-socket-check`, loopback HTTP reachability with `--exec-http-check`, print follow-up commands with `--commands`, and write diagnostics with `--output`; aliases: `doctor`, `check` |

@@ -90,7 +90,9 @@ Example repo default:
 
 ```sh
 agent-team runtime set codex --runtime-bin codex
+agent-team runtime set codex --runtime-bin codex --dry-run --commands
 agent-team runtime unset --dry-run
+agent-team runtime unset --dry-run --commands
 ```
 
 Equivalent direct config:

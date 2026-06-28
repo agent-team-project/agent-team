@@ -58,6 +58,7 @@ func newRuntimeSetCmd() *cobra.Command {
 		target        string
 		runtimeBinary string
 		dryRun        bool
+		commands      bool
 		jsonOut       bool
 		format        string
 	)
@@ -72,6 +73,18 @@ func newRuntimeSetCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime set: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime set: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime set: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime set: --commands requires --dry-run.")
 				return exitErr(2)
 			}
 			tmpl, err := parseRuntimeFormat(format)
@@ -100,6 +113,14 @@ func newRuntimeSetCmd() *cobra.Command {
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
 			}
+			if commands {
+				return renderRuntimeSetApplyCommand(cmd.OutOrStdout(), result, runtimeSetApplyCommandOptions{
+					Repo:      runtimeCommandRepo(cmd, target),
+					RepoSet:   runtimeCommandRepoSet(cmd),
+					RepoFlag:  runtimeCommandRepoFlag(cmd),
+					BinarySet: cmd.Flags().Changed("runtime-bin") || cmd.Flags().Changed("binary"),
+				})
+			}
 			if tmpl != nil {
 				return renderRuntimeFormat(cmd.OutOrStdout(), result, tmpl)
 			}
@@ -111,6 +132,7 @@ func newRuntimeSetCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtimeBinary, "runtime-bin", "", "Runtime binary or wrapper to store. Defaults to the runtime's built-in binary.")
 	cmd.Flags().StringVar(&runtimeBinary, "binary", "", "Alias for --runtime-bin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the config change without writing.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the set result with a Go template, e.g. '{{.Runtime}} {{.Binary}}'.")
 	return cmd
@@ -118,10 +140,11 @@ func newRuntimeSetCmd() *cobra.Command {
 
 func newRuntimeUnsetCmd() *cobra.Command {
 	var (
-		target  string
-		dryRun  bool
-		jsonOut bool
-		format  string
+		target   string
+		dryRun   bool
+		commands bool
+		jsonOut  bool
+		format   string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -134,6 +157,18 @@ func newRuntimeUnsetCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime unset: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime unset: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime unset: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime unset: --commands requires --dry-run.")
 				return exitErr(2)
 			}
 			tmpl, err := parseRuntimeFormat(format)
@@ -153,6 +188,13 @@ func newRuntimeUnsetCmd() *cobra.Command {
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
 			}
+			if commands {
+				return renderRuntimeUnsetApplyCommand(cmd.OutOrStdout(), result, runtimeUnsetApplyCommandOptions{
+					Repo:     runtimeCommandRepo(cmd, target),
+					RepoSet:  runtimeCommandRepoSet(cmd),
+					RepoFlag: runtimeCommandRepoFlag(cmd),
+				})
+			}
 			if tmpl != nil {
 				return renderRuntimeFormat(cmd.OutOrStdout(), result, tmpl)
 			}
@@ -162,6 +204,7 @@ func newRuntimeUnsetCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root or any path under a repo.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the config change without writing.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the unset result with a Go template, e.g. '{{.Changed}} {{.DryRun}}'.")
 	return cmd
@@ -244,6 +287,19 @@ type runtimeUnsetResult struct {
 	Changed    bool     `json:"changed"`
 	DryRun     bool     `json:"dry_run,omitempty"`
 	Notes      []string `json:"notes,omitempty"`
+}
+
+type runtimeSetApplyCommandOptions struct {
+	Repo      string
+	RepoSet   bool
+	RepoFlag  string
+	BinarySet bool
+}
+
+type runtimeUnsetApplyCommandOptions struct {
+	Repo     string
+	RepoSet  bool
+	RepoFlag string
 }
 
 type runtimeInfo struct {
@@ -733,6 +789,75 @@ func renderRuntimeUnsetResult(w fmtWriter, result runtimeUnsetResult) {
 	for _, note := range result.Notes {
 		fmt.Fprintf(w, "note:    %s\n", note)
 	}
+}
+
+func renderRuntimeSetApplyCommand(w fmtWriter, result runtimeSetResult, opts runtimeSetApplyCommandOptions) error {
+	if !result.Changed {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(runtimeSetApplyCommandArgs(result, opts)), " "))
+	return err
+}
+
+func runtimeSetApplyCommandArgs(result runtimeSetResult, opts runtimeSetApplyCommandOptions) []string {
+	args := []string{"agent-team", "runtime", "set"}
+	args = appendRuntimeRepoArgs(args, opts.RepoFlag, opts.Repo, opts.RepoSet)
+	args = append(args, result.Runtime)
+	if opts.BinarySet && strings.TrimSpace(result.Binary) != "" {
+		args = append(args, "--runtime-bin", result.Binary)
+	}
+	return args
+}
+
+func renderRuntimeUnsetApplyCommand(w fmtWriter, result runtimeUnsetResult, opts runtimeUnsetApplyCommandOptions) error {
+	if !result.Changed {
+		return nil
+	}
+	args := []string{"agent-team", "runtime", "unset"}
+	args = appendRuntimeRepoArgs(args, opts.RepoFlag, opts.Repo, opts.RepoSet)
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(args), " "))
+	return err
+}
+
+func appendRuntimeRepoArgs(args []string, repoFlag, repo string, repoSet bool) []string {
+	if !repoSet || strings.TrimSpace(repo) == "" {
+		return args
+	}
+	flag := strings.TrimSpace(repoFlag)
+	if flag == "" {
+		flag = "target"
+	}
+	return append(args, "--"+flag, repo)
+}
+
+func runtimeCommandRepoSet(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	if flag := cmd.Root().PersistentFlags().Lookup(rootRepoFlagName); flag != nil && flag.Changed {
+		return true
+	}
+	return cmd.Flags().Changed("target")
+}
+
+func runtimeCommandRepoFlag(cmd *cobra.Command) string {
+	if cmd != nil {
+		if flag := cmd.Root().PersistentFlags().Lookup(rootRepoFlagName); flag != nil && flag.Changed {
+			return rootRepoFlagName
+		}
+	}
+	return "target"
+}
+
+func runtimeCommandRepo(cmd *cobra.Command, target string) string {
+	if cmd != nil {
+		if flag := cmd.Root().PersistentFlags().Lookup(rootRepoFlagName); flag != nil && flag.Changed {
+			if value := strings.TrimSpace(flag.Value.String()); value != "" {
+				return value
+			}
+		}
+	}
+	return target
 }
 
 func renderRuntimeList(w fmtWriter, rows []runtimeInfo) {

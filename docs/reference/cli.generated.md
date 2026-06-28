@@ -6687,6 +6687,7 @@ Flags:
 
 ```text
       --binary string        Alias for --runtime-bin.
+      --commands             With --dry-run, print the apply command.
       --dry-run              Preview the config change without writing.
       --format string        Render the set result with a Go template, e.g. '{{.Runtime}} {{.Binary}}'.
       --json                 Emit machine-readable JSON.
@@ -6715,6 +6716,7 @@ Aliases: `clear`, `reset`
 Flags:
 
 ```text
+      --commands        With --dry-run, print the apply command.
       --dry-run         Preview the config change without writing.
       --format string   Render the unset result with a Go template, e.g. '{{.Changed}} {{.DryRun}}'.
       --json            Emit machine-readable JSON.
