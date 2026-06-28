@@ -484,6 +484,18 @@ func TestJobCreateListShowClose(t *testing.T) {
 		t.Fatalf("tail output = %q", got)
 	}
 
+	newestCmd := NewRootCmd()
+	newestOut, newestErr := &bytes.Buffer{}, &bytes.Buffer{}
+	newestCmd.SetOut(newestOut)
+	newestCmd.SetErr(newestErr)
+	newestCmd.SetArgs([]string{"job", "events", "SQU-42", "--repo", tmp, "--sort", "newest", "--format", "{{.Type}} {{.Status}}"})
+	if err := newestCmd.Execute(); err != nil {
+		t.Fatalf("job events newest: %v\nstderr=%s", err, newestErr.String())
+	}
+	if got := strings.TrimSpace(newestOut.String()); got != "closed done\ncreated queued" {
+		t.Fatalf("job events newest = %q", newestOut.String())
+	}
+
 	summaryCmd := NewRootCmd()
 	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	summaryCmd.SetOut(summaryOut)
@@ -593,6 +605,18 @@ func TestJobEventsAll(t *testing.T) {
 		t.Fatalf("job events --all follow = %q", got)
 	}
 
+	newestAll := NewRootCmd()
+	newestAllOut, newestAllErr := &bytes.Buffer{}, &bytes.Buffer{}
+	newestAll.SetOut(newestAllOut)
+	newestAll.SetErr(newestAllErr)
+	newestAll.SetArgs([]string{"job", "events", "--all", "--repo", root, "--tail", "2", "--sort", "newest", "--format", "{{.JobID}} {{.Type}}"})
+	if err := newestAll.Execute(); err != nil {
+		t.Fatalf("job events --all newest: %v\nstderr=%s", err, newestAllErr.String())
+	}
+	if got := strings.TrimSpace(newestAllOut.String()); got != "squ-702 closed\nsqu-701 updated" {
+		t.Fatalf("job events --all newest = %q", got)
+	}
+
 	jobs, err := job.List(teamDir)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
@@ -644,6 +668,30 @@ func TestJobEventsAll(t *testing.T) {
 	}
 	if !strings.Contains(missingIDErr.String(), "job id is required") {
 		t.Fatalf("job events missing id error = %q", missingIDErr.String())
+	}
+
+	invalidSort := NewRootCmd()
+	invalidSortOut, invalidSortErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSort.SetOut(invalidSortOut)
+	invalidSort.SetErr(invalidSortErr)
+	invalidSort.SetArgs([]string{"job", "events", "--all", "--repo", root, "--sort", "sideways"})
+	if err := invalidSort.Execute(); err == nil {
+		t.Fatalf("job events accepted invalid sort: stdout=%s", invalidSortOut.String())
+	}
+	if !strings.Contains(invalidSortErr.String(), "--sort must be oldest or newest") {
+		t.Fatalf("job events invalid sort error = %q", invalidSortErr.String())
+	}
+
+	invalidSortFollow := NewRootCmd()
+	invalidSortFollowOut, invalidSortFollowErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSortFollow.SetOut(invalidSortFollowOut)
+	invalidSortFollow.SetErr(invalidSortFollowErr)
+	invalidSortFollow.SetArgs([]string{"job", "events", "--all", "--repo", root, "--follow", "--sort", "newest"})
+	if err := invalidSortFollow.Execute(); err == nil {
+		t.Fatalf("job events accepted newest follow: stdout=%s", invalidSortFollowOut.String())
+	}
+	if !strings.Contains(invalidSortFollowErr.String(), "--sort newest cannot be combined with --follow") {
+		t.Fatalf("job events newest follow error = %q", invalidSortFollowErr.String())
 	}
 }
 

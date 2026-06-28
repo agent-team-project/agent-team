@@ -2231,6 +2231,7 @@ Flags:
       --json                Emit machine-readable JSON. With --follow, emit one JSON object per line.
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --since string        Only show job events since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.
+      --sort string         Sort returned events by oldest or newest. Follow mode always streams oldest first. (default "oldest")
       --status strings      Only show job events with this status: queued, running, blocked, done, or failed. Can repeat or comma-separate.
       --summary             Summarize matching job events by type, status, actor, and instance.
       --tail string         Show only the last N events before returning or following (0 or all = all). (default "0")
@@ -4625,6 +4626,7 @@ Flags:
       --json                Emit matching job events as JSON.
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --since string        Only show job events since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.
+      --sort string         Sort returned events by oldest or newest. Follow mode always streams oldest first. (default "oldest")
       --status strings      Only show job events with this status: queued, running, blocked, done, or failed. Can repeat or comma-separate.
       --summary             Summarize matching job events by job, type, status, actor, and instance.
       --tail string         Show only the last N matching events after combining pipeline jobs (0 or all = all). (default "0")
@@ -7743,6 +7745,7 @@ Flags:
       --json                Emit matching job events as JSON.
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --since string        Only show job events since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.
+      --sort string         Sort returned events by oldest or newest. Follow mode always streams oldest first. (default "oldest")
       --status strings      Only show job events with this status: queued, running, blocked, done, or failed. Can repeat or comma-separate.
       --summary             Summarize matching job events by job, type, status, actor, and instance.
       --tail string         Show only the last N matching events after combining team jobs (0 or all = all). (default "0")

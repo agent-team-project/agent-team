@@ -1069,6 +1069,7 @@ func newJobEventsCmd() *cobra.Command {
 		interval  time.Duration
 		jsonOut   bool
 		summary   bool
+		sortBy    string
 		format    string
 	)
 	cwd, _ := os.Getwd()
@@ -1105,6 +1106,15 @@ func newJobEventsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job events: --interval must be >= 0.")
 				return exitErr(2)
 			}
+			sortMode, err := parseJobEventSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job events: %v\n", err)
+				return exitErr(2)
+			}
+			if follow && sortMode == "newest" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job events: --sort newest cannot be combined with --follow.")
+				return exitErr(2)
+			}
 			filters, err := newJobEventFilters(types, actors, statuses, instances, since, time.Now)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job events: %v\n", err)
@@ -1138,7 +1148,7 @@ func newJobEventsCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job events: %v\n", err)
 					return exitErr(1)
 				}
-				events, err := collectJobEventsForJobs(teamDir, jobs, filters, tailEvents)
+				events, err := collectJobEventsForJobs(teamDir, jobs, filters, tailEvents, sortMode)
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job events: %v\n", err)
 					return exitErr(1)
@@ -1155,7 +1165,7 @@ func newJobEventsCmd() *cobra.Command {
 				defer stop()
 				return runJobEventsFollow(ctx, cmd.OutOrStdout(), teamDir, j.ID, tailEvents, interval, filters, jsonOut, tmpl)
 			}
-			return runJobEvents(cmd.OutOrStdout(), teamDir, j.ID, tailEvents, filters, jsonOut, summary, tmpl)
+			return runJobEvents(cmd.OutOrStdout(), teamDir, j.ID, tailEvents, filters, sortMode, jsonOut, summary, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -1168,6 +1178,7 @@ func newJobEventsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&instances, "instance", nil, "Only show job events for this owning instance. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&since, "since", "", "Only show job events since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	cmd.Flags().DurationVar(&interval, "interval", time.Second, "Polling interval for --follow.")
+	cmd.Flags().StringVar(&sortBy, "sort", "oldest", "Sort returned events by oldest or newest. Follow mode always streams oldest first.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON. With --follow, emit one JSON object per line.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching job events by type, status, actor, and instance.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each event with a Go template, e.g. '{{.TS}} {{.Type}} {{.Message}}'.")
@@ -7476,13 +7487,15 @@ func writeJobWithAudit(teamDir string, j *job.Job, eventType, actor, message str
 	return job.AppendSnapshotEvent(teamDir, j, eventType, actor, message, data)
 }
 
-func runJobEvents(w io.Writer, teamDir, id string, tail int, filters jobEventFilters, jsonOut, summary bool, tmpl *template.Template) error {
+func runJobEvents(w io.Writer, teamDir, id string, tail int, filters jobEventFilters, sortMode string, jsonOut, summary bool, tmpl *template.Template) error {
 	events, err := job.ListEvents(teamDir, id)
 	if err != nil {
 		return err
 	}
 	events = filterJobEvents(events, filters)
+	sortJobEvents(events)
 	events = job.TailEvents(events, tail)
+	sortJobEventsForDisplay(events, sortMode)
 	if summary {
 		return renderJobEventSummary(w, id, events, jsonOut)
 	}
@@ -7681,6 +7694,45 @@ func jobStatusFilterSet(filters []string) (map[string]bool, error) {
 	return out, nil
 }
 
+func parseJobEventSort(raw string) (string, error) {
+	sortMode := strings.ToLower(strings.TrimSpace(raw))
+	switch sortMode {
+	case "", "oldest", "time":
+		return "oldest", nil
+	case "newest", "latest":
+		return "newest", nil
+	default:
+		return "", fmt.Errorf("--sort must be oldest or newest")
+	}
+}
+
+func sortJobEventsForDisplay(events []job.Event, sortMode string) {
+	sortJobEvents(events)
+	if sortMode != "newest" {
+		return
+	}
+	sort.SliceStable(events, func(i, j int) bool {
+		left := events[i]
+		right := events[j]
+		if !left.TS.Equal(right.TS) {
+			if left.TS.IsZero() {
+				return false
+			}
+			if right.TS.IsZero() {
+				return true
+			}
+			return left.TS.After(right.TS)
+		}
+		if left.JobID != right.JobID {
+			return left.JobID < right.JobID
+		}
+		if left.Type != right.Type {
+			return left.Type < right.Type
+		}
+		return left.Message < right.Message
+	})
+}
+
 func renderJobEventsFollowBatch(w io.Writer, events []job.Event, jsonOut bool, tmpl *template.Template, header bool) error {
 	if jsonOut {
 		enc := json.NewEncoder(w)
@@ -7861,7 +7913,7 @@ func renderScopedJobEvents(w io.Writer, scope string, events []job.Event, jsonOu
 	return nil
 }
 
-func collectJobEventsForJobs(teamDir string, jobs []*job.Job, filters jobEventFilters, tail int) ([]job.Event, error) {
+func collectJobEventsForJobs(teamDir string, jobs []*job.Job, filters jobEventFilters, tail int, sortMode string) ([]job.Event, error) {
 	events := []job.Event{}
 	for _, j := range jobs {
 		if j == nil {
@@ -7874,7 +7926,9 @@ func collectJobEventsForJobs(teamDir string, jobs []*job.Job, filters jobEventFi
 		events = append(events, filterJobEvents(jobEvents, filters)...)
 	}
 	sortJobEvents(events)
-	return job.TailEvents(events, tail), nil
+	events = job.TailEvents(events, tail)
+	sortJobEventsForDisplay(events, sortMode)
+	return events, nil
 }
 
 func collectScopedJobEventsSnapshot(teamDir string, jobs []*job.Job, filters jobEventFilters, indexes map[string]int) ([]job.Event, error) {

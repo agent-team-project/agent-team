@@ -1238,6 +1238,18 @@ func TestPipelineJobEvents(t *testing.T) {
 		t.Fatalf("pipeline job-events format = %q", got)
 	}
 
+	newest := NewRootCmd()
+	newestOut, newestErr := &bytes.Buffer{}, &bytes.Buffer{}
+	newest.SetOut(newestOut)
+	newest.SetErr(newestErr)
+	newest.SetArgs([]string{"pipeline", "job-events", "ticket_to_pr", "--repo", root, "--tail", "2", "--sort", "newest", "--format", "{{.JobID}} {{.Type}} {{.Status}}"})
+	if err := newest.Execute(); err != nil {
+		t.Fatalf("pipeline job-events newest: %v\nstderr=%s", err, newestErr.String())
+	}
+	if got := strings.TrimSpace(newestOut.String()); got != "squ-403 closed done\nsqu-401 updated running" {
+		t.Fatalf("pipeline job-events newest = %q", got)
+	}
+
 	table := NewRootCmd()
 	tableOut, tableErr := &bytes.Buffer{}, &bytes.Buffer{}
 	table.SetOut(tableOut)
@@ -1299,6 +1311,18 @@ func TestPipelineJobEvents(t *testing.T) {
 	}
 	if !strings.Contains(invalidFollowErr.String(), "--summary cannot be combined with --follow") {
 		t.Fatalf("pipeline job-events summary follow error = %q", invalidFollowErr.String())
+	}
+
+	invalidSortFollow := NewRootCmd()
+	invalidSortFollowOut, invalidSortFollowErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSortFollow.SetOut(invalidSortFollowOut)
+	invalidSortFollow.SetErr(invalidSortFollowErr)
+	invalidSortFollow.SetArgs([]string{"pipeline", "job-events", "ticket_to_pr", "--repo", root, "--follow", "--sort", "newest"})
+	if err := invalidSortFollow.Execute(); err == nil {
+		t.Fatalf("pipeline job-events accepted newest follow: stdout=%s", invalidSortFollowOut.String())
+	}
+	if !strings.Contains(invalidSortFollowErr.String(), "--sort newest cannot be combined with --follow") {
+		t.Fatalf("pipeline job-events newest follow error = %q", invalidSortFollowErr.String())
 	}
 
 	invalidInterval := NewRootCmd()

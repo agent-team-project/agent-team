@@ -447,6 +447,7 @@ func newPipelineJobEventsCmd() *cobra.Command {
 		interval  time.Duration
 		summary   bool
 		jsonOut   bool
+		sortBy    string
 		format    string
 	)
 	cwd, _ := os.Getwd()
@@ -478,6 +479,15 @@ func newPipelineJobEventsCmd() *cobra.Command {
 			}
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline job-events: --interval must be >= 0.")
+				return exitErr(2)
+			}
+			sortMode, err := parseJobEventSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline job-events: %v\n", err)
+				return exitErr(2)
+			}
+			if follow && sortMode == "newest" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline job-events: --sort newest cannot be combined with --follow.")
 				return exitErr(2)
 			}
 			pipelineName := ""
@@ -524,7 +534,7 @@ func newPipelineJobEventsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline job-events: %v\n", err)
 				return exitErr(1)
 			}
-			events, err := collectJobEventsForJobs(teamDir, jobs, filters, tailEvents)
+			events, err := collectJobEventsForJobs(teamDir, jobs, filters, tailEvents, sortMode)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline job-events: %v\n", err)
 				return exitErr(1)
@@ -542,6 +552,7 @@ func newPipelineJobEventsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&instances, "instance", nil, "Only show job events for this owning instance. Can repeat or comma-separate.")
 	cmd.Flags().StringVar(&since, "since", "", "Only show job events since this duration ago (for example 10m, 24h) or an RFC3339 timestamp.")
 	cmd.Flags().DurationVar(&interval, "interval", time.Second, "Polling interval for --follow.")
+	cmd.Flags().StringVar(&sortBy, "sort", "oldest", "Sort returned events by oldest or newest. Follow mode always streams oldest first.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching job events by job, type, status, actor, and instance.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit matching job events as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each job event with a Go template, e.g. '{{.JobID}} {{.Type}} {{.Status}}'.")

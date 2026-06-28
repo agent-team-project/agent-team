@@ -1255,6 +1255,18 @@ pipelines = ["ticket_to_pr", "release_train"]
 		t.Fatalf("team job-events format = %q", got)
 	}
 
+	newest := NewRootCmd()
+	newestOut, newestErr := &bytes.Buffer{}, &bytes.Buffer{}
+	newest.SetOut(newestOut)
+	newest.SetErr(newestErr)
+	newest.SetArgs([]string{"team", "job-events", "delivery", "--repo", root, "--tail", "2", "--sort", "newest", "--format", "{{.JobID}} {{.Type}} {{.Status}}"})
+	if err := newest.Execute(); err != nil {
+		t.Fatalf("team job-events newest: %v\nstderr=%s", err, newestErr.String())
+	}
+	if got := strings.TrimSpace(newestOut.String()); got != "squ-502 closed done\nsqu-501 updated running" {
+		t.Fatalf("team job-events newest = %q", got)
+	}
+
 	table := NewRootCmd()
 	tableOut, tableErr := &bytes.Buffer{}, &bytes.Buffer{}
 	table.SetOut(tableOut)
@@ -1304,6 +1316,18 @@ pipelines = ["ticket_to_pr", "release_train"]
 	}
 	if !strings.Contains(invalidFollowErr.String(), "--summary cannot be combined with --follow") {
 		t.Fatalf("team job-events summary follow error = %q", invalidFollowErr.String())
+	}
+
+	invalidSortFollow := NewRootCmd()
+	invalidSortFollowOut, invalidSortFollowErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSortFollow.SetOut(invalidSortFollowOut)
+	invalidSortFollow.SetErr(invalidSortFollowErr)
+	invalidSortFollow.SetArgs([]string{"team", "job-events", "delivery", "--repo", root, "--follow", "--sort", "newest"})
+	if err := invalidSortFollow.Execute(); err == nil {
+		t.Fatalf("team job-events accepted newest follow: stdout=%s", invalidSortFollowOut.String())
+	}
+	if !strings.Contains(invalidSortFollowErr.String(), "--sort newest cannot be combined with --follow") {
+		t.Fatalf("team job-events newest follow error = %q", invalidSortFollowErr.String())
 	}
 
 	invalidInterval := NewRootCmd()
