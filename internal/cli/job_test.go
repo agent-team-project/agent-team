@@ -8550,6 +8550,24 @@ func TestJobNoteDryRunDoesNotMutateJob(t *testing.T) {
 	if !preview.DryRun || preview.Job == nil || preview.Job.LastEvent != "note" || preview.Job.LastStatus != "preview note" {
 		t.Fatalf("preview = %+v", preview)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "note", "squ-74", "--repo", tmp, "--actor", "ops", "--message", "preview note", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("job note dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "job", "note", "squ-74",
+		"--repo", tmp,
+		"--actor", "ops",
+		"--message", "preview note",
+	}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("job note dry-run commands = %q, want %q", got, wantCommand)
+	}
 	updated, err := job.Read(teamDir, "squ-74")
 	if err != nil {
 		t.Fatalf("read job: %v", err)
@@ -8563,6 +8581,39 @@ func TestJobNoteDryRunDoesNotMutateJob(t *testing.T) {
 	}
 	if len(events) != 0 {
 		t.Fatalf("dry-run wrote events = %+v", events)
+	}
+}
+
+func TestJobNoteCommandValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"job", "note", "SQU-74", "--message", "note", "--json", "--format", "{{.ID}}"}, "--format cannot be combined"},
+		{[]string{"job", "note", "SQU-74", "--message", "note", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"job", "note", "SQU-74", "--message", "note", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"job", "note", "SQU-74", "--message", "note", "--dry-run", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("%v: err = %v, want exit 2", tc.args, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v: validation wrote stdout: %q", tc.args, out.String())
+		}
 	}
 }
 

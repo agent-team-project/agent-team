@@ -2319,6 +2319,7 @@ Flags:
 
 ```text
       --actor string          Actor label recorded in the note audit event. (default "cli")
+      --commands              With --dry-run, print the matching job note apply command when the preview has actionable work.
       --dry-run               Preview the note without changing job state or writing an audit event.
       --format string         Render the updated job or dry-run preview with a Go template, e.g. '{{.ID}} {{.LastEvent}}'.
       --json                  Emit the updated job or dry-run preview as JSON.

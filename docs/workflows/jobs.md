@@ -305,13 +305,15 @@ print only the matching send apply command.
 agent-team job note squ-42 "Waiting on staging credentials"
 agent-team job note squ-42 "Linear status changed to blocked" --actor linear
 agent-team job note squ-42 --message-file handoff.md
+agent-team job note squ-42 "Will retry after deploy" --dry-run --commands
 agent-team job note squ-42 "Will retry after deploy" --dry-run --json
 ```
 
 `job note` appends an audit event and updates `last_event` / `last_status`
 without sending anything to an instance. Use it for human handoffs, incident
 context, or external decisions that should remain attached to the job. Use
-`--actor` when automation records the note.
+`--actor` when automation records the note. Add `--commands` to a dry-run when
+scripts should print only the matching note apply command.
 
 ## Retrying Jobs
 
