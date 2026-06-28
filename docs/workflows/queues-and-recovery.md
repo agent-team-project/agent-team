@@ -53,6 +53,13 @@ agent-team queue show <id>
 Use `--runtime claude|codex` to narrow active queue entries by the runtime recorded in the dispatch payload, falling back to daemon metadata when a queued item already names a concrete instance. Runtime-filtered summaries include a `runtimes` count and exclude quarantined files whose runtime cannot be known from the quarantine index.
 Use `queue watch` when a retry, drain, or repair loop is expected to change active queue rows while you are inspecting them.
 
+Preview daemon drain work before applying it:
+
+```sh
+agent-team queue drain --dry-run
+agent-team queue drain --dry-run --commands
+```
+
 Job-scoped:
 
 ```sh

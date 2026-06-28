@@ -174,7 +174,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team queue ls` | List active queue entries; filter queued dispatches with `--runtime`, sort rows with `--sort`, and cap output with `--limit` |
 | `agent-team queue watch` | Continuous active queue list shortcut with the same filters and formatting as `queue ls --watch` |
 | `agent-team queue show <id>` | Inspect one active queue item, including resolved runtime metadata; add `--commands` to print only follow-up commands |
-| `agent-team queue drain` | Dispatch ready pending entries |
+| `agent-team queue drain` | Dispatch ready pending entries; add `--dry-run --commands` to print the matching daemon drain command only when work is ready |
 | `agent-team queue retry <id>` | Retry one entry |
 | `agent-team queue retry --all` | Retry matching entries; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit` |
 | `agent-team queue drop <id>` | Drop one entry |

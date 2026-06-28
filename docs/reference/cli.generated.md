@@ -5884,6 +5884,7 @@ agent-team queue drain [flags]
 Flags:
 
 ```text
+      --commands        With --dry-run, print the matching drain command when the preview has actionable work.
       --dry-run         Preview ready queue items without dispatching them.
       --format string   Render the drain result with a Go template, e.g. '{{.Dispatched}} {{.Pending}}'.
       --json            Emit machine-readable JSON.

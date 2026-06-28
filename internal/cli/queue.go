@@ -580,10 +580,11 @@ func newQueueRetryCmd() *cobra.Command {
 
 func newQueueDrainCmd() *cobra.Command {
 	var (
-		target  string
-		dryRun  bool
-		jsonOut bool
-		format  string
+		target   string
+		dryRun   bool
+		commands bool
+		jsonOut  bool
+		format   string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -591,6 +592,18 @@ func newQueueDrainCmd() *cobra.Command {
 		Short: "Ask the running daemon to dispatch ready pending queue items.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue drain: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue drain: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue drain: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue drain: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -611,6 +624,9 @@ func newQueueDrainCmd() *cobra.Command {
 						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue drain: %v\n", err)
 						return exitErr(1)
 					}
+					if commands {
+						return renderQueueDrainApplyCommand(cmd.OutOrStdout(), result, target, cmd.Flags().Changed("target"))
+					}
 					return renderQueueDrainResult(cmd.OutOrStdout(), result, jsonOut, tmpl)
 				} else if !errors.Is(err, errDaemonNotRunning) {
 					return err
@@ -619,6 +635,9 @@ func newQueueDrainCmd() *cobra.Command {
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue drain: %v\n", err)
 					return exitErr(1)
+				}
+				if commands {
+					return renderQueueDrainApplyCommand(cmd.OutOrStdout(), result, target, cmd.Flags().Changed("target"))
 				}
 				return renderQueueDrainResult(cmd.OutOrStdout(), result, jsonOut, tmpl)
 			}
@@ -640,6 +659,7 @@ func newQueueDrainCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview ready queue items without dispatching them.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching drain command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the drain result with a Go template, e.g. '{{.Dispatched}} {{.Pending}}'.")
 	return cmd
@@ -1310,6 +1330,17 @@ func renderQueueApplyCommand(w io.Writer, hasAction bool, opts queueApplyCommand
 	}
 	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(queueApplyCommandArgs(opts)), " "))
 	return err
+}
+
+func renderQueueDrainApplyCommand(w io.Writer, result *daemon.QueueDrainResult, target string, targetSet bool) error {
+	if result == nil || !result.DryRun || result.WouldDispatch == 0 {
+		return nil
+	}
+	return renderQueueApplyCommand(w, true, queueApplyCommandOptions{
+		BaseArgs:  []string{"agent-team", "queue", "drain"},
+		Target:    target,
+		TargetSet: targetSet,
+	})
 }
 
 func queueApplyCommandArgs(opts queueApplyCommandOptions) []string {

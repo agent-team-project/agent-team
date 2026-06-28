@@ -472,6 +472,9 @@ func TestQueueDoctorFormatValidation(t *testing.T) {
 		{[]string{"queue", "prune", "--commands"}, "--commands requires --dry-run"},
 		{[]string{"queue", "prune", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"queue", "prune", "--dry-run", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"queue", "drain", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"queue", "drain", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"queue", "drain", "--dry-run", "--commands", "--format", "{{.Pending}}"}, "--commands cannot be combined with --format"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
@@ -3064,5 +3067,32 @@ func TestQueueDrainDryRunDoesNotRequireDaemon(t *testing.T) {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("offline drain text missing %q:\n%s", want, textOut.String())
 		}
+	}
+
+	commandsCmd := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commandsCmd.SetOut(commandsOut)
+	commandsCmd.SetErr(commandsErr)
+	commandsCmd.SetArgs([]string{"queue", "drain", "--target", tmp, "--dry-run", "--commands"})
+	if err := commandsCmd.Execute(); err != nil {
+		t.Fatalf("queue drain dry-run offline commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "queue", "drain", "--target", tmp}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("queue drain dry-run commands = %q, want %q", got, wantCommand)
+	}
+
+	empty := t.TempDir()
+	initInto(t, empty)
+	emptyCommands := NewRootCmd()
+	emptyCommandsOut, emptyCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	emptyCommands.SetOut(emptyCommandsOut)
+	emptyCommands.SetErr(emptyCommandsErr)
+	emptyCommands.SetArgs([]string{"queue", "drain", "--target", empty, "--dry-run", "--commands"})
+	if err := emptyCommands.Execute(); err != nil {
+		t.Fatalf("empty queue drain dry-run commands: %v\nstderr=%s", err, emptyCommandsErr.String())
+	}
+	if got := strings.TrimSpace(emptyCommandsOut.String()); got != "" {
+		t.Fatalf("empty queue drain dry-run commands = %q, want no output", got)
 	}
 }
