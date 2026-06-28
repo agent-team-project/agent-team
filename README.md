@@ -367,8 +367,8 @@ agent-team channel show <name> [--tail N] [--format '{{.Channel.Name}} {{len .Me
                                                 # show a channel summary and recent messages
 agent-team channel publish <name> [body...] [--message "..."] [--message-file <path|->] [--sender user] [--format '{{.Seq}}'] [--json]
                                                 # publish to a channel; appends locally if the daemon is down
-agent-team event publish <type> [--payload <json> | --payload-file <path|->] [--dry-run] [--format '{{len .Matched}} {{len .Dispatched}}'] [--json]
-                                                # manually publish a topology event through the daemon
+agent-team event publish <type> [--payload <json> | --payload-file <path|->] [--dry-run] [--commands] [--format '{{len .Matched}} {{len .Dispatched}}'] [--json]
+                                                # manually publish a topology event through the daemon; dry-run can print the matching apply command
 agent-team channel rm <name> [-f] [--dry-run] [--commands] [--format '{{.Action}}'] [--json]
                                                 # delete a channel and its durable state; dry-run can print the force apply command
 agent-team rm [<instance>...] [-q] [--all] [--finished] [--latest | --last N] [--runtime codex] [--status stopped] [--phase done] [--stale] [--runtime-stale] [--unhealthy] [--agent manager] [--dry-run] [--commands] [--summary] [-f] [--format '{{.Instance}} {{.Path}}'] [--json]

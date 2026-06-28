@@ -32,6 +32,7 @@ func newEventPublishCmd() *cobra.Command {
 		payload     string
 		payloadFile string
 		dryRun      bool
+		commands    bool
 		jsonOut     bool
 		format      string
 	)
@@ -43,6 +44,18 @@ func newEventPublishCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team event publish: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team event publish: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team event publish: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team event publish: --commands requires --dry-run.")
 				return exitErr(2)
 			}
 			if strings.TrimSpace(payload) != "" && strings.TrimSpace(payloadFile) != "" {
@@ -82,6 +95,18 @@ func newEventPublishCmd() *cobra.Command {
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team event publish: %v\n", err)
 					return exitErr(1)
+				}
+				if commands {
+					return renderEventPublishApplyCommand(cmd.OutOrStdout(), preview, eventPublishApplyCommandOptions{
+						Repo:           intakeCommandRepo(cmd, target),
+						RepoSet:        intakeCommandRepoSet(cmd),
+						RepoFlag:       intakeCommandRepoFlag(cmd),
+						Payload:        strings.TrimSpace(payload),
+						PayloadSet:     cmd.Flags().Changed("payload"),
+						PayloadFile:    payloadFile,
+						PayloadFileSet: cmd.Flags().Changed("payload-file"),
+						PayloadRaw:     string(payloadBody),
+					})
 				}
 				return renderEventPublishPreview(cmd.OutOrStdout(), preview, jsonOut, formatTemplate)
 			}
@@ -135,6 +160,7 @@ func newEventPublishCmd() *cobra.Command {
 	c.Flags().StringVar(&payload, "payload", "", "JSON object passed as the event payload (e.g. '{\"target\":\"worker\"}').")
 	c.Flags().StringVar(&payloadFile, "payload-file", "", "Read event payload JSON from a file, or '-' for stdin.")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching triggers without publishing to the daemon.")
+	c.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command, one per line.")
 	c.Flags().BoolVar(&jsonOut, "json", false, "Emit the daemon event outcome as JSON.")
 	c.Flags().StringVar(&format, "format", "", "Render the event outcome or dry-run preview with a Go template, e.g. '{{len .Matched}} {{len .Dispatched}}'.")
 	return c
@@ -176,6 +202,35 @@ type eventPipelineStepPreview struct {
 	Timeout      string     `json:"timeout,omitempty"`
 	Attempts     int        `json:"attempts,omitempty"`
 	MaxAttempts  int        `json:"max_attempts,omitempty"`
+}
+
+type eventPublishApplyCommandOptions struct {
+	Repo           string
+	RepoSet        bool
+	RepoFlag       string
+	Payload        string
+	PayloadSet     bool
+	PayloadFile    string
+	PayloadFileSet bool
+	PayloadRaw     string
+}
+
+func renderEventPublishApplyCommand(w io.Writer, preview *eventPublishPreview, opts eventPublishApplyCommandOptions) error {
+	if !eventPublishPreviewHasRoutes(preview) {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(eventPublishApplyCommandArgs(preview, opts)), " "))
+	return err
+}
+
+func eventPublishApplyCommandArgs(preview *eventPublishPreview, opts eventPublishApplyCommandOptions) []string {
+	eventType := ""
+	if preview != nil {
+		eventType = strings.TrimSpace(preview.Type)
+	}
+	args := []string{"agent-team", "event", "publish", eventType}
+	args = appendIntakeRepoArgs(args, opts.RepoFlag, opts.Repo, opts.RepoSet)
+	return appendPayloadCommandArgs(args, opts.Payload, opts.PayloadSet, opts.PayloadFile, opts.PayloadFileSet, opts.PayloadRaw)
 }
 
 func previewEventPublish(teamDir, eventType string, payload map[string]any) (*eventPublishPreview, error) {

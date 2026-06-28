@@ -349,7 +349,7 @@ Use `0` for either duration to disable that automatic retention path.
 | Provider gets a non-2xx response | `agent-team intake deliveries --tail 20`, then `agent-team intake doctor` |
 | Delivery says daemon is not running | `agent-team daemon start`, then replay the delivery after dry-run |
 | GitHub cleanup fails verification | `gh auth status`, `gh pr view <url> --json merged,state,mergeCommit` |
-| Events publish but nothing starts | `agent-team event publish <type> --payload-file ... --dry-run`, `agent-team topology summary` |
+| Events publish but nothing starts | `agent-team event publish <type> --payload-file ... --dry-run --commands`, `agent-team topology summary` |
 | Jobs look stale after webhook delivery | `agent-team job show <id> --events all`, `agent-team job reconcile status` |
 
 `repair` does not replay webhooks automatically. External events can have side effects, so replay remains an explicit operator action.

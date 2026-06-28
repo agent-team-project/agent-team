@@ -371,4 +371,4 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team channel show <name>` | Show channel summary and recent messages; set `--tail`, or emit `--json` / `--format` for scripts |
 | `agent-team channel publish <name>` | Publish channel message; emit `--json` / `--format` for scripts |
 | `agent-team channel rm <name>` | Remove channel state; use `--dry-run --commands` to print the force apply command, or emit `--json` / `--format` |
-| `agent-team event publish <type>` | Publish a raw topology event |
+| `agent-team event publish <type>` | Publish a raw topology event; use `--dry-run --commands` to print the matching apply command |

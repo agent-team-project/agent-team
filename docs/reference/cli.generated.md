@@ -931,6 +931,7 @@ agent-team event publish <type> [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the apply command, one per line.
       --dry-run               Preview matching triggers without publishing to the daemon.
       --format string         Render the event outcome or dry-run preview with a Go template, e.g. '{{len .Matched}} {{len .Dispatched}}'.
       --json                  Emit the daemon event outcome as JSON.

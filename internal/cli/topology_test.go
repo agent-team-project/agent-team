@@ -553,6 +553,29 @@ func TestEventPublishPayloadFileDash(t *testing.T) {
 	if len(body.Matched) != 1 || body.Matched[0] != "manager" || len(body.Messaged) != 1 || body.Messaged[0] != "manager" {
 		t.Fatalf("body = %+v, want manager matched and messaged", body)
 	}
+
+	intakeInput = strings.NewReader(`{"name":"manager"}`)
+	commandsCmd := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commandsCmd.SetOut(commandsOut)
+	commandsCmd.SetErr(commandsErr)
+	commandsCmd.SetArgs([]string{"--repo", target, "event", "publish", "user_invocation", "--payload-file", "-", "--dry-run", "--commands"})
+	if err := commandsCmd.Execute(); err != nil {
+		t.Fatalf("event publish stdin --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team",
+		"event",
+		"publish",
+		"user_invocation",
+		"--repo",
+		target,
+		"--payload",
+		`{"name":"manager"}`,
+	}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("event publish stdin --commands output = %q, want %q", got, wantCommand)
+	}
 }
 
 func TestEventPublishDryRunUsesLocalTopology(t *testing.T) {
@@ -579,6 +602,40 @@ func TestEventPublishDryRunUsesLocalTopology(t *testing.T) {
 	}
 	if !preview.DryRun || preview.Type != "user_invocation" || len(preview.Matched) != 1 || preview.Matched[0] != "manager" {
 		t.Fatalf("preview = %+v", preview)
+	}
+
+	commandsCmd := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commandsCmd.SetOut(commandsOut)
+	commandsCmd.SetErr(commandsErr)
+	commandsCmd.SetArgs([]string{"event", "publish", "user_invocation", "--payload", `{"name":"manager"}`, "--dry-run", "--commands", "--target", target})
+	if err := commandsCmd.Execute(); err != nil {
+		t.Fatalf("event publish dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team",
+		"event",
+		"publish",
+		"user_invocation",
+		"--target",
+		target,
+		"--payload",
+		`{"name":"manager"}`,
+	}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("event publish dry-run --commands output = %q, want %q", got, wantCommand)
+	}
+
+	noRouteCmd := NewRootCmd()
+	noRouteOut, noRouteErr := &bytes.Buffer{}, &bytes.Buffer{}
+	noRouteCmd.SetOut(noRouteOut)
+	noRouteCmd.SetErr(noRouteErr)
+	noRouteCmd.SetArgs([]string{"event", "publish", "unknown.event", "--payload", `{"name":"worker"}`, "--dry-run", "--commands", "--target", target})
+	if err := noRouteCmd.Execute(); err != nil {
+		t.Fatalf("event publish dry-run --commands no route: %v\nstderr=%s", err, noRouteErr.String())
+	}
+	if got := noRouteOut.String(); got != "" {
+		t.Fatalf("event publish dry-run --commands no route output = %q, want empty", got)
 	}
 }
 
@@ -694,6 +751,9 @@ func TestEventPublishFormatRejectsConflictingModes(t *testing.T) {
 		want string
 	}{
 		{[]string{"event", "publish", "user_invocation", "--format", "{{len .Matched}}", "--json"}, "--format cannot be combined"},
+		{[]string{"event", "publish", "user_invocation", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"event", "publish", "user_invocation", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"event", "publish", "user_invocation", "--dry-run", "--commands", "--format", "{{.Type}}"}, "--commands cannot be combined with --format"},
 		{[]string{"event", "publish", "user_invocation", "--format", "{{"}, "invalid --format template"},
 		{[]string{"event", "publish", "user_invocation", "--payload", `{}`, "--payload-file", "-"}, "choose one of --payload or --payload-file"},
 	}
