@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -535,6 +536,60 @@ func TestDoctorCommandsReportsMissingTeamAction(t *testing.T) {
 	}
 	if errOut.Len() != 0 {
 		t.Fatalf("doctor --commands should not write missing-team problem to stderr: %s", errOut.String())
+	}
+}
+
+func TestDoctorCommandsReportsDaemonStartAction(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"doctor", "--target", tmp, "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("doctor --commands daemon start action: %v\nstderr=%s", err, errOut.String())
+	}
+	want := strings.Join(scopedOperatorActions([]string{
+		"agent-team daemon start",
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
+	if got := out.String(); got != want {
+		t.Fatalf("doctor --commands daemon start output = %q, want %q", got, want)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("doctor --commands should not write daemon warning to stderr: %s", errOut.String())
+	}
+}
+
+func TestDoctorCommandsReportsDaemonNotReadyActions(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := os.MkdirAll(daemon.DaemonRoot(teamDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(daemon.PidPath(teamDir), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"doctor", "--target", tmp, "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("doctor --commands daemon not-ready actions: %v\nstderr=%s", err, errOut.String())
+	}
+	want := strings.Join(scopedOperatorActions([]string{
+		"agent-team daemon restart",
+		"agent-team daemon logs --tail 80",
+	}, operatorCommandScope{Repo: tmp, Set: true}), "\n") + "\n"
+	if got := out.String(); got != want {
+		t.Fatalf("doctor --commands daemon not-ready output = %q, want %q", got, want)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("doctor --commands should not write daemon warning to stderr: %s", errOut.String())
 	}
 }
 

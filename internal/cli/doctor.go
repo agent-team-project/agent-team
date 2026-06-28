@@ -292,8 +292,23 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 		warnings = append(warnings, fmt.Sprintf("outbox quarantine: %d file(s) preserved under .agent_team/outbox/quarantine — inspect with `agent-team outbox quarantine ls`.", len(quarantine)))
 		actions = appendDoctorActions(actions, "agent-team outbox quarantine ls")
 	}
+	if len(problems) == 0 {
+		daemonStatus := collectDaemonStatus(teamDir)
+		warnings = append(warnings, doctorDaemonStatusWarnings(daemonStatus)...)
+		actions = appendDoctorActions(actions, daemonStatusRemediationActions(daemonStatus)...)
+	}
 
 	return reportDoctor(cmd, problems, warnings, actions, jsonOut, commands, tmpl, operatorCommandScopeFromCommand(cmd, target, "target"))
+}
+
+func doctorDaemonStatusWarnings(status daemonStatusJSON) []string {
+	if !status.Running {
+		return []string{"daemon not running — run `agent-team daemon start` before dispatching jobs, ticking pipelines, or managing instances."}
+	}
+	if !status.Ready {
+		return []string{"daemon running but not ready — run `agent-team daemon restart` or inspect `agent-team daemon logs --tail 80`."}
+	}
+	return nil
 }
 
 func appendDoctorActions(actions []string, next ...string) []string {
