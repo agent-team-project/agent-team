@@ -1194,6 +1194,8 @@ Flags:
 
 ```text
       --force              Overwrite existing .agent_team/ files (config.toml is never overwritten).
+      --format string      Render the init result with a Go template, e.g. '{{.TeamDir}} {{.Kind}}'.
+      --json               Emit machine-readable JSON on success.
       --no-input           Fail with a clear error if required parameters are missing instead of prompting.
       --set stringArray    Set a template parameter, e.g. --set linear.team_id=<uuid>. Repeatable.
       --target string      Target repo root. (default "<repo>")

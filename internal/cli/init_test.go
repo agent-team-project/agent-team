@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -99,6 +100,62 @@ func TestInit_DefaultTemplate(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout missing %q\nfull:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestInitJSONDefaultTemplate(t *testing.T) {
+	tmp := t.TempDir()
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs(append(initArgsWithRequired(tmp), "--json"))
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init --json: %v\nstderr: %s", err, errOut.String())
+	}
+	var result initResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode init json: %v\nbody=%s", err, out.String())
+	}
+	resolvedTarget, err := resolveAbsTarget(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDir := filepath.ToSlash(filepath.Join(resolvedTarget, ".agent_team"))
+	if result.Target != filepath.ToSlash(resolvedTarget) || result.TeamDir != teamDir || result.Kind != "default" || result.Ref != "bundled" || result.TemplateName != "default" || result.TemplateVersion != "1.0.0" || !strings.HasPrefix(result.ContentHash, "sha256:") || result.Empty || result.Force {
+		t.Fatalf("unexpected init json result: %+v", result)
+	}
+	if result.ConfigPath != filepath.ToSlash(filepath.Join(resolvedTarget, ".agent_team", "config.toml")) || result.LockPath != filepath.ToSlash(filepath.Join(resolvedTarget, ".agent_team", ".template.lock")) {
+		t.Fatalf("unexpected init paths: %+v", result)
+	}
+	if strings.Contains(out.String(), "Vendoring team into") || strings.Contains(out.String(), "Done. Next steps") {
+		t.Fatalf("init --json should not include progress text: %s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".agent_team", ".template.lock")); err != nil {
+		t.Fatalf("template lock missing after init --json: %v", err)
+	}
+}
+
+func TestInitFormatEmptyTemplate(t *testing.T) {
+	tmp := t.TempDir()
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"init", "--target", tmp, "--template", "empty", "--format", "{{.Kind}} {{.Empty}} {{.TeamDir}} {{.LockPath}}"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init empty --format: %v\nstderr: %s", err, errOut.String())
+	}
+	resolvedTarget, err := resolveAbsTarget(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "empty true " + filepath.ToSlash(filepath.Join(resolvedTarget, ".agent_team"))
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Fatalf("init empty format = %q, want %q", got, want)
+	}
+	if strings.Contains(out.String(), "Vendoring team into") || strings.Contains(out.String(), "Done. Next steps") {
+		t.Fatalf("init --format should not include progress text: %s", out.String())
 	}
 }
 
@@ -248,6 +305,50 @@ func TestInit_BadTemplate(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "must be `default` or `empty`") {
 		t.Errorf("missing error text, got: %s", errOut.String())
+	}
+}
+
+func TestInitOutputFlagValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "format json",
+			args: []string{"init", "--json", "--format", "{{.TeamDir}}"},
+			want: "--format cannot be combined with --json",
+		},
+		{
+			name: "invalid format",
+			args: []string{"init", "--format", "{{"},
+			want: "invalid --format template",
+		},
+		{
+			name: "machine output no prompt",
+			args: []string{"init", "--json", "--target", t.TempDir()},
+			want: "machine-readable output requested but required parameters are missing",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(errOut)
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("expected init validation failure, stdout=%s", out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("err = %v, want exit 2", err)
+			}
+			if !strings.Contains(errOut.String(), tt.want) {
+				t.Fatalf("stderr = %q, want %q", errOut.String(), tt.want)
+			}
+		})
 	}
 }
 

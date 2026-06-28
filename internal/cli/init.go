@@ -2,11 +2,14 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	texttemplate "text/template"
 
 	"github.com/jamesaud/agent-team/internal/template"
 	"github.com/spf13/cobra"
@@ -34,6 +37,8 @@ func newInitCmd() *cobra.Command {
 		templateFlag string
 		setFlags     []string
 		noInputFlag  bool
+		jsonOut      bool
+		format       string
 	)
 
 	cmd := &cobra.Command{
@@ -46,6 +51,15 @@ func newInitCmd() *cobra.Command {
 			"when required parameters have no value.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team init: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			tmpl, err := parseTemplateCLIFormat("init-format", format)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team init: %v\n", err)
+				return exitErr(2)
+			}
 			ref := ""
 			if len(args) == 1 {
 				ref = args[0]
@@ -57,6 +71,8 @@ func newInitCmd() *cobra.Command {
 				ref:        ref,
 				setStrings: setFlags,
 				noInput:    noInputFlag,
+				jsonOut:    jsonOut,
+				format:     tmpl,
 			})
 		},
 	}
@@ -67,6 +83,8 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&templateFlag, "template", "default", "`default` (uses the supplied/bundled template ref) or `empty` (scaffold only, no manifest).")
 	cmd.Flags().StringArrayVar(&setFlags, "set", nil, "Set a template parameter, e.g. --set linear.team_id=<uuid>. Repeatable.")
 	cmd.Flags().BoolVar(&noInputFlag, "no-input", false, "Fail with a clear error if required parameters are missing instead of prompting.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON on success.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the init result with a Go template, e.g. '{{.TeamDir}} {{.Kind}}'.")
 	return cmd
 }
 
@@ -78,6 +96,22 @@ type initConfig struct {
 	ref        string // template ref ("" = bundled when kind=default)
 	setStrings []string
 	noInput    bool
+	jsonOut    bool
+	format     *texttemplate.Template
+}
+
+type initResult struct {
+	Target          string `json:"target"`
+	TeamDir         string `json:"team_dir"`
+	Kind            string `json:"kind"`
+	Ref             string `json:"ref,omitempty"`
+	TemplateName    string `json:"template_name,omitempty"`
+	TemplateVersion string `json:"template_version,omitempty"`
+	ContentHash     string `json:"content_hash,omitempty"`
+	ConfigPath      string `json:"config_path"`
+	LockPath        string `json:"lock_path,omitempty"`
+	Empty           bool   `json:"empty"`
+	Force           bool   `json:"force"`
 }
 
 func runInit(cmd *cobra.Command, cfg initConfig) error {
@@ -92,7 +126,18 @@ func runInit(cmd *cobra.Command, cfg initConfig) error {
 	}
 	teamDir := filepath.Join(target, teamDirName)
 	out := cmd.OutOrStdout()
+	if initMachineOutput(cfg) {
+		out = io.Discard
+	}
 	fmt.Fprintf(out, "Vendoring team into %s\n", teamDir)
+	result := initResult{
+		Target:     filepath.ToSlash(target),
+		TeamDir:    filepath.ToSlash(teamDir),
+		Kind:       cfg.kind,
+		ConfigPath: filepath.ToSlash(filepath.Join(teamDir, "config.toml")),
+		Empty:      cfg.kind == "empty",
+		Force:      cfg.force,
+	}
 
 	if cfg.kind == "empty" {
 		if err := writeEmpty(out, teamDir); err != nil {
@@ -102,7 +147,7 @@ func runInit(cmd *cobra.Command, cfg initConfig) error {
 			return err
 		}
 		printNextSteps(out, teamDir)
-		return nil
+		return renderInitResult(cmd.OutOrStdout(), result, cfg)
 	}
 
 	// Default-kind path: resolve template ref → render → write resolved config.
@@ -112,6 +157,17 @@ func runInit(cmd *cobra.Command, cfg initConfig) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 		return exitErr(2)
 	}
+	result.Ref = rt.Ref
+	result.LockPath = filepath.ToSlash(filepath.Join(teamDir, template.LockFileName))
+	if rt.Manifest != nil {
+		result.TemplateName = rt.Manifest.Template.Name
+		result.TemplateVersion = rt.Manifest.Template.Version
+	}
+	hash, err := template.ContentHash(rt)
+	if err != nil {
+		return fmt.Errorf("hash template source: %w", err)
+	}
+	result.ContentHash = hash
 
 	sets, err := template.ParseSetSpecs(cfg.setStrings)
 	if err != nil {
@@ -119,7 +175,8 @@ func runInit(cmd *cobra.Command, cfg initConfig) error {
 		return exitErr(2)
 	}
 
-	resolved, err := resolveInitConfig(cmd, rt.Manifest, sets, cfg.noInput)
+	machineOutput := initMachineOutput(cfg)
+	resolved, err := resolveInitConfig(cmd, rt.Manifest, sets, cfg.noInput || machineOutput, machineOutput)
 	if err != nil {
 		return err
 	}
@@ -134,6 +191,24 @@ func runInit(cmd *cobra.Command, cfg initConfig) error {
 		return err
 	}
 	printNextSteps(out, teamDir)
+	return renderInitResult(cmd.OutOrStdout(), result, cfg)
+}
+
+func initMachineOutput(cfg initConfig) bool {
+	return cfg.jsonOut || cfg.format != nil
+}
+
+func renderInitResult(w io.Writer, result initResult, cfg initConfig) error {
+	if cfg.jsonOut {
+		return json.NewEncoder(w).Encode(result)
+	}
+	if cfg.format != nil {
+		if err := cfg.format.Execute(w, result); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(w)
+		return err
+	}
 	return nil
 }
 
@@ -155,7 +230,7 @@ func resolveAbsTarget(target string) (string, error) {
 // resolveInitConfig builds the resolved config tree from manifest defaults +
 // CLI --set values, prompting interactively for any missing required params
 // (unless --no-input is in effect).
-func resolveInitConfig(cmd *cobra.Command, m *template.Manifest, sets []template.SetSpec, noInput bool) (template.Tree, error) {
+func resolveInitConfig(cmd *cobra.Command, m *template.Manifest, sets []template.SetSpec, noInput bool, machineOutput bool) (template.Tree, error) {
 	defaults := template.DefaultsFromManifest(m)
 	withSets, err := template.ApplySets(defaults, sets, m)
 	if err != nil {
@@ -175,7 +250,7 @@ func resolveInitConfig(cmd *cobra.Command, m *template.Manifest, sets []template
 	}
 
 	if noInput {
-		printMissingParams(cmd.ErrOrStderr(), m, missing)
+		printMissingParams(cmd.ErrOrStderr(), m, missing, machineOutput)
 		return nil, exitErr(2)
 	}
 
@@ -222,8 +297,12 @@ func isEmptyForInit(v any) bool {
 	return false
 }
 
-func printMissingParams(w fmtWriter, m *template.Manifest, keys []string) {
-	fmt.Fprintln(w, "agent-team: --no-input given but required parameters are missing:")
+func printMissingParams(w fmtWriter, m *template.Manifest, keys []string, machineOutput bool) {
+	if machineOutput {
+		fmt.Fprintln(w, "agent-team: machine-readable output requested but required parameters are missing:")
+	} else {
+		fmt.Fprintln(w, "agent-team: --no-input given but required parameters are missing:")
+	}
 	for _, k := range keys {
 		p := m.FindParameter(k)
 		desc := ""
