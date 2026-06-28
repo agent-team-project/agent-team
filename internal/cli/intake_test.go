@@ -80,11 +80,25 @@ func TestIntakeLinearDryRunNormalizesWithoutDaemon(t *testing.T) {
 	if result.Event.Type != "ticket.created" || result.Event.Payload["ticket"] != "SQU-102" || result.Event.Payload["team"] != "SQU" {
 		t.Fatalf("event = %+v", result.Event)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"intake", "linear", "--payload", payload, "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("intake linear dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "intake", "linear", "--payload", payload}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("intake linear commands = %q, want %q", commandsOut.String(), wantCommand)
+	}
 }
 
 func TestIntakePayloadFileDashReadsStdin(t *testing.T) {
 	prev := intakeInput
-	intakeInput = strings.NewReader(`{"action":"Issue created","data":{"identifier":"SQU-104","title":"Pipe payload"}}`)
+	stdinPayload := `{"action":"Issue created","data":{"identifier":"SQU-104","title":"Pipe payload"}}`
+	intakeInput = strings.NewReader(stdinPayload)
 	t.Cleanup(func() { intakeInput = prev })
 
 	cmd := NewRootCmd()
@@ -101,6 +115,21 @@ func TestIntakePayloadFileDashReadsStdin(t *testing.T) {
 	}
 	if !result.DryRun || result.Event == nil || result.Event.Type != "ticket.created" || result.Event.Payload["ticket"] != "SQU-104" {
 		t.Fatalf("stdin dry-run result = %+v", result)
+	}
+
+	target := t.TempDir()
+	intakeInput = strings.NewReader(stdinPayload)
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"--repo", target, "intake", "linear", "--payload-file", "-", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("intake linear stdin dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "intake", "linear", "--repo", target, "--payload", stdinPayload}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("intake linear stdin commands = %q, want %q", commandsOut.String(), wantCommand)
 	}
 }
 
@@ -2407,6 +2436,45 @@ func TestIntakePreviewTriggersRequiresDryRun(t *testing.T) {
 	}
 }
 
+func TestIntakeDryRunCommandsValidation(t *testing.T) {
+	payload := `{"action":"Issue created","data":{"identifier":"SQU-106"}}`
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"intake", "linear", "--payload", payload, "--commands"}, "--commands requires --dry-run"},
+		{[]string{"intake", "linear", "--payload", payload, "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"intake", "linear", "--payload", payload, "--dry-run", "--commands", "--format", "{{.Event.Type}}"}, "--commands cannot be combined with --format"},
+		{[]string{"intake", "github", "--payload", `{"action":"opened","pull_request":{"number":1}}`, "--commands"}, "--commands requires --dry-run"},
+		{[]string{"intake", "github", "--payload", `{"action":"opened","pull_request":{"number":1}}`, "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"intake", "github", "--payload", `{"action":"opened","pull_request":{"number":1}}`, "--dry-run", "--commands", "--format", "{{.Event.Type}}"}, "--commands cannot be combined with --format"},
+		{[]string{"intake", "schedule", "nightly", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"intake", "schedule", "nightly", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"intake", "schedule", "nightly", "--dry-run", "--commands", "--format", "{{.Event.Type}}"}, "--commands cannot be combined with --format"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("%v: err = %v, want exit 2", tc.args, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v: validation wrote stdout: %q", tc.args, out.String())
+		}
+	}
+}
+
 func TestIntakeGitHubReconcilesOwningJob(t *testing.T) {
 	target, _, cleanup := setupIntakePipelineRepo(t)
 	defer cleanup()
@@ -2636,6 +2704,39 @@ gate = "pr"
 	}
 	if unchanged.PR != "" {
 		t.Fatalf("dry-run wrote PR: %+v", unchanged)
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{
+		"intake", "github",
+		"--payload", payload,
+		"--target", target,
+		"--dry-run",
+		"--reconcile-job",
+		"--advance",
+		"--workspace", "repo",
+		"--runtime", "codex",
+		"--runtime-bin", "codex-dev",
+		"--commands",
+	})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("intake github dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "intake", "github",
+		"--target", target,
+		"--payload", payload,
+		"--reconcile-job",
+		"--advance",
+		"--workspace", "repo",
+		"--runtime", "codex",
+		"--runtime-bin", "codex-dev",
+	}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("intake github dry-run commands = %q, want %q", commandsOut.String(), wantCommand)
 	}
 }
 
@@ -2960,6 +3061,19 @@ func TestIntakeScheduleDryRunText(t *testing.T) {
 			t.Fatalf("dry-run text missing %q:\n%s", want, out.String())
 		}
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"intake", "schedule", "nightly", "--payload", `{"workspace":"repo"}`, "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("intake schedule dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "intake", "schedule", "nightly", "--payload", `{"workspace":"repo"}`}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("intake schedule commands = %q, want %q", commandsOut.String(), wantCommand)
+	}
 }
 
 func TestIntakeScheduleAcceptsPayloadFileAndRejectsConflict(t *testing.T) {
@@ -3001,6 +3115,24 @@ func TestIntakeScheduleAcceptsPayloadFileAndRejectsConflict(t *testing.T) {
 	}
 	if !strings.Contains(conflictErr.String(), "choose one of --payload or --payload-file") {
 		t.Fatalf("conflict stderr = %q", conflictErr.String())
+	}
+
+	prev := intakeInput
+	stdinPayload := `{"workspace":"stdin","from_stdin":true}`
+	intakeInput = strings.NewReader(stdinPayload)
+	t.Cleanup(func() { intakeInput = prev })
+	target := t.TempDir()
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"--repo", target, "intake", "schedule", "nightly", "--payload-file", "-", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("intake schedule stdin commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "intake", "schedule", "nightly", "--repo", target, "--payload", stdinPayload}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("intake schedule stdin commands = %q, want %q", commandsOut.String(), wantCommand)
 	}
 }
 

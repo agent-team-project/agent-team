@@ -65,6 +65,7 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 		payloadFile   string
 		dryRun        bool
 		previewRoutes bool
+		commands      bool
 		reconcileJob  bool
 		cleanupMerged bool
 		verifyPR      bool
@@ -91,6 +92,18 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake %s: --format cannot be combined with --json.\n", provider)
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake %s: --commands cannot be combined with --json.\n", provider)
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake %s: --commands cannot be combined with --format.\n", provider)
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake %s: --commands requires --dry-run.\n", provider)
 				return exitErr(2)
 			}
 			if provider == "github" && cleanupMerged && !reconcileJob {
@@ -202,6 +215,29 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 				}
 			}
 			if dryRun {
+				if commands {
+					return renderWebhookIntakeApplyCommand(cmd.OutOrStdout(), webhookIntakeApplyCommandOptions{
+						Provider:       provider,
+						Repo:           intakeCommandRepo(cmd, target),
+						RepoSet:        intakeCommandRepoSet(cmd),
+						RepoFlag:       intakeCommandRepoFlag(cmd),
+						Payload:        payload,
+						PayloadSet:     cmd.Flags().Changed("payload"),
+						PayloadFile:    payloadFile,
+						PayloadFileSet: cmd.Flags().Changed("payload-file"),
+						PayloadRaw:     string(body),
+						ReconcileJob:   reconcileJob,
+						CleanupMerged:  cleanupMerged,
+						VerifyPR:       verifyPR,
+						AdvanceJob:     advanceJob,
+						Workspace:      workspace,
+						WorkspaceSet:   provider == "github" && cmd.Flags().Changed("workspace"),
+						RuntimeKind:    runtimeKind,
+						RuntimeKindSet: provider == "github" && cmd.Flags().Changed("runtime"),
+						RuntimeBin:     runtimeBin,
+						RuntimeBinSet:  provider == "github" && cmd.Flags().Changed("runtime-bin"),
+					})
+				}
 				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, reconcile, cleanupPreview, advancePreview, triggerPreview)
 			}
 			if err := publishIntakeEventWithJob(cmd, target, ev, jsonOut, tmpl, reconcile, cleanup, advance); err != nil {
@@ -218,6 +254,7 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 	cmd.Flags().StringVar(&payloadFile, "payload-file", "", "Read webhook JSON from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Normalize and print the event without publishing to the daemon.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command, one per line.")
 	if provider == "github" {
 		cmd.Flags().BoolVar(&reconcileJob, "reconcile-job", false, "Also reconcile the normalized PR event into the owning durable job.")
 		cmd.Flags().BoolVar(&cleanupMerged, "cleanup-merged", false, "With --reconcile-job, remove the job-owned worktree and branch after a merged PR event.")
@@ -247,6 +284,7 @@ func newIntakeScheduleCmd() *cobra.Command {
 		payloadFile   string
 		dryRun        bool
 		previewRoutes bool
+		commands      bool
 		wait          bool
 		waitStatuses  []string
 		waitEvents    []string
@@ -266,6 +304,18 @@ func newIntakeScheduleCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake schedule: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake schedule: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake schedule: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake schedule: --commands requires --dry-run.")
 				return exitErr(2)
 			}
 			tmpl, err := parseIntakeFormat(format)
@@ -329,6 +379,19 @@ func newIntakeScheduleCmd() *cobra.Command {
 						return exitErr(1)
 					}
 				}
+				if commands {
+					return renderIntakeScheduleApplyCommand(cmd.OutOrStdout(), intakeScheduleApplyCommandOptions{
+						Name:           args[0],
+						Repo:           intakeCommandRepo(cmd, target),
+						RepoSet:        intakeCommandRepoSet(cmd),
+						RepoFlag:       intakeCommandRepoFlag(cmd),
+						Payload:        payload,
+						PayloadSet:     cmd.Flags().Changed("payload"),
+						PayloadFile:    payloadFile,
+						PayloadFileSet: cmd.Flags().Changed("payload-file"),
+						PayloadRaw:     string(override),
+					})
+				}
 				return renderIntakeDryRun(cmd.OutOrStdout(), ev, jsonOut, tmpl, nil, nil, nil, triggerPreview)
 			}
 			return publishScheduleEvent(cmd, target, ev, "agent-team intake schedule", wait, waitFilters, waitTimeout, waitInterval, failOnFailed, jsonOut, tmpl)
@@ -339,6 +402,7 @@ func newIntakeScheduleCmd() *cobra.Command {
 	cmd.Flags().StringVar(&payloadFile, "payload-file", "", "Read additional schedule payload JSON from a file, or '-' for stdin.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Normalize and print the event without publishing to the daemon.")
 	cmd.Flags().BoolVar(&previewRoutes, "preview-triggers", false, "With --dry-run, include local topology instance and pipeline matches.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the apply command, one per line.")
 	cmd.Flags().BoolVar(&wait, "wait", false, "After the schedule publishes pipeline jobs, wait for those jobs to reach a lifecycle status, event, or next-step state.")
 	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&waitEvents, "wait-event", nil, "With --wait, last event to wait for, e.g. pipeline_step, advance_dispatched, closed, or pipeline_done. Can repeat or comma-separate.")
@@ -1438,6 +1502,98 @@ func renderIntakeDryRun(w io.Writer, ev *intake.Event, jsonOut bool, tmpl *templ
 		}
 	}
 	return nil
+}
+
+type webhookIntakeApplyCommandOptions struct {
+	Provider       string
+	Repo           string
+	RepoSet        bool
+	RepoFlag       string
+	Payload        string
+	PayloadSet     bool
+	PayloadFile    string
+	PayloadFileSet bool
+	PayloadRaw     string
+	ReconcileJob   bool
+	CleanupMerged  bool
+	VerifyPR       bool
+	AdvanceJob     bool
+	Workspace      string
+	WorkspaceSet   bool
+	RuntimeKind    string
+	RuntimeKindSet bool
+	RuntimeBin     string
+	RuntimeBinSet  bool
+}
+
+func renderWebhookIntakeApplyCommand(w io.Writer, opts webhookIntakeApplyCommandOptions) error {
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(webhookIntakeApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func webhookIntakeApplyCommandArgs(opts webhookIntakeApplyCommandOptions) []string {
+	args := []string{"agent-team", "intake", strings.TrimSpace(opts.Provider)}
+	args = appendIntakeRepoArgs(args, opts.RepoFlag, opts.Repo, opts.RepoSet)
+	args = appendPayloadCommandArgs(args, opts.Payload, opts.PayloadSet, opts.PayloadFile, opts.PayloadFileSet, opts.PayloadRaw)
+	if opts.ReconcileJob {
+		args = append(args, "--reconcile-job")
+	}
+	if opts.CleanupMerged {
+		args = append(args, "--cleanup-merged")
+	}
+	if opts.VerifyPR {
+		args = append(args, "--verify-pr")
+	}
+	if opts.AdvanceJob {
+		args = append(args, "--advance")
+	}
+	if opts.WorkspaceSet && strings.TrimSpace(opts.Workspace) != "" {
+		args = append(args, "--workspace", opts.Workspace)
+	}
+	if opts.RuntimeKindSet && strings.TrimSpace(opts.RuntimeKind) != "" {
+		args = append(args, "--runtime", opts.RuntimeKind)
+	}
+	if opts.RuntimeBinSet && strings.TrimSpace(opts.RuntimeBin) != "" {
+		args = append(args, "--runtime-bin", opts.RuntimeBin)
+	}
+	return args
+}
+
+type intakeScheduleApplyCommandOptions struct {
+	Name           string
+	Repo           string
+	RepoSet        bool
+	RepoFlag       string
+	Payload        string
+	PayloadSet     bool
+	PayloadFile    string
+	PayloadFileSet bool
+	PayloadRaw     string
+}
+
+func renderIntakeScheduleApplyCommand(w io.Writer, opts intakeScheduleApplyCommandOptions) error {
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(intakeScheduleApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func intakeScheduleApplyCommandArgs(opts intakeScheduleApplyCommandOptions) []string {
+	args := []string{"agent-team", "intake", "schedule", opts.Name}
+	args = appendIntakeRepoArgs(args, opts.RepoFlag, opts.Repo, opts.RepoSet)
+	return appendPayloadCommandArgs(args, opts.Payload, opts.PayloadSet, opts.PayloadFile, opts.PayloadFileSet, opts.PayloadRaw)
+}
+
+func appendPayloadCommandArgs(args []string, payload string, payloadSet bool, payloadFile string, payloadFileSet bool, payloadRaw string) []string {
+	if payloadSet && strings.TrimSpace(payload) != "" {
+		return append(args, "--payload", payload)
+	}
+	payloadFile = strings.TrimSpace(payloadFile)
+	if payloadFileSet && payloadFile != "" && payloadFile != "-" {
+		return append(args, "--payload-file", payloadFile)
+	}
+	if payloadFileSet && payloadFile == "-" && strings.TrimSpace(payloadRaw) != "" {
+		return append(args, "--payload", payloadRaw)
+	}
+	return args
 }
 
 func preflightIntakeDaemon(teamDir string) error {

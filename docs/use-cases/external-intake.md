@@ -13,6 +13,11 @@ agent-team intake linear \
   --payload-file linear-ticket-created.json \
   --dry-run \
   --preview-triggers
+agent-team intake linear \
+  --payload-file linear-ticket-created.json \
+  --dry-run \
+  --preview-triggers \
+  --commands
 ```
 
 For GitHub:
@@ -22,6 +27,11 @@ agent-team intake github \
   --payload-file github-pr-merged.json \
   --dry-run \
   --preview-triggers
+agent-team intake github \
+  --payload-file github-pr-merged.json \
+  --dry-run \
+  --preview-triggers \
+  --commands
 ```
 
 ## Run a Local Listener

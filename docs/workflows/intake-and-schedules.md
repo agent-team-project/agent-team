@@ -28,6 +28,7 @@ agent-team schedule fire --wait --wait-next-state queued --wait-step triage --wa
 agent-team schedule run nightly --dry-run --preview-triggers
 agent-team schedule run nightly --dry-run --commands
 agent-team schedule run nightly --payload '{"ticket":"SQU-610"}' --wait --wait-next-state queued --wait-step triage --wait-timeout 30s
+agent-team intake schedule nightly --payload '{"ticket":"SQU-611"}' --dry-run --commands
 agent-team intake schedule nightly --payload '{"ticket":"SQU-611"}' --wait --wait-next-state queued --wait-step triage --wait-timeout 30s
 ```
 
@@ -65,6 +66,7 @@ and `match.event` sees the suffix (`created`, `opened`, `merged`, and so on).
 
 ```sh
 agent-team intake linear --payload-file linear-webhook.json --dry-run --preview-triggers
+agent-team intake linear --payload-file linear-webhook.json --dry-run --preview-triggers --commands
 ```
 
 Expected use:
@@ -79,6 +81,7 @@ Expected use:
 
 ```sh
 agent-team intake github --payload-file github-webhook.json --dry-run --preview-triggers
+agent-team intake github --payload-file github-webhook.json --dry-run --preview-triggers --commands
 agent-team intake github --payload-file github-webhook.json --reconcile-job --advance
 agent-team intake github --payload-file github-webhook.json --reconcile-job --advance --wait --wait-status running --wait-timeout 30s
 agent-team intake github --payload-file github-webhook.json --reconcile-job --cleanup-merged --verify-pr
