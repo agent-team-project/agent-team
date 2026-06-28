@@ -8213,6 +8213,7 @@ func collectPipelineRuntimeResumePlans(teamDir, pipeline string, stepFilter stri
 				plan = runtimeResumePlanWithJobCommands(plan, jobID)
 			}
 		}
+		plan.Detail = runtimeResumePlanDetail(meta, plan)
 		if len(actionSet) > 0 && !actionSet[plan.RecommendedAction] {
 			continue
 		}

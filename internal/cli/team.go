@@ -449,6 +449,7 @@ func collectTeamRuntimeResumePlans(teamDir, name string, stepFilter string, stat
 		}
 		plan := runtimeResumePlanFromMetadata(meta)
 		plan = runtimeResumePlanWithJobContextFromDisk(teamDir, plan, jobCache)
+		plan.Detail = runtimeResumePlanDetail(meta, plan)
 		if len(actionSet) > 0 && !actionSet[plan.RecommendedAction] {
 			continue
 		}

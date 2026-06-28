@@ -1247,6 +1247,16 @@ func TestRuntimeResumePlanJobStepFilter(t *testing.T) {
 	if plan.Instance != "worker-squ-43-implement" || plan.Job != "squ-43" || plan.Pipeline != "ticket_to_pr" || plan.StepID != "implement" || plan.JobLastMessageCommand != "agent-team job logs squ-43 --step implement --last-message" {
 		t.Fatalf("plan = %+v", plan)
 	}
+	for _, want := range []string{
+		"agent-team job resume-plan squ-43 --step implement",
+		"agent-team job logs squ-43 --step implement --follow",
+		"agent-team job logs squ-43 --step implement --last-message",
+		"codex resume implement-session",
+	} {
+		if !strings.Contains(plan.Detail, want) {
+			t.Fatalf("step-aware detail = %q, want %q", plan.Detail, want)
+		}
+	}
 
 	text := NewRootCmd()
 	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}

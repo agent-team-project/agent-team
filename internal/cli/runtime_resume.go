@@ -414,6 +414,7 @@ func collectRuntimeResumePlans(teamDir string, instances []string, jobID string,
 		} else {
 			plan = runtimeResumePlanWithJobContextFromDisk(teamDir, plan, jobCache)
 		}
+		plan.Detail = runtimeResumePlanDetail(meta, plan)
 		if len(actionSet) > 0 && !actionSet[plan.RecommendedAction] {
 			continue
 		}
@@ -668,9 +669,9 @@ func runtimeResumePlanDetail(meta *daemon.Metadata, plan runtimeResumePlan) stri
 	}
 	if !plan.ManagedResume {
 		if plan.Stale {
-			return lifecycleStaleUnsupportedResumeDetailForInstance(meta, plan.Instance)
+			return "recorded running pid is not live; " + runtimeResumeUnsupportedResumeDetail(meta, plan)
 		}
-		return lifecycleUnsupportedResumeDetailForInstance(meta, plan.Instance)
+		return runtimeResumeUnsupportedResumeDetail(meta, plan)
 	}
 	if plan.Stale {
 		return "recorded running pid is not live; managed start can reconcile and resume the recorded runtime session under daemon ownership"
@@ -679,6 +680,46 @@ func runtimeResumePlanDetail(meta *daemon.Metadata, plan runtimeResumePlan) stri
 		return "managed attach can stop the daemon child, open the session, and resume daemon ownership afterward"
 	}
 	return "managed start can resume the recorded runtime session under daemon ownership"
+}
+
+func runtimeResumeUnsupportedResumeDetail(meta *daemon.Metadata, plan runtimeResumePlan) string {
+	detail := lifecycleUnsupportedResumeDetail(meta)
+	hints := runtimeResumeUnsupportedResumeActionHints(plan)
+	if len(hints) == 0 {
+		return detail
+	}
+	return detail + "; " + strings.Join(hints, "; ")
+}
+
+func runtimeResumeUnsupportedResumeActionHints(plan runtimeResumePlan) []string {
+	var hints []string
+	if command := runtimeResumePlanPlanCommand(plan); command != "" {
+		hints = append(hints, "plan: "+command)
+	}
+	if command := strings.TrimSpace(plan.JobLogsCommand); command != "" {
+		hints = append(hints, "logs: "+command)
+	} else if command := strings.TrimSpace(plan.LogsCommand); command != "" {
+		hints = append(hints, "logs: "+command)
+	}
+	if command := strings.TrimSpace(plan.JobLastMessageCommand); command != "" {
+		hints = append(hints, "last message: "+command)
+	} else if command := strings.TrimSpace(plan.LastMessageCommand); command != "" {
+		hints = append(hints, "last message: "+command)
+	}
+	if command := strings.TrimSpace(plan.ResumeCommand); command != "" {
+		hints = append(hints, "unmanaged resume: "+command)
+	}
+	return hints
+}
+
+func runtimeResumePlanPlanCommand(plan runtimeResumePlan) string {
+	if id := job.NormalizeID(plan.Job); id != "" {
+		return "agent-team job resume-plan " + id + jobStepCommandFlag(plan.StepID)
+	}
+	if instance := strings.TrimSpace(plan.Instance); instance != "" {
+		return "agent-team resume-plan " + instance
+	}
+	return ""
 }
 
 func parseRuntimeResumeStatusFilter(raw []string) (map[string]bool, error) {
