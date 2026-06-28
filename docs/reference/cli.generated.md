@@ -2012,6 +2012,7 @@ Flags:
 
 ```text
       --all             Clean all done jobs that still own a recorded worktree or branch.
+      --commands        With --dry-run, print the matching cleanup apply command when the preview has actionable work.
       --dry-run         Preview the job-owned worktree and branch cleanup without removing anything.
       --force-branch    With --merged, delete the job branch with git branch -D if it is not locally merged.
       --format string   Render the cleanup result with a Go template, e.g. '{{.ID}} {{.LastStatus}}' or '{{.Total}} {{.Cleaned}}'.
@@ -2190,6 +2191,7 @@ Flags:
 
 ```text
       --all                   Hold all matching jobs instead of one job.
+      --commands              With --dry-run, print the matching hold apply command when the preview has actionable work.
       --dry-run               Preview the hold without writing job state.
       --for duration          Hold for this duration, for example 30m or 2h.
       --format string         Render the updated job or batch row with a Go template, e.g. '{{.ID}} {{.Held}} {{.HoldReason}}' or '{{.JobID}} {{.Action}}'.
@@ -3085,6 +3087,7 @@ Flags:
 
 ```text
       --all                   Release all matching held jobs instead of one job.
+      --commands              With --dry-run, print the matching release apply command when the preview has actionable work.
       --dry-run               Preview the release without writing job state.
       --expired               With --all, only release held jobs whose hold_until has passed.
       --format string         Render the updated job or batch row with a Go template, e.g. '{{.ID}} {{.Held}} {{.LastStatus}}' or '{{.JobID}} {{.Action}}'.
@@ -3380,6 +3383,7 @@ Flags:
 
 ```text
       --all                   Mark stale running work across all jobs.
+      --commands              With --dry-run, print the matching timeout apply command when the preview has actionable work.
       --dry-run               Preview stale-work failure without writing job state.
       --format string         Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
       --json                  Emit timeout results as JSON.
@@ -4264,6 +4268,7 @@ Flags:
 ```text
       --actor string          Actor label recorded in cancellation audit events. (default "cli")
       --all                   Cancel non-terminal jobs across all pipelines.
+      --commands              With --dry-run, print the matching cancel apply command when the preview has actionable work.
       --dry-run               Preview cancellations without writing job state.
       --format string         Render each cancellation result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StatusAfter}}'.
       --json                  Emit cancellation results as JSON.
@@ -4286,6 +4291,7 @@ agent-team pipeline cleanup <pipeline> [flags]
 Flags:
 
 ```text
+      --commands        With --dry-run, print the matching pipeline cleanup apply command when the preview has actionable work.
       --dry-run         Preview done pipeline-owned job cleanup without removing worktrees or branches.
       --force-branch    Delete recorded branches even when git does not consider them merged.
       --format string   Render the cleanup result with a Go template, e.g. '{{.Pipeline}} {{.Cleaned}} {{.Failed}}'.
@@ -4440,6 +4446,7 @@ Flags:
 
 ```text
       --all                   Hold jobs across all pipelines.
+      --commands              With --dry-run, print the matching hold apply command when the preview has actionable work.
       --dry-run               Preview holds without writing job state.
       --for duration          Hold for this duration, for example 30m or 2h.
       --format string         Render each hold result with a Go template, e.g. '{{.JobID}} {{.Action}}'.
@@ -5113,6 +5120,7 @@ Flags:
 
 ```text
       --all                   Reject manual gates across all pipelines.
+      --commands              With --dry-run, print the matching reject apply command when the preview has actionable work.
       --dry-run               Preview manual gate rejections without writing job state.
       --format string         Render each rejection result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
       --json                  Emit rejection results as JSON.
@@ -5137,6 +5145,7 @@ Flags:
 
 ```text
       --all                   Release held jobs across all pipelines.
+      --commands              With --dry-run, print the matching release apply command when the preview has actionable work.
       --dry-run               Preview releases without writing job state.
       --expired               Only release held jobs whose hold_until has passed.
       --format string         Render each release result with a Go template, e.g. '{{.JobID}} {{.Action}}'.
@@ -5161,6 +5170,7 @@ Flags:
 
 ```text
       --all-ready-steps               Advance every currently ready independent pipeline step during the scoped repair advance.
+      --commands                      With --dry-run, print the matching pipeline repair apply command when the preview has actionable work.
       --dry-run                       Preview pipeline repair actions without mutating state or starting the daemon.
       --fail-on-failed                With --wait, exit 1 if any repaired job resolves to failed.
       --format string                 Render the pipeline repair result with a Go template, e.g. '{{.Pipeline}} {{.Queue.Action}}'.
@@ -5359,6 +5369,7 @@ Flags:
 
 ```text
       --all                   Skip matching steps across all pipelines.
+      --commands              With --dry-run, print the matching skip apply command when the preview has actionable work.
       --dry-run               Preview skipped steps without writing job state.
       --format string         Render each skip result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
       --json                  Emit skip results as JSON.
@@ -5497,6 +5508,7 @@ Flags:
 
 ```text
       --all                   Mark stale running steps failed across all pipelines.
+      --commands              With --dry-run, print the matching timeout apply command when the preview has actionable work.
       --dry-run               Preview stale-step failures without writing job state.
       --format string         Render each timeout result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
       --json                  Emit timeout results as JSON.
@@ -5794,6 +5806,7 @@ Flags:
 
 ```text
       --all                  Drop all matching queue items instead of one id.
+      --commands             With --dry-run, print the matching drop command when the preview has actionable work.
       --dry-run              Preview matching queue items without dropping them.
       --event-type strings   With --all, filter by event type; repeat or comma-separate values.
       --format string        Render each drop result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -5863,6 +5876,7 @@ agent-team queue prune [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching prune command when the preview has actionable work.
       --dry-run               Preview queue items that would be pruned without dropping them.
       --event-type strings    Filter by event type before pruning; repeat or comma-separate values.
       --format string         Render each result with a Go template, e.g. '{{.ID}} {{.State}}'.
@@ -6042,6 +6056,7 @@ Flags:
 
 ```text
       --all                  Retry all matching queue items instead of one id.
+      --commands             With --dry-run, print the matching retry command when the preview has actionable work.
       --dry-run              Preview matching queue items without retrying them.
       --event-type strings   With --all, filter by event type; repeat or comma-separate values.
       --format string        Render each retry result with a Go template, e.g. '{{.ID}} {{.Action}}'.
@@ -6123,6 +6138,7 @@ Flags:
 
 ```text
       --all-ready-steps               Advance every currently ready independent pipeline step during the repair tick.
+      --commands                      With --dry-run, print the matching repair apply command when the preview has actionable work.
       --dry-run                       Preview repair actions without mutating state or starting the daemon.
       --fail-on-failed                With --wait, exit 1 if any repaired job resolves to failed.
       --format string                 Render the repair result with a Go template, e.g. '{{.DryRun}} {{.Queue.Action}}'.
@@ -7247,6 +7263,7 @@ Flags:
 
 ```text
       --actor string          Actor label recorded in cancellation audit events. (default "cli")
+      --commands              With --dry-run, print the matching team cancel apply command when the preview has actionable work.
       --dry-run               Preview team cancellations without writing job state.
       --format string         Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StatusAfter}}'.
       --json                  Emit cancellation results as JSON.
@@ -7269,6 +7286,7 @@ agent-team team cleanup <team> [flags]
 Flags:
 
 ```text
+      --commands        With --dry-run, print the matching team cleanup apply command when the preview has actionable work.
       --dry-run         Preview done team-owned job cleanup without removing anything.
       --force-branch    With --merged, delete job branches with git branch -D if they are not locally merged.
       --format string   Render the cleanup batch with a Go template, e.g. '{{.Team}} {{.Cleaned}} {{.Failed}}'.
@@ -7470,6 +7488,7 @@ agent-team team hold <team> [reason...] [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching hold apply command when the preview has actionable work.
       --dry-run               Preview holds without writing job state.
       --for duration          Hold for this duration, for example 30m or 2h.
       --format string         Render each hold result with a Go template, e.g. '{{.JobID}} {{.Action}}'.
@@ -8253,6 +8272,7 @@ agent-team team reject <team> [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching team reject apply command when the preview has actionable work.
       --dry-run               Preview manual gate rejections without writing job state.
       --format string         Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
       --json                  Emit rejection results as JSON.
@@ -8276,6 +8296,7 @@ agent-team team release <team> [message...] [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching release apply command when the preview has actionable work.
       --dry-run               Preview releases without writing job state.
       --expired               Only release held jobs whose hold_until has passed.
       --format string         Render each release result with a Go template, e.g. '{{.JobID}} {{.Action}}'.
@@ -8300,6 +8321,7 @@ Flags:
 
 ```text
       --all-ready-steps               Advance every currently ready independent team pipeline step during the scoped repair tick.
+      --commands                      With --dry-run, print the matching team repair apply command when the preview has actionable work.
       --dry-run                       Preview team repair actions without mutating state or starting the daemon.
       --fail-on-failed                With --wait, exit 1 if any team-repaired job resolves to failed.
       --format string                 Render the team repair result with a Go template, e.g. '{{.Team.Name}} {{.Queue.Action}}'.
@@ -8599,6 +8621,7 @@ agent-team team skip <team> --step <id> [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching team skip apply command when the preview has actionable work.
       --dry-run               Preview skipped team steps without writing job state.
       --format string         Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
       --json                  Emit skip results as JSON.
@@ -8768,6 +8791,7 @@ agent-team team timeout <team> [flags]
 Flags:
 
 ```text
+      --commands              With --dry-run, print the matching timeout apply command when the preview has actionable work.
       --dry-run               Preview stale-work failures without writing job state.
       --format string         Render each result with a Go template, e.g. '{{.JobID}} {{.Action}} {{.StepID}}'.
       --jobs                  Include stale step-less jobs whose target instance belongs to the team.

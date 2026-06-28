@@ -188,6 +188,19 @@ func TestQueueCommandListShowDropLocal(t *testing.T) {
 		t.Fatalf("drop dry-run removed queue item: %v", err)
 	}
 
+	dryDropCommands := NewRootCmd()
+	dryDropCommandsOut, dryDropCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryDropCommands.SetOut(dryDropCommandsOut)
+	dryDropCommands.SetErr(dryDropCommandsErr)
+	dryDropCommands.SetArgs([]string{"queue", "drop", "q-local", "--target", tmp, "--dry-run", "--commands"})
+	if err := dryDropCommands.Execute(); err != nil {
+		t.Fatalf("queue drop dry-run commands: %v\nstderr=%s", err, dryDropCommandsErr.String())
+	}
+	wantDropCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "queue", "drop", "q-local", "--target", tmp}), " ")
+	if got := strings.TrimSpace(dryDropCommandsOut.String()); got != wantDropCommand {
+		t.Fatalf("queue drop dry-run commands = %q, want %q", got, wantDropCommand)
+	}
+
 	dryDropFormat := NewRootCmd()
 	dryDropFormatOut, dryDropFormatErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dryDropFormat.SetOut(dryDropFormatOut)
@@ -440,10 +453,19 @@ func TestQueueDoctorFormatValidation(t *testing.T) {
 		{[]string{"queue", "show", "q-local", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
 		{[]string{"queue", "quarantine", "show", "quarantine/pending/q.json", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"queue", "quarantine", "show", "quarantine/pending/q.json", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"queue", "drop", "q-local", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"queue", "drop", "q-local", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"queue", "drop", "q-local", "--dry-run", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
 		{[]string{"queue", "drop", "--format", "{{.ID}}", "--json"}, "--format cannot be combined"},
 		{[]string{"queue", "drop", "--format", "{{"}, "invalid --format template"},
+		{[]string{"queue", "retry", "q-local", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"queue", "retry", "q-local", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"queue", "retry", "q-local", "--dry-run", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
 		{[]string{"queue", "retry", "--format", "{{.ID}}", "--json"}, "--format cannot be combined"},
 		{[]string{"queue", "retry", "--format", "{{"}, "invalid --format template"},
+		{[]string{"queue", "prune", "--commands"}, "--commands requires --dry-run"},
+		{[]string{"queue", "prune", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
+		{[]string{"queue", "prune", "--dry-run", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
@@ -1706,6 +1728,39 @@ func TestQueueDropAllLocal(t *testing.T) {
 		t.Fatalf("dry-run removed worker item: %v", err)
 	}
 
+	dryCommands := NewRootCmd()
+	dryCommandsOut, dryCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryCommands.SetOut(dryCommandsOut)
+	dryCommands.SetErr(dryCommandsErr)
+	dryCommands.SetArgs([]string{
+		"queue", "drop",
+		"--target", tmp,
+		"--all",
+		"--instance", "worker",
+		"--event-type", "agent.dispatch",
+		"--job", "SQU-104",
+		"--runtime", "codex",
+		"--limit", "1",
+		"--dry-run",
+		"--commands",
+	})
+	if err := dryCommands.Execute(); err != nil {
+		t.Fatalf("queue drop --all dry-run commands: %v\nstderr=%s", err, dryCommandsErr.String())
+	}
+	wantDropAllCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "queue", "drop",
+		"--target", tmp,
+		"--all",
+		"--instance", "worker",
+		"--event-type", "agent.dispatch",
+		"--job", "SQU-104",
+		"--runtime", "codex",
+		"--limit", "1",
+	}), " ")
+	if got := strings.TrimSpace(dryCommandsOut.String()); got != wantDropAllCommand {
+		t.Fatalf("queue drop --all dry-run commands = %q, want %q", got, wantDropAllCommand)
+	}
+
 	runtimeDry := NewRootCmd()
 	runtimeDryOut, runtimeDryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	runtimeDry.SetOut(runtimeDryOut)
@@ -1884,6 +1939,39 @@ func TestQueueRetryAllLocal(t *testing.T) {
 	}
 	if item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-retry-worker"); err != nil || item.State != daemon.QueueStateDead {
 		t.Fatalf("dry-run changed item=%+v err=%v", item, err)
+	}
+
+	dryCommands := NewRootCmd()
+	dryCommandsOut, dryCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dryCommands.SetOut(dryCommandsOut)
+	dryCommands.SetErr(dryCommandsErr)
+	dryCommands.SetArgs([]string{
+		"queue", "retry",
+		"--target", tmp,
+		"--all",
+		"--instance", "worker",
+		"--event-type", "agent.dispatch",
+		"--job", "SQU-100",
+		"--runtime", "codex",
+		"--limit", "1",
+		"--dry-run",
+		"--commands",
+	})
+	if err := dryCommands.Execute(); err != nil {
+		t.Fatalf("queue retry --all dry-run commands: %v\nstderr=%s", err, dryCommandsErr.String())
+	}
+	wantRetryAllCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "queue", "retry",
+		"--target", tmp,
+		"--all",
+		"--instance", "worker",
+		"--event-type", "agent.dispatch",
+		"--job", "SQU-100",
+		"--runtime", "codex",
+		"--limit", "1",
+	}), " ")
+	if got := strings.TrimSpace(dryCommandsOut.String()); got != wantRetryAllCommand {
+		t.Fatalf("queue retry --all dry-run commands = %q, want %q", got, wantRetryAllCommand)
 	}
 
 	runtimeDry := NewRootCmd()
@@ -2121,6 +2209,19 @@ func TestQueuePruneLocal(t *testing.T) {
 	}
 	if _, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-dead-old"); err != nil {
 		t.Fatalf("dry-run removed item: %v", err)
+	}
+
+	pruneCommands := NewRootCmd()
+	pruneCommandsOut, pruneCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	pruneCommands.SetOut(pruneCommandsOut)
+	pruneCommands.SetErr(pruneCommandsErr)
+	pruneCommands.SetArgs([]string{"queue", "prune", "--target", tmp, "--older-than", "24h", "--dry-run", "--commands"})
+	if err := pruneCommands.Execute(); err != nil {
+		t.Fatalf("queue prune dry-run commands: %v\nstderr=%s", err, pruneCommandsErr.String())
+	}
+	wantPruneCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "queue", "prune", "--target", tmp, "--older-than", "24h0m0s"}), " ")
+	if got := strings.TrimSpace(pruneCommandsOut.String()); got != wantPruneCommand {
+		t.Fatalf("queue prune dry-run commands = %q, want %q", got, wantPruneCommand)
 	}
 
 	prune := NewRootCmd()
@@ -2660,6 +2761,19 @@ func TestQueueRetryDryRunSingleDoesNotRequireDaemon(t *testing.T) {
 	}
 	if unchanged.State != daemon.QueueStateDead || unchanged.LastError != "spawn failed" || unchanged.Attempts != daemon.MaxQueueAttempts {
 		t.Fatalf("retry dry-run changed item = %+v", unchanged)
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"queue", "retry", "q-retry-one", "--target", tmp, "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("queue retry dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantRetryCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "queue", "retry", "q-retry-one", "--target", tmp}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantRetryCommand {
+		t.Fatalf("queue retry dry-run commands = %q, want %q", got, wantRetryCommand)
 	}
 
 	textCmd := NewRootCmd()
