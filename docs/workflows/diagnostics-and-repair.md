@@ -14,6 +14,7 @@ The CLI should help operators answer:
 ```sh
 agent-team overview
 agent-team overview --json
+agent-team overview --source queue --reason dead --commands
 agent-team overview -w
 ```
 
@@ -35,6 +36,11 @@ It summarizes:
 JSON output includes both `actions` (the compatibility list of command
 strings) and `action_details` with a command, source, reason, and team scope
 where applicable.
+
+Use `--source`, `--reason`, `--sort`, or `--limit` when the action hint list
+should be filtered or bounded for scripts. These flags do not hide the
+underlying overview counts; they only select which action hints are rendered in
+text, JSON, templates, or `--commands` output.
 
 When daemon metadata contains crashed instances or stale recorded running PIDs,
 overview includes runtime counts and suggests `agent-team resume-plan

@@ -26,7 +26,11 @@ func newOverviewCmd() *cobra.Command {
 		lastMessage   bool
 		watch         bool
 		noClear       bool
+		limit         int
 		scheduleLimit int
+		sortBy        string
+		sources       []string
+		reasons       []string
 		interval      time.Duration
 		format        string
 	)
@@ -44,6 +48,20 @@ func newOverviewCmd() *cobra.Command {
 			}
 			if scheduleLimit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team overview: --schedule-limit must be >= 0.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team overview: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			sortMode, err := parseNextActionSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team overview: %v\n", err)
+				return exitErr(2)
+			}
+			filters, err := parseNextActionFilters(sources, reasons)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team overview: %v\n", err)
 				return exitErr(2)
 			}
 			if commands && jsonOut {
@@ -71,14 +89,17 @@ func newOverviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			shapeActions := func(result *overviewResult) *overviewResult {
+				return overviewResultWithActionSelection(overviewResultWithLastMessageActions(result, lastMessage), limit, filters, sortMode)
+			}
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
 				return runOverviewWatch(ctx, cmd.OutOrStdout(), func(now time.Time) (*overviewResult, error) {
-					return overviewResultWithLastMessageActions(collectOverview(teamDir, now, scheduleLimit), lastMessage), nil
+					return shapeActions(collectOverview(teamDir, now, scheduleLimit)), nil
 				}, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
-			result := overviewResultWithLastMessageActions(collectOverview(teamDir, time.Now().UTC(), scheduleLimit), lastMessage)
+			result := shapeActions(collectOverview(teamDir, time.Now().UTC(), scheduleLimit))
 			if commands {
 				return renderOverviewCommands(cmd.OutOrStdout(), result, operatorCommandScopeFromCommand(cmd, target, "target"))
 			}
@@ -91,7 +112,11 @@ func newOverviewCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh overview until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Show at most this many action recommendations after filtering and sorting; 0 means all.")
 	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 5, "Upcoming schedules to inspect after ordering; 0 means all.")
+	cmd.Flags().StringVar(&sortBy, "sort", "default", "Sort action recommendations before applying --limit by default, source, reason, or command.")
+	cmd.Flags().StringSliceVar(&sources, "source", nil, "Only keep action recommendations from this source: health, topology, runtime, inbox, outbox, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only keep action recommendations with this reason. Values match exactly, or as prefixes before '='. Queue/job/outbox quarantine aliases are supported. Can repeat or comma-separate.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the overview result with a Go template, e.g. '{{.State}} {{len .Actions}}'.")
 	return cmd
@@ -105,7 +130,11 @@ func newTeamOverviewCmd() *cobra.Command {
 		lastMessage   bool
 		watch         bool
 		noClear       bool
+		limit         int
 		scheduleLimit int
+		sortBy        string
+		sources       []string
+		reasons       []string
 		interval      time.Duration
 		format        string
 	)
@@ -123,6 +152,20 @@ func newTeamOverviewCmd() *cobra.Command {
 			}
 			if scheduleLimit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team overview: --schedule-limit must be >= 0.")
+				return exitErr(2)
+			}
+			if limit < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team overview: --limit must be >= 0.")
+				return exitErr(2)
+			}
+			sortMode, err := parseNextActionSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team overview: %v\n", err)
+				return exitErr(2)
+			}
+			filters, err := parseNextActionFilters(sources, reasons)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team overview: %v\n", err)
 				return exitErr(2)
 			}
 			if commands && jsonOut {
@@ -150,6 +193,9 @@ func newTeamOverviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			shapeActions := func(result *overviewResult) *overviewResult {
+				return overviewResultWithActionSelection(overviewResultWithLastMessageActions(result, lastMessage), limit, filters, sortMode)
+			}
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
@@ -158,7 +204,7 @@ func newTeamOverviewCmd() *cobra.Command {
 					if err != nil {
 						return nil, err
 					}
-					return overviewResultWithLastMessageActions(result, lastMessage), nil
+					return shapeActions(result), nil
 				}, jsonOut, tmpl, interval, !noClear && !jsonOut)
 			}
 			result, err := collectTeamOverview(teamDir, args[0], time.Now().UTC(), scheduleLimit)
@@ -166,7 +212,7 @@ func newTeamOverviewCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team overview: %v\n", err)
 				return exitErr(1)
 			}
-			result = overviewResultWithLastMessageActions(result, lastMessage)
+			result = shapeActions(result)
 			if commands {
 				return renderOverviewCommands(cmd.OutOrStdout(), result, operatorCommandScopeFromCommand(cmd, repo, "repo"))
 			}
@@ -179,7 +225,11 @@ func newTeamOverviewCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh team overview until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Show at most this many action recommendations after filtering and sorting; 0 means all.")
 	cmd.Flags().IntVar(&scheduleLimit, "schedule-limit", 5, "Upcoming team schedules to inspect after ordering; 0 means all.")
+	cmd.Flags().StringVar(&sortBy, "sort", "default", "Sort action recommendations before applying --limit by default, source, reason, or command.")
+	cmd.Flags().StringSliceVar(&sources, "source", nil, "Only keep action recommendations from this source: health, topology, runtime, inbox, outbox, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&reasons, "reason", nil, "Only keep action recommendations with this reason. Values match exactly, or as prefixes before '='. Queue/job/outbox quarantine aliases are supported. Can repeat or comma-separate.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the team overview result with a Go template, e.g. '{{.Team.Name}} {{.State}}'.")
 	return cmd
@@ -1100,6 +1150,25 @@ func overviewResultWithLastMessageActions(out *overviewResult, lastMessage bool)
 	}
 	out.ActionDetails = operatorActionHintsWithLastMessage(out.ActionDetails)
 	out.Actions = overviewActionCommands(out.ActionDetails)
+	return out
+}
+
+func overviewResultWithActionSelection(out *overviewResult, limit int, filters nextActionFilters, sortMode string) *overviewResult {
+	if out == nil {
+		return nil
+	}
+	actions := append([]string{}, out.Actions...)
+	details := nextActionDetailsFromOverview(out, actions)
+	actions, details = filterNextActions(actions, details, filters)
+	actions, details = sortNextActions(actions, details, sortMode)
+	if limit > 0 && len(actions) > limit {
+		actions = actions[:limit]
+		if len(details) > limit {
+			details = details[:limit]
+		}
+	}
+	out.Actions = actions
+	out.ActionDetails = details
 	return out
 }
 

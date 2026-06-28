@@ -4212,8 +4212,12 @@ Flags:
       --interval duration    Refresh interval for --watch. (default 2s)
       --json                 Emit overview as JSON.
       --last-message         When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.
+      --limit int            Show at most this many action recommendations after filtering and sorting; 0 means all.
       --no-clear             With --watch, append snapshots instead of redrawing the terminal.
+      --reason strings       Only keep action recommendations with this reason. Values match exactly, or as prefixes before '='. Queue/job/outbox quarantine aliases are supported. Can repeat or comma-separate.
       --schedule-limit int   Upcoming schedules to inspect after ordering; 0 means all. (default 5)
+      --sort string          Sort action recommendations before applying --limit by default, source, reason, or command. (default "default")
+      --source strings       Only keep action recommendations from this source: health, topology, runtime, inbox, outbox, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.
       --target string        Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
   -w, --watch                Refresh overview until interrupted.
 ```
@@ -8151,9 +8155,13 @@ Flags:
       --interval duration    Refresh interval for --watch. (default 2s)
       --json                 Emit team overview as JSON.
       --last-message         When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.
+      --limit int            Show at most this many action recommendations after filtering and sorting; 0 means all.
       --no-clear             With --watch, append snapshots instead of redrawing the terminal.
+      --reason strings       Only keep action recommendations with this reason. Values match exactly, or as prefixes before '='. Queue/job/outbox quarantine aliases are supported. Can repeat or comma-separate.
       --repo string          Repo root containing .agent_team. (default "<repo>")
       --schedule-limit int   Upcoming team schedules to inspect after ordering; 0 means all. (default 5)
+      --sort string          Sort action recommendations before applying --limit by default, source, reason, or command. (default "default")
+      --source strings       Only keep action recommendations from this source: health, topology, runtime, inbox, outbox, queue, jobs, pipelines, schedules, intake, section_errors, or overview. Can repeat or comma-separate.
   -w, --watch                Refresh team overview until interrupted.
 ```
 

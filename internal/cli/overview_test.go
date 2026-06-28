@@ -114,6 +114,86 @@ func TestScopedOperatorActionsPreserveCommandTails(t *testing.T) {
 	}
 }
 
+func TestOverviewActionSelectionFlags(t *testing.T) {
+	root := writeOverviewAttentionFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root, "--source", "schedules", "--reason", "due", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview filtered json: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode filtered overview: %v\nbody=%s", err, out.String())
+	}
+	if len(overview.Actions) != 1 || overview.Actions[0] != "agent-team schedule fire --dry-run --preview-triggers" {
+		t.Fatalf("filtered overview actions = %+v", overview.Actions)
+	}
+	if len(overview.ActionDetails) != 1 || overview.ActionDetails[0].Source != "schedules" || overview.ActionDetails[0].Reason != "due=1" {
+		t.Fatalf("filtered overview details = %+v", overview.ActionDetails)
+	}
+	if overview.Queue.Dead != 1 || overview.Schedules.Due != 1 {
+		t.Fatalf("overview summaries should remain unfiltered: queue=%+v schedules=%+v", overview.Queue, overview.Schedules)
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"overview", "--target", root, "--source", "queue", "--reason", "queue_dead_letter", "--sort", "command", "--limit", "1", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("overview filtered commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	want := scopedOperatorAction("agent-team job queue retry squ-700 --all --sort attempts --limit 10 --dry-run", operatorCommandScope{Repo: root, Set: true}) + "\n"
+	if got := commandsOut.String(); got != want {
+		t.Fatalf("overview filtered commands = %q, want %q", got, want)
+	}
+}
+
+func TestTeamOverviewActionSelectionFlags(t *testing.T) {
+	root := writeOverviewAttentionFixture(t)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "overview", "delivery", "--repo", root, "--source", "queue", "--reason", "queue_dead_letter", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team overview filtered json: %v\nstderr=%s", err, stderr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
+		t.Fatalf("decode filtered team overview: %v\nbody=%s", err, out.String())
+	}
+	if overview.Team == nil || overview.Team.Name != "delivery" {
+		t.Fatalf("team overview team = %+v", overview.Team)
+	}
+	if len(overview.Actions) != 1 || overview.Actions[0] != "agent-team team queue retry delivery --all --job squ-700 --sort attempts --limit 10 --dry-run" {
+		t.Fatalf("filtered team overview actions = %+v", overview.Actions)
+	}
+	for _, detail := range overview.ActionDetails {
+		if detail.Team != "delivery" || detail.Source != "queue" || detail.Reason != "queue_dead_letter" {
+			t.Fatalf("filtered team detail = %+v, want delivery queue queue_dead_letter", detail)
+		}
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"team", "overview", "delivery", "--repo", root, "--source", "schedules", "--reason", "due", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("team overview filtered commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	want := scopedOperatorAction("agent-team team tick delivery --dry-run --skip-drain --skip-advance", operatorCommandScope{Repo: root, Set: true}) + "\n"
+	if got := commandsOut.String(); got != want {
+		t.Fatalf("team overview filtered commands = %q, want %q", got, want)
+	}
+}
+
 func TestOperatorActionWithLastMessageOnlyTouchesResumePlan(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1768,6 +1848,16 @@ func TestOverviewFormatValidation(t *testing.T) {
 			want: "--commands cannot be combined with --watch",
 		},
 		{
+			name: "overview-invalid-limit",
+			args: []string{"overview", "--limit", "-1"},
+			want: "--limit must be >= 0",
+		},
+		{
+			name: "overview-invalid-source",
+			args: []string{"overview", "--source", "missing"},
+			want: "unknown --source",
+		},
+		{
 			name: "team-overview-json-conflict",
 			args: []string{"team", "overview", "delivery", "--format", "{{.State}}", "--json"},
 			want: "--format cannot be combined",
@@ -1791,6 +1881,16 @@ func TestOverviewFormatValidation(t *testing.T) {
 			name: "team-overview-commands-watch-conflict",
 			args: []string{"team", "overview", "delivery", "--commands", "--watch"},
 			want: "--commands cannot be combined with --watch",
+		},
+		{
+			name: "team-overview-invalid-limit",
+			args: []string{"team", "overview", "delivery", "--limit", "-1"},
+			want: "--limit must be >= 0",
+		},
+		{
+			name: "team-overview-invalid-source",
+			args: []string{"team", "overview", "delivery", "--source", "missing"},
+			want: "unknown --source",
 		},
 	}
 	for _, tc := range cases {
