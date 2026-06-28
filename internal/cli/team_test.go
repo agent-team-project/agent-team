@@ -7516,6 +7516,18 @@ instances = ["other", "build-worker"]
 		t.Fatalf("team events tail format = %q", got)
 	}
 
+	newest := NewRootCmd()
+	newestOut, newestErr := &bytes.Buffer{}, &bytes.Buffer{}
+	newest.SetOut(newestOut)
+	newest.SetErr(newestErr)
+	newest.SetArgs([]string{"team", "events", "delivery", "--repo", root, "--tail", "2", "--sort", "newest", "--format", "{{.Instance}} {{.Action}}"})
+	if err := newest.Execute(); err != nil {
+		t.Fatalf("team events newest: %v\nstderr=%s", err, newestErr.String())
+	}
+	if got := strings.TrimSpace(newestOut.String()); got != "worker-squ-501 stop\nworker-squ-501 dispatch" {
+		t.Fatalf("team events newest = %q", got)
+	}
+
 	summary := NewRootCmd()
 	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	summary.SetOut(summaryOut)
@@ -7572,6 +7584,18 @@ instances = ["other", "build-worker"]
 	}
 	if strings.Contains(codexOut.String(), "manager up") || strings.Contains(codexOut.String(), "build-worker-1") || strings.Contains(codexOut.String(), "other stop") {
 		t.Fatalf("team events runtime leaked unrelated event:\n%s", codexOut.String())
+	}
+
+	invalidSortFollow := NewRootCmd()
+	invalidSortFollowOut, invalidSortFollowErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSortFollow.SetOut(invalidSortFollowOut)
+	invalidSortFollow.SetErr(invalidSortFollowErr)
+	invalidSortFollow.SetArgs([]string{"team", "events", "delivery", "--repo", root, "--follow", "--sort", "newest"})
+	if err := invalidSortFollow.Execute(); err == nil {
+		t.Fatalf("team events accepted newest follow: stdout=%s", invalidSortFollowOut.String())
+	}
+	if !strings.Contains(invalidSortFollowErr.String(), "--sort newest cannot be combined with --follow") {
+		t.Fatalf("team events newest follow error = %q", invalidSortFollowErr.String())
 	}
 
 	badRuntime := NewRootCmd()

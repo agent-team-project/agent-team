@@ -7222,6 +7222,18 @@ target = "worker"
 		t.Fatalf("pipeline events tail format = %q", got)
 	}
 
+	newest := NewRootCmd()
+	newestOut, newestErr := &bytes.Buffer{}, &bytes.Buffer{}
+	newest.SetOut(newestOut)
+	newest.SetErr(newestErr)
+	newest.SetArgs([]string{"pipeline", "events", "ticket_to_pr", "--repo", root, "--tail", "2", "--sort", "newest", "--format", "{{.Instance}} {{.Action}}"})
+	if err := newest.Execute(); err != nil {
+		t.Fatalf("pipeline events newest: %v\nstderr=%s", err, newestErr.String())
+	}
+	if got := strings.TrimSpace(newestOut.String()); got != "worker-squ-995 stop\nworker-squ-995 dispatch" {
+		t.Fatalf("pipeline events newest = %q", got)
+	}
+
 	summary := NewRootCmd()
 	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	summary.SetOut(summaryOut)
@@ -7294,6 +7306,18 @@ target = "worker"
 	}
 	if strings.Contains(codexOut.String(), "manager up") || strings.Contains(codexOut.String(), "foreign stop") {
 		t.Fatalf("pipeline events runtime leaked unrelated event:\n%s", codexOut.String())
+	}
+
+	invalidSortFollow := NewRootCmd()
+	invalidSortFollowOut, invalidSortFollowErr := &bytes.Buffer{}, &bytes.Buffer{}
+	invalidSortFollow.SetOut(invalidSortFollowOut)
+	invalidSortFollow.SetErr(invalidSortFollowErr)
+	invalidSortFollow.SetArgs([]string{"pipeline", "events", "ticket_to_pr", "--repo", root, "--follow", "--sort", "newest"})
+	if err := invalidSortFollow.Execute(); err == nil {
+		t.Fatalf("pipeline events accepted newest follow: stdout=%s", invalidSortFollowOut.String())
+	}
+	if !strings.Contains(invalidSortFollowErr.String(), "--sort newest cannot be combined with --follow") {
+		t.Fatalf("pipeline events newest follow error = %q", invalidSortFollowErr.String())
 	}
 
 	invalidMany := NewRootCmd()

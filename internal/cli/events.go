@@ -30,6 +30,7 @@ func newEventsCmd() *cobra.Command {
 		last             int
 		jsonOut          bool
 		summary          bool
+		sortBy           string
 		format           string
 		actionFilters    []string
 		instanceFilters  []string
@@ -68,6 +69,15 @@ func newEventsCmd() *cobra.Command {
 			}
 			if format != "" && (jsonOut || summary) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team events: --format cannot be combined with --json or --summary.")
+				return exitErr(2)
+			}
+			sortMode, err := parseEventSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team events: %v\n", err)
+				return exitErr(2)
+			}
+			if follow && sortMode == "newest" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team events: --sort newest cannot be combined with --follow.")
 				return exitErr(2)
 			}
 			formatTemplate, err := parseEventFormat(format)
@@ -126,7 +136,7 @@ func newEventsCmd() *cobra.Command {
 			}
 			ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer cancel()
-			return runEvents(ctx, cmd.OutOrStdout(), client, eventsOptions{Follow: follow, Tail: tail, JSON: jsonOut, Summary: summary, Format: formatTemplate, Filters: filters})
+			return runEvents(ctx, cmd.OutOrStdout(), client, eventsOptions{Follow: follow, Tail: tail, JSON: jsonOut, Summary: summary, Sort: sortMode, Format: formatTemplate, Filters: filters})
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
@@ -136,6 +146,7 @@ func newEventsCmd() *cobra.Command {
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show events for the N most recently started daemon-known instances after other filters (0 = all).")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit raw JSONL events.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching events by action, status, agent, and instance.")
+	cmd.Flags().StringVar(&sortBy, "sort", "oldest", "Sort returned events by oldest or newest. Follow mode always streams oldest first.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each event with a Go template, e.g. '{{.Job}} {{.Action}} {{.Instance}} {{.Status}}'.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only show events with this action. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only show events for this instance. Can repeat or comma-separate.")
@@ -157,6 +168,7 @@ type eventsOptions struct {
 	Tail    int
 	JSON    bool
 	Summary bool
+	Sort    string
 	Format  *template.Template
 	Filters eventFilters
 }
@@ -213,12 +225,16 @@ func runEvents(ctx context.Context, w io.Writer, client eventsClient, opts event
 		return err
 	}
 	defer rc.Close()
-	if tailAfterFilters {
+	sortSnapshot := !opts.Follow && opts.Sort == "newest"
+	if tailAfterFilters || sortSnapshot {
 		events, err := collectFilteredEventLines(rc, opts.Filters)
 		if err != nil {
 			return err
 		}
-		events = tailEventLines(events, opts.Tail)
+		if tailAfterFilters {
+			events = tailEventLines(events, opts.Tail)
+		}
+		sortEventLinesForDisplay(events, opts.Sort)
 		if opts.Summary {
 			return renderEventSummaryLines(w, events, opts.JSON)
 		}
@@ -661,6 +677,32 @@ func tailEventLines(events []filteredEventLine, tail int) []filteredEventLine {
 		return events
 	}
 	return events[len(events)-tail:]
+}
+
+func sortEventLinesForDisplay(events []filteredEventLine, sortMode string) {
+	if sortMode != "newest" {
+		return
+	}
+	sort.SliceStable(events, func(i, j int) bool {
+		left := events[i].ev
+		right := events[j].ev
+		if !left.TS.Equal(right.TS) {
+			if left.TS.IsZero() {
+				return false
+			}
+			if right.TS.IsZero() {
+				return true
+			}
+			return left.TS.After(right.TS)
+		}
+		if left.Instance != right.Instance {
+			return left.Instance < right.Instance
+		}
+		if left.Action != right.Action {
+			return left.Action < right.Action
+		}
+		return left.Message < right.Message
+	})
 }
 
 func renderEventTextLines(w io.Writer, events []filteredEventLine) error {

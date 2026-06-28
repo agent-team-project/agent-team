@@ -1309,7 +1309,7 @@ func newTeamJobEventsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team job-events: --interval must be >= 0.")
 				return exitErr(2)
 			}
-			sortMode, err := parseJobEventSort(sortBy)
+			sortMode, err := parseEventSort(sortBy)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team job-events: %v\n", err)
 				return exitErr(2)
@@ -4274,6 +4274,7 @@ func newTeamEventsCmd() *cobra.Command {
 		tail             int
 		jsonOut          bool
 		summary          bool
+		sortBy           string
 		format           string
 		actionFilters    []string
 		statusFilters    []string
@@ -4303,6 +4304,15 @@ func newTeamEventsCmd() *cobra.Command {
 			}
 			if format != "" && (jsonOut || summary) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team events: --format cannot be combined with --json or --summary.")
+				return exitErr(2)
+			}
+			sortMode, err := parseEventSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team events: %v\n", err)
+				return exitErr(2)
+			}
+			if follow && sortMode == "newest" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team events: --sort newest cannot be combined with --follow.")
 				return exitErr(2)
 			}
 			formatTemplate, err := parseEventFormat(format)
@@ -4351,7 +4361,7 @@ func newTeamEventsCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			defer stop()
-			return runEvents(ctx, cmd.OutOrStdout(), client, eventsOptions{Follow: follow, Tail: tail, JSON: jsonOut, Summary: summary, Format: formatTemplate, Filters: filters})
+			return runEvents(ctx, cmd.OutOrStdout(), client, eventsOptions{Follow: follow, Tail: tail, JSON: jsonOut, Summary: summary, Sort: sortMode, Format: formatTemplate, Filters: filters})
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -4359,6 +4369,7 @@ func newTeamEventsCmd() *cobra.Command {
 	cmd.Flags().IntVar(&tail, "tail", 0, "Show only the last N matching team events before returning or following (0 = all).")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit raw JSONL events.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching team events by action, status, agent, and instance.")
+	cmd.Flags().StringVar(&sortBy, "sort", "oldest", "Sort returned events by oldest or newest. Follow mode always streams oldest first.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each event with a Go template, e.g. '{{.Job}} {{.Action}} {{.Instance}} {{.Status}}'.")
 	cmd.Flags().StringSliceVar(&actionFilters, "action", nil, "Only show events with this action. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show events with this lifecycle status. Can repeat or comma-separate.")

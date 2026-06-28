@@ -235,6 +235,59 @@ func TestEventsTailAppliesAfterFiltersWhenNotFollowing(t *testing.T) {
 	}
 }
 
+func TestEventsSortNewestSnapshots(t *testing.T) {
+	body := strings.Join([]string{
+		`{"ts":"2026-06-17T12:00:00Z","action":"start","instance":"manager","agent":"manager","status":"running"}`,
+		`{"ts":"2026-06-17T12:02:00Z","action":"stop","instance":"worker","agent":"worker","status":"stopped"}`,
+		`{"ts":"2026-06-17T12:01:00Z","action":"dispatch","instance":"reviewer","agent":"manager","status":"running"}`,
+		"",
+	}, "\n")
+	tmpl, err := parseEventFormat(`{{.Instance}} {{.Action}}`)
+	if err != nil {
+		t.Fatalf("parseEventFormat: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := runEvents(context.Background(), &buf, &fakeEventsClient{body: body}, eventsOptions{
+		Sort:   "newest",
+		Format: tmpl,
+	}); err != nil {
+		t.Fatalf("runEvents newest: %v", err)
+	}
+	if got, want := buf.String(), "worker stop\nreviewer dispatch\nmanager start\n"; got != want {
+		t.Fatalf("newest event output = %q, want %q", got, want)
+	}
+}
+
+func TestEventsSortNewestTailAfterFilters(t *testing.T) {
+	body := strings.Join([]string{
+		`{"ts":"2026-06-17T12:00:00Z","action":"start","instance":"manager-old","agent":"manager","status":"running"}`,
+		`{"ts":"2026-06-17T12:01:00Z","action":"stop","instance":"worker","agent":"worker","status":"stopped"}`,
+		`{"ts":"2026-06-17T12:02:00Z","action":"dispatch","instance":"manager-mid","agent":"manager","status":"running"}`,
+		`{"ts":"2026-06-17T12:03:00Z","action":"stop","instance":"manager-new","agent":"manager","status":"stopped"}`,
+		"",
+	}, "\n")
+	client := &fakeEventsClient{body: body}
+	tmpl, err := parseEventFormat(`{{.Instance}} {{.Action}}`)
+	if err != nil {
+		t.Fatalf("parseEventFormat: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := runEvents(context.Background(), &buf, client, eventsOptions{
+		Tail:    2,
+		Sort:    "newest",
+		Format:  tmpl,
+		Filters: mustEventFilters(t, nil, nil, []string{"manager"}, nil, "", nil),
+	}); err != nil {
+		t.Fatalf("runEvents filtered newest tail: %v", err)
+	}
+	if client.tail != 0 {
+		t.Fatalf("client tail = %d, want full history so CLI can tail after filters", client.tail)
+	}
+	if got, want := buf.String(), "manager-new stop\nmanager-mid dispatch\n"; got != want {
+		t.Fatalf("filtered newest tail output = %q, want %q", got, want)
+	}
+}
+
 func TestEventsTailAfterFiltersPreservesRawJSON(t *testing.T) {
 	body := strings.Join([]string{
 		`{"action":"dispatch","instance":"manager-old","agent":"manager"}`,
@@ -352,6 +405,21 @@ func TestEventsFormatRejectsConflictingOutputModes(t *testing.T) {
 		if !strings.Contains(stderr.String(), "--format cannot be combined") {
 			t.Fatalf("%v: stderr = %q, want format conflict", args, stderr.String())
 		}
+	}
+}
+
+func TestEventsRejectNewestSortWithFollow(t *testing.T) {
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"events", "--follow", "--sort", "newest"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("events accepted newest sort with follow")
+	}
+	if !strings.Contains(stderr.String(), "--sort newest cannot be combined with --follow") {
+		t.Fatalf("stderr = %q, want newest follow validation", stderr.String())
 	}
 }
 

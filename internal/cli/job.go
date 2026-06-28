@@ -1106,7 +1106,7 @@ func newJobEventsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job events: --interval must be >= 0.")
 				return exitErr(2)
 			}
-			sortMode, err := parseJobEventSort(sortBy)
+			sortMode, err := parseEventSort(sortBy)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job events: %v\n", err)
 				return exitErr(2)
@@ -7694,7 +7694,7 @@ func jobStatusFilterSet(filters []string) (map[string]bool, error) {
 	return out, nil
 }
 
-func parseJobEventSort(raw string) (string, error) {
+func parseEventSort(raw string) (string, error) {
 	sortMode := strings.ToLower(strings.TrimSpace(raw))
 	switch sortMode {
 	case "", "oldest", "time":

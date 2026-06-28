@@ -975,6 +975,7 @@ Flags:
       --runtime strings    Only show events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
       --runtime-stale      Only show events for instances whose recorded runtime PID is currently no longer live.
       --since string       Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
+      --sort string        Sort returned events by oldest or newest. Follow mode always streams oldest first. (default "oldest")
       --stale              Only show events for instances whose status.toml is currently stale.
       --status strings     Only show events with this lifecycle status. Can repeat or comma-separate.
       --step string        Only show events for instances recorded on this pipeline step id.
@@ -4523,6 +4524,7 @@ Flags:
       --runtime strings   Only show pipeline events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
       --runtime-stale     Only show pipeline events for instances whose recorded runtime PID is currently no longer live.
       --since string      Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
+      --sort string       Sort returned events by oldest or newest. Follow mode always streams oldest first. (default "oldest")
       --stale             Only show pipeline events for instances whose status.toml is currently stale or missing.
       --status strings    Only show events with this lifecycle status. Can repeat or comma-separate.
       --step string       Only show events for instances recorded on this pipeline step id.
@@ -7623,6 +7625,7 @@ Flags:
       --runtime strings   Only show team events for daemon-known instances for this runtime: claude or codex. Can repeat or comma-separate.
       --runtime-stale     Only show team events for instances whose recorded runtime PID is currently no longer live.
       --since string      Only show events since a duration ago (for example 10m, 24h) or an RFC3339 timestamp.
+      --sort string       Sort returned events by oldest or newest. Follow mode always streams oldest first. (default "oldest")
       --stale             Only show team events for instances whose status.toml is currently stale or missing.
       --status strings    Only show events with this lifecycle status. Can repeat or comma-separate.
       --step string       Only show events for instances recorded on this pipeline step id.
