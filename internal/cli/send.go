@@ -37,6 +37,7 @@ func newSendCmd() *cobra.Command {
 		unhealthyOnly bool
 		allowMissing  bool
 		dryRun        bool
+		commands      bool
 		jsonOut       bool
 		format        string
 	)
@@ -51,6 +52,18 @@ func newSendCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team send: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team send: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team send: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team send: --commands cannot be combined with --format.")
 				return exitErr(2)
 			}
 			if last < 0 {
@@ -119,6 +132,72 @@ func newSendCmd() *cobra.Command {
 			if staleOnly || unhealthyOnly {
 				opts.StaleByInstance = staleInstanceSet(teamDir, time.Now())
 			}
+			if commands {
+				if opts.selectingSet() {
+					if allowMissing {
+						fmt.Fprintln(cmd.ErrOrStderr(), "agent-team send: --allow-missing cannot be combined with --all, --latest, --last, --agent, --runtime, --status, --phase, --stale, --runtime-stale, or --unhealthy.")
+						return exitErr(2)
+					}
+					targets, err := selectSendTargets(client, opts)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team send: %v\n", err)
+						return exitErr(2)
+					}
+					return renderScopedSendApplyCommand(cmd.OutOrStdout(), len(targets) > 0, scopedSendApplyCommandOptions{
+						BaseArgs:       []string{"agent-team", "send"},
+						RepoFlag:       "target",
+						Repo:           target,
+						RepoSet:        cmd.Flags().Changed("target"),
+						From:           from,
+						FromSet:        cmd.Flags().Changed("from"),
+						Message:        message,
+						MessageSet:     cmd.Flags().Changed("message"),
+						MessageFile:    messageFile,
+						MessageFileSet: cmd.Flags().Changed("message-file"),
+						Positional:     args,
+						All:            all,
+						Latest:         latest,
+						Last:           last,
+						AgentFilters:   agents,
+						AgentSet:       cmd.Flags().Changed("agent"),
+						RuntimeFilters: runtimes,
+						RuntimeSet:     cmd.Flags().Changed("runtime"),
+						StatusFilters:  statusFilters,
+						StatusSet:      cmd.Flags().Changed("status"),
+						PhaseFilters:   phaseFilters,
+						PhaseSet:       cmd.Flags().Changed("phase"),
+						Stale:          staleOnly,
+						RuntimeStale:   runtimeStale,
+						Unhealthy:      unhealthyOnly,
+					})
+				}
+				known := true
+				if !allowMissing {
+					var err error
+					known, err = sendTargetKnown(client, to)
+					if err != nil {
+						return err
+					}
+					if !known {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team send: instance %q is not known to the daemon; use --allow-missing to queue anyway.\n", to)
+						return exitErr(2)
+					}
+				}
+				return renderScopedSendApplyCommand(cmd.OutOrStdout(), known || allowMissing, scopedSendApplyCommandOptions{
+					BaseArgs:       []string{"agent-team", "send", to},
+					RepoFlag:       "target",
+					Repo:           target,
+					RepoSet:        cmd.Flags().Changed("target"),
+					From:           from,
+					FromSet:        cmd.Flags().Changed("from"),
+					Message:        message,
+					MessageSet:     cmd.Flags().Changed("message"),
+					MessageFile:    messageFile,
+					MessageFileSet: cmd.Flags().Changed("message-file"),
+					Positional:     args[1:],
+					AllowMissing:   allowMissing,
+				})
+			}
 			if opts.selectingSet() {
 				return runSendSelectionWithClient(cmd.OutOrStdout(), cmd.ErrOrStderr(), client, body, opts)
 			}
@@ -141,6 +220,7 @@ func newSendCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Send to daemon-known instances that are crashed, status-stale, or runtime-stale.")
 	cmd.Flags().BoolVar(&allowMissing, "allow-missing", false, "Allow queueing a message for an instance the daemon does not know yet.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview matching recipients without appending mailbox messages.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching send apply command when the preview has actionable recipients.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each send result with a Go template, e.g. '{{.To}} {{.ID}}'.")
 	return cmd
@@ -451,6 +531,7 @@ func renderSendFormat(w io.Writer, rows []sendJSON, tmpl *template.Template) err
 
 type scopedSendApplyCommandOptions struct {
 	BaseArgs       []string
+	RepoFlag       string
 	Repo           string
 	RepoSet        bool
 	From           string
@@ -463,6 +544,8 @@ type scopedSendApplyCommandOptions struct {
 	All            bool
 	Latest         bool
 	Last           int
+	AgentFilters   []string
+	AgentSet       bool
 	StatusFilters  []string
 	StatusSet      bool
 	RuntimeFilters []string
@@ -472,6 +555,7 @@ type scopedSendApplyCommandOptions struct {
 	Stale          bool
 	RuntimeStale   bool
 	Unhealthy      bool
+	AllowMissing   bool
 }
 
 func renderScopedSendApplyCommand(w io.Writer, hasRecipients bool, opts scopedSendApplyCommandOptions) error {
@@ -484,16 +568,22 @@ func renderScopedSendApplyCommand(w io.Writer, hasRecipients bool, opts scopedSe
 
 func scopedSendApplyCommandArgs(opts scopedSendApplyCommandOptions) []string {
 	args := append([]string{}, opts.BaseArgs...)
+	messageSet := opts.MessageSet && strings.TrimSpace(opts.Message) != ""
+	messageFileSet := opts.MessageFileSet && strings.TrimSpace(opts.MessageFile) != ""
 	if opts.RepoSet && strings.TrimSpace(opts.Repo) != "" {
-		args = append(args, "--repo", opts.Repo)
+		flag := strings.TrimSpace(opts.RepoFlag)
+		if flag == "" {
+			flag = "repo"
+		}
+		args = append(args, "--"+flag, opts.Repo)
 	}
 	if opts.FromSet && strings.TrimSpace(opts.From) != "" {
 		args = append(args, "--from", opts.From)
 	}
-	if opts.MessageSet {
+	if messageSet {
 		args = append(args, "--message", opts.Message)
 	}
-	if opts.MessageFileSet && strings.TrimSpace(opts.MessageFile) != "" {
+	if messageFileSet {
 		args = append(args, "--message-file", opts.MessageFile)
 	}
 	if opts.All {
@@ -504,6 +594,11 @@ func scopedSendApplyCommandArgs(opts scopedSendApplyCommandOptions) []string {
 	}
 	if opts.Last > 0 {
 		args = append(args, "--last", fmt.Sprint(opts.Last))
+	}
+	if opts.AgentSet {
+		if filters := normalizeCommandList(opts.AgentFilters); len(filters) > 0 {
+			args = append(args, "--agent", strings.Join(filters, ","))
+		}
 	}
 	if opts.StatusSet {
 		if filters := normalizeCommandList(opts.StatusFilters); len(filters) > 0 {
@@ -529,7 +624,10 @@ func scopedSendApplyCommandArgs(opts scopedSendApplyCommandOptions) []string {
 	if opts.Unhealthy {
 		args = append(args, "--unhealthy")
 	}
-	if !opts.MessageSet && !opts.MessageFileSet && len(opts.Positional) > 0 {
+	if opts.AllowMissing {
+		args = append(args, "--allow-missing")
+	}
+	if !messageSet && !messageFileSet && len(opts.Positional) > 0 {
 		args = append(args, opts.Positional...)
 	}
 	return args

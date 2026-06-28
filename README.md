@@ -246,7 +246,7 @@ agent-team events [-f] [--tail N] [--latest | --last N] [--since 24h] [--summary
                                                 # show/follow lifecycle events; phase/stale/unhealthy narrow by current status.toml; reads local history if the daemon is down
 agent-team wait [<instance>...] [-q] [--all] [--latest | --last N] [--agent manager] [--status running] [--runtime codex] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--until terminal|running|stopped|exited|crashed|removed] [--until-phase done] [--timeout 5m] [--interval 500ms] [--dry-run] [--fail-on-crash] [--summary] [--format '{{.Instance}} {{.Status}} {{.Phase}}'] [--json]
                                                 # wait for lifecycle or work-phase conditions, using persisted metadata if the daemon is down
-agent-team send [<instance>] [message...] [--message "..."] [--message-file <path|->] [--all] [--latest | --last N] [--agent manager] [--runtime codex] [--status running] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--from user] [--allow-missing] [--dry-run] [--format '{{.To}} {{.ID}}'] [--json]
+agent-team send [<instance>] [message...] [--message "..."] [--message-file <path|->] [--all] [--latest | --last N] [--agent manager] [--runtime codex] [--status running] [--phase idle] [--stale] [--runtime-stale] [--unhealthy] [--from user] [--allow-missing] [--dry-run] [--commands] [--format '{{.To}} {{.ID}}'] [--json]
                                                 # send a daemon mailbox message; phase/stale/runtime-stale/unhealthy selectors use current metadata; appends locally if the daemon is down
 agent-team inbox ls [--team delivery] [--unread] [--format '{{.Instance}} {{.Unread}}'] [--json] | show <instance> [--unread] [--tail N] [--format '{{.ID}} {{.Body}}'] [--json] | ack <instance> <message-id>|--all [--dry-run] [--format '{{.Instance}} {{.Acked}}'] [--json]
                                                 # inspect daemon mailbox summaries, show instance messages, or advance an inbox cursor
@@ -440,7 +440,7 @@ For job, pipeline, or team approve dry-runs, add `--commands` when scripts shoul
 
 For pipeline or team retry dry-runs, add `--commands` when scripts should print only the matching apply command for eligible failed-step resets.
 
-For job block, cancel, close, dispatch, advance, note, reopen/retry, send, update, or step dry-runs, add `--commands` when scripts should print only the matching block, cancel, close, dispatch, note, reopen/retry, send, metadata, or step apply command.
+For top-level or job block, cancel, close, dispatch, advance, note, reopen/retry, send, update, or step dry-runs, add `--commands` when scripts should print only the matching block, cancel, close, dispatch, note, reopen/retry, send, metadata, or step apply command.
 
 For pipeline or team send dry-runs, add `--commands` when scripts should print only the matching scoped send apply command for actionable recipients.
 

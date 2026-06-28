@@ -365,7 +365,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 
 | Command | Purpose |
 | --- | --- |
-| `agent-team send` | Send mailbox message |
+| `agent-team send` | Send mailbox message; add `--dry-run --commands` to print the matching send apply command |
 | `agent-team channels` | List channels |
 | `agent-team channel show <name>` | Show channel messages |
 | `agent-team channel publish <name>` | Publish channel message |

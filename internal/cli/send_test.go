@@ -132,6 +132,130 @@ func TestSendDryRunSingleValidatesButDoesNotAppend(t *testing.T) {
 	}
 }
 
+func TestSendDryRunCommands(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	if err := daemon.WriteMetadata(root, &daemon.Metadata{
+		Instance: "manager",
+		Agent:    "manager",
+		Status:   daemon.StatusRunning,
+	}); err != nil {
+		t.Fatalf("write manager metadata: %v", err)
+	}
+	if err := daemon.WriteMetadata(root, &daemon.Metadata{
+		Instance: "worker",
+		Agent:    "worker",
+		Status:   daemon.StatusStopped,
+	}); err != nil {
+		t.Fatalf("write worker metadata: %v", err)
+	}
+
+	direct := NewRootCmd()
+	directOut, directErr := &bytes.Buffer{}, &bytes.Buffer{}
+	direct.SetOut(directOut)
+	direct.SetErr(directErr)
+	direct.SetArgs([]string{"send", "manager", "--target", tmp, "--from", "ops", "--message", "hello", "--dry-run", "--commands"})
+	if err := direct.Execute(); err != nil {
+		t.Fatalf("send direct --dry-run --commands: %v\nstderr=%s", err, directErr.String())
+	}
+	wantDirect := strings.Join(shellQuoteArgs([]string{"agent-team", "send", "manager", "--target", tmp, "--from", "ops", "--message", "hello"}), " ")
+	if got := strings.TrimSpace(directOut.String()); got != wantDirect {
+		t.Fatalf("send direct --dry-run --commands = %q, want %q", got, wantDirect)
+	}
+	if messages, err := daemon.ReadMessages(root, "manager"); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read manager messages: %v", err)
+	} else if len(messages) != 0 {
+		t.Fatalf("dry-run wrote manager messages: %+v", messages)
+	}
+
+	emptyMessageFlag := NewRootCmd()
+	emptyMessageOut, emptyMessageErr := &bytes.Buffer{}, &bytes.Buffer{}
+	emptyMessageFlag.SetOut(emptyMessageOut)
+	emptyMessageFlag.SetErr(emptyMessageErr)
+	emptyMessageFlag.SetArgs([]string{"send", "manager", "--target", tmp, "--message", "", "--dry-run", "--commands", "fallback", "text"})
+	if err := emptyMessageFlag.Execute(); err != nil {
+		t.Fatalf("send empty --message --dry-run --commands: %v\nstderr=%s", err, emptyMessageErr.String())
+	}
+	wantEmptyMessage := strings.Join(shellQuoteArgs([]string{"agent-team", "send", "manager", "--target", tmp, "fallback", "text"}), " ")
+	if got := strings.TrimSpace(emptyMessageOut.String()); got != wantEmptyMessage {
+		t.Fatalf("send empty --message --dry-run --commands = %q, want %q", got, wantEmptyMessage)
+	}
+
+	selection := NewRootCmd()
+	selectionOut, selectionErr := &bytes.Buffer{}, &bytes.Buffer{}
+	selection.SetOut(selectionOut)
+	selection.SetErr(selectionErr)
+	selection.SetArgs([]string{"send", "--target", tmp, "--agent", "manager", "--status", "running", "--message", "hello", "--dry-run", "--commands"})
+	if err := selection.Execute(); err != nil {
+		t.Fatalf("send selection --dry-run --commands: %v\nstderr=%s", err, selectionErr.String())
+	}
+	wantSelection := strings.Join(shellQuoteArgs([]string{"agent-team", "send", "--target", tmp, "--message", "hello", "--agent", "manager", "--status", "running"}), " ")
+	if got := strings.TrimSpace(selectionOut.String()); got != wantSelection {
+		t.Fatalf("send selection --dry-run --commands = %q, want %q", got, wantSelection)
+	}
+
+	badSelection := NewRootCmd()
+	badSelection.SetOut(&bytes.Buffer{})
+	badSelectionErr := &bytes.Buffer{}
+	badSelection.SetErr(badSelectionErr)
+	badSelection.SetArgs([]string{"send", "--target", tmp, "--all", "--allow-missing", "--message", "hello", "--dry-run", "--commands"})
+	err := badSelection.Execute()
+	if err == nil {
+		t.Fatalf("send selection allow-missing --dry-run --commands succeeded")
+	}
+	var badSelectionCode ExitCode
+	if !errors.As(err, &badSelectionCode) || int(badSelectionCode) != 2 {
+		t.Fatalf("bad selection err = %v, want exit 2", err)
+	}
+	if !strings.Contains(badSelectionErr.String(), "--allow-missing cannot be combined") {
+		t.Fatalf("bad selection stderr = %q, want allow-missing validation", badSelectionErr.String())
+	}
+
+	noRecipients := NewRootCmd()
+	noRecipientsOut, noRecipientsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	noRecipients.SetOut(noRecipientsOut)
+	noRecipients.SetErr(noRecipientsErr)
+	noRecipients.SetArgs([]string{"send", "--target", tmp, "--agent", "reviewer", "--message", "hello", "--dry-run", "--commands"})
+	if err := noRecipients.Execute(); err != nil {
+		t.Fatalf("send no-recipient --dry-run --commands: %v\nstderr=%s", err, noRecipientsErr.String())
+	}
+	if got := strings.TrimSpace(noRecipientsOut.String()); got != "" {
+		t.Fatalf("send no-recipient --dry-run --commands = %q, want empty", got)
+	}
+
+	missing := NewRootCmd()
+	missing.SetOut(&bytes.Buffer{})
+	missingErr := &bytes.Buffer{}
+	missing.SetErr(missingErr)
+	missing.SetArgs([]string{"send", "future", "--target", tmp, "--dry-run", "--commands", "queued"})
+	err = missing.Execute()
+	if err == nil {
+		t.Fatalf("send missing --dry-run --commands succeeded")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 2 {
+		t.Fatalf("missing err = %v, want exit 2", err)
+	}
+	if !strings.Contains(missingErr.String(), "not known to the daemon") {
+		t.Fatalf("missing stderr = %q, want unknown-instance hint", missingErr.String())
+	}
+
+	allowMissing := NewRootCmd()
+	allowMissingOut, allowMissingErr := &bytes.Buffer{}, &bytes.Buffer{}
+	allowMissing.SetOut(allowMissingOut)
+	allowMissing.SetErr(allowMissingErr)
+	allowMissing.SetArgs([]string{"send", "future", "--target", tmp, "--allow-missing", "--dry-run", "--commands", "queued"})
+	if err := allowMissing.Execute(); err != nil {
+		t.Fatalf("send allow-missing --dry-run --commands: %v\nstderr=%s", err, allowMissingErr.String())
+	}
+	wantAllowMissing := strings.Join(shellQuoteArgs([]string{"agent-team", "send", "future", "--target", tmp, "--allow-missing", "queued"}), " ")
+	if got := strings.TrimSpace(allowMissingOut.String()); got != wantAllowMissing {
+		t.Fatalf("send allow-missing --dry-run --commands = %q, want %q", got, wantAllowMissing)
+	}
+}
+
 func TestSendAllowMissingQueuesWithoutKnownCheck(t *testing.T) {
 	client := &fakeSendClient{}
 	if err := runSendWithClient(&bytes.Buffer{}, &bytes.Buffer{}, client, "future", "queued", sendOptions{AllowMissing: true}); err != nil {
@@ -917,6 +1041,38 @@ func TestSendFormatRejectsConflictingModes(t *testing.T) {
 		}
 		if !strings.Contains(stderr.String(), tc.want) {
 			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+	}
+}
+
+func TestSendCommandsValidation(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"send", "manager", "hello", "--commands"}, "send: --commands requires --dry-run"},
+		{[]string{"send", "manager", "hello", "--dry-run", "--commands", "--json"}, "send: --commands cannot be combined with --json"},
+		{[]string{"send", "manager", "hello", "--dry-run", "--commands", "--format", "{{.To}}"}, "send: --commands cannot be combined with --format"},
+	}
+	for _, tc := range cases {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v: expected validation error", tc.args)
+		}
+		var code ExitCode
+		if !errors.As(err, &code) || int(code) != 2 {
+			t.Fatalf("%v: err = %v, want exit 2", tc.args, err)
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%v: stderr = %q, want %q", tc.args, stderr.String(), tc.want)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v: validation wrote stdout: %q", tc.args, out.String())
 		}
 	}
 }
