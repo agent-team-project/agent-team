@@ -537,12 +537,24 @@ func TestStartDryRunCommandsPrintsApplyCommand(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("start --dry-run --commands: %v\nstderr: %s", err, stderr.String())
 	}
-	want := "agent-team start --target " + tmp + " --agent manager"
+	want := "agent-team start --repo " + tmp + " --agent manager"
 	if got := strings.TrimSpace(out.String()); got != want {
 		t.Fatalf("start --dry-run --commands = %q, want %q", got, want)
 	}
 	if _, err := os.Stat(daemon.PidPath(teamDir)); !os.IsNotExist(err) {
 		t.Fatalf("commands dry-run should not create daemon pidfile, stat err=%v", err)
+	}
+
+	rootScoped := NewRootCmd()
+	rootScopedOut, rootScopedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	rootScoped.SetOut(rootScopedOut)
+	rootScoped.SetErr(rootScopedErr)
+	rootScoped.SetArgs([]string{"--repo", tmp, "start", "--dry-run", "--agent", "manager", "--commands"})
+	if err := rootScoped.Execute(); err != nil {
+		t.Fatalf("start root --repo --dry-run --commands: %v\nstderr: %s", err, rootScopedErr.String())
+	}
+	if got := strings.TrimSpace(rootScopedOut.String()); got != want {
+		t.Fatalf("start root --repo --dry-run --commands = %q, want %q", got, want)
 	}
 
 	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
@@ -1951,17 +1963,22 @@ func TestStopKillRestartDryRunCommandsPrintApplyCommands(t *testing.T) {
 		{
 			name: "stop named remove timeout",
 			args: []string{"stop", "manager", "--target", tmp, "--dry-run", "--rm", "--timeout", "10s", "--commands"},
-			want: "agent-team stop --target " + tmp + " manager --rm --timeout 10s",
+			want: "agent-team stop --repo " + tmp + " manager --rm --timeout 10s",
 		},
 		{
 			name: "kill filtered",
 			args: []string{"kill", "--target", tmp, "--dry-run", "--all", "--runtime", "claude", "--commands"},
-			want: "agent-team kill --target " + tmp + " --all --runtime claude",
+			want: "agent-team kill --repo " + tmp + " --all --runtime claude",
 		},
 		{
 			name: "restart filtered force timeout",
 			args: []string{"restart", "--target", tmp, "--dry-run", "--agent", "manager", "--force", "--timeout", "5s", "--commands"},
-			want: "agent-team restart --target " + tmp + " --agent manager --force --timeout 5s",
+			want: "agent-team restart --repo " + tmp + " --agent manager --force --timeout 5s",
+		},
+		{
+			name: "restart root scoped",
+			args: []string{"--repo", tmp, "restart", "--dry-run", "--agent", "manager", "--force", "--timeout", "5s", "--commands"},
+			want: "agent-team restart --repo " + tmp + " --agent manager --force --timeout 5s",
 		},
 	}
 	for _, tc := range cases {

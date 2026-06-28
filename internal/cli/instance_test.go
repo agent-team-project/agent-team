@@ -1472,9 +1472,21 @@ func TestRmTopLevelDryRunCommands(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("rm --dry-run --commands: %v\nstderr=%s", err, stderr.String())
 	}
-	want := strings.Join(shellQuoteArgs([]string{"agent-team", "rm", "--target", tmp, "ephemeral", "--force"}), " ")
+	want := strings.Join(shellQuoteArgs([]string{"agent-team", "rm", "--repo", tmp, "ephemeral", "--force"}), " ")
 	if got := strings.TrimSpace(out.String()); got != want {
 		t.Fatalf("rm --dry-run --commands = %q, want %q", got, want)
+	}
+
+	rootScoped := NewRootCmd()
+	rootScopedOut, rootScopedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	rootScoped.SetOut(rootScopedOut)
+	rootScoped.SetErr(rootScopedErr)
+	rootScoped.SetArgs([]string{"--repo", tmp, "rm", "ephemeral", "--force", "--dry-run", "--commands"})
+	if err := rootScoped.Execute(); err != nil {
+		t.Fatalf("rm root --repo --dry-run --commands: %v\nstderr=%s", err, rootScopedErr.String())
+	}
+	if got := strings.TrimSpace(rootScopedOut.String()); got != want {
+		t.Fatalf("rm root --repo --dry-run --commands = %q, want %q", got, want)
 	}
 	if _, err := os.Stat(stateDir); err != nil {
 		t.Fatalf("state should remain after dry-run: %v", err)
@@ -2454,9 +2466,21 @@ func TestPruneRuntimeNarrowsFinishedInstances(t *testing.T) {
 	if err := commands.Execute(); err != nil {
 		t.Fatalf("prune --dry-run --commands: %v\nstderr=%s", err, commandsErr.String())
 	}
-	want := strings.Join(shellQuoteArgs([]string{"agent-team", "prune", "--target", tmp, "--runtime", "codex", "--status", "crashed"}), " ")
+	want := strings.Join(shellQuoteArgs([]string{"agent-team", "prune", "--repo", tmp, "--runtime", "codex", "--status", "crashed"}), " ")
 	if got := strings.TrimSpace(commandsOut.String()); got != want {
 		t.Fatalf("prune --dry-run --commands = %q, want %q", got, want)
+	}
+
+	rootScopedCommands := NewRootCmd()
+	rootScopedCommandsOut, rootScopedCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	rootScopedCommands.SetOut(rootScopedCommandsOut)
+	rootScopedCommands.SetErr(rootScopedCommandsErr)
+	rootScopedCommands.SetArgs([]string{"--repo", tmp, "prune", "--runtime", "codex", "--status", "crashed", "--dry-run", "--commands"})
+	if err := rootScopedCommands.Execute(); err != nil {
+		t.Fatalf("prune root --repo --dry-run --commands: %v\nstderr=%s", err, rootScopedCommandsErr.String())
+	}
+	if got := strings.TrimSpace(rootScopedCommandsOut.String()); got != want {
+		t.Fatalf("prune root --repo --dry-run --commands = %q, want %q", got, want)
 	}
 }
 
