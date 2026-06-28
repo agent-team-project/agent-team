@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -209,7 +211,7 @@ func TestChannelCommandsUseLocalStoreWhenDaemonStopped(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := runChannelLs(out, stderr, teamDir); err != nil {
+	if err := runChannelLs(out, stderr, teamDir, channelListOptions{}); err != nil {
 		t.Fatalf("list local channels: %v\nstderr=%s", err, stderr.String())
 	}
 	if !strings.Contains(out.String(), "#ops") || !strings.Contains(out.String(), "1") {
@@ -217,7 +219,7 @@ func TestChannelCommandsUseLocalStoreWhenDaemonStopped(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := runChannelShow(out, stderr, teamDir, "#ops"); err != nil {
+	if err := runChannelShow(out, stderr, teamDir, "#ops", channelShowOptions{Tail: 10}); err != nil {
 		t.Fatalf("show local channel: %v\nstderr=%s", err, stderr.String())
 	}
 	if !strings.Contains(out.String(), "offline broadcast") || !strings.Contains(out.String(), "messages:      1") {
@@ -233,11 +235,134 @@ func TestChannelCommandsUseLocalStoreWhenDaemonStopped(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := runChannelLs(out, stderr, teamDir); err != nil {
+	if err := runChannelLs(out, stderr, teamDir, channelListOptions{}); err != nil {
 		t.Fatalf("list after rm: %v\nstderr=%s", err, stderr.String())
 	}
 	if strings.TrimSpace(out.String()) != "(no channels)" {
 		t.Fatalf("list after rm = %q, want no channels", out.String())
+	}
+}
+
+func TestChannelLsSortLimitFormatAndJSON(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	for _, item := range []struct {
+		channel string
+		bodies  []string
+	}{
+		{channel: "#alpha", bodies: []string{"a"}},
+		{channel: "#beta", bodies: []string{"b1", "b2", "b3"}},
+		{channel: "#gamma", bodies: []string{"g1", "g2"}},
+	} {
+		for _, body := range item.bodies {
+			if err := runChannelPublish(&bytes.Buffer{}, &bytes.Buffer{}, teamDir, item.channel, "tester", body); err != nil {
+				t.Fatalf("publish %s/%s: %v", item.channel, body, err)
+			}
+		}
+	}
+
+	stdout, stderr, err := executeChannelCommand("channel", "ls", "--target", tmp, "--sort", "messages", "--limit", "2", "--format", "{{.Name}} {{.MessageCount}}")
+	if err != nil {
+		t.Fatalf("channel ls format: %v\nstderr=%s", err, stderr)
+	}
+	if got, want := strings.TrimSpace(stdout), "#beta 3\n#gamma 2"; got != want {
+		t.Fatalf("channel ls format = %q, want %q", got, want)
+	}
+
+	stdout, stderr, err = executeChannelCommand("channels", "--target", tmp, "--sort", "messages", "--limit", "1", "--json")
+	if err != nil {
+		t.Fatalf("channels json: %v\nstderr=%s", err, stderr)
+	}
+	var infos []channelInfo
+	if err := json.Unmarshal([]byte(stdout), &infos); err != nil {
+		t.Fatalf("decode channels json: %v\nbody=%s", err, stdout)
+	}
+	if len(infos) != 1 || infos[0].Name != "#beta" || infos[0].MessageCount != 3 {
+		t.Fatalf("channels json = %+v, want #beta only", infos)
+	}
+}
+
+func TestChannelShowTailJSONAndFormat(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	for _, body := range []string{"first", "second", "third"} {
+		if err := runChannelPublish(&bytes.Buffer{}, &bytes.Buffer{}, teamDir, "#ops", "tester", body); err != nil {
+			t.Fatalf("publish %s: %v", body, err)
+		}
+	}
+
+	stdout, stderr, err := executeChannelCommand("channel", "show", "#ops", "--target", tmp, "--tail", "2", "--json")
+	if err != nil {
+		t.Fatalf("channel show json: %v\nstderr=%s", err, stderr)
+	}
+	if strings.Contains(stdout, "channel:") {
+		t.Fatalf("channel show json included text summary: %q", stdout)
+	}
+	var result channelShowResult
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("decode channel show json: %v\nbody=%s", err, stdout)
+	}
+	if result.Channel == nil || result.Channel.Name != "#ops" || len(result.Messages) != 2 || result.Messages[0].Body != "second" || result.Messages[1].Body != "third" {
+		t.Fatalf("channel show json = %+v, want tail second/third", result)
+	}
+
+	stdout, stderr, err = executeChannelCommand("channel", "show", "#ops", "--target", tmp, "--tail", "1", "--format", "{{.Channel.Name}} {{len .Messages}} {{(index .Messages 0).Body}}")
+	if err != nil {
+		t.Fatalf("channel show format: %v\nstderr=%s", err, stderr)
+	}
+	if got, want := strings.TrimSpace(stdout), "#ops 1 third"; got != want {
+		t.Fatalf("channel show format = %q, want %q", got, want)
+	}
+}
+
+func TestChannelMachineOutputValidation(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "ls rejects json format",
+			args: []string{"channel", "ls", "--target", tmp, "--json", "--format", "{{.Name}}"},
+			want: "--format cannot be combined with --json",
+		},
+		{
+			name: "ls rejects negative limit",
+			args: []string{"channel", "ls", "--target", tmp, "--limit", "-1"},
+			want: "--limit must be >= 0",
+		},
+		{
+			name: "ls rejects bad sort",
+			args: []string{"channel", "ls", "--target", tmp, "--sort", "created"},
+			want: "--sort must be name, subscribers, messages, or last",
+		},
+		{
+			name: "show rejects json format",
+			args: []string{"channel", "show", "#ops", "--target", tmp, "--json", "--format", "{{.Channel.Name}}"},
+			want: "--format cannot be combined with --json",
+		},
+		{
+			name: "show rejects negative tail",
+			args: []string{"channel", "show", "#ops", "--target", tmp, "--tail", "-1"},
+			want: "--tail must be >= 0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, stderr, err := executeChannelCommand(tt.args...)
+			var code ExitCode
+			if !errors.As(err, &code) || code != 2 {
+				t.Fatalf("err = %v, want exit 2", err)
+			}
+			if !strings.Contains(stderr, tt.want) {
+				t.Fatalf("stderr = %q, want %q", stderr, tt.want)
+			}
+		})
 	}
 }
 
@@ -278,7 +403,7 @@ func TestChannelPublishCommandMessageFile(t *testing.T) {
 	}
 
 	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
-	if err := runChannelShow(showOut, showErr, teamDir, "#ops"); err != nil {
+	if err := runChannelShow(showOut, showErr, teamDir, "#ops", channelShowOptions{Tail: 10}); err != nil {
 		t.Fatalf("show channel after publishes: %v\nstderr=%s", err, showErr.String())
 	}
 	if !strings.Contains(showOut.String(), "file broadcast") || !strings.Contains(showOut.String(), "stdin broadcast") {
@@ -368,4 +493,14 @@ func TestHumanAge(t *testing.T) {
 			t.Errorf("humanAge(%s) = %q want %q", c.d, got, c.want)
 		}
 	}
+}
+
+func executeChannelCommand(args ...string) (string, string, error) {
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return out.String(), stderr.String(), err
 }

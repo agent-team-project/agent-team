@@ -361,8 +361,10 @@ agent-team intake linear|github (--payload <json> | --payload-file <path|->) [--
                                                 # normalize external webhook or schedule events, run a local /linear and /github listener, summarize/validate/inspect/prune delivery history with ACTION hints, and replay one or many normalized deliveries; successful replays mark failures recovered
 agent-team intake service systemd|launchd|compose|kubernetes [--bin /usr/local/bin/agent-team] [--addr 127.0.0.1:8787] [--env-file <path>] [--secret-name <name>] [--workspace-claim <pvc>] [--github-reconcile-job [--github-cleanup-merged [--github-verify-pr]]]
                                                 # print a systemd unit, launchd plist, compose service, or Kubernetes manifests for running intake serve against the current repo
-agent-team channels                             # list pub/sub channels; reads local channel state if the daemon is down
-agent-team channel show <name>                  # show a channel summary and recent messages
+agent-team channels [--sort messages] [--limit N] [--format '{{.Name}}'] [--json]
+                                                # list pub/sub channels; reads local channel state if the daemon is down
+agent-team channel show <name> [--tail N] [--format '{{.Channel.Name}} {{len .Messages}}'] [--json]
+                                                # show a channel summary and recent messages
 agent-team channel publish <name> [body...] [--message "..."] [--message-file <path|->] [--sender user]
                                                 # publish to a channel; appends locally if the daemon is down
 agent-team event publish <type> [--payload <json> | --payload-file <path|->] [--dry-run] [--format '{{len .Matched}} {{len .Dispatched}}'] [--json]

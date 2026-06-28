@@ -248,6 +248,10 @@ agent-team channel ls [flags]
 Flags:
 
 ```text
+      --format string   Render each channel with a Go template, e.g. '{{.Name}} {{.MessageCount}}'.
+      --json            Emit machine-readable JSON.
+      --limit int       Limit channels after sorting; 0 means no limit.
+      --sort string     Sort channels by name, subscribers, messages, or last. (default "name")
       --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 
@@ -312,6 +316,9 @@ agent-team channel show <name> [flags]
 Flags:
 
 ```text
+      --format string   Render the channel summary and messages with a Go template, e.g. '{{.Channel.Name}} {{len .Messages}}'.
+      --json            Emit machine-readable JSON.
+      --tail int        Show at most this many recent messages; 0 means all messages. (default 10)
       --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 
@@ -332,6 +339,10 @@ agent-team channels [flags]
 Flags:
 
 ```text
+      --format string   Render each channel with a Go template, e.g. '{{.Name}} {{.MessageCount}}'.
+      --json            Emit machine-readable JSON.
+      --limit int       Limit channels after sorting; 0 means no limit.
+      --sort string     Sort channels by name, subscribers, messages, or last. (default "name")
       --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 

@@ -2,11 +2,15 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
 	"text/tabwriter"
+	"text/template"
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/daemon"
@@ -30,57 +34,90 @@ func newChannelCmd() *cobra.Command {
 // newChannelsCmd is the top-level alias `agent-team channels`, mirroring the
 // `agent-team ps` shortcut for `instance ps`.
 func newChannelsCmd() *cobra.Command {
-	var target string
+	var opts channelListCommandOptions
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "channels",
 		Short: "List all pub/sub channels (alias for `channel ls`).",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			teamDir, err := resolveTeamDir(cmd, target)
+			listOpts, err := channelListOptionsFromCommand(cmd, opts, "agent-team channels")
 			if err != nil {
 				return err
 			}
-			return runChannelLs(cmd.OutOrStdout(), cmd.ErrOrStderr(), teamDir)
+			teamDir, err := resolveTeamDir(cmd, opts.Target)
+			if err != nil {
+				return err
+			}
+			return runChannelLs(cmd.OutOrStdout(), cmd.ErrOrStderr(), teamDir, listOpts)
 		},
 	}
-	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
+	addChannelListFlags(cmd, &opts, cwd)
 	return cmd
 }
 
 func newChannelLsCmd() *cobra.Command {
-	var target string
+	var opts channelListCommandOptions
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List all channels: subscriber count, message count, last activity.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			teamDir, err := resolveTeamDir(cmd, target)
+			listOpts, err := channelListOptionsFromCommand(cmd, opts, "agent-team channel ls")
 			if err != nil {
 				return err
 			}
-			return runChannelLs(cmd.OutOrStdout(), cmd.ErrOrStderr(), teamDir)
+			teamDir, err := resolveTeamDir(cmd, opts.Target)
+			if err != nil {
+				return err
+			}
+			return runChannelLs(cmd.OutOrStdout(), cmd.ErrOrStderr(), teamDir, listOpts)
 		},
 	}
-	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
+	addChannelListFlags(cmd, &opts, cwd)
 	return cmd
 }
 
 func newChannelShowCmd() *cobra.Command {
-	var target string
+	var (
+		target  string
+		tail    int
+		jsonOut bool
+		format  string
+	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
 		Use:   "show <name>",
 		Short: "Show one channel's summary plus its tail of recent messages.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team channel show: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if tail < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team channel show: --tail must be >= 0.")
+				return exitErr(2)
+			}
+			tmpl, err := parseChannelFormat(format, "channel-show-format")
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team channel show: %v\n", err)
+				return exitErr(2)
+			}
 			teamDir, err := resolveTeamDir(cmd, target)
 			if err != nil {
 				return err
 			}
-			return runChannelShow(cmd.OutOrStdout(), cmd.ErrOrStderr(), teamDir, args[0])
+			return runChannelShow(cmd.OutOrStdout(), cmd.ErrOrStderr(), teamDir, args[0], channelShowOptions{
+				Tail:   tail,
+				JSON:   jsonOut,
+				Format: tmpl,
+			})
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
+	cmd.Flags().IntVar(&tail, "tail", 10, "Show at most this many recent messages; 0 means all messages.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the channel summary and messages with a Go template, e.g. '{{.Channel.Name}} {{len .Messages}}'.")
 	return cmd
 }
 
@@ -151,7 +188,68 @@ func newChannelRmCmd() *cobra.Command {
 
 // --- run* helpers --------------------------------------------------------
 
-func runChannelLs(stdout, stderr io.Writer, teamDir string) error {
+type channelListCommandOptions struct {
+	Target string
+	Sort   string
+	Limit  int
+	JSON   bool
+	Format string
+}
+
+type channelListOptions struct {
+	Sort   string
+	Limit  int
+	JSON   bool
+	Format *template.Template
+}
+
+type channelShowOptions struct {
+	Tail   int
+	JSON   bool
+	Format *template.Template
+}
+
+type channelShowResult struct {
+	Channel  *channelInfo      `json:"channel"`
+	Messages []*channelMessage `json:"messages"`
+}
+
+func addChannelListFlags(cmd *cobra.Command, opts *channelListCommandOptions, defaultTarget string) {
+	cmd.Flags().StringVar(&opts.Target, "target", defaultTarget, legacyRepoTargetFlagHelp)
+	cmd.Flags().StringVar(&opts.Sort, "sort", "name", "Sort channels by name, subscribers, messages, or last.")
+	cmd.Flags().IntVar(&opts.Limit, "limit", 0, "Limit channels after sorting; 0 means no limit.")
+	cmd.Flags().BoolVar(&opts.JSON, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().StringVar(&opts.Format, "format", "", "Render each channel with a Go template, e.g. '{{.Name}} {{.MessageCount}}'.")
+}
+
+func channelListOptionsFromCommand(cmd *cobra.Command, opts channelListCommandOptions, label string) (channelListOptions, error) {
+	if opts.Format != "" && opts.JSON {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --format cannot be combined with --json.\n", label)
+		return channelListOptions{}, exitErr(2)
+	}
+	if opts.Limit < 0 {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --limit must be >= 0.\n", label)
+		return channelListOptions{}, exitErr(2)
+	}
+	sortMode, err := parseChannelListSort(opts.Sort)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", label, err)
+		return channelListOptions{}, exitErr(2)
+	}
+	tmpl, err := parseChannelFormat(opts.Format, "channel-list-format")
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", label, err)
+		return channelListOptions{}, exitErr(2)
+	}
+	return channelListOptions{
+		Sort:   sortMode,
+		Limit:  opts.Limit,
+		JSON:   opts.JSON,
+		Format: tmpl,
+	}, nil
+}
+
+func runChannelLs(stdout, stderr io.Writer, teamDir string, opts channelListOptions) error {
 	client, err := channelClientForTeamDir(teamDir)
 	if err != nil {
 		return err
@@ -159,6 +257,22 @@ func runChannelLs(stdout, stderr io.Writer, teamDir string) error {
 	infos, err := client.ChannelList()
 	if err != nil {
 		return err
+	}
+	sortChannelInfos(infos, opts.Sort)
+	infos = limitChannelInfos(infos, opts.Limit)
+	if opts.JSON {
+		return json.NewEncoder(stdout).Encode(infos)
+	}
+	if opts.Format != nil {
+		for _, info := range infos {
+			if err := opts.Format.Execute(stdout, info); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(stdout); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	if len(infos) == 0 {
 		fmt.Fprintln(stdout, "(no channels)")
@@ -177,7 +291,81 @@ func runChannelLs(stdout, stderr io.Writer, teamDir string) error {
 	return tw.Flush()
 }
 
-func runChannelShow(stdout, stderr io.Writer, teamDir, name string) error {
+const (
+	channelListSortName        = "name"
+	channelListSortSubscribers = "subscribers"
+	channelListSortMessages    = "messages"
+	channelListSortLast        = "last"
+)
+
+func parseChannelListSort(raw string) (string, error) {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "", channelListSortName, "channel":
+		return channelListSortName, nil
+	case channelListSortSubscribers:
+		return channelListSortSubscribers, nil
+	case channelListSortMessages:
+		return channelListSortMessages, nil
+	case channelListSortLast:
+		return channelListSortLast, nil
+	default:
+		return "", fmt.Errorf("--sort must be name, subscribers, messages, or last")
+	}
+}
+
+func sortChannelInfos(infos []*channelInfo, sortBy string) {
+	sort.SliceStable(infos, func(i, j int) bool {
+		left, right := infos[i], infos[j]
+		if left == nil || right == nil {
+			return right != nil
+		}
+		tie := func() bool {
+			return left.Name < right.Name
+		}
+		switch sortBy {
+		case channelListSortSubscribers:
+			if left.Subscribers != right.Subscribers {
+				return left.Subscribers > right.Subscribers
+			}
+			return tie()
+		case channelListSortMessages:
+			if left.MessageCount != right.MessageCount {
+				return left.MessageCount > right.MessageCount
+			}
+			return tie()
+		case channelListSortLast:
+			if left.LastMessageTS.IsZero() != right.LastMessageTS.IsZero() {
+				return !left.LastMessageTS.IsZero()
+			}
+			if !left.LastMessageTS.Equal(right.LastMessageTS) {
+				return left.LastMessageTS.After(right.LastMessageTS)
+			}
+			return tie()
+		default:
+			return tie()
+		}
+	})
+}
+
+func limitChannelInfos(infos []*channelInfo, limit int) []*channelInfo {
+	if limit <= 0 || len(infos) <= limit {
+		return infos
+	}
+	return infos[:limit]
+}
+
+func parseChannelFormat(format, name string) (*template.Template, error) {
+	if strings.TrimSpace(format) == "" {
+		return nil, nil
+	}
+	tmpl, err := template.New(name).Parse(format)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --format template: %w", err)
+	}
+	return tmpl, nil
+}
+
+func runChannelShow(stdout, stderr io.Writer, teamDir, name string, opts channelShowOptions) error {
 	client, err := channelClientForTeamDir(teamDir)
 	if err != nil {
 		return err
@@ -197,17 +385,8 @@ func runChannelShow(stdout, stderr io.Writer, teamDir, name string) error {
 		fmt.Fprintf(stderr, "agent-team: no such channel: %s\n", name)
 		return exitErr(2)
 	}
-	fmt.Fprintf(stdout, "channel:       %s\n", info.Name)
-	fmt.Fprintf(stdout, "subscribers:   %d\n", info.Subscribers)
-	fmt.Fprintf(stdout, "messages:      %d\n", info.MessageCount)
-	if !info.LastMessageTS.IsZero() {
-		fmt.Fprintf(stdout, "last message:  %s\n", info.LastMessageTS.Format(time.RFC3339))
-	} else {
-		fmt.Fprintln(stdout, "last message:  —")
-	}
-
-	// Tail the most recent up-to-10 messages by querying since=0 then
-	// keeping the tail. We pass a synthetic instance label "(cli-show)" with
+	// Tail recent messages by querying since=0 then keeping the tail. We pass
+	// a synthetic instance label "(cli-show)" with
 	// since=0 — the server doesn't require subscription when since is given.
 	// A real subscriber's cursor is unaffected.
 	since := int64(0)
@@ -216,9 +395,30 @@ func runChannelShow(stdout, stderr io.Writer, teamDir, name string) error {
 		return err
 	}
 	tail := dr.Messages
-	const maxTail = 10
-	if len(tail) > maxTail {
-		tail = tail[len(tail)-maxTail:]
+	if opts.Tail > 0 && len(tail) > opts.Tail {
+		tail = tail[len(tail)-opts.Tail:]
+	}
+	result := channelShowResult{
+		Channel:  info,
+		Messages: tail,
+	}
+	if opts.JSON {
+		return json.NewEncoder(stdout).Encode(result)
+	}
+	if opts.Format != nil {
+		if err := opts.Format.Execute(stdout, result); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(stdout)
+		return err
+	}
+	fmt.Fprintf(stdout, "channel:       %s\n", info.Name)
+	fmt.Fprintf(stdout, "subscribers:   %d\n", info.Subscribers)
+	fmt.Fprintf(stdout, "messages:      %d\n", info.MessageCount)
+	if !info.LastMessageTS.IsZero() {
+		fmt.Fprintf(stdout, "last message:  %s\n", info.LastMessageTS.Format(time.RFC3339))
+	} else {
+		fmt.Fprintln(stdout, "last message:  —")
 	}
 	if len(tail) == 0 {
 		return nil
