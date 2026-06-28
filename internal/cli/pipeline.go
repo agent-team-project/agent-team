@@ -2968,6 +2968,7 @@ func newPipelineResumePlanCmd() *cobra.Command {
 		unhealthyOnly bool
 		summary       bool
 		commandsOnly  bool
+		lastMessage   bool
 		jsonOut       bool
 		all           bool
 		format        string
@@ -3044,6 +3045,9 @@ func newPipelineResumePlanCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			sortRuntimeResumePlans(plans, sortMode)
+			if lastMessage {
+				preferRuntimeResumeLastMessages(plans)
+			}
 			if summary {
 				out := summarizeRuntimeResumePlans(plans)
 				if jsonOut {
@@ -3057,7 +3061,9 @@ func newPipelineResumePlanCmd() *cobra.Command {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(plans)
 			}
 			if commandsOnly {
-				renderRuntimeResumePlanCommands(cmd.OutOrStdout(), plans, runtimeResumeCommandOptionsFromFlag(cmd, repo, "repo"))
+				opts := runtimeResumeCommandOptionsFromFlag(cmd, repo, "repo")
+				opts.LastMessage = lastMessage
+				renderRuntimeResumePlanCommands(cmd.OutOrStdout(), plans, opts)
 				return nil
 			}
 			if tmpl != nil {
@@ -3079,6 +3085,7 @@ func newPipelineResumePlanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only include crashed or stale running metadata.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching pipeline resume plans by recommended action, runtime, and status.")
 	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.")
+	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().BoolVar(&all, "all", false, "Plan runtime recovery across all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.")

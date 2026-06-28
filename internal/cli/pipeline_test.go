@@ -5639,6 +5639,18 @@ target = "worker"
 		t.Fatalf("formatted pipeline resume-plan = %q, want %q", got, want)
 	}
 
+	lastMessage := NewRootCmd()
+	lastMessageOut, lastMessageErr := &bytes.Buffer{}, &bytes.Buffer{}
+	lastMessage.SetOut(lastMessageOut)
+	lastMessage.SetErr(lastMessageErr)
+	lastMessage.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--step", "implement", "--runtime", "codex", "--action", "logs", "--last-message", "--format", "{{.RecommendedCommand}}"})
+	if err := lastMessage.Execute(); err != nil {
+		t.Fatalf("pipeline resume-plan --last-message format: %v\nstderr=%s", err, lastMessageErr.String())
+	}
+	if got, want := strings.TrimSpace(lastMessageOut.String()), "agent-team job logs squ-940 --step implement --last-message"; got != want {
+		t.Fatalf("pipeline resume-plan --last-message = %q, want %q", got, want)
+	}
+
 	summary := NewRootCmd()
 	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	summary.SetOut(summaryOut)
@@ -5727,6 +5739,18 @@ target = "worker"
 		strings.Join(shellQuoteArgs([]string{"agent-team", "job", "logs", "--repo", root, "squ-940", "--step", "review", "--follow"}), " "),
 	}, "\n"); got != want {
 		t.Fatalf("pipeline commands resume-plan = %q, want %q", got, want)
+	}
+
+	lastMessageCommands := NewRootCmd()
+	lastMessageCommandsOut, lastMessageCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	lastMessageCommands.SetOut(lastMessageCommandsOut)
+	lastMessageCommands.SetErr(lastMessageCommandsErr)
+	lastMessageCommands.SetArgs([]string{"pipeline", "resume-plan", "ticket_to_pr", "--repo", root, "--step", "implement", "--runtime", "codex", "--action", "logs", "--last-message", "--commands"})
+	if err := lastMessageCommands.Execute(); err != nil {
+		t.Fatalf("pipeline resume-plan --last-message commands: %v\nstderr=%s", err, lastMessageCommandsErr.String())
+	}
+	if got, want := strings.TrimSpace(lastMessageCommandsOut.String()), strings.Join(shellQuoteArgs([]string{"agent-team", "job", "logs", "--repo", root, "squ-940", "--step", "implement", "--last-message"}), " "); got != want {
+		t.Fatalf("pipeline resume-plan --last-message commands = %q, want %q", got, want)
 	}
 
 	invalidMany := NewRootCmd()

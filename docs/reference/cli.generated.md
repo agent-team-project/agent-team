@@ -3244,6 +3244,7 @@ Flags:
       --commands          Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --json              Emit machine-readable JSON.
+      --last-message      For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.
       --limit int         Limit plans after filtering and sorting; 0 means no limit.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
@@ -5338,6 +5339,7 @@ Flags:
       --commands          Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --json              Emit machine-readable JSON.
+      --last-message      For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.
       --limit int         Limit plans after filtering and sorting; 0 means no limit.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
@@ -6373,6 +6375,7 @@ Flags:
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --job string        Select the instance recorded on or associated with this job id.
       --json              Emit machine-readable JSON.
+      --last-message      For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.
       --limit int         Limit plans after filtering and sorting; 0 means no limit.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
@@ -6653,6 +6656,7 @@ Flags:
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --job string        Select the instance recorded on or associated with this job id.
       --json              Emit machine-readable JSON.
+      --last-message      For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.
       --limit int         Limit plans after filtering and sorting; 0 means no limit.
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
       --runtime-stale     Only include running metadata whose recorded runtime PID is no longer live.
@@ -8549,6 +8553,7 @@ Flags:
       --commands          Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --json              Emit machine-readable JSON.
+      --last-message      For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.
       --limit int         Limit plans after filtering and sorting; 0 means no limit.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.
@@ -8673,6 +8678,7 @@ Flags:
       --commands          Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --json              Emit machine-readable JSON.
+      --last-message      For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.
       --limit int         Limit plans after filtering and sorting; 0 means no limit.
       --repo string       Repo root containing .agent_team. (default "<repo>")
       --runtime strings   Only include metadata for this runtime: claude or codex. Can repeat or comma-separate.

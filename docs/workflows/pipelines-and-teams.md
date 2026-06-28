@@ -207,7 +207,9 @@ Common states:
 Pipeline and team resume-plan rows keep the owning job and step in their
 recommended attach/log follow-ups when that context is known, so generated
 commands such as `agent-team job logs <job> --step <id> --follow` stay tied to
-the exact failed or stale stage.
+the exact failed or stale stage. Add `--last-message` when Codex log fallbacks
+should use `agent-team job logs <job> --step <id> --last-message` or the
+matching instance-level sidecar command instead.
 When these job, pipeline, or team diagnostic views are run with an explicit `--repo`, their `--commands` output preserves that repo selector in emitted `agent-team` follow-ups so scripts can be launched from outside the target checkout.
 Use `team wait-jobs <team>` when a script should wait for team-owned jobs to reach a lifecycle status, event, or next stage such as `--next-state ready --step review`; use `team wait <team>` when the condition is about team-owned instance lifecycle instead.
 

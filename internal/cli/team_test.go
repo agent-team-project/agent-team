@@ -6472,6 +6472,18 @@ func TestTeamRuntimeResumePlanScopesMetadata(t *testing.T) {
 		t.Fatalf("team commands resume-plan = %q, want %q", got, want)
 	}
 
+	lastMessageCommands := NewRootCmd()
+	lastMessageCommandsOut, lastMessageCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	lastMessageCommands.SetOut(lastMessageCommandsOut)
+	lastMessageCommands.SetErr(lastMessageCommandsErr)
+	lastMessageCommands.SetArgs([]string{"team", "resume-plan", "delivery", "--repo", root, "--status", "crashed", "--runtime", "codex", "--action", "logs", "--last-message", "--commands"})
+	if err := lastMessageCommands.Execute(); err != nil {
+		t.Fatalf("team resume-plan --last-message commands: %v\nstderr=%s", err, lastMessageCommandsErr.String())
+	}
+	if got, want := strings.TrimSpace(lastMessageCommandsOut.String()), strings.Join(shellQuoteArgs([]string{"agent-team", "logs", "--repo", root, "worker-squ-900", "--last-message"}), " "); got != want {
+		t.Fatalf("team resume-plan --last-message commands = %q, want %q", got, want)
+	}
+
 	invalidSort := NewRootCmd()
 	invalidSortOut, invalidSortErr := &bytes.Buffer{}, &bytes.Buffer{}
 	invalidSort.SetOut(invalidSortOut)

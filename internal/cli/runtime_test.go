@@ -1390,6 +1390,18 @@ func TestRuntimeResumePlanActionFilter(t *testing.T) {
 		t.Fatalf("runtime resume-plan --action = %q, want %q", got, want)
 	}
 
+	lastMessage := NewRootCmd()
+	lastMessageOut, lastMessageErr := &bytes.Buffer{}, &bytes.Buffer{}
+	lastMessage.SetOut(lastMessageOut)
+	lastMessage.SetErr(lastMessageErr)
+	lastMessage.SetArgs([]string{"runtime", "resume-plan", "--target", tmp, "--action", "logs", "--last-message", "--format", "{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}"})
+	if err := lastMessage.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan --last-message: %v\nstderr=%s", err, lastMessageErr.String())
+	}
+	if got, want := strings.TrimSpace(lastMessageOut.String()), "logs-codex logs agent-team logs logs-codex --last-message"; got != want {
+		t.Fatalf("runtime resume-plan --last-message = %q, want %q", got, want)
+	}
+
 	summary := NewRootCmd()
 	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	summary.SetOut(summaryOut)

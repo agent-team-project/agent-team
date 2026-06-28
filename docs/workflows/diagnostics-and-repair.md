@@ -50,6 +50,8 @@ Resume-plan also probes positive recorded PIDs for `running` metadata; stale
 rows are marked in JSON/text, unhealthy totals count crashed plus stale-running
 rows, and summaries expose both counts before recommending the right start,
 resume, or log fallback.
+Add `--last-message` when Codex log fallbacks should point at the clean final
+response sidecar rather than raw daemon logs.
 When daemon metadata resolves to a durable job, resume-plan recommendations
 prefer job-scoped attach/log commands in text, JSON, templates, and
 `--commands` output. Pipeline step ownership is preserved with `--step` so the
