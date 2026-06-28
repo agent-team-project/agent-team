@@ -5588,7 +5588,7 @@ target = "worker"
 	if len(plans) != 2 || plans[0].Instance != "manager-squ-940" || plans[1].Instance != "worker-squ-940" {
 		t.Fatalf("plans = %+v, want manager-squ-940 and worker-squ-940 only", plans)
 	}
-	if plans[0].Job != "squ-940" || plans[0].Pipeline != "ticket_to_pr" || plans[0].StepID != "review" || plans[1].Job != "squ-940" || plans[1].Pipeline != "ticket_to_pr" || plans[1].StepID != "implement" || plans[1].JobLogsCommand != "agent-team job logs squ-940 --follow" || plans[1].JobLastMessageCommand != "agent-team job logs squ-940 --last-message" {
+	if plans[0].Job != "squ-940" || plans[0].Pipeline != "ticket_to_pr" || plans[0].StepID != "review" || plans[0].JobLogsCommand != "agent-team job logs squ-940 --step review --follow" || plans[1].Job != "squ-940" || plans[1].Pipeline != "ticket_to_pr" || plans[1].StepID != "implement" || plans[1].JobLogsCommand != "agent-team job logs squ-940 --step implement --follow" || plans[1].JobLastMessageCommand != "agent-team job logs squ-940 --step implement --last-message" {
 		t.Fatalf("job-scoped commands not populated: %+v", plans)
 	}
 
@@ -5635,7 +5635,7 @@ target = "worker"
 	if err := format.Execute(); err != nil {
 		t.Fatalf("pipeline resume-plan format: %v\nstderr=%s", err, formatErr.String())
 	}
-	if got, want := strings.TrimSpace(formatOut.String()), "worker-squ-940 codex logs ticket_to_pr implement agent-team job logs squ-940 --follow"; got != want {
+	if got, want := strings.TrimSpace(formatOut.String()), "worker-squ-940 codex logs ticket_to_pr implement agent-team job logs squ-940 --step implement --follow"; got != want {
 		t.Fatalf("formatted pipeline resume-plan = %q, want %q", got, want)
 	}
 
@@ -5724,7 +5724,7 @@ target = "worker"
 	}
 	if got, want := strings.TrimSpace(commandsOut.String()), strings.Join([]string{
 		strings.Join(shellQuoteArgs([]string{"agent-team", "start", "--repo", root, "worker-squ-942"}), " "),
-		strings.Join(shellQuoteArgs([]string{"agent-team", "logs", "--repo", root, "manager-squ-940", "--follow"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "job", "logs", "--repo", root, "squ-940", "--step", "review", "--follow"}), " "),
 	}, "\n"); got != want {
 		t.Fatalf("pipeline commands resume-plan = %q, want %q", got, want)
 	}

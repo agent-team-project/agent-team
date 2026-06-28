@@ -1244,7 +1244,7 @@ func TestRuntimeResumePlanJobStepFilter(t *testing.T) {
 		t.Fatalf("plans = %+v, want one implement plan", plans)
 	}
 	plan := plans[0]
-	if plan.Instance != "worker-squ-43-implement" || plan.Job != "squ-43" || plan.Pipeline != "ticket_to_pr" || plan.StepID != "implement" || plan.JobLastMessageCommand != "agent-team job logs squ-43 --last-message" {
+	if plan.Instance != "worker-squ-43-implement" || plan.Job != "squ-43" || plan.Pipeline != "ticket_to_pr" || plan.StepID != "implement" || plan.JobLastMessageCommand != "agent-team job logs squ-43 --step implement --last-message" {
 		t.Fatalf("plan = %+v", plan)
 	}
 

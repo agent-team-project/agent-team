@@ -50,6 +50,10 @@ Resume-plan also probes positive recorded PIDs for `running` metadata; stale
 rows are marked in JSON/text, unhealthy totals count crashed plus stale-running
 rows, and summaries expose both counts before recommending the right start,
 resume, or log fallback.
+When daemon metadata resolves to a durable job, resume-plan recommendations
+prefer job-scoped attach/log commands in text, JSON, templates, and
+`--commands` output. Pipeline step ownership is preserved with `--step` so the
+follow-up stays on the exact stage rather than the broader job default.
 Docker-like views keep `stale` for old `status.toml` files and expose stale
 runtime metadata separately as `runtime_stale`. Their `--unhealthy` filters
 include crashed rows, status-stale rows, and runtime-stale rows, so

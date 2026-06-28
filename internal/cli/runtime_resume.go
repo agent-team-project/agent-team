@@ -498,7 +498,7 @@ func runtimeResumePlanFromMetadata(meta *daemon.Metadata) runtimeResumePlan {
 	if plan.Job != "" {
 		plan = runtimeResumePlanWithJobCommands(plan, plan.Job)
 	}
-	plan.RecommendedCommand, plan.RecommendedAction = runtimeResumeRecommendation(meta, plan)
+	plan = runtimeResumePlanWithRecommendation(plan)
 	plan.Detail = runtimeResumePlanDetail(meta, plan)
 	return plan
 }
@@ -518,11 +518,12 @@ func runtimeResumePlanWithJobCommands(plan runtimeResumePlan, jobID string) runt
 	if id == "" {
 		return plan
 	}
+	stepFlag := jobStepCommandFlag(plan.StepID)
 	plan.Job = id
-	plan.JobAttachCommand = "agent-team job attach " + id + " --dry-run"
-	plan.JobLogsCommand = "agent-team job logs " + id + " --follow"
+	plan.JobAttachCommand = "agent-team job attach " + id + stepFlag + " --dry-run"
+	plan.JobLogsCommand = "agent-team job logs " + id + stepFlag + " --follow"
 	if plan.Runtime == string(runtimebin.KindCodex) {
-		plan.JobLastMessageCommand = "agent-team job logs " + id + " --last-message"
+		plan.JobLastMessageCommand = "agent-team job logs " + id + stepFlag + " --last-message"
 	}
 	return plan
 }
@@ -530,9 +531,6 @@ func runtimeResumePlanWithJobCommands(plan runtimeResumePlan, jobID string) runt
 func runtimeResumePlanWithJobContext(plan runtimeResumePlan, j *job.Job) runtimeResumePlan {
 	if j == nil {
 		return plan
-	}
-	if id := job.NormalizeID(j.ID); id != "" {
-		plan = runtimeResumePlanWithJobCommands(plan, id)
 	}
 	if pipeline := strings.TrimSpace(j.Pipeline); pipeline != "" {
 		plan.Pipeline = pipeline
@@ -543,6 +541,10 @@ func runtimeResumePlanWithJobContext(plan runtimeResumePlan, j *job.Job) runtime
 			plan.Agent = strings.TrimSpace(step.Target)
 		}
 	}
+	if id := job.NormalizeID(j.ID); id != "" {
+		plan = runtimeResumePlanWithJobCommands(plan, id)
+	}
+	plan = runtimeResumePlanWithRecommendation(plan)
 	return plan
 }
 
@@ -604,20 +606,34 @@ func runtimeResumePlanMatchesStep(plan runtimeResumePlan, stepFilter string) boo
 	return strings.TrimSpace(plan.StepID) == stepFilter
 }
 
-func runtimeResumeRecommendation(meta *daemon.Metadata, plan runtimeResumePlan) (string, string) {
+func runtimeResumePlanWithRecommendation(plan runtimeResumePlan) runtimeResumePlan {
+	plan.RecommendedCommand, plan.RecommendedAction = runtimeResumeRecommendation(plan)
+	return plan
+}
+
+func runtimeResumeRecommendation(plan runtimeResumePlan) (string, string) {
 	if !plan.DirectResume {
+		if strings.TrimSpace(plan.JobLogsCommand) != "" {
+			return plan.JobLogsCommand, "logs"
+		}
 		return plan.LogsCommand, "logs"
 	}
 	if plan.CanManagedResume {
 		if strings.TrimSpace(plan.StartCommand) != "" {
 			return plan.StartCommand, "start"
 		}
+		if strings.TrimSpace(plan.JobAttachCommand) != "" {
+			return plan.JobAttachCommand, "attach"
+		}
 		if strings.TrimSpace(plan.AttachCommand) != "" {
 			return plan.AttachCommand, "attach"
 		}
 	}
-	if lifecycleMetadataRuntimeKind(meta) == runtimebin.KindCodex && strings.TrimSpace(plan.ResumeCommand) != "" {
+	if plan.Runtime == string(runtimebin.KindCodex) && strings.TrimSpace(plan.ResumeCommand) != "" {
 		return plan.ResumeCommand, "resume"
+	}
+	if strings.TrimSpace(plan.JobLogsCommand) != "" {
+		return plan.JobLogsCommand, "logs"
 	}
 	if strings.TrimSpace(plan.LogsCommand) != "" {
 		return plan.LogsCommand, "logs"
@@ -871,6 +887,7 @@ func renderRuntimeResumePlanCommands(w fmtWriter, plans []runtimeResumePlan, opt
 func runtimeResumePlanCommand(plan runtimeResumePlan, opts runtimeResumeCommandOptions) string {
 	var args []string
 	instance := strings.TrimSpace(plan.Instance)
+	jobID := strings.TrimSpace(plan.Job)
 	switch strings.TrimSpace(plan.RecommendedAction) {
 	case "start":
 		if instance == "" {
@@ -880,6 +897,16 @@ func runtimeResumePlanCommand(plan runtimeResumePlan, opts runtimeResumeCommandO
 		args = appendRuntimeResumeCommandTargetArgs(args, opts)
 		args = append(args, instance)
 	case "attach":
+		if jobID != "" && strings.TrimSpace(plan.JobAttachCommand) != "" {
+			args = []string{"agent-team", "job", "attach"}
+			args = appendRuntimeResumeCommandTargetArgs(args, opts)
+			args = append(args, jobID)
+			if step := strings.TrimSpace(plan.StepID); step != "" {
+				args = append(args, "--step", step)
+			}
+			args = append(args, "--dry-run")
+			break
+		}
 		if instance == "" {
 			return strings.TrimSpace(plan.RecommendedCommand)
 		}
@@ -888,6 +915,16 @@ func runtimeResumePlanCommand(plan runtimeResumePlan, opts runtimeResumeCommandO
 		args = append(args, instance)
 		args = append(args, "--dry-run")
 	case "logs":
+		if jobID != "" && strings.TrimSpace(plan.JobLogsCommand) != "" {
+			args = []string{"agent-team", "job", "logs"}
+			args = appendRuntimeResumeCommandTargetArgs(args, opts)
+			args = append(args, jobID)
+			if step := strings.TrimSpace(plan.StepID); step != "" {
+				args = append(args, "--step", step)
+			}
+			args = append(args, "--follow")
+			break
+		}
 		if instance == "" {
 			return strings.TrimSpace(plan.RecommendedCommand)
 		}
