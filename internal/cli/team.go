@@ -1084,10 +1084,20 @@ func newTeamPsCmd() *cobra.Command {
 		watch            bool
 		noClear          bool
 		interval         time.Duration
+		summary          bool
+		staleOnly        bool
 		runtimeFilters   []string
 		runtimeStaleOnly bool
+		unhealthyOnly    bool
+		latest           bool
+		last             int
 		jsonOut          bool
 		format           string
+		sortBy           string
+		statusFilters    []string
+		agentFilters     []string
+		phaseFilters     []string
+		instanceFilters  []string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -1100,8 +1110,16 @@ func newTeamPsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ps: --interval must be >= 0.")
 				return exitErr(2)
 			}
-			if format != "" && (watch || jsonOut) {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ps: --format cannot be combined with --watch or --json.")
+			if last < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ps: --last must be >= 0.")
+				return exitErr(2)
+			}
+			if latest && last > 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ps: choose one of --latest or --last.")
+				return exitErr(2)
+			}
+			if format != "" && (watch || jsonOut || summary) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ps: --format cannot be combined with --watch, --json, or --summary.")
 				return exitErr(2)
 			}
 			tmpl, err := parsePsFormat(format)
@@ -1109,12 +1127,23 @@ func newTeamPsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team ps: %v\n", err)
 				return exitErr(2)
 			}
-			opts, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(nil, runtimeFilters, nil, nil, nil, false, false)
+			opts, err := newPsOptionsWithRuntimeInstancesAndUnhealthy(statusFilters, runtimeFilters, agentFilters, phaseFilters, instanceFilters, staleOnly, unhealthyOnly)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team ps: %v\n", err)
 				return exitErr(2)
 			}
 			opts.runtimeStale = runtimeStaleOnly
+			sortMode, err := parsePsSort(sortBy)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team ps: %v\n", err)
+				return exitErr(2)
+			}
+			opts.Sort = sortMode
+			opts.SortSet = cmd.Flags().Changed("sort")
+			opts.Limit = last
+			if latest {
+				opts.Limit = 1
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -1123,7 +1152,16 @@ func newTeamPsCmd() *cobra.Command {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				defer stop()
 				clear := !noClear && !jsonOut
+				if summary {
+					return runTeamPsSummaryWatchWithOptions(ctx, cmd.OutOrStdout(), teamDir, args[0], interval, jsonOut, clear, opts)
+				}
 				return runTeamPsWatchWithOptions(ctx, cmd.OutOrStdout(), teamDir, args[0], interval, jsonOut, clear, opts)
+			}
+			if summary && jsonOut {
+				return runTeamPsSummaryJSON(cmd.OutOrStdout(), teamDir, args[0], time.Now().UTC(), opts)
+			}
+			if summary {
+				return runTeamPsSummary(cmd.OutOrStdout(), teamDir, args[0], time.Now().UTC(), opts)
 			}
 			rows, err := collectTeamPsRowsWithOptions(teamDir, args[0], time.Now().UTC(), opts)
 			if err != nil {
@@ -1137,8 +1175,18 @@ func newTeamPsCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh team instances until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Show lifecycle counts instead of team instance rows.")
+	cmd.Flags().BoolVarP(&latest, "latest", "l", false, "Show only the most recently started team-owned instance after other filters.")
+	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show only the N most recently started team-owned instances after other filters (0 = all).")
+	cmd.Flags().BoolVar(&staleOnly, "stale", false, "Only show team-owned instances whose status.toml is stale.")
+	cmd.Flags().BoolVar(&unhealthyOnly, "unhealthy", false, "Only show crashed, status-stale, or runtime-stale team-owned instances.")
+	cmd.Flags().StringVar(&sortBy, "sort", "name", "Sort team instance rows by name, status, agent, phase, stale, runtime-stale, unhealthy, started, stopped, or exited.")
+	cmd.Flags().StringSliceVar(&statusFilters, "status", nil, "Only show team-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only show team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only show team-owned running instances whose recorded runtime PID is no longer live.")
+	cmd.Flags().StringSliceVar(&agentFilters, "agent", nil, "Only show team-owned instances for this agent. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&phaseFilters, "phase", nil, "Only show team-owned work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&instanceFilters, "instance", nil, "Only show team-owned instances with this name. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team instances as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each team instance with a Go template, e.g. '{{.Instance}} {{.Status}}'.")
 	return cmd
@@ -7962,7 +8010,7 @@ func collectTeamPsRowsWithOptions(teamDir, name string, now time.Time, opts psOp
 	if err != nil {
 		return nil, err
 	}
-	return filterPsRows(teamInstanceRows(top, team, rows), opts), nil
+	return filterLimitSortPsRows(teamInstanceRows(top, team, rows), opts), nil
 }
 
 type teamLifecycleUpOptions struct {
@@ -10624,6 +10672,50 @@ func renderTeamRepairTickStep(w io.Writer, step teamRepairTickStep) error {
 
 func runTeamPsWatch(ctx context.Context, w io.Writer, teamDir, name string, interval time.Duration, jsonOut bool, clear bool) error {
 	return runTeamPsWatchWithOptions(ctx, w, teamDir, name, interval, jsonOut, clear, psOptions{})
+}
+
+func runTeamPsSummary(w io.Writer, teamDir, name string, now time.Time, opts psOptions) error {
+	rows, err := collectTeamPsRowsWithOptions(teamDir, name, now, opts)
+	if err != nil {
+		return err
+	}
+	return renderPsSummary(w, psSummaryRows(rows))
+}
+
+func runTeamPsSummaryJSON(w io.Writer, teamDir, name string, now time.Time, opts psOptions) error {
+	rows, err := collectTeamPsRowsWithOptions(teamDir, name, now, opts)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(w).Encode(psSummaryRows(rows))
+}
+
+func runTeamPsSummaryWatchWithOptions(ctx context.Context, w io.Writer, teamDir, name string, interval time.Duration, jsonOut bool, clear bool, opts psOptions) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if jsonOut {
+			if err := runTeamPsSummaryJSON(w, teamDir, name, time.Now().UTC(), opts); err != nil {
+				return err
+			}
+		} else {
+			if err := writeWatchClear(w, clear); err != nil {
+				return err
+			}
+			if err := runTeamPsSummary(w, teamDir, name, time.Now().UTC(), opts); err != nil {
+				return err
+			}
+		}
+		if !waitForWatchTick(ctx, ticker.C) {
+			return nil
+		}
+		if !jsonOut && !clear {
+			fmt.Fprintln(w)
+		}
+	}
 }
 
 func runTeamPsWatchWithOptions(ctx context.Context, w io.Writer, teamDir, name string, interval time.Duration, jsonOut bool, clear bool, opts psOptions) error {

@@ -8359,13 +8359,23 @@ Aliases: `instances`
 Flags:
 
 ```text
+      --agent strings       Only show team-owned instances for this agent. Can repeat or comma-separate.
       --format string       Render each team instance with a Go template, e.g. '{{.Instance}} {{.Status}}'.
+      --instance strings    Only show team-owned instances with this name. Can repeat or comma-separate.
       --interval duration   Refresh interval for --watch. (default 2s)
       --json                Emit team instances as JSON.
+  -n, --last int            Show only the N most recently started team-owned instances after other filters (0 = all).
+  -l, --latest              Show only the most recently started team-owned instance after other filters.
       --no-clear            With --watch, append snapshots instead of redrawing the terminal.
+      --phase strings       Only show team-owned work phase: planning, implementing, awaiting_review, blocked, idle, done, or unknown. Can repeat or comma-separate.
       --repo string         Repo root containing .agent_team. (default "<repo>")
       --runtime strings     Only show team-owned instances for this runtime: claude or codex. Can repeat or comma-separate.
       --runtime-stale       Only show team-owned running instances whose recorded runtime PID is no longer live.
+      --sort string         Sort team instance rows by name, status, agent, phase, stale, runtime-stale, unhealthy, started, stopped, or exited. (default "name")
+      --stale               Only show team-owned instances whose status.toml is stale.
+      --status strings      Only show team-owned lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
+      --summary             Show lifecycle counts instead of team instance rows.
+      --unhealthy           Only show crashed, status-stale, or runtime-stale team-owned instances.
   -w, --watch               Refresh team instances until interrupted.
 ```
 

@@ -2544,6 +2544,91 @@ instances = ["build-worker"]
 	}
 }
 
+func TestTeamPsSummaryFiltersAndLatest(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.manager]
+agent = "manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[instances.build-worker]
+agent = "worker"
+ephemeral = true
+
+[teams.delivery]
+instances = ["manager", "worker"]
+
+[teams.platform]
+instances = ["build-worker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, meta := range []*daemon.Metadata{
+		{Instance: "manager", Agent: "manager", Runtime: string(runtimebin.KindClaude), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-4 * time.Minute)},
+		{Instance: "worker-squ-101", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now.Add(-3 * time.Minute)},
+		{Instance: "worker-squ-102", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusCrashed, Workspace: root, StartedAt: now.Add(-2 * time.Minute), ExitedAt: now.Add(-time.Minute)},
+		{Instance: "build-worker-1", Agent: "worker", Runtime: string(runtimebin.KindCodex), Status: daemon.StatusRunning, PID: os.Getpid(), Workspace: root, StartedAt: now},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	summaryCmd := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summaryCmd.SetOut(summaryOut)
+	summaryCmd.SetErr(summaryErr)
+	summaryCmd.SetArgs([]string{"team", "ps", "delivery", "--repo", root, "--summary", "--runtime", "codex", "--json"})
+	if err := summaryCmd.Execute(); err != nil {
+		t.Fatalf("team ps summary runtime: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var summary psSummaryJSON
+	if err := json.Unmarshal(summaryOut.Bytes(), &summary); err != nil {
+		t.Fatalf("decode team ps summary: %v\nbody=%s", err, summaryOut.String())
+	}
+	if summary.Total != 2 || summary.Running != 1 || summary.Crashed != 1 || summary.Runtimes["codex"] != 2 {
+		t.Fatalf("summary = %+v, want delivery Codex workers only", summary)
+	}
+
+	latestCmd := NewRootCmd()
+	latestOut, latestErr := &bytes.Buffer{}, &bytes.Buffer{}
+	latestCmd.SetOut(latestOut)
+	latestCmd.SetErr(latestErr)
+	latestCmd.SetArgs([]string{"team", "ps", "delivery", "--repo", root, "--latest", "--json"})
+	if err := latestCmd.Execute(); err != nil {
+		t.Fatalf("team ps latest: %v\nstderr=%s", err, latestErr.String())
+	}
+	var latestRows []psJSONRow
+	if err := json.Unmarshal(latestOut.Bytes(), &latestRows); err != nil {
+		t.Fatalf("decode team ps latest: %v\nbody=%s", err, latestOut.String())
+	}
+	if len(latestRows) != 1 || latestRows[0].Instance != "worker-squ-102" {
+		t.Fatalf("latest rows = %+v, want newest delivery-owned worker", latestRows)
+	}
+
+	lastCmd := NewRootCmd()
+	lastOut, lastErr := &bytes.Buffer{}, &bytes.Buffer{}
+	lastCmd.SetOut(lastOut)
+	lastCmd.SetErr(lastErr)
+	lastCmd.SetArgs([]string{"team", "ps", "delivery", "--repo", root, "--last", "2", "--sort", "started", "--json"})
+	if err := lastCmd.Execute(); err != nil {
+		t.Fatalf("team ps last: %v\nstderr=%s", err, lastErr.String())
+	}
+	var lastRows []psJSONRow
+	if err := json.Unmarshal(lastOut.Bytes(), &lastRows); err != nil {
+		t.Fatalf("decode team ps last: %v\nbody=%s", err, lastOut.String())
+	}
+	if got := strings.Join(rowInstances(lastRows), ","); got != "worker-squ-102,worker-squ-101" {
+		t.Fatalf("last rows = %v, want newest two delivery-owned workers", rowInstances(lastRows))
+	}
+}
+
 func TestTeamRetryScopesPipelineFailures(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
@@ -5985,6 +6070,20 @@ instances = ["manager"]
 	}
 	if len(rows) != 1 || rows[0].Instance != "manager" {
 		t.Fatalf("watch json rows = %+v", rows)
+	}
+
+	summaryCtx, summaryCancel := context.WithCancel(context.Background())
+	summaryCancel()
+	var summaryOut bytes.Buffer
+	if err := runTeamPsSummaryWatchWithOptions(summaryCtx, &summaryOut, teamDir, "delivery", time.Millisecond, true, false, psOptions{}); err != nil {
+		t.Fatalf("team ps summary watch json: %v", err)
+	}
+	var summary psSummaryJSON
+	if err := json.Unmarshal(bytes.TrimSpace(summaryOut.Bytes()), &summary); err != nil {
+		t.Fatalf("decode summary watch json: %v\nbody=%s", err, summaryOut.String())
+	}
+	if summary.Total != 1 || summary.Unknown != 1 {
+		t.Fatalf("summary watch = %+v, want one unknown declared instance", summary)
 	}
 }
 
@@ -12894,9 +12993,24 @@ func TestTeamPsRejectsFormatCombinations(t *testing.T) {
 			want: "--format cannot be combined",
 		},
 		{
+			name: "format with summary",
+			args: []string{"team", "ps", "delivery", "--format", "{{.Instance}}", "--summary"},
+			want: "--format cannot be combined",
+		},
+		{
 			name: "invalid format",
 			args: []string{"team", "ps", "delivery", "--format", "{{"},
 			want: "invalid --format template",
+		},
+		{
+			name: "negative last",
+			args: []string{"team", "ps", "delivery", "--last", "-1"},
+			want: "--last must be >= 0",
+		},
+		{
+			name: "latest and last",
+			args: []string{"team", "ps", "delivery", "--latest", "--last", "1"},
+			want: "choose one of --latest or --last",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

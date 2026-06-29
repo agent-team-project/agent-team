@@ -344,6 +344,7 @@ Add `--runtime codex` or `--runtime-bin <path>` when repair retry or final tick 
 | CI wants remediation commands | `agent-team health --jobs --commands` |
 | Need only unhealthy instance rows | `agent-team ps --unhealthy --json` |
 | Need only stale recorded runtime PIDs | `agent-team ps --runtime-stale --json` |
+| Need team-scoped instance counts | `agent-team team ps delivery --summary --json` |
 | Need handoff artifact | `agent-team snapshot --output diagnostics.json` |
 | Need script-friendly global snapshot fields | `agent-team snapshot --format '{{.Repo}} {{len .Jobs}}'` |
 | Need one workflow handoff artifact | `agent-team pipeline snapshot ticket_to_pr --output ticket-to-pr-diagnostics.json` |
