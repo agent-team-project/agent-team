@@ -656,6 +656,98 @@ func TestMonitorSummaryJSONUsesHealthSnapshot(t *testing.T) {
 	}
 }
 
+func TestMonitorReportsRuntimeResumeCapabilities(t *testing.T) {
+	root := writeOverviewRuntimeFixture(t)
+
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"monitor", "--target", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("monitor runtime json: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot monitorSnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode monitor runtime json: %v\nbody=%s", err, stdout.String())
+	}
+	if snapshot.RuntimeError != "" {
+		t.Fatalf("runtime_error = %q", snapshot.RuntimeError)
+	}
+	if snapshot.Runtime.Total != 4 || snapshot.Runtime.Crashed != 3 || snapshot.Runtime.Exited != 1 {
+		t.Fatalf("runtime summary = %+v", snapshot.Runtime)
+	}
+	if snapshot.Runtime.ManagedResume != 2 || snapshot.Runtime.CanManagedResume != 1 || snapshot.Runtime.DirectResume != 2 {
+		t.Fatalf("runtime resume capability summary = %+v", snapshot.Runtime)
+	}
+
+	filtered := NewRootCmd()
+	filteredOut, filteredErr := &bytes.Buffer{}, &bytes.Buffer{}
+	filtered.SetOut(filteredOut)
+	filtered.SetErr(filteredErr)
+	filtered.SetArgs([]string{"monitor", "--target", root, "--runtime", "codex", "--json"})
+	if err := filtered.Execute(); err != nil {
+		t.Fatalf("monitor filtered runtime json: %v\nstderr=%s", err, filteredErr.String())
+	}
+	var filteredSnapshot monitorSnapshot
+	if err := json.Unmarshal(filteredOut.Bytes(), &filteredSnapshot); err != nil {
+		t.Fatalf("decode monitor filtered runtime json: %v\nbody=%s", err, filteredOut.String())
+	}
+	if filteredSnapshot.Runtime.Total != 2 || filteredSnapshot.Runtime.Crashed != 1 || filteredSnapshot.Runtime.Exited != 1 {
+		t.Fatalf("filtered runtime summary = %+v", filteredSnapshot.Runtime)
+	}
+	if filteredSnapshot.Runtime.ManagedResume != 0 || filteredSnapshot.Runtime.CanManagedResume != 0 || filteredSnapshot.Runtime.DirectResume != 1 {
+		t.Fatalf("filtered runtime resume capability summary = %+v", filteredSnapshot.Runtime)
+	}
+
+	summary := NewRootCmd()
+	summaryOut, summaryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	summary.SetOut(summaryOut)
+	summary.SetErr(summaryErr)
+	summary.SetArgs([]string{"monitor", "--summary", "--resources", "--runtime", "codex", "--json", "--target", root})
+	if err := summary.Execute(); err != nil {
+		t.Fatalf("monitor summary runtime json: %v\nstderr=%s", err, summaryErr.String())
+	}
+	var summarySnapshot monitorSummarySnapshot
+	if err := json.Unmarshal(summaryOut.Bytes(), &summarySnapshot); err != nil {
+		t.Fatalf("decode monitor summary runtime json: %v\nbody=%s", err, summaryOut.String())
+	}
+	if summarySnapshot.Runtime.Total != 2 || summarySnapshot.Runtime.ManagedResume != 0 || summarySnapshot.Runtime.CanManagedResume != 0 || summarySnapshot.Runtime.DirectResume != 1 {
+		t.Fatalf("summary runtime resume capability summary = %+v", summarySnapshot.Runtime)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"monitor", "--summary", "--target", root})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("monitor summary runtime text: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "runtime: total=4 running=0 stopped=0 exited=1 crashed=3 unknown=0 stale_running=0 managed_resume=2 can_managed_resume=1 direct_resume=2") {
+		t.Fatalf("summary text missing runtime capabilities:\n%s", textOut.String())
+	}
+
+	team := NewRootCmd()
+	teamOut, teamErr := &bytes.Buffer{}, &bytes.Buffer{}
+	team.SetOut(teamOut)
+	team.SetErr(teamErr)
+	team.SetArgs([]string{"team", "monitor", "delivery", "--repo", root, "--json"})
+	if err := team.Execute(); err != nil {
+		t.Fatalf("team monitor runtime json: %v\nstderr=%s", err, teamErr.String())
+	}
+	var teamSnapshot monitorSnapshot
+	if err := json.Unmarshal(teamOut.Bytes(), &teamSnapshot); err != nil {
+		t.Fatalf("decode team monitor runtime json: %v\nbody=%s", err, teamOut.String())
+	}
+	if teamSnapshot.Runtime.Total != 3 || teamSnapshot.Runtime.Crashed != 2 || teamSnapshot.Runtime.Exited != 1 {
+		t.Fatalf("team runtime summary = %+v", teamSnapshot.Runtime)
+	}
+	if teamSnapshot.Runtime.ManagedResume != 1 || teamSnapshot.Runtime.CanManagedResume != 1 || teamSnapshot.Runtime.DirectResume != 2 {
+		t.Fatalf("team runtime resume capability summary = %+v", teamSnapshot.Runtime)
+	}
+}
+
 func TestMonitorSummaryLatestJSONScopesHealthRows(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

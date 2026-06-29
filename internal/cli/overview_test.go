@@ -2045,6 +2045,11 @@ func writeOverviewAttentionFixture(t *testing.T) string {
 	if err := os.MkdirAll(teamDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	for _, name := range []string{"manager", "support", "worker"} {
+		if err := os.MkdirAll(filepath.Join(teamDir, "agents", name), 0o755); err != nil {
+			t.Fatalf("mkdir agent %s: %v", name, err)
+		}
+	}
 	instances := `
 [instances.manager]
 agent = "manager"

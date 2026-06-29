@@ -323,6 +323,8 @@ type monitorSnapshot struct {
 	JobStatus      []jobStatusReconcileResult `json:"job_status_preview,omitempty"`
 	PipelineStatus []pipelineStatusRow        `json:"pipeline_status,omitempty"`
 	Schedules      *scheduleForecast          `json:"schedules,omitempty"`
+	Runtime        overviewRuntimeSummary     `json:"runtime"`
+	RuntimeError   string                     `json:"runtime_error,omitempty"`
 	Inbox          overviewInboxSummary       `json:"inbox"`
 	InboxError     string                     `json:"inbox_error,omitempty"`
 	Instances      []psJSONRow                `json:"instances"`
@@ -346,6 +348,8 @@ type monitorSummarySnapshot struct {
 	JobStatus      []jobStatusReconcileResult    `json:"job_status_preview,omitempty"`
 	PipelineStatus []pipelineStatusRow           `json:"pipeline_status,omitempty"`
 	Schedules      *scheduleForecast             `json:"schedules,omitempty"`
+	Runtime        overviewRuntimeSummary        `json:"runtime"`
+	RuntimeError   string                        `json:"runtime_error,omitempty"`
 	Inbox          overviewInboxSummary          `json:"inbox"`
 	InboxError     string                        `json:"inbox_error,omitempty"`
 	Events         *eventSummaryJSON             `json:"events,omitempty"`
@@ -558,6 +562,15 @@ func collectMonitorSummarySnapshot(teamDir string, now time.Time, opts monitorOp
 	}
 	health = healthResultWithLastMessageActions(health, opts.LastMessage)
 	snapshot := &monitorSummarySnapshot{Health: health}
+	var runtimeSelectedInstances map[string]bool
+	if runtimeSelectedInstances, err = monitorSummaryRuntimeSelectedInstanceSet(teamDir, now, opts.PS); err != nil {
+		return nil, err
+	}
+	if runtime, err := collectMonitorRuntimeSummary(teamDir, runtimeSelectedInstances); err != nil {
+		snapshot.RuntimeError = err.Error()
+	} else {
+		snapshot.Runtime = runtime
+	}
 	if inbox, err := collectMonitorInbox(teamDir, nil, nil, nil); err != nil {
 		snapshot.InboxError = err.Error()
 	} else {
@@ -678,6 +691,47 @@ func collectMonitorResourceSummary(teamDir string, now time.Time, opts monitorOp
 	return &summary, nil
 }
 
+func collectMonitorRuntimeSummary(teamDir string, selectedInstances map[string]bool) (overviewRuntimeSummary, error) {
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return overviewRuntimeSummary{}, err
+	}
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return overviewRuntimeSummary{}, err
+	}
+	return overviewRuntimeFromMetadata(filterMonitorRuntimeMetadata(metas, selectedInstances), jobs), nil
+}
+
+func collectTeamMonitorRuntimeSummary(teamDir string, top *topology.Topology, team *topology.Team, selectedInstances map[string]bool) (overviewRuntimeSummary, error) {
+	metas, err := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		return overviewRuntimeSummary{}, err
+	}
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return overviewRuntimeSummary{}, err
+	}
+	metas = teamMetadata(top, team, metas)
+	return overviewRuntimeFromMetadata(filterMonitorRuntimeMetadata(metas, selectedInstances), jobs), nil
+}
+
+func filterMonitorRuntimeMetadata(metas []*daemon.Metadata, selectedInstances map[string]bool) []*daemon.Metadata {
+	if selectedInstances == nil {
+		return metas
+	}
+	out := make([]*daemon.Metadata, 0, len(metas))
+	for _, meta := range metas {
+		if meta == nil {
+			continue
+		}
+		if selectedInstances[meta.Instance] {
+			out = append(out, meta)
+		}
+	}
+	return out
+}
+
 func monitorEventFilters(opts monitorOptions, instances map[string]bool) eventFilters {
 	filters := opts.EventFilters
 	filters.agents = opts.PS.agents
@@ -744,10 +798,23 @@ func monitorSummarySelectedInstanceSet(teamDir string, now time.Time, opts psOpt
 	return monitorSelectedInstanceSet(displayRows, opts), nil
 }
 
+func monitorSummaryRuntimeSelectedInstanceSet(teamDir string, now time.Time, opts psOptions) (map[string]bool, error) {
+	if !monitorPSUsesVisibleInstanceSet(opts) {
+		return nil, nil
+	}
+	rows, err := collectPsRows(teamDir, now)
+	if err != nil {
+		return nil, err
+	}
+	displayRows := filterLimitSortPsRows(rows, opts)
+	return monitorRuntimeSelectedInstanceSet(displayRows, opts), nil
+}
+
 func renderMonitorSummarySnapshot(w io.Writer, snapshot *monitorSummarySnapshot) {
 	renderHealth(w, snapshot.Health)
 	fmt.Fprintln(w)
 	renderMonitorInboxSummary(w, snapshot.Inbox, snapshot.InboxError)
+	renderMonitorRuntimeSummary(w, snapshot.Runtime, snapshot.RuntimeError)
 	if snapshot.ResourcesError != "" || snapshot.Resources != nil {
 		fmt.Fprintln(w)
 		if snapshot.ResourcesError != "" {
@@ -784,6 +851,24 @@ func renderMonitorSummarySnapshot(w io.Writer, snapshot *monitorSummarySnapshot)
 			_ = renderEventSummaryResult(w, *snapshot.Events, false)
 		}
 	}
+}
+
+func renderMonitorRuntimeSummary(w io.Writer, runtime overviewRuntimeSummary, runtimeErr string) {
+	if runtimeErr != "" {
+		fmt.Fprintf(w, "runtime: unavailable: %s\n", runtimeErr)
+		return
+	}
+	fmt.Fprintf(w, "runtime: total=%d running=%d stopped=%d exited=%d crashed=%d unknown=%d stale_running=%d managed_resume=%d can_managed_resume=%d direct_resume=%d\n",
+		runtime.Total,
+		runtime.Running,
+		runtime.Stopped,
+		runtime.Exited,
+		runtime.Crashed,
+		runtime.Unknown,
+		runtime.StaleRunning,
+		runtime.ManagedResume,
+		runtime.CanManagedResume,
+		runtime.DirectResume)
 }
 
 func renderMonitorJobsSummary(w io.Writer, snapshot *jobTriageSnapshot) {
@@ -928,6 +1013,7 @@ func collectMonitorSnapshot(teamDir string, now time.Time, probe processStatsPro
 	health = healthResultWithLastMessageActions(health, opts.LastMessage)
 	displayRows := filterLimitSortPsRows(rows, opts.PS)
 	selectedInstances := monitorSelectedInstanceSet(displayRows, opts.PS)
+	runtimeSelectedInstances := monitorRuntimeSelectedInstanceSet(displayRows, opts.PS)
 	selectedInboxInstances := monitorInboxSelectedInstanceSet(displayRows, opts.PS)
 	snapshot := &monitorSnapshot{
 		Health:       health,
@@ -935,6 +1021,11 @@ func collectMonitorSnapshot(teamDir string, now time.Time, probe processStatsPro
 		Stats:        []statsJSONRow{},
 		instanceRows: displayRows,
 		statsEmpty:   "(no running instances; use --all to include stopped/exited instances)",
+	}
+	if runtime, err := collectMonitorRuntimeSummary(teamDir, runtimeSelectedInstances); err != nil {
+		snapshot.RuntimeError = err.Error()
+	} else {
+		snapshot.Runtime = runtime
 	}
 	if inbox, err := collectMonitorInbox(teamDir, nil, nil, selectedInboxInstances); err != nil {
 		snapshot.InboxError = err.Error()
@@ -1076,6 +1167,7 @@ func collectTeamMonitorSnapshot(teamDir, name string, now time.Time, probe proce
 	health = healthResultWithLastMessageActions(health, opts.LastMessage)
 	displayRows := filterLimitSortPsRows(teamRows, opts.PS)
 	selectedInstances := monitorSelectedInstanceSet(displayRows, opts.PS)
+	runtimeSelectedInstances := monitorRuntimeSelectedInstanceSet(displayRows, opts.PS)
 	selectedInboxInstances := monitorInboxSelectedInstanceSet(displayRows, opts.PS)
 	info := teamInfoFromTopology(team)
 	snapshot := &monitorSnapshot{
@@ -1085,6 +1177,11 @@ func collectTeamMonitorSnapshot(teamDir, name string, now time.Time, probe proce
 		Stats:        []statsJSONRow{},
 		instanceRows: displayRows,
 		statsEmpty:   "(no running team-owned instances; use --all to include stopped/exited instances)",
+	}
+	if runtime, err := collectTeamMonitorRuntimeSummary(teamDir, top, team, runtimeSelectedInstances); err != nil {
+		snapshot.RuntimeError = err.Error()
+	} else {
+		snapshot.Runtime = runtime
 	}
 	if inbox, err := collectMonitorInbox(teamDir, top, team, selectedInboxInstances); err != nil {
 		snapshot.InboxError = err.Error()
@@ -1253,6 +1350,25 @@ func monitorSelectedInstanceSet(rows []instanceRow, opts psOptions) map[string]b
 	return monitorInstanceSetFromRows(rows)
 }
 
+func monitorRuntimeSelectedInstanceSet(rows []instanceRow, opts psOptions) map[string]bool {
+	if !monitorPSUsesVisibleInstanceSet(opts) {
+		return nil
+	}
+	return monitorInstanceSetFromRows(rows)
+}
+
+func monitorPSUsesVisibleInstanceSet(opts psOptions) bool {
+	return opts.Limit > 0 ||
+		len(opts.statuses) > 0 ||
+		len(opts.runtimes) > 0 ||
+		len(opts.agents) > 0 ||
+		len(opts.phases) > 0 ||
+		len(opts.instances) > 0 ||
+		opts.stale ||
+		opts.runtimeStale ||
+		opts.unhealthy
+}
+
 func monitorInboxSelectedInstanceSet(rows []instanceRow, opts psOptions) map[string]bool {
 	if len(opts.instances) > 0 {
 		out := make(map[string]bool, len(opts.instances))
@@ -1356,6 +1472,7 @@ func renderMonitor(w io.Writer, snapshot *monitorSnapshot) error {
 	renderHealth(w, snapshot.Health)
 	fmt.Fprintln(w)
 	renderMonitorInboxSummary(w, snapshot.Inbox, snapshot.InboxError)
+	renderMonitorRuntimeSummary(w, snapshot.Runtime, snapshot.RuntimeError)
 
 	if snapshot.Plan != nil {
 		fmt.Fprintln(w)

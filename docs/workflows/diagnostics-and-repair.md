@@ -55,10 +55,11 @@ after filtering, sorting, and limiting.
 Resume-plan also probes positive recorded PIDs for `running` metadata; stale
 rows are marked in JSON/text, unhealthy totals count crashed plus stale-running
 rows, and summaries expose both counts before recommending the right start,
-resume, or log fallback. Overview JSON and text also count runtime resume
-capabilities as `managed_resume`, `can_managed_resume`, and `direct_resume`, so
-dashboards can tell whether recovery can stay daemon-managed or needs a direct
-runtime fallback before running a detailed `resume-plan`.
+resume, or log fallback. Overview and monitor JSON/text also count runtime
+resume capabilities as `managed_resume`, `can_managed_resume`, and
+`direct_resume`, so dashboards can tell whether recovery can stay
+daemon-managed or needs a direct runtime fallback before running a detailed
+`resume-plan`.
 Add `--last-message` to `overview`, `team overview`, `next`, `team next`, or
 the resume-plan command itself when Codex log fallbacks should point at the
 clean final response sidecar rather than raw daemon logs.
@@ -168,7 +169,7 @@ agent-team team monitor delivery --plan --jobs --commands
 agent-team team watch delivery --jobs --schedules
 ```
 
-Monitor combines health, job/queue/outbox recovery signals, inbox counts, instance rows, resources, events, jobs, schedules, and plan previews. Add `--last-message` when stale Codex runtime recovery hints should point at clean final-response sidecars, or `--commands` when scripts need one command per line from the visible health, plan, and job sections. `team monitor <team>` applies the same view to team-owned runtime, queue, and outbox quarantine before rendering recovery actions, and `team watch <team>` is the continuous shortcut.
+Monitor combines health, job/queue/outbox recovery signals, inbox counts, runtime resume capability counts, instance rows, resources, events, jobs, schedules, and plan previews. Add `--last-message` when stale Codex runtime recovery hints should point at clean final-response sidecars, or `--commands` when scripts need one command per line from the visible health, plan, and job sections. `team monitor <team>` applies the same view to team-owned runtime, queue, and outbox quarantine before rendering recovery actions, and `team watch <team>` is the continuous shortcut.
 
 ## Snapshot
 
