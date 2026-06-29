@@ -125,6 +125,10 @@ triage, pipeline status, overview/next hints, and the drain loop.
    post-mortem artifact with durable job state, audit events, daemon lifecycle
    rows, queue ownership, quarantined queue files, runtime metadata, state-file
    status, log paths, last-message sidecar paths, and optional log tails.
+   `agent-team repair` now runs event-backed job reconciliation as a first-class
+   repair step before timeout/retry/tick phases, so terminal lifecycle events can
+   close or fail durable jobs even when operators use `--skip-tick` for a narrow
+   repair pass. Coverage: `TestRepairReconcilesJobEventsWithoutTick`.
 
 6. **`job reconcile status` does not recover missing-state ephemeral jobs.**
    After `worker-doc-701` was removed, `job reconcile status --dry-run` returned

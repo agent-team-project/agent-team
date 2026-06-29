@@ -336,6 +336,118 @@ func TestRepairDryRunReportsIntakeDuplicateRequestIDs(t *testing.T) {
 	}
 }
 
+func TestRepairReconcilesJobEventsWithoutTick(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-220",
+		Ticket:    "SQU-220",
+		Target:    "worker",
+		Instance:  "worker-squ-220",
+		Status:    job.StatusRunning,
+		CreatedAt: now.Add(-time.Hour),
+		UpdatedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	exitCode := 0
+	if err := daemon.AppendLifecycleEvent(daemon.DaemonRoot(teamDir), &daemon.LifecycleEvent{
+		ID:       "event-worker-squ-220-exit",
+		TS:       now,
+		Action:   "exit",
+		Instance: "worker-squ-220",
+		Agent:    "worker",
+		Job:      "squ-220",
+		Ticket:   "SQU-220",
+		Branch:   "worker-squ-220",
+		PR:       "https://github.com/acme/repo/pull/220",
+		Status:   daemon.StatusExited,
+		ExitCode: &exitCode,
+		Message:  "instance process exited",
+	}); err != nil {
+		t.Fatalf("append lifecycle event: %v", err)
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--skip-daemon", "--skip-queue", "--skip-tick", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("repair event reconcile dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview repairResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode repair event preview: %v\nbody=%s", err, dryOut.String())
+	}
+	if preview.JobEvents.Action != "would_reconcile" || len(preview.JobEvents.Results) != 1 ||
+		preview.JobEvents.Results[0].JobID != "squ-220" ||
+		preview.JobEvents.Results[0].After != job.StatusDone ||
+		!preview.JobEvents.Results[0].Changed ||
+		!preview.JobEvents.Results[0].DryRun {
+		t.Fatalf("job events preview = %+v", preview.JobEvents)
+	}
+	unchanged, err := job.Read(teamDir, "squ-220")
+	if err != nil {
+		t.Fatalf("read unchanged job: %v", err)
+	}
+	if unchanged.Status != job.StatusRunning {
+		t.Fatalf("dry-run mutated job = %+v", unchanged)
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--skip-daemon", "--skip-queue", "--skip-tick", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("repair event reconcile commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "repair", "--repo", tmp, "--skip-daemon", "--skip-queue", "--skip-tick"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("repair event commands = %q, want %q", got, wantCommand)
+	}
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--skip-daemon", "--skip-queue", "--skip-tick"})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("repair event reconcile text: %v\nstderr=%s", err, textErr.String())
+	}
+	for _, want := range []string{"Job events: would_reconcile", "squ-220", "instance_exited", "would_update"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("repair event text missing %q:\n%s", want, textOut.String())
+		}
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"repair", "--target", tmp, "--skip-daemon", "--skip-queue", "--skip-tick", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("repair event reconcile apply: %v\nstderr=%s", err, applyErr.String())
+	}
+	var result repairResult
+	if err := json.Unmarshal(applyOut.Bytes(), &result); err != nil {
+		t.Fatalf("decode repair event apply: %v\nbody=%s", err, applyOut.String())
+	}
+	if result.JobEvents.Action != "reconciled" || len(result.JobEvents.Results) != 1 || !result.JobEvents.Results[0].Changed {
+		t.Fatalf("job events apply = %+v", result.JobEvents)
+	}
+	updated, err := job.Read(teamDir, "squ-220")
+	if err != nil {
+		t.Fatalf("read updated job: %v", err)
+	}
+	if updated.Status != job.StatusDone || updated.LastEvent != "instance_exited" || updated.Branch != "worker-squ-220" || updated.PR == "" {
+		t.Fatalf("updated job = %+v", updated)
+	}
+}
+
 func TestRepairJobsIncludesStatusPreview(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

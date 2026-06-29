@@ -293,15 +293,23 @@ Repair can:
 
 1. start or reconcile daemon state
 2. retry dead-letter queue items
-3. optionally mark stale running job work failed with `--timeout-jobs`
-4. optionally retry failed pipeline steps with `--retry-pipelines`
-5. run a maintenance tick
-6. include before/after health snapshots
+3. reconcile terminal job lifecycle events
+4. optionally mark stale running job work failed with `--timeout-jobs`
+5. optionally retry failed pipeline steps with `--retry-pipelines`
+6. run a maintenance tick
+7. include before/after health snapshots
 
 Add `--last-message` when repair health snapshots should prefer clean Codex
 final-response sidecar commands for stale runtime recovery hints.
 
 `--dry-run` should be the first step.
+`repair` includes a `job_events` phase that applies the same terminal runtime
+metadata/lifecycle-event reconciliation as `job reconcile events`. This phase
+runs before stale timeout and retry phases and does not depend on the
+maintenance tick, so `repair --skip-tick` can still close or fail jobs whose
+worker already exited and whose runtime metadata has been reduced to lifecycle
+history. Use `repair --dry-run --skip-tick --json` to preview `job_events`, or
+`--commands` to emit the matching apply command.
 Use `drain` when a script should keep running global maintenance cycles until
 the daemon has no immediate schedule, outbox, queue, or pipeline work left.
 Add `--wait --wait-status running` when it should then wait for jobs advanced

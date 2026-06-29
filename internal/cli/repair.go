@@ -384,6 +384,7 @@ type repairResult struct {
 	Daemon          repairStepResult          `json:"daemon"`
 	Queue           repairQueueStep           `json:"queue"`
 	Intake          repairIntakeStep          `json:"intake"`
+	JobEvents       repairJobEventsStep       `json:"job_events"`
 	JobTimeout      repairPipelineTimeoutStep `json:"job_timeout"`
 	PipelineTimeout repairPipelineTimeoutStep `json:"pipeline_timeout"`
 	PipelineRetry   repairPipelineRetryStep   `json:"pipeline_retry"`
@@ -414,6 +415,12 @@ type repairIntakeStep struct {
 	DuplicateRequestIDs int      `json:"duplicate_request_ids,omitempty"`
 	LatestErrorID       string   `json:"latest_error_id,omitempty"`
 	Actions             []string `json:"actions,omitempty"`
+}
+
+type repairJobEventsStep struct {
+	Action  string                    `json:"action"`
+	Reason  string                    `json:"reason,omitempty"`
+	Results []jobEventReconcileResult `json:"results,omitempty"`
 }
 
 type repairPipelineRetryStep struct {
@@ -492,6 +499,7 @@ func repairResultHasApplyCommand(result *repairResult) bool {
 	}
 	return repairDaemonStepHasApplyCommand(result.Daemon) ||
 		repairQueueStepHasApplyCommand(result.Queue) ||
+		repairJobEventsStepHasApplyCommand(result.JobEvents) ||
 		repairPipelineTimeoutStepHasApplyCommand(result.JobTimeout) ||
 		repairPipelineTimeoutStepHasApplyCommand(result.PipelineTimeout) ||
 		repairPipelineRetryStepHasApplyCommand(result.PipelineRetry) ||
@@ -504,6 +512,10 @@ func repairDaemonStepHasApplyCommand(step repairStepResult) bool {
 
 func repairQueueStepHasApplyCommand(step repairQueueStep) bool {
 	return step.Action == "would_retry" && len(step.Results) > 0
+}
+
+func repairJobEventsStepHasApplyCommand(step repairJobEventsStep) bool {
+	return step.Action == "would_reconcile" && len(step.Results) > 0
 }
 
 func repairPipelineTimeoutStepHasApplyCommand(step repairPipelineTimeoutStep) bool {
@@ -721,6 +733,12 @@ func runRepair(cmd *cobra.Command, target, teamDir string, opts repairOptions) (
 
 	result.Intake = collectRepairIntakeStep(teamDir, opts)
 
+	jobEvents, err := runRepairJobEventsStep(teamDir, opts)
+	if err != nil {
+		return nil, err
+	}
+	result.JobEvents = jobEvents
+
 	jobTimeout, err := runRepairJobTimeoutStep(teamDir, opts)
 	if err != nil {
 		return nil, err
@@ -893,6 +911,30 @@ func runRepairPipelineRetryStep(cmd *cobra.Command, teamDir string, opts repairO
 	return repairPipelineRetryStep{Action: action, Results: results}, nil
 }
 
+func runRepairJobEventsStep(teamDir string, opts repairOptions) (repairJobEventsStep, error) {
+	results, err := reconcileJobsFromEvents(teamDir, opts.DryRun, time.Now().UTC())
+	if err != nil {
+		return repairJobEventsStep{Action: "error", Reason: err.Error()}, err
+	}
+	action := "none"
+	if jobEventReconcileResultsHaveChanges(results) {
+		action = "reconciled"
+		if opts.DryRun {
+			action = "would_reconcile"
+		}
+	}
+	return repairJobEventsStep{Action: action, Results: results}, nil
+}
+
+func jobEventReconcileResultsHaveChanges(results []jobEventReconcileResult) bool {
+	for _, result := range results {
+		if result.Changed {
+			return true
+		}
+	}
+	return false
+}
+
 func runRepairPipelineTimeoutStep(teamDir string, opts repairOptions) (repairPipelineTimeoutStep, error) {
 	if !opts.TimeoutPipelines {
 		return repairPipelineTimeoutStep{Action: "skipped", Reason: "--timeout-pipelines not set"}, nil
@@ -1032,6 +1074,10 @@ func renderRepairResult(w io.Writer, result *repairResult, jsonOut bool, tmpl *t
 	fmt.Fprintln(w)
 	renderRepairIntakeStep(w, result.Intake)
 	fmt.Fprintln(w)
+	if err := renderRepairJobEventsStep(w, result.JobEvents); err != nil {
+		return err
+	}
+	fmt.Fprintln(w)
 	renderRepairJobTimeoutStep(w, result.JobTimeout)
 	fmt.Fprintln(w)
 	renderRepairPipelineTimeoutStep(w, result.PipelineTimeout)
@@ -1093,6 +1139,15 @@ func renderRepairIntakeStep(w io.Writer, step repairIntakeStep) {
 	for _, action := range step.Actions {
 		fmt.Fprintf(w, "  action %s\n", action)
 	}
+}
+
+func renderRepairJobEventsStep(w io.Writer, step repairJobEventsStep) error {
+	fmt.Fprintf(w, "Job events: %s", emptyDash(step.Action))
+	if step.Reason != "" {
+		fmt.Fprintf(w, " (%s)", step.Reason)
+	}
+	fmt.Fprintln(w)
+	return renderJobEventReconcileResults(w, step.Results, false, nil)
 }
 
 func renderRepairPipelineRetryStep(w io.Writer, step repairPipelineRetryStep) error {
