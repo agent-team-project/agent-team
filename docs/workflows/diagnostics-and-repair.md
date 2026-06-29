@@ -66,6 +66,8 @@ When daemon metadata resolves to a durable job, resume-plan recommendations
 prefer job-scoped attach/log commands in text, JSON, templates, and
 `--commands` output. Pipeline step ownership is preserved with `--step` so the
 follow-up stays on the exact stage rather than the broader job default.
+Use `resume-plan --commands --fallbacks` when a handoff should include every
+viable recovery command per plan instead of only the recommended one.
 Docker-like views keep `stale` for old `status.toml` files and expose stale
 runtime metadata separately as `runtime_stale`. Their `--unhealthy` filters
 include crashed rows, status-stale rows, and runtime-stale rows, so

@@ -873,6 +873,7 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 		directOnly     bool
 		summary        bool
 		commandsOnly   bool
+		fallbacks      bool
 		lastMessage    bool
 		jsonOut        bool
 		format         string
@@ -902,6 +903,10 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 			}
 			if commandsOnly && format != "" {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --format.\n", cfg.ErrorName)
+				return exitErr(2)
+			}
+			if fallbacks && !commandsOnly {
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --fallbacks requires --commands.\n", cfg.ErrorName)
 				return exitErr(2)
 			}
 			if limit < 0 {
@@ -955,6 +960,7 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 			if commandsOnly {
 				opts := runtimeResumeCommandOptionsFromFlag(cmd, repo, "repo")
 				opts.LastMessage = lastMessage
+				opts.Fallbacks = fallbacks
 				renderRuntimeResumePlanCommands(cmd.OutOrStdout(), plans, opts)
 				return nil
 			}
@@ -980,6 +986,7 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 	cmd.Flags().BoolVar(&directOnly, "direct", false, "Only include runtimes with a direct runtime resume command.")
 	cmd.Flags().BoolVar(&summary, "summary", false, cfg.SummaryHelp)
 	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.")
+	cmd.Flags().BoolVar(&fallbacks, "fallbacks", false, "With --commands, print all viable start, attach, log, last-message, and direct resume commands per plan.")
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.")

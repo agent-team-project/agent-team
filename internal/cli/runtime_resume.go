@@ -60,6 +60,7 @@ type runtimeResumeCommandOptions struct {
 	TargetFlag  string
 	TargetSet   bool
 	LastMessage bool
+	Fallbacks   bool
 }
 
 type runtimeResumeCapabilityFilters struct {
@@ -116,6 +117,7 @@ func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Comm
 		directOnly     bool
 		summary        bool
 		commandsOnly   bool
+		fallbacks      bool
 		lastMessage    bool
 		jsonOut        bool
 		format         string
@@ -145,6 +147,10 @@ func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Comm
 			}
 			if commandsOnly && format != "" {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --format.\n", cfg.ErrorName)
+				return exitErr(2)
+			}
+			if fallbacks && !commandsOnly {
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --fallbacks requires --commands.\n", cfg.ErrorName)
 				return exitErr(2)
 			}
 			if strings.TrimSpace(jobID) != "" && len(args) > 0 {
@@ -202,6 +208,7 @@ func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Comm
 			if commandsOnly {
 				opts := runtimeResumeCommandOptionsFromFlag(cmd, target, runtimeResumePlanRepoFlag(cfg))
 				opts.LastMessage = lastMessage
+				opts.Fallbacks = fallbacks
 				renderRuntimeResumePlanCommands(cmd.OutOrStdout(), plans, opts)
 				return nil
 			}
@@ -232,6 +239,7 @@ func newRuntimeResumePlanCommand(cfg runtimeResumePlanCommandConfig) *cobra.Comm
 	cmd.Flags().BoolVar(&directOnly, "direct", false, "Only include runtimes with a direct runtime resume command.")
 	cmd.Flags().BoolVar(&summary, "summary", false, cfg.SummaryHelp)
 	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.")
+	cmd.Flags().BoolVar(&fallbacks, "fallbacks", false, "With --commands, print all viable start, attach, log, last-message, and direct resume commands per plan.")
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.")
@@ -255,6 +263,7 @@ func newJobResumePlanCmd() *cobra.Command {
 		directOnly     bool
 		summary        bool
 		commandsOnly   bool
+		fallbacks      bool
 		lastMessage    bool
 		jsonOut        bool
 		format         string
@@ -285,6 +294,10 @@ func newJobResumePlanCmd() *cobra.Command {
 			}
 			if commandsOnly && format != "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job resume-plan: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if fallbacks && !commandsOnly {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job resume-plan: --fallbacks requires --commands.")
 				return exitErr(2)
 			}
 			if limit < 0 {
@@ -338,6 +351,7 @@ func newJobResumePlanCmd() *cobra.Command {
 			if commandsOnly {
 				opts := runtimeResumeCommandOptionsFromFlag(cmd, repo, "repo")
 				opts.LastMessage = lastMessage
+				opts.Fallbacks = fallbacks
 				renderRuntimeResumePlanCommands(cmd.OutOrStdout(), plans, opts)
 				return nil
 			}
@@ -363,6 +377,7 @@ func newJobResumePlanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&directOnly, "direct", false, "Only include runtimes with a direct runtime resume command.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching resume plans by recommended action, runtime, and status.")
 	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.")
+	cmd.Flags().BoolVar(&fallbacks, "fallbacks", false, "With --commands, print all viable start, attach, log, last-message, and direct resume commands per plan.")
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.")
@@ -993,13 +1008,72 @@ func renderRuntimeResumePlans(w fmtWriter, plans []runtimeResumePlan) {
 }
 
 func renderRuntimeResumePlanCommands(w fmtWriter, plans []runtimeResumePlan, opts runtimeResumeCommandOptions) {
+	seen := map[string]bool{}
 	for _, plan := range plans {
-		command := runtimeResumePlanCommand(plan, opts)
-		if command == "" {
-			continue
+		commands := []string{runtimeResumePlanCommand(plan, opts)}
+		if opts.Fallbacks {
+			commands = runtimeResumePlanFallbackCommands(plan, opts)
 		}
-		fmt.Fprintln(w, command)
+		for _, command := range commands {
+			command = strings.TrimSpace(command)
+			if command == "" || seen[command] {
+				continue
+			}
+			seen[command] = true
+			fmt.Fprintln(w, command)
+		}
 	}
+}
+
+func runtimeResumePlanFallbackCommands(plan runtimeResumePlan, opts runtimeResumeCommandOptions) []string {
+	instance := strings.TrimSpace(plan.Instance)
+	jobID := strings.TrimSpace(plan.Job)
+	step := strings.TrimSpace(plan.StepID)
+	var commands []string
+	add := func(command string) {
+		command = strings.TrimSpace(command)
+		if command != "" {
+			commands = append(commands, command)
+		}
+	}
+	if instance != "" && strings.TrimSpace(plan.StartCommand) != "" {
+		add(runtimeResumeScopedCommand(opts, []string{"agent-team", "start"}, instance))
+	}
+	if jobID != "" && strings.TrimSpace(plan.JobAttachCommand) != "" {
+		args := []string{jobID}
+		if step != "" {
+			args = append(args, "--step", step)
+		}
+		args = append(args, "--dry-run")
+		add(runtimeResumeScopedCommand(opts, []string{"agent-team", "job", "attach"}, args...))
+	}
+	if instance != "" && strings.TrimSpace(plan.AttachCommand) != "" {
+		add(runtimeResumeScopedCommand(opts, []string{"agent-team", "attach"}, instance, "--dry-run"))
+	}
+	if jobID != "" && strings.TrimSpace(plan.JobLogsCommand) != "" {
+		args := []string{jobID}
+		if step != "" {
+			args = append(args, "--step", step)
+		}
+		args = append(args, "--follow")
+		add(runtimeResumeScopedCommand(opts, []string{"agent-team", "job", "logs"}, args...))
+	}
+	if jobID != "" && strings.TrimSpace(plan.JobLastMessageCommand) != "" {
+		args := []string{jobID}
+		if step != "" {
+			args = append(args, "--step", step)
+		}
+		args = append(args, "--last-message")
+		add(runtimeResumeScopedCommand(opts, []string{"agent-team", "job", "logs"}, args...))
+	}
+	if instance != "" && strings.TrimSpace(plan.LogsCommand) != "" {
+		add(runtimeResumeScopedCommand(opts, []string{"agent-team", "logs"}, instance, "--follow"))
+	}
+	if instance != "" && strings.TrimSpace(plan.LastMessageCommand) != "" {
+		add(runtimeResumeScopedCommand(opts, []string{"agent-team", "logs"}, instance, "--last-message"))
+	}
+	add(plan.ResumeCommand)
+	return commands
 }
 
 func runtimeResumePlanCommand(plan runtimeResumePlan, opts runtimeResumeCommandOptions) string {
@@ -1083,6 +1157,13 @@ func appendRuntimeResumeCommandTargetArgs(args []string, opts runtimeResumeComma
 		flag = "--target"
 	}
 	return append(args, flag, opts.Target)
+}
+
+func runtimeResumeScopedCommand(opts runtimeResumeCommandOptions, prefix []string, suffix ...string) string {
+	args := append([]string(nil), prefix...)
+	args = appendRuntimeResumeCommandTargetArgs(args, opts)
+	args = append(args, suffix...)
+	return strings.Join(shellQuoteArgs(args), " ")
 }
 
 func runtimeResumeCommandOptionsFromFlag(cmd *cobra.Command, target string, localFlag string) runtimeResumeCommandOptions {

@@ -3336,6 +3336,7 @@ func newPipelineResumePlanCmd() *cobra.Command {
 		directOnly     bool
 		summary        bool
 		commandsOnly   bool
+		fallbacks      bool
 		lastMessage    bool
 		jsonOut        bool
 		all            bool
@@ -3367,6 +3368,10 @@ func newPipelineResumePlanCmd() *cobra.Command {
 			}
 			if commandsOnly && format != "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if fallbacks && !commandsOnly {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --fallbacks requires --commands.")
 				return exitErr(2)
 			}
 			if len(args) > 1 {
@@ -3436,6 +3441,7 @@ func newPipelineResumePlanCmd() *cobra.Command {
 			if commandsOnly {
 				opts := runtimeResumeCommandOptionsFromFlag(cmd, repo, "repo")
 				opts.LastMessage = lastMessage
+				opts.Fallbacks = fallbacks
 				renderRuntimeResumePlanCommands(cmd.OutOrStdout(), plans, opts)
 				return nil
 			}
@@ -3461,6 +3467,7 @@ func newPipelineResumePlanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&directOnly, "direct", false, "Only include runtimes with a direct runtime resume command.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching pipeline resume plans by recommended action, runtime, and status.")
 	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.")
+	cmd.Flags().BoolVar(&fallbacks, "fallbacks", false, "With --commands, print all viable start, attach, log, last-message, and direct resume commands per plan.")
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
 	cmd.Flags().BoolVar(&all, "all", false, "Plan runtime recovery across all pipelines. This is the default when no pipeline is passed.")

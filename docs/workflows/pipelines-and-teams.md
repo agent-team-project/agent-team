@@ -215,6 +215,10 @@ commands such as `agent-team job logs <job> --step <id> --follow` stay tied to
 the exact failed or stale stage. Add `--last-message` when Codex log fallbacks
 should use `agent-team job logs <job> --step <id> --last-message` or the
 matching instance-level sidecar command instead.
+Add `--commands --fallbacks` when an operator handoff should include every
+viable command for each selected plan: managed start, attach dry-run, log
+follow, Codex last-message, and direct runtime resume. Plain `--commands`
+continues to emit only the single recommended command per plan.
 When these job, pipeline, or team diagnostic views are run with an explicit `--repo`, their `--commands` output preserves that repo selector in emitted `agent-team` follow-ups so scripts can be launched from outside the target checkout.
 Use `team wait-jobs <team>` when a script should wait for team-owned jobs to reach a lifecycle status, event, or next stage such as `--next-state ready --step review`; use `team wait <team>` when the condition is about team-owned instance lifecycle instead.
 

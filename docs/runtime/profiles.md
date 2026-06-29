@@ -263,6 +263,7 @@ agent-team resume-plan --status crashed --summary --json
 agent-team resume-plan --runtime-stale --summary
 agent-team resume-plan --unhealthy --sort stale --limit 10
 agent-team resume-plan --unhealthy --sort stale --limit 10 --commands
+agent-team resume-plan --unhealthy --sort stale --limit 10 --commands --fallbacks
 agent-team resume-plan --managed
 agent-team resume-plan --can-managed --commands
 agent-team resume-plan --direct --action resume
@@ -297,9 +298,12 @@ running metadata, and unhealthy metadata. Add `--managed` to inspect runtimes
 whose adapter supports daemon-managed resume, `--can-managed` when the metadata
 also has the session id needed for managed restart, or `--direct` when you only
 want rows with a direct runtime resume command. Add `--commands` when scripts
-need only the recommended command lines after filtering, sorting, and limiting; any
-`agent-team` follow-up preserves the selected `--repo` or `--target` scope, while
-direct runtime commands such as `codex resume <session>` remain unchanged.
+need only the recommended command lines after filtering, sorting, and limiting,
+or add `--commands --fallbacks` when a recovery script should receive every
+viable managed start, attach dry-run, log follow, Codex last-message, and direct
+runtime resume command for each selected plan. Any `agent-team` follow-up
+preserves the selected `--repo` or `--target` scope, while direct runtime
+commands such as `codex resume <session>` remain unchanged.
 `--limit` cannot be combined with `--summary`.
 When a positive recorded `running` PID is no longer live, resume-plan marks the
 row as `stale` and recommends the recovery path that can reconcile or resume it.

@@ -1422,6 +1422,25 @@ func TestRuntimeResumePlanMarksStaleRunningMetadata(t *testing.T) {
 	if got := strings.TrimSpace(jobFilteredOut.String()); got != "squ-55 stale-manager true agent-team start stale-manager" {
 		t.Fatalf("job stale plan = %q", got)
 	}
+
+	fallbacks := NewRootCmd()
+	fallbacksOut, fallbacksErr := &bytes.Buffer{}, &bytes.Buffer{}
+	fallbacks.SetOut(fallbacksOut)
+	fallbacks.SetErr(fallbacksErr)
+	fallbacks.SetArgs([]string{"resume-plan", "--repo", tmp, "--job", "SQU-55", "--runtime-stale", "--commands", "--fallbacks"})
+	if err := fallbacks.Execute(); err != nil {
+		t.Fatalf("runtime resume-plan fallbacks: %v\nstderr=%s", err, fallbacksErr.String())
+	}
+	if got, want := strings.TrimSpace(fallbacksOut.String()), strings.Join([]string{
+		strings.Join(shellQuoteArgs([]string{"agent-team", "start", "--repo", tmp, "stale-manager"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "job", "attach", "--repo", tmp, "squ-55", "--dry-run"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "attach", "--repo", tmp, "stale-manager", "--dry-run"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "job", "logs", "--repo", tmp, "squ-55", "--follow"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "logs", "--repo", tmp, "stale-manager", "--follow"}), " "),
+		"claude --resume sid-stale",
+	}, "\n"); got != want {
+		t.Fatalf("fallback commands = %q, want %q", got, want)
+	}
 }
 
 func TestRuntimeResumePlanUnhealthyFilter(t *testing.T) {
@@ -2130,6 +2149,38 @@ func TestRuntimeResumePlanRejectsInvalidLimit(t *testing.T) {
 	}
 	if !strings.Contains(jobErr.String(), "--limit must be >= 0") {
 		t.Fatalf("job limit stderr = %q", jobErr.String())
+	}
+}
+
+func TestRuntimeResumePlanFallbacksRequireCommands(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	for _, args := range [][]string{
+		{"runtime", "resume-plan", "--target", tmp, "--fallbacks"},
+		{"job", "resume-plan", "SQU-1", "--repo", tmp, "--fallbacks"},
+		{"pipeline", "resume-plan", "--repo", tmp, "--fallbacks"},
+		{"team", "resume-plan", "delivery", "--repo", tmp, "--fallbacks"},
+	} {
+		cmd := NewRootCmd()
+		out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
+		cmd.SetArgs(args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v unexpectedly succeeded", args)
+		}
+		var ec ExitCode
+		if !errors.As(err, &ec) || int(ec) != 2 {
+			t.Fatalf("%v error = %v, want exit 2", args, err)
+		}
+		if !strings.Contains(errOut.String(), "--fallbacks requires --commands") {
+			t.Fatalf("%v stderr = %q", args, errOut.String())
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v wrote stdout: %s", args, out.String())
+		}
 	}
 }
 

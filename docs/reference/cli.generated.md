@@ -3349,6 +3349,7 @@ Flags:
       --can-managed       Only include runtimes with enough session metadata for daemon-managed resume.
       --commands          Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.
       --direct            Only include runtimes with a direct runtime resume command.
+      --fallbacks         With --commands, print all viable start, attach, log, last-message, and direct resume commands per plan.
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --json              Emit machine-readable JSON.
       --last-message      For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.
@@ -5600,6 +5601,7 @@ Flags:
       --can-managed       Only include runtimes with enough session metadata for daemon-managed resume.
       --commands          Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.
       --direct            Only include runtimes with a direct runtime resume command.
+      --fallbacks         With --commands, print all viable start, attach, log, last-message, and direct resume commands per plan.
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --json              Emit machine-readable JSON.
       --last-message      For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.
@@ -6725,6 +6727,7 @@ Flags:
       --can-managed       Only include runtimes with enough session metadata for daemon-managed resume.
       --commands          Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.
       --direct            Only include runtimes with a direct runtime resume command.
+      --fallbacks         With --commands, print all viable start, attach, log, last-message, and direct resume commands per plan.
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --job string        Select the instance recorded on or associated with this job id.
       --json              Emit machine-readable JSON.
@@ -7099,6 +7102,7 @@ Flags:
       --can-managed       Only include runtimes with enough session metadata for daemon-managed resume.
       --commands          Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.
       --direct            Only include runtimes with a direct runtime resume command.
+      --fallbacks         With --commands, print all viable start, attach, log, last-message, and direct resume commands per plan.
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --job string        Select the instance recorded on or associated with this job id.
       --json              Emit machine-readable JSON.
@@ -9106,6 +9110,7 @@ Flags:
       --can-managed       Only include runtimes with enough session metadata for daemon-managed resume.
       --commands          Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.
       --direct            Only include runtimes with a direct runtime resume command.
+      --fallbacks         With --commands, print all viable start, attach, log, last-message, and direct resume commands per plan.
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --json              Emit machine-readable JSON.
       --last-message      For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.
@@ -9265,6 +9270,7 @@ Flags:
       --can-managed       Only include runtimes with enough session metadata for daemon-managed resume.
       --commands          Print only recommended commands, one per line, after filtering, sorting, and limiting. agent-team follow-ups preserve the selected repo scope.
       --direct            Only include runtimes with a direct runtime resume command.
+      --fallbacks         With --commands, print all viable start, attach, log, last-message, and direct resume commands per plan.
       --format string     Render each plan with a Go template, e.g. '{{.Instance}} {{.RecommendedAction}} {{.RecommendedCommand}}'.
       --json              Emit machine-readable JSON.
       --last-message      For Codex log fallbacks, recommend the clean last-message sidecar instead of following raw logs.
