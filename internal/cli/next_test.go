@@ -430,6 +430,19 @@ func TestNextCommandFiltersRuntimeSource(t *testing.T) {
 		t.Fatalf("runtime last-message filtered details = %+v", lastMessageResult.ActionDetails)
 	}
 
+	fallbacks := NewRootCmd()
+	fallbacksOut, fallbacksErr := &bytes.Buffer{}, &bytes.Buffer{}
+	fallbacks.SetOut(fallbacksOut)
+	fallbacks.SetErr(fallbacksErr)
+	fallbacks.SetArgs([]string{"next", "--target", root, "--source", "runtime", "--fallbacks", "--commands"})
+	if err := fallbacks.Execute(); err != nil {
+		t.Fatalf("next runtime fallbacks commands: %v\nstderr=%s", err, fallbacksErr.String())
+	}
+	wantFallback := scopedOperatorAction("agent-team resume-plan --status crashed --sort action --limit 10 --commands --fallbacks", operatorCommandScope{Repo: root, Set: true}) + "\n"
+	if got := fallbacksOut.String(); got != wantFallback {
+		t.Fatalf("runtime fallbacks commands = %q, want %q", got, wantFallback)
+	}
+
 	team := NewRootCmd()
 	teamOut, teamErr := &bytes.Buffer{}, &bytes.Buffer{}
 	team.SetOut(teamOut)
@@ -466,6 +479,19 @@ func TestNextCommandFiltersRuntimeSource(t *testing.T) {
 	}
 	if len(teamLastMessageResult.ActionDetails) != 1 || teamLastMessageResult.ActionDetails[0].Team != "delivery" || teamLastMessageResult.ActionDetails[0].Source != "runtime" || teamLastMessageResult.ActionDetails[0].Reason != "crashed=2" {
 		t.Fatalf("team runtime last-message filtered details = %+v", teamLastMessageResult.ActionDetails)
+	}
+
+	teamFallbacks := NewRootCmd()
+	teamFallbacksOut, teamFallbacksErr := &bytes.Buffer{}, &bytes.Buffer{}
+	teamFallbacks.SetOut(teamFallbacksOut)
+	teamFallbacks.SetErr(teamFallbacksErr)
+	teamFallbacks.SetArgs([]string{"team", "next", "delivery", "--repo", root, "--source", "runtime", "--fallbacks", "--commands"})
+	if err := teamFallbacks.Execute(); err != nil {
+		t.Fatalf("team next runtime fallbacks commands: %v\nstderr=%s", err, teamFallbacksErr.String())
+	}
+	wantTeamFallback := scopedOperatorAction("agent-team team resume-plan delivery --status crashed --sort action --limit 10 --commands --fallbacks", operatorCommandScope{Repo: root, Set: true}) + "\n"
+	if got := teamFallbacksOut.String(); got != wantTeamFallback {
+		t.Fatalf("team runtime fallbacks commands = %q, want %q", got, wantTeamFallback)
 	}
 }
 

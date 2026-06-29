@@ -7479,6 +7479,7 @@ func newTeamHealthCmd() *cobra.Command {
 		format           string
 		commands         bool
 		lastMessage      bool
+		fallbacks        bool
 		runtimeFilters   []string
 		runtimeStaleOnly bool
 	)
@@ -7529,7 +7530,7 @@ func newTeamHealthCmd() *cobra.Command {
 				return exitErr(1)
 			}
 			if snapshot != nil {
-				snapshot.Health = healthResultWithLastMessageActions(snapshot.Health, lastMessage)
+				snapshot.Health = healthResultWithResumePlanActions(snapshot.Health, lastMessage, fallbacks)
 			}
 			if !quiet {
 				scope := operatorCommandScopeFromCommand(cmd, repo, "repo")
@@ -7549,6 +7550,7 @@ func newTeamHealthCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team health as JSON.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "Print issue remediation commands, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
+	cmd.Flags().BoolVar(&fallbacks, "fallbacks", false, "When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.")
 	cmd.Flags().StringSliceVar(&runtimeFilters, "runtime", nil, "Only check team-owned daemon-known instances for this runtime: claude or codex. Daemon, queue, and job health remain team-scoped. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&runtimeStaleOnly, "runtime-stale", false, "Only check team-owned running instances whose recorded runtime PID is no longer live. Daemon, queue, and job health remain team-scoped.")
 	cmd.Flags().StringVar(&format, "format", "", "Render team health with a Go template, e.g. '{{.Team.Name}} {{.Health.Healthy}}'.")
@@ -7649,6 +7651,7 @@ func newTeamMonitorCmd() *cobra.Command {
 		resources        bool
 		stopExtras       bool
 		lastMessage      bool
+		fallbacks        bool
 		commands         bool
 		jsonOut          bool
 		noClear          bool
@@ -7798,6 +7801,7 @@ func newTeamMonitorCmd() *cobra.Command {
 			opts.EventSort = eventSortMode
 			opts.EventFilters = eventFilters
 			opts.LastMessage = lastMessage
+			opts.Fallbacks = fallbacks
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -7859,6 +7863,7 @@ func newTeamMonitorCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&resources, "resources", false, "With --summary, include aggregate CPU, memory, and RSS totals for team-owned instances.")
 	cmd.Flags().BoolVar(&stopExtras, "stop-extras", false, "With --plan, preview running team-agent extras as stop actions.")
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
+	cmd.Flags().BoolVar(&fallbacks, "fallbacks", false, "When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "Print recovery and apply commands from the visible team monitor sections, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON. With --watch, writes one JSON object per refresh.")
 	cmd.Flags().BoolVar(&latest, "latest", false, "Show only the most recently started team-owned instance after other filters.")

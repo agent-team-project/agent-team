@@ -272,6 +272,19 @@ ephemeral = true
 	if strings.Contains(body, "HEALTH") || strings.Contains(body, "INSTANCES") || strings.Contains(body, "Ready pipeline steps:") {
 		t.Fatalf("monitor --commands included dashboard text:\n%s", body)
 	}
+
+	fallbacks := NewRootCmd()
+	fallbacksOut, fallbacksErr := &bytes.Buffer{}, &bytes.Buffer{}
+	fallbacks.SetOut(fallbacksOut)
+	fallbacks.SetErr(fallbacksErr)
+	fallbacks.SetArgs([]string{"monitor", "--target", tmp, "--fallbacks", "--plan", "--jobs", "--commands"})
+	if err := fallbacks.Execute(); err != nil {
+		t.Fatalf("monitor fallback commands: %v\nstderr=%s", err, fallbacksErr.String())
+	}
+	wantFallback := scopedOperatorAction("agent-team job resume-plan squ-88 --runtime-stale --commands --fallbacks", scope)
+	if !strings.Contains(fallbacksOut.String(), wantFallback) {
+		t.Fatalf("monitor fallback commands missing %q:\n%s", wantFallback, fallbacksOut.String())
+	}
 }
 
 func TestMonitorSummaryCommands(t *testing.T) {

@@ -279,6 +279,8 @@ stale-running instances to `resume-plan`; `agent-team team overview <team>` and
 `agent-team team next <team> --source runtime` use `agent-team team resume-plan <team>`
 for team-scoped recovery. The older `runtime resume-plan` and `team runtime resume-plan`
 paths remain available for compatibility.
+Add `--fallbacks` to overview, next, health, or monitor views when their
+runtime recovery hints should call `resume-plan --commands --fallbacks`.
 Unsupported lifecycle rows from `start`, `restart`, `plan`, and `sync` also
 include the matching global or job-scoped `resume-plan` command when the
 runtime metadata cannot be managed-resumed.

@@ -24,6 +24,7 @@ func newOverviewCmd() *cobra.Command {
 		jsonOut       bool
 		commands      bool
 		lastMessage   bool
+		fallbacks     bool
 		watch         bool
 		noClear       bool
 		limit         int
@@ -90,7 +91,7 @@ func newOverviewCmd() *cobra.Command {
 				return err
 			}
 			shapeActions := func(result *overviewResult) *overviewResult {
-				return overviewResultWithActionSelection(overviewResultWithLastMessageActions(result, lastMessage), limit, filters, sortMode)
+				return overviewResultWithActionSelection(overviewResultWithResumePlanActions(result, lastMessage, fallbacks), limit, filters, sortMode)
 			}
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -110,6 +111,7 @@ func newOverviewCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit overview as JSON.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended actions, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
+	cmd.Flags().BoolVar(&fallbacks, "fallbacks", false, "When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh overview until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Show at most this many action recommendations after filtering and sorting; 0 means all.")
@@ -128,6 +130,7 @@ func newTeamOverviewCmd() *cobra.Command {
 		jsonOut       bool
 		commands      bool
 		lastMessage   bool
+		fallbacks     bool
 		watch         bool
 		noClear       bool
 		limit         int
@@ -194,7 +197,7 @@ func newTeamOverviewCmd() *cobra.Command {
 				return err
 			}
 			shapeActions := func(result *overviewResult) *overviewResult {
-				return overviewResultWithActionSelection(overviewResultWithLastMessageActions(result, lastMessage), limit, filters, sortMode)
+				return overviewResultWithActionSelection(overviewResultWithResumePlanActions(result, lastMessage, fallbacks), limit, filters, sortMode)
 			}
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -223,6 +226,7 @@ func newTeamOverviewCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team overview as JSON.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended team actions, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
+	cmd.Flags().BoolVar(&fallbacks, "fallbacks", false, "When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh team overview until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Show at most this many action recommendations after filtering and sorting; 0 means all.")
@@ -1152,7 +1156,11 @@ func overviewActionCommands(hints []operatorActionHint) []string {
 }
 
 func overviewResultWithLastMessageActions(out *overviewResult, lastMessage bool) *overviewResult {
-	if out == nil || !lastMessage {
+	return overviewResultWithResumePlanActions(out, lastMessage, false)
+}
+
+func overviewResultWithResumePlanActions(out *overviewResult, lastMessage, fallbacks bool) *overviewResult {
+	if out == nil || (!lastMessage && !fallbacks) {
 		return out
 	}
 	if len(out.ActionDetails) == 0 {
@@ -1162,7 +1170,7 @@ func overviewResultWithLastMessageActions(out *overviewResult, lastMessage bool)
 		}
 		out.ActionDetails = details
 	}
-	out.ActionDetails = operatorActionHintsWithLastMessage(out.ActionDetails)
+	out.ActionDetails = operatorActionHintsWithResumePlanOptions(out.ActionDetails, lastMessage, fallbacks)
 	out.Actions = overviewActionCommands(out.ActionDetails)
 	return out
 }
@@ -1187,23 +1195,51 @@ func overviewResultWithActionSelection(out *overviewResult, limit int, filters n
 }
 
 func operatorActionHintsWithLastMessage(hints []operatorActionHint) []operatorActionHint {
+	return operatorActionHintsWithResumePlanOptions(hints, true, false)
+}
+
+func operatorActionHintsWithResumePlanOptions(hints []operatorActionHint, lastMessage, fallbacks bool) []operatorActionHint {
 	if len(hints) == 0 {
 		return nil
 	}
 	out := make([]operatorActionHint, 0, len(hints))
 	for _, hint := range hints {
-		hint.Command = operatorActionWithLastMessage(hint.Command)
+		hint.Command = operatorActionWithResumePlanOptions(hint.Command, lastMessage, fallbacks)
 		out = append(out, hint)
 	}
 	return out
 }
 
 func operatorActionWithLastMessage(action string) string {
+	return operatorActionWithResumePlanOptions(action, true, false)
+}
+
+func operatorActionWithResumePlanOptions(action string, lastMessage, fallbacks bool) string {
 	command := strings.TrimSpace(action)
-	if command == "" || strings.Contains(command, "--last-message") || !operatorActionIsResumePlan(command) {
+	if command == "" || !operatorActionIsResumePlan(command) {
 		return action
 	}
-	return command + " --last-message"
+	if lastMessage && !operatorActionHasFlag(command, "--last-message") {
+		command += " --last-message"
+	}
+	if fallbacks {
+		if !operatorActionHasFlag(command, "--commands") {
+			command += " --commands"
+		}
+		if !operatorActionHasFlag(command, "--fallbacks") {
+			command += " --fallbacks"
+		}
+	}
+	return command
+}
+
+func operatorActionHasFlag(command, flag string) bool {
+	for _, field := range strings.Fields(command) {
+		if field == flag {
+			return true
+		}
+	}
+	return false
 }
 
 func operatorActionIsResumePlan(command string) bool {

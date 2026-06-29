@@ -62,6 +62,10 @@ fallback before running a detailed `resume-plan`.
 Add `--last-message` to `overview`, `team overview`, `next`, `team next`, or
 the resume-plan command itself when Codex log fallbacks should point at the
 clean final response sidecar rather than raw daemon logs.
+Add `--fallbacks` to `overview`, `team overview`, `next`, `team next`,
+`health`, or `monitor` when runtime recovery hints should hand off to
+`resume-plan --commands --fallbacks` instead of the single recommended
+resume-plan row.
 When daemon metadata resolves to a durable job, resume-plan recommendations
 prefer job-scoped attach/log commands in text, JSON, templates, and
 `--commands` output. Pipeline step ownership is preserved with `--step` so the
@@ -109,6 +113,8 @@ focused on copyable commands; JSON output also includes `action_details` so
 scripts can group recommendations by source and reason without parsing command
 strings. Add `--last-message` when runtime recommendations should carry the
 same clean Codex final-message preference into their `resume-plan` follow-ups.
+Add `--fallbacks` when runtime recommendations should call resume-plan with
+command-mode fallback expansion.
 Add `--commands` when scripts need only the filtered, sorted, and limited
 commands with no headers or reason labels. When `overview`,
 `team overview`, `next`, or `team next` was scoped with `--target` or `--repo`,
@@ -146,7 +152,8 @@ Health exits nonzero when unhealthy in one-shot mode.
 With `--jobs`, stuck or failed jobs can make health fail. This is useful in CI or operator dashboards.
 
 Add `--last-message` when runtime issue remediation should carry clean Codex
-final-message fallbacks into `resume-plan` follow-ups. Add `--commands` when a
+final-message fallbacks into `resume-plan` follow-ups. Add `--fallbacks` when
+runtime issue remediation should call fallback-expanded resume-plan output. Add `--commands` when a
 script needs only the issue remediation commands, one per line, while
 preserving the same healthy/unhealthy exit code. When `health` or `team health`
 is scoped with `--target` or `--repo`, command-only `agent-team` follow-ups
@@ -172,7 +179,7 @@ agent-team team monitor delivery --plan --jobs --commands
 agent-team team watch delivery --jobs --schedules
 ```
 
-Monitor combines health, job/queue/outbox recovery signals, inbox counts, runtime resume capability counts, instance rows, resources, events, jobs, schedules, and plan previews. Add `--last-message` when stale Codex runtime recovery hints should point at clean final-response sidecars, `--commands` when scripts need one command per line from the visible health, plan, and job sections, or `--summary --commands` when a compact health/plan/job command list is enough. `team monitor <team>` applies the same view to team-owned runtime, queue, and outbox quarantine before rendering recovery actions; add `--summary [--resources]` for compact scoped health, or `--summary --commands` for compact scoped recovery commands. `team watch <team>` is the continuous shortcut.
+Monitor combines health, job/queue/outbox recovery signals, inbox counts, runtime resume capability counts, instance rows, resources, events, jobs, schedules, and plan previews. Add `--last-message` when stale Codex runtime recovery hints should point at clean final-response sidecars, `--fallbacks` when runtime hints should call fallback-expanded resume-plan output, `--commands` when scripts need one command per line from the visible health, plan, and job sections, or `--summary --commands` when a compact health/plan/job command list is enough. `team monitor <team>` applies the same view to team-owned runtime, queue, and outbox quarantine before rendering recovery actions; add `--summary [--resources]` for compact scoped health, or `--summary --commands` for compact scoped recovery commands. `team watch <team>` is the continuous shortcut.
 
 ## Snapshot
 

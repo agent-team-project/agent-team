@@ -1055,6 +1055,7 @@ Flags:
 ```text
       --agent strings       Only check declared and daemon-known instances for this agent. Daemon health remains global. Can repeat or comma-separate.
       --commands            Print issue remediation commands, one per line. agent-team follow-ups preserve the selected repo scope.
+      --fallbacks           When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.
       --format string       Render the health result with a Go template, e.g. '{{.Healthy}} {{.Summary.Running}}'.
       --instance strings    Only check instances with this name. Daemon health remains global. Can repeat or comma-separate.
       --interval duration   Refresh interval for --watch or --wait. (default 2s)
@@ -3910,6 +3911,7 @@ Flags:
       --event-action strings   With --events, only show lifecycle events with this action. Can repeat or comma-separate.
       --events int             Include the last N matching daemon lifecycle events in the full monitor (0 = omit).
       --events-sort string     Sort the visible --events section by oldest or newest. (default "oldest")
+      --fallbacks              When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.
       --format string          Render monitor snapshots with a Go template, e.g. '{{.Health.Healthy}} {{len .Instances}}'.
       --instance strings       Only show instances, stats, and plan rows with this name. Can repeat or comma-separate.
       --interval duration      Refresh interval for --watch. (default 2s)
@@ -3959,6 +3961,7 @@ Flags:
 ```text
       --commands             Print only recommended commands, one per line. agent-team follow-ups preserve the selected repo scope.
       --details              Include source and reason metadata in text output.
+      --fallbacks            When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.
       --format string        Render the next-action result with a Go template, e.g. '{{.State}} {{len .Actions}}'.
       --interval duration    Refresh interval for --watch. (default 2s)
       --json                 Emit recommended actions as JSON.
@@ -4382,6 +4385,7 @@ Flags:
 
 ```text
       --commands             Print recommended actions, one per line. agent-team follow-ups preserve the selected repo scope.
+      --fallbacks            When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.
       --format string        Render the overview result with a Go template, e.g. '{{.State}} {{len .Actions}}'.
       --interval duration    Refresh interval for --watch. (default 2s)
       --json                 Emit overview as JSON.
@@ -8090,6 +8094,7 @@ Flags:
 
 ```text
       --commands          Print issue remediation commands, one per line. agent-team follow-ups preserve the selected repo scope.
+      --fallbacks         When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.
       --format string     Render team health with a Go template, e.g. '{{.Team.Name}} {{.Health.Healthy}}'.
       --jobs              Include team-owned job and pipeline health.
       --json              Emit team health as JSON.
@@ -8261,6 +8266,7 @@ Flags:
       --event-action strings   With --events, only show lifecycle events with this action. Can repeat or comma-separate.
       --events int             Include the last N matching team lifecycle events in the full monitor (0 = omit).
       --events-sort string     Sort the visible --events section by oldest or newest. (default "oldest")
+      --fallbacks              When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.
       --format string          Render team monitor snapshots with a Go template, e.g. '{{.Team.Name}} {{len .Instances}}'.
       --instance strings       Only show team-owned instances with this name. Can repeat or comma-separate.
       --interval duration      Refresh interval for --watch. (default 2s)
@@ -8303,6 +8309,7 @@ Flags:
 ```text
       --commands             Print only recommended commands, one per line. agent-team follow-ups preserve the selected repo scope.
       --details              Include source and reason metadata in text output.
+      --fallbacks            When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.
       --format string        Render the next-action result with a Go template, e.g. '{{.Team.Name}} {{len .Actions}}'.
       --interval duration    Refresh interval for --watch. (default 2s)
       --json                 Emit recommended actions as JSON.
@@ -8574,6 +8581,7 @@ Flags:
 
 ```text
       --commands             Print recommended team actions, one per line. agent-team follow-ups preserve the selected repo scope.
+      --fallbacks            When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.
       --format string        Render the team overview result with a Go template, e.g. '{{.Team.Name}} {{.State}}'.
       --interval duration    Refresh interval for --watch. (default 2s)
       --json                 Emit team overview as JSON.

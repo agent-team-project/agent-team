@@ -255,6 +255,56 @@ func TestOperatorActionWithLastMessageOnlyTouchesResumePlan(t *testing.T) {
 	}
 }
 
+func TestOperatorActionWithResumePlanFallbacks(t *testing.T) {
+	cases := []struct {
+		name        string
+		in          string
+		lastMessage bool
+		fallbacks   bool
+		want        string
+	}{
+		{
+			name:      "top-level fallbacks",
+			in:        "agent-team resume-plan --status crashed",
+			fallbacks: true,
+			want:      "agent-team resume-plan --status crashed --commands --fallbacks",
+		},
+		{
+			name:        "last message and fallbacks",
+			in:          "agent-team job resume-plan squ-42 --runtime-stale",
+			lastMessage: true,
+			fallbacks:   true,
+			want:        "agent-team job resume-plan squ-42 --runtime-stale --last-message --commands --fallbacks",
+		},
+		{
+			name:      "preserves existing commands flag",
+			in:        "agent-team pipeline resume-plan ticket_to_pr --commands",
+			fallbacks: true,
+			want:      "agent-team pipeline resume-plan ticket_to_pr --commands --fallbacks",
+		},
+		{
+			name:        "does not duplicate flags",
+			in:          "agent-team team resume-plan delivery --last-message --commands --fallbacks",
+			lastMessage: true,
+			fallbacks:   true,
+			want:        "agent-team team resume-plan delivery --last-message --commands --fallbacks",
+		},
+		{
+			name:      "non resume plan untouched",
+			in:        "agent-team repair --dry-run",
+			fallbacks: true,
+			want:      "agent-team repair --dry-run",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := operatorActionWithResumePlanOptions(tc.in, tc.lastMessage, tc.fallbacks); got != tc.want {
+				t.Fatalf("operatorActionWithResumePlanOptions(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestOverviewReportsUnreadInboxActions(t *testing.T) {
 	root := t.TempDir()
 	initInto(t, root)

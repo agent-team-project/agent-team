@@ -1827,6 +1827,19 @@ func TestHealthCommandLastMessageRewritesRuntimeRecoveryActions(t *testing.T) {
 	if !strings.Contains(commandsOut.String(), wantCommand) {
 		t.Fatalf("health last-message commands missing %q:\n%s", wantCommand, commandsOut.String())
 	}
+
+	fallbacks := NewRootCmd()
+	fallbacksOut, fallbacksErr := &bytes.Buffer{}, &bytes.Buffer{}
+	fallbacks.SetOut(fallbacksOut)
+	fallbacks.SetErr(fallbacksErr)
+	fallbacks.SetArgs([]string{"health", "--unhealthy", "--fallbacks", "--commands", "--target", tmp})
+	if err := fallbacks.Execute(); !errors.As(err, &code) || code != 1 {
+		t.Fatalf("health fallbacks commands err = %v, want exit 1\nstderr=%s", err, fallbacksErr.String())
+	}
+	wantFallbackCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", tmp, "job", "resume-plan", "squ-88", "--runtime-stale", "--commands", "--fallbacks"}), " ")
+	if !strings.Contains(fallbacksOut.String(), wantFallbackCommand) {
+		t.Fatalf("health fallback commands missing %q:\n%s", wantFallbackCommand, fallbacksOut.String())
+	}
 }
 
 func TestHealthCommandRuntimeStaleFilterOnlyIncludesRuntimeStaleInstances(t *testing.T) {

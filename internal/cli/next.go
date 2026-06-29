@@ -27,6 +27,7 @@ func newNextCmd() *cobra.Command {
 		details       bool
 		commandsOnly  bool
 		lastMessage   bool
+		fallbacks     bool
 		watch         bool
 		noClear       bool
 		interval      time.Duration
@@ -99,7 +100,7 @@ func newNextCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return overviewResultWithLastMessageActions(result, lastMessage), nil
+				return overviewResultWithResumePlanActions(result, lastMessage, fallbacks), nil
 			}
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -128,6 +129,7 @@ func newNextCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&details, "details", false, "Include source and reason metadata in text output.")
 	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print only recommended commands, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
+	cmd.Flags().BoolVar(&fallbacks, "fallbacks", false, "When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
@@ -147,6 +149,7 @@ func newTeamNextCmd() *cobra.Command {
 		details       bool
 		commandsOnly  bool
 		lastMessage   bool
+		fallbacks     bool
 		watch         bool
 		noClear       bool
 		interval      time.Duration
@@ -213,7 +216,7 @@ func newTeamNextCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return overviewResultWithLastMessageActions(result, lastMessage), nil
+				return overviewResultWithResumePlanActions(result, lastMessage, fallbacks), nil
 			}
 			if watch {
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -241,6 +244,7 @@ func newTeamNextCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&details, "details", false, "Include source and reason metadata in text output.")
 	cmd.Flags().BoolVar(&commandsOnly, "commands", false, "Print only recommended commands, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&lastMessage, "last-message", false, "When runtime recovery actions use resume-plan log fallbacks, prefer clean Codex final-message commands.")
+	cmd.Flags().BoolVar(&fallbacks, "fallbacks", false, "When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Refresh recommended actions until interrupted.")
 	cmd.Flags().BoolVar(&noClear, "no-clear", false, "With --watch, append snapshots instead of redrawing the terminal.")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Refresh interval for --watch.")
