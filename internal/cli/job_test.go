@@ -12641,7 +12641,7 @@ after = ["implement"]
 	if err := mermaid.Execute(); err != nil {
 		t.Fatalf("job graph mermaid: %v\nstderr=%s", err, mermaidErr.String())
 	}
-	if !strings.Contains(mermaidOut.String(), "state: running") || !strings.Contains(mermaidOut.String(), "instance: manager-squ-960-review") {
+	if !strings.Contains(mermaidOut.String(), "job: squ-960") || !strings.Contains(mermaidOut.String(), "ticket: SQU-960") || !strings.Contains(mermaidOut.String(), "state: running") || !strings.Contains(mermaidOut.String(), "instance: manager-squ-960-review") {
 		t.Fatalf("job graph mermaid missing overlay labels:\n%s", mermaidOut.String())
 	}
 

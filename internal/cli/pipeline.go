@@ -11028,7 +11028,7 @@ func renderPipelineGraphText(w io.Writer, graph pipelineGraph) {
 
 func renderPipelineGraphMermaid(w io.Writer, graph pipelineGraph) {
 	fmt.Fprintln(w, "flowchart TD")
-	fmt.Fprintf(w, "  trigger[%q]\n", pipelineMermaidLabel("trigger: "+graph.Summary))
+	fmt.Fprintf(w, "  trigger[%q]\n", pipelineMermaidLabel(pipelineGraphTriggerLabel(graph, "<br/>")))
 	nodeIDs := map[string]string{}
 	for i, node := range graph.Nodes {
 		id := pipelineGraphNodeMermaidID(node.ID, i)
@@ -11054,7 +11054,7 @@ func renderPipelineGraphMermaid(w io.Writer, graph pipelineGraph) {
 func renderPipelineGraphDOT(w io.Writer, graph pipelineGraph) {
 	fmt.Fprintf(w, "digraph %q {\n", graph.Name)
 	fmt.Fprintln(w, "  rankdir=TB;")
-	fmt.Fprintf(w, "  %q [label=%q, shape=oval];\n", "trigger", "trigger: "+graph.Summary)
+	fmt.Fprintf(w, "  %q [label=%q, shape=oval];\n", "trigger", pipelineGraphTriggerLabel(graph, "\n"))
 	for _, node := range graph.Nodes {
 		fmt.Fprintf(w, "  %q [label=%q];\n", node.ID, pipelineGraphNodeLabel(node, "\n"))
 	}
@@ -11066,6 +11066,33 @@ func renderPipelineGraphDOT(w io.Writer, graph pipelineGraph) {
 		fmt.Fprintf(w, "  %q -> %q;\n", from, edge.To)
 	}
 	fmt.Fprintln(w, "}")
+}
+
+func pipelineGraphTriggerLabel(graph pipelineGraph, sep string) string {
+	parts := []string{"trigger: " + emptyDash(graph.Summary)}
+	return strings.Join(append(parts, pipelineGraphJobLabelParts(graph)...), sep)
+}
+
+func pipelineGraphPipelineLabel(graph pipelineGraph) string {
+	parts := []string{"pipeline: " + graph.Name}
+	return strings.Join(append(parts, pipelineGraphJobLabelParts(graph)...), "\n")
+}
+
+func pipelineGraphJobLabelParts(graph pipelineGraph) []string {
+	if strings.TrimSpace(graph.JobID) == "" {
+		return nil
+	}
+	parts := []string{"job: " + graph.JobID}
+	if strings.TrimSpace(graph.Ticket) != "" {
+		parts = append(parts, "ticket: "+graph.Ticket)
+	}
+	if graph.JobStatus != "" {
+		parts = append(parts, "status: "+string(graph.JobStatus))
+	}
+	if strings.TrimSpace(graph.JobState) != "" {
+		parts = append(parts, "state: "+graph.JobState)
+	}
+	return parts
 }
 
 func pipelineGraphNodeLabel(node pipelineGraphNode, sep string) string {

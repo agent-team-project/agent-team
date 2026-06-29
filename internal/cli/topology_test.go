@@ -484,7 +484,7 @@ schedules = ["nightly"]
 	if err := jobMermaid.Execute(); err != nil {
 		t.Fatalf("topology graph job mermaid: %v\nstderr=%s", err, jobMermaidErr.String())
 	}
-	if !strings.Contains(jobMermaidOut.String(), "state: ready") || !strings.Contains(jobMermaidOut.String(), "actions: "+wantAction) {
+	if !strings.Contains(jobMermaidOut.String(), "job: squ-971") || !strings.Contains(jobMermaidOut.String(), "ticket: SQU-971") || !strings.Contains(jobMermaidOut.String(), "state: ready") || !strings.Contains(jobMermaidOut.String(), "actions: "+wantAction) {
 		t.Fatalf("topology graph job mermaid output:\n%s", jobMermaidOut.String())
 	}
 

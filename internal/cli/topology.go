@@ -614,7 +614,7 @@ func topologyGraphNodeLabels(graph topologyGraph) []teamGraphLabel {
 		labels = append(labels, teamGraphLabel{ID: "team:" + team.Name, Label: strings.Join(parts, "\n")})
 	}
 	for _, pipeline := range graph.Pipelines {
-		labels = append(labels, teamGraphLabel{ID: "pipeline:" + pipeline.Name, Label: "pipeline: " + pipeline.Name})
+		labels = append(labels, teamGraphLabel{ID: "pipeline:" + pipeline.Name, Label: pipelineGraphPipelineLabel(pipeline)})
 		labels = append(labels, teamGraphLabel{ID: "pipeline:" + pipeline.Name + ":trigger", Label: "trigger: " + emptyDash(pipeline.Summary)})
 		for _, node := range pipeline.Nodes {
 			labels = append(labels, teamGraphLabel{

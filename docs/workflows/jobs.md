@@ -189,6 +189,8 @@ Use `job graph <job-id>` when you want the same per-step state as
 `job explain` overlaid on the declared pipeline graph without looking up the
 pipeline name first. It supports text, Mermaid, DOT, JSON, and `--commands`
 output for scripts that should run the graph's recommended follow-up actions.
+Mermaid and DOT output label the overlaid job on the trigger node so exported
+diagrams keep the work-unit context.
 
 ## Waiting For Jobs
 

@@ -521,7 +521,7 @@ after = ["review"]
 	if err := mermaid.Execute(); err != nil {
 		t.Fatalf("pipeline graph --job mermaid: %v\nstderr=%s", err, mermaidErr.String())
 	}
-	for _, want := range []string{"state: running", "status: running", "instance: manager-squ-950-review", "waiting for: review"} {
+	for _, want := range []string{"job: squ-950", "ticket: SQU-950", "state: running", "status: running", "instance: manager-squ-950-review", "waiting for: review"} {
 		if !strings.Contains(mermaidOut.String(), want) {
 			t.Fatalf("pipeline graph --job mermaid missing %q:\n%s", want, mermaidOut.String())
 		}
@@ -535,7 +535,7 @@ after = ["review"]
 	if err := dot.Execute(); err != nil {
 		t.Fatalf("pipeline graph --job dot: %v\nstderr=%s", err, dotErr.String())
 	}
-	if !strings.Contains(dotOut.String(), "state: waiting") || !strings.Contains(dotOut.String(), "waiting for: review") {
+	if !strings.Contains(dotOut.String(), "job: squ-950") || !strings.Contains(dotOut.String(), "state: waiting") || !strings.Contains(dotOut.String(), "waiting for: review") {
 		t.Fatalf("pipeline graph --job dot missing overlay labels:\n%s", dotOut.String())
 	}
 

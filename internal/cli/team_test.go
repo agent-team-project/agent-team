@@ -286,7 +286,7 @@ since = "2026-06-18T12:00:00Z"
 	if err := graphJobMermaid.Execute(); err != nil {
 		t.Fatalf("team graph job mermaid: %v\nstderr=%s", err, graphJobMermaidErr.String())
 	}
-	if !strings.Contains(graphJobMermaidOut.String(), "state: ready") || !strings.Contains(graphJobMermaidOut.String(), "actions: "+wantGraphAction) {
+	if !strings.Contains(graphJobMermaidOut.String(), "job: squ-801") || !strings.Contains(graphJobMermaidOut.String(), "ticket: SQU-801") || !strings.Contains(graphJobMermaidOut.String(), "state: ready") || !strings.Contains(graphJobMermaidOut.String(), "actions: "+wantGraphAction) {
 		t.Fatalf("team graph job mermaid output:\n%s", graphJobMermaidOut.String())
 	}
 
