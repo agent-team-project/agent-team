@@ -90,6 +90,45 @@ func TestWatchJSONIncludesFilteredInboxSummary(t *testing.T) {
 	}
 }
 
+func TestWatchFallbacksRewriteRuntimeHealthActions(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
+		Instance:  "runtime-stale",
+		Agent:     "worker",
+		Job:       "SQU-88",
+		Runtime:   "codex",
+		Status:    daemon.StatusRunning,
+		PID:       99999999,
+		Workspace: tmp,
+		StartedAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("write runtime metadata: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd := NewRootCmd()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetContext(ctx)
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"watch", "--json", "--fallbacks", "--interval", "1ms", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("watch --fallbacks --json: %v\nstderr=%s", err, stderr.String())
+	}
+	first := strings.Split(strings.TrimSpace(stdout.String()), "\n")[0]
+	if first == "" {
+		t.Fatalf("watch fallback output empty")
+	}
+	var snapshot monitorSnapshot
+	if err := json.Unmarshal([]byte(first), &snapshot); err != nil {
+		t.Fatalf("decode first watch fallback snapshot: %v\nbody=%s", err, first)
+	}
+	assertHealthIssueAction(t, snapshot.Health, "runtime_stale", "agent-team job resume-plan squ-88 --runtime-stale --commands --fallbacks")
+}
+
 func TestWatchSummaryJSONEmitsHealthSnapshots(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

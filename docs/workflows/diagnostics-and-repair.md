@@ -173,13 +173,15 @@ agent-team monitor --summary --commands
 agent-team monitor --plan --jobs --commands
 agent-team monitor -w --jobs --events 20
 agent-team watch --jobs --last-message
+agent-team watch --jobs --fallbacks
 agent-team team monitor delivery --jobs --schedules --last-message
 agent-team team monitor delivery --summary --resources
 agent-team team monitor delivery --plan --jobs --commands
 agent-team team watch delivery --jobs --schedules
+agent-team team watch delivery --jobs --fallbacks
 ```
 
-Monitor combines health, job/queue/outbox recovery signals, inbox counts, runtime resume capability counts, instance rows, resources, events, jobs, schedules, and plan previews. Add `--last-message` when stale Codex runtime recovery hints should point at clean final-response sidecars, `--fallbacks` when runtime hints should call fallback-expanded resume-plan output, `--commands` when scripts need one command per line from the visible health, plan, and job sections, or `--summary --commands` when a compact health/plan/job command list is enough. `team monitor <team>` applies the same view to team-owned runtime, queue, and outbox quarantine before rendering recovery actions; add `--summary [--resources]` for compact scoped health, or `--summary --commands` for compact scoped recovery commands. `team watch <team>` is the continuous shortcut.
+Monitor combines health, job/queue/outbox recovery signals, inbox counts, runtime resume capability counts, instance rows, resources, events, jobs, schedules, and plan previews. Add `--last-message` when stale Codex runtime recovery hints should point at clean final-response sidecars, `--fallbacks` when runtime hints should call fallback-expanded resume-plan output, `--commands` when scripts need one command per line from the visible health, plan, and job sections, or `--summary --commands` when a compact health/plan/job command list is enough. `watch` is the continuous shortcut and accepts the same runtime recovery hint preferences. `team monitor <team>` applies the same view to team-owned runtime, queue, and outbox quarantine before rendering recovery actions; add `--summary [--resources]` for compact scoped health, or `--summary --commands` for compact scoped recovery commands. `team watch <team>` is the scoped continuous shortcut and also accepts `--last-message` and `--fallbacks`.
 
 ## Snapshot
 

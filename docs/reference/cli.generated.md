@@ -10168,6 +10168,7 @@ Flags:
       --event-action strings   With --events, only show lifecycle events with this action. Can repeat or comma-separate.
       --events int             Include the last N matching daemon lifecycle events in the full monitor (0 = omit).
       --events-sort string     Sort the visible --events section by oldest or newest. (default "oldest")
+      --fallbacks              When runtime recovery actions use resume-plan, recommend command-mode fallback expansion.
       --format string          Render each monitor snapshot with a Go template, e.g. '{{.Health.Healthy}} {{len .Instances}}'.
       --instance strings       Only show instances, stats, and plan rows with this name. Can repeat or comma-separate.
       --interval duration      Refresh interval. (default 2s)
