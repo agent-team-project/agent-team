@@ -310,6 +310,8 @@ maintenance tick, so `repair --skip-tick` can still close or fail jobs whose
 worker already exited and whose runtime metadata has been reduced to lifecycle
 history. Use `repair --dry-run --skip-tick --json` to preview `job_events`, or
 `--commands` to emit the matching apply command.
+`pipeline repair <pipeline>` and `team repair <team>` include the same phase,
+filtered to jobs owned by that pipeline or team.
 Use `drain` when a script should keep running global maintenance cycles until
 the daemon has no immediate schedule, outbox, queue, or pipeline work left.
 Add `--wait --wait-status running` when it should then wait for jobs advanced

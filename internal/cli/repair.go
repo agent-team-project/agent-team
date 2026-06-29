@@ -518,6 +518,17 @@ func repairJobEventsStepHasApplyCommand(step repairJobEventsStep) bool {
 	return step.Action == "would_reconcile" && len(step.Results) > 0
 }
 
+func repairJobEventsStepFromResults(results []jobEventReconcileResult, dryRun bool) repairJobEventsStep {
+	action := "none"
+	if jobEventReconcileResultsHaveChanges(results) {
+		action = "reconciled"
+		if dryRun {
+			action = "would_reconcile"
+		}
+	}
+	return repairJobEventsStep{Action: action, Results: results}
+}
+
 func repairPipelineTimeoutStepHasApplyCommand(step repairPipelineTimeoutStep) bool {
 	return step.Action == "would_fail" && len(step.Results) > 0
 }
@@ -536,6 +547,7 @@ func pipelineRepairResultHasApplyCommand(result *pipelineRepairResult) bool {
 	}
 	return repairDaemonStepHasApplyCommand(result.Daemon) ||
 		repairQueueStepHasApplyCommand(result.Queue) ||
+		repairJobEventsStepHasApplyCommand(result.JobEvents) ||
 		repairPipelineTimeoutStepHasApplyCommand(result.JobTimeout) ||
 		repairPipelineTimeoutStepHasApplyCommand(result.PipelineTimeout) ||
 		repairPipelineRetryStepHasApplyCommand(result.PipelineRetry) ||
@@ -560,6 +572,7 @@ func teamRepairResultHasApplyCommand(result *teamRepairResult) bool {
 	}
 	return repairDaemonStepHasApplyCommand(result.Daemon) ||
 		repairQueueStepHasApplyCommand(result.Queue) ||
+		repairJobEventsStepHasApplyCommand(result.JobEvents) ||
 		repairPipelineTimeoutStepHasApplyCommand(result.JobTimeout) ||
 		repairPipelineTimeoutStepHasApplyCommand(result.PipelineTimeout) ||
 		repairPipelineRetryStepHasApplyCommand(result.PipelineRetry) ||
@@ -916,14 +929,7 @@ func runRepairJobEventsStep(teamDir string, opts repairOptions) (repairJobEvents
 	if err != nil {
 		return repairJobEventsStep{Action: "error", Reason: err.Error()}, err
 	}
-	action := "none"
-	if jobEventReconcileResultsHaveChanges(results) {
-		action = "reconciled"
-		if opts.DryRun {
-			action = "would_reconcile"
-		}
-	}
-	return repairJobEventsStep{Action: action, Results: results}, nil
+	return repairJobEventsStepFromResults(results, opts.DryRun), nil
 }
 
 func jobEventReconcileResultsHaveChanges(results []jobEventReconcileResult) bool {

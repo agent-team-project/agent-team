@@ -5175,6 +5175,50 @@ func writeReadyAdvanceJob(t *testing.T, teamDir, id string) {
 	}
 }
 
+func writeRunningLifecycleJob(t *testing.T, teamDir, id, target, pipelineName, instance string) {
+	t.Helper()
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        id,
+		Ticket:    strings.ToUpper(id),
+		Target:    target,
+		Pipeline:  pipelineName,
+		Instance:  instance,
+		Status:    job.StatusRunning,
+		CreatedAt: now.Add(-2 * time.Hour),
+		UpdatedAt: now.Add(-time.Hour),
+	}
+	if strings.TrimSpace(pipelineName) != "" {
+		j.Steps = []job.Step{
+			{ID: "implement", Target: target, Status: job.StatusRunning, Instance: instance, StartedAt: now.Add(-time.Hour)},
+		}
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write running lifecycle job: %v", err)
+	}
+}
+
+func appendLifecycleExitEventForJob(t *testing.T, teamDir, id, target, instance, branch, pr string, exitCode int) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := daemon.AppendLifecycleEvent(daemon.DaemonRoot(teamDir), &daemon.LifecycleEvent{
+		ID:       fmt.Sprintf("event-%s-exit", instance),
+		TS:       now,
+		Action:   "exit",
+		Instance: instance,
+		Agent:    target,
+		Job:      id,
+		Ticket:   strings.ToUpper(id),
+		Branch:   branch,
+		PR:       pr,
+		Status:   daemon.StatusExited,
+		ExitCode: &exitCode,
+		Message:  "instance process exited",
+	}); err != nil {
+		t.Fatalf("append lifecycle event: %v", err)
+	}
+}
+
 func TestPipelineRejectManualGate(t *testing.T) {
 	root := t.TempDir()
 	teamDir := filepath.Join(root, ".agent_team")
@@ -9500,6 +9544,88 @@ func TestPipelineRepairScopesQueueAndRetry(t *testing.T) {
 	}), " ")
 	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
 		t.Fatalf("pipeline repair dry-run commands = %q, want %q", got, wantCommand)
+	}
+}
+
+func TestPipelineRepairReconcilesScopedJobEvents(t *testing.T) {
+	root, _, cleanup := setupManualGateApprovalRepo(t, false)
+	defer cleanup()
+	teamDir := filepath.Join(root, ".agent_team")
+	writeRunningLifecycleJob(t, teamDir, "squ-930", "worker", "ticket_to_pr", "worker-squ-930")
+	writeRunningLifecycleJob(t, teamDir, "ops-930", "worker", "ops_to_pr", "worker-ops-930")
+	appendLifecycleExitEventForJob(t, teamDir, "squ-930", "worker", "worker-squ-930", "worker-squ-930", "https://github.com/acme/repo/pull/930", 0)
+	appendLifecycleExitEventForJob(t, teamDir, "ops-930", "worker", "worker-ops-930", "worker-ops-930", "https://github.com/acme/repo/pull/1930", 0)
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"pipeline", "repair", "ticket_to_pr", "--repo", root, "--dry-run", "--skip-daemon", "--skip-queue", "--skip-advance", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("pipeline repair job events dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview pipelineRepairResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode pipeline repair job events preview: %v\nbody=%s", err, dryOut.String())
+	}
+	if preview.JobEvents.Action != "would_reconcile" || len(preview.JobEvents.Results) != 1 ||
+		preview.JobEvents.Results[0].JobID != "squ-930" ||
+		preview.JobEvents.Results[0].After != job.StatusDone ||
+		!preview.JobEvents.Results[0].DryRun {
+		t.Fatalf("pipeline job events preview = %+v", preview.JobEvents)
+	}
+	if strings.Contains(dryOut.String(), "ops-930") {
+		t.Fatalf("pipeline repair leaked other pipeline event:\n%s", dryOut.String())
+	}
+	unchanged, err := job.Read(teamDir, "squ-930")
+	if err != nil {
+		t.Fatalf("read dry-run job: %v", err)
+	}
+	if unchanged.Status != job.StatusRunning {
+		t.Fatalf("dry-run mutated pipeline job = %+v", unchanged)
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"pipeline", "repair", "ticket_to_pr", "--repo", root, "--dry-run", "--skip-daemon", "--skip-queue", "--skip-advance", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("pipeline repair job events commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "pipeline", "repair", "ticket_to_pr", "--repo", root, "--skip-daemon", "--skip-queue", "--skip-advance"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("pipeline repair job events commands = %q, want %q", got, wantCommand)
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"pipeline", "repair", "ticket_to_pr", "--repo", root, "--skip-daemon", "--skip-queue", "--skip-advance", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("pipeline repair job events apply: %v\nstderr=%s", err, applyErr.String())
+	}
+	var applied pipelineRepairResult
+	if err := json.Unmarshal(applyOut.Bytes(), &applied); err != nil {
+		t.Fatalf("decode pipeline repair job events apply: %v\nbody=%s", err, applyOut.String())
+	}
+	if applied.JobEvents.Action != "reconciled" || len(applied.JobEvents.Results) != 1 || !applied.JobEvents.Results[0].Changed {
+		t.Fatalf("pipeline job events apply = %+v", applied.JobEvents)
+	}
+	updated, err := job.Read(teamDir, "squ-930")
+	if err != nil {
+		t.Fatalf("read updated pipeline job: %v", err)
+	}
+	other, err := job.Read(teamDir, "ops-930")
+	if err != nil {
+		t.Fatalf("read unrelated pipeline job: %v", err)
+	}
+	if updated.Status != job.StatusDone || updated.LastEvent != "instance_exited" || updated.Branch != "worker-squ-930" || updated.PR == "" {
+		t.Fatalf("updated pipeline job = %+v", updated)
+	}
+	if other.Status != job.StatusRunning || other.LastEvent != "" {
+		t.Fatalf("unrelated pipeline job changed = %+v", other)
 	}
 }
 

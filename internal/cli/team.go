@@ -7959,6 +7959,7 @@ type teamRepairResult struct {
 	HealthBefore    *healthResult             `json:"health_before,omitempty"`
 	Daemon          repairStepResult          `json:"daemon"`
 	Queue           repairQueueStep           `json:"queue"`
+	JobEvents       repairJobEventsStep       `json:"job_events"`
 	JobTimeout      repairPipelineTimeoutStep `json:"job_timeout"`
 	PipelineTimeout repairPipelineTimeoutStep `json:"pipeline_timeout"`
 	PipelineRetry   repairPipelineRetryStep   `json:"pipeline_retry"`
@@ -10418,6 +10419,12 @@ func runTeamRepair(cmd *cobra.Command, repo, teamDir, name string, opts teamRepa
 		}
 	}
 
+	jobEvents, err := runTeamRepairJobEventsStep(teamDir, team, opts)
+	if err != nil {
+		return nil, err
+	}
+	result.JobEvents = jobEvents
+
 	jobTimeout, err := runTeamRepairJobTimeoutStep(teamDir, team, opts)
 	if err != nil {
 		return nil, err
@@ -10512,6 +10519,18 @@ func teamRepairResultWithLastMessageActions(result *teamRepairResult, lastMessag
 	result.HealthBefore = healthResultWithLastMessageActions(result.HealthBefore, true)
 	result.HealthAfter = healthResultWithLastMessageActions(result.HealthAfter, true)
 	return result
+}
+
+func runTeamRepairJobEventsStep(teamDir string, team *topology.Team, opts teamRepairOptions) (repairJobEventsStep, error) {
+	jobs, err := job.List(teamDir)
+	if err != nil {
+		return repairJobEventsStep{Action: "error", Reason: err.Error()}, err
+	}
+	results, err := reconcileSelectedJobsFromEvents(teamDir, teamTimeoutJobCandidates(team, jobs), opts.DryRun, time.Now().UTC())
+	if err != nil {
+		return repairJobEventsStep{Action: "error", Reason: err.Error()}, err
+	}
+	return repairJobEventsStepFromResults(results, opts.DryRun), nil
 }
 
 func runTeamRepairPipelineRetryStep(cmd *cobra.Command, teamDir string, team *topology.Team, opts teamRepairOptions) (repairPipelineRetryStep, error) {
@@ -11166,6 +11185,10 @@ func renderTeamRepairResult(w io.Writer, result *teamRepairResult, jsonOut bool,
 	renderRepairDaemonStep(w, result.Daemon)
 	fmt.Fprintln(w)
 	renderRepairQueueStep(w, result.Queue)
+	fmt.Fprintln(w)
+	if err := renderRepairJobEventsStep(w, result.JobEvents); err != nil {
+		return err
+	}
 	fmt.Fprintln(w)
 	renderRepairJobTimeoutStep(w, result.JobTimeout)
 	fmt.Fprintln(w)

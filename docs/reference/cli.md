@@ -269,7 +269,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team pipeline timeout <pipeline>` | Mark stale running steps failed; add `--target-agent` to scope by role |
 | `agent-team pipeline retry <pipeline>` | Retry failed steps, honoring step `max_attempts` caps; add `--dry-run --commands` for the apply command or `--dispatch --wait-next-state`/`--wait-step` for stage-aware recovery handoff |
 | `agent-team pipeline tick <pipeline>` | Run or preview one scoped queue drain and ready-step advance cycle for one pipeline; add `--dry-run --commands` for the scoped apply command or `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |
-| `agent-team pipeline repair <pipeline>` | Scoped repair loop for one pipeline: queue retry, optional timeout/retry, ready-step advance, and `--wait-next-state`/`--wait-step` stage-aware bounded handoff |
+| `agent-team pipeline repair <pipeline>` | Scoped repair loop for one pipeline: event-backed job reconciliation, queue retry, optional timeout/retry, ready-step advance, and `--wait-next-state`/`--wait-step` stage-aware bounded handoff |
 | `agent-team pipeline drain <pipeline>` | Run scoped queue drain and ready-step advance cycles until one pipeline is idle; add `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |
 
 ## Teams
@@ -304,7 +304,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team team wait-jobs <team>` | Wait for team-owned jobs to reach a lifecycle status, event, or next-step state/stage |
 | `agent-team team tick <team>` | Scoped maintenance cycle; add `--dry-run --commands` for the scoped apply command, use `--workspace`/`--runtime` for advanced steps, and use `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |
 | `agent-team team drain <team>` | Scoped drain-until-idle maintenance loop; add `--wait-next-state`/`--wait-step` for stage-aware bounded handoff |
-| `agent-team team repair <team>` | Scoped repair loop, including stale-work timeout with `--timeout-jobs`; failed-step retry accepts pipeline/step filters, `--retry-force`, workspace/runtime overrides, `--last-message` health hints, and `--wait-next-state`/`--wait-step` stage-aware bounded handoff |
+| `agent-team team repair <team>` | Scoped repair loop with team-owned event-backed job reconciliation and stale-work timeout with `--timeout-jobs`; failed-step retry accepts pipeline/step filters, `--retry-force`, workspace/runtime overrides, `--last-message` health hints, and `--wait-next-state`/`--wait-step` stage-aware bounded handoff |
 | `agent-team team queue <team>` | Scoped queue list; filter queued dispatches with `--runtime`, sort rows with `--sort`, cap output with `--limit`, or print visible row actions with `--commands` |
 | `agent-team team queue show <team> <id>` | Inspect one active queue item owned by a team; add `--commands` to print only follow-up commands that preserve an explicit `--repo` selector |
 | `agent-team team queue retry <team> --all` | Retry matching team-owned entries; filter, sort, and limit batch actions with `--runtime`, `--sort`, and `--limit`; add `--dry-run --commands` for the scoped apply command |
@@ -375,7 +375,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team watch` | Continuous monitor with health, job/queue/outbox recovery, inbox, instances, resources, and optional lifecycle events; add `--events N --events-sort newest` to show latest events first, or `--last-message` for the same Codex final-message preference |
 | `agent-team snapshot` | Redacted diagnostic artifact with command provenance, job/queue/outbox quarantine inventory, event tails ordered with `--events-sort`, formatted summary fields, or next-action commands with `--commands` |
 | `agent-team snapshot diff <before.json> <after.json>` | Compare saved global, team, pipeline, or job diagnostic artifacts, or compare one saved artifact with current repo state for the saved scope using `--current-after` / `--current-before`; includes provenance, git/runtime context, health, plan, triage, next-action hints, job state, job quarantine, inboxes, outbox, outbox quarantine, queue, queue quarantine, schedules, intake, events, timeline rows, pipeline state, saved JSON output, action filters, summary-only output, sorted/bounded detail rows, and formatted counters for scripts |
-| `agent-team repair` | Start/reconcile/timeout/retry/tick recovery loop; timeout repair accepts filters, and failed-step retry accepts pipeline/step filters, `--retry-force`, runtime overrides, `--last-message` health hints, and `--wait-next-state`/`--wait-step` stage-aware bounded handoff |
+| `agent-team repair` | Start/reconcile/event-reconcile/timeout/retry/tick recovery loop; timeout repair accepts filters, and failed-step retry accepts pipeline/step filters, `--retry-force`, runtime overrides, `--last-message` health hints, and `--wait-next-state`/`--wait-step` stage-aware bounded handoff |
 
 ## Communication
 

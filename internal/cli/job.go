@@ -11725,12 +11725,16 @@ func reconcileJobsFromStatus(teamDir string, dryRun bool, now time.Time) ([]jobS
 }
 
 func reconcileJobsFromEvents(teamDir string, dryRun bool, now time.Time) ([]jobEventReconcileResult, error) {
-	daemonRoot := daemon.DaemonRoot(teamDir)
-	metas, err := daemon.ListMetadata(daemonRoot)
+	jobs, err := job.List(teamDir)
 	if err != nil {
 		return nil, err
 	}
-	jobs, err := job.List(teamDir)
+	return reconcileSelectedJobsFromEvents(teamDir, jobs, dryRun, now)
+}
+
+func reconcileSelectedJobsFromEvents(teamDir string, jobs []*job.Job, dryRun bool, now time.Time) ([]jobEventReconcileResult, error) {
+	daemonRoot := daemon.DaemonRoot(teamDir)
+	metas, err := daemon.ListMetadata(daemonRoot)
 	if err != nil {
 		return nil, err
 	}

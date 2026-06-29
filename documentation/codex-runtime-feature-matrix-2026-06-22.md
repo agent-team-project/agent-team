@@ -128,7 +128,11 @@ triage, pipeline status, overview/next hints, and the drain loop.
    `agent-team repair` now runs event-backed job reconciliation as a first-class
    repair step before timeout/retry/tick phases, so terminal lifecycle events can
    close or fail durable jobs even when operators use `--skip-tick` for a narrow
-   repair pass. Coverage: `TestRepairReconcilesJobEventsWithoutTick`.
+   repair pass. Scoped `pipeline repair` and `team repair` now run the same
+   phase against only jobs owned by that pipeline or team. Coverage:
+   `TestRepairReconcilesJobEventsWithoutTick`,
+   `TestPipelineRepairReconcilesScopedJobEvents`, and
+   `TestTeamRepairReconcilesScopedJobEvents`.
 
 6. **`job reconcile status` does not recover missing-state ephemeral jobs.**
    After `worker-doc-701` was removed, `job reconcile status --dry-run` returned

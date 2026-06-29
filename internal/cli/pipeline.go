@@ -6124,6 +6124,7 @@ type pipelineRepairResult struct {
 	StatusBefore    []pipelineStatusRow       `json:"status_before,omitempty"`
 	Daemon          repairStepResult          `json:"daemon"`
 	Queue           repairQueueStep           `json:"queue"`
+	JobEvents       repairJobEventsStep       `json:"job_events"`
 	JobTimeout      repairPipelineTimeoutStep `json:"job_timeout"`
 	PipelineTimeout repairPipelineTimeoutStep `json:"pipeline_timeout"`
 	PipelineRetry   repairPipelineRetryStep   `json:"pipeline_retry"`
@@ -10219,6 +10220,12 @@ func runPipelineRepair(cmd *cobra.Command, repo, teamDir, pipeline string, opts 
 		}
 	}
 
+	jobEvents, err := runPipelineRepairJobEventsStep(teamDir, pipeline, opts)
+	if err != nil {
+		return nil, err
+	}
+	result.JobEvents = jobEvents
+
 	jobTimeout, err := runPipelineRepairJobTimeoutStep(teamDir, pipeline, opts)
 	if err != nil {
 		return nil, err
@@ -10250,6 +10257,18 @@ func runPipelineRepair(cmd *cobra.Command, repo, teamDir, pipeline string, opts 
 		result.StatusAfter = after
 	}
 	return result, nil
+}
+
+func runPipelineRepairJobEventsStep(teamDir, pipeline string, opts pipelineRepairOptions) (repairJobEventsStep, error) {
+	jobs, err := selectedPipelineJobs(teamDir, pipeline)
+	if err != nil {
+		return repairJobEventsStep{Action: "error", Reason: err.Error()}, err
+	}
+	results, err := reconcileSelectedJobsFromEvents(teamDir, jobs, opts.DryRun, time.Now().UTC())
+	if err != nil {
+		return repairJobEventsStep{Action: "error", Reason: err.Error()}, err
+	}
+	return repairJobEventsStepFromResults(results, opts.DryRun), nil
 }
 
 func runPipelineRepairPipelineRetryStep(cmd *cobra.Command, teamDir, pipeline string, opts pipelineRepairOptions) (repairPipelineRetryStep, error) {
@@ -11593,6 +11612,9 @@ func renderPipelineRepairResult(w io.Writer, result *pipelineRepairResult, jsonO
 	fmt.Fprintf(w, "Status before: %s\n", pipelineRepairStatusSummary(result.StatusBefore))
 	renderRepairDaemonStep(w, result.Daemon)
 	renderRepairQueueStep(w, result.Queue)
+	if err := renderRepairJobEventsStep(w, result.JobEvents); err != nil {
+		return err
+	}
 	renderRepairJobTimeoutStep(w, result.JobTimeout)
 	renderRepairPipelineTimeoutStep(w, result.PipelineTimeout)
 	if err := renderRepairPipelineRetryStep(w, result.PipelineRetry); err != nil {
