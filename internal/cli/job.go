@@ -7318,11 +7318,13 @@ func newJobReconcileCmd() *cobra.Command {
 
 func newJobReconcileEventsCmd() *cobra.Command {
 	var (
-		repo     string
-		dryRun   bool
-		commands bool
-		jsonOut  bool
-		format   string
+		repo        string
+		pipeline    string
+		targetAgent string
+		dryRun      bool
+		commands    bool
+		jsonOut     bool
+		format      string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -7355,22 +7357,36 @@ func newJobReconcileEventsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			results, err := reconcileJobsFromEvents(teamDir, dryRun, time.Now().UTC())
+			jobs, err := job.List(teamDir)
+			if err != nil {
+				return err
+			}
+			jobs = filterJobTimeoutCandidates(jobs, jobTimeoutFilters{
+				Pipeline:    pipeline,
+				TargetAgent: targetAgent,
+			})
+			results, err := reconcileSelectedJobsFromEvents(teamDir, jobs, dryRun, time.Now().UTC())
 			if err != nil {
 				return err
 			}
 			if commands {
 				scope := operatorCommandScopeFromCommand(cmd, repo, "repo")
 				return renderJobReconcileApplyCommand(cmd.OutOrStdout(), jobEventReconcileResultsHaveDryRunAction(results), jobReconcileApplyCommandOptions{
-					BaseArgs: []string{"agent-team", "job", "reconcile", "events"},
-					Repo:     scope.Repo,
-					RepoSet:  scope.Set,
+					BaseArgs:    []string{"agent-team", "job", "reconcile", "events"},
+					Repo:        scope.Repo,
+					RepoSet:     scope.Set,
+					Pipeline:    pipeline,
+					PipelineSet: cmd.Flags().Changed("pipeline"),
+					TargetAgent: targetAgent,
+					TargetSet:   cmd.Flags().Changed("target-agent"),
 				})
 			}
 			return renderJobEventReconcileResults(cmd.OutOrStdout(), results, jsonOut, tmpl)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&pipeline, "pipeline", "", "Only reconcile jobs owned by this pipeline.")
+	cmd.Flags().StringVar(&targetAgent, "target-agent", "", "Only reconcile jobs targeting this agent.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview job updates without writing them.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching job reconcile events apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
@@ -14466,11 +14482,15 @@ type jobCreateApplyCommandOptions struct {
 }
 
 type jobReconcileApplyCommandOptions struct {
-	BaseArgs []string
-	Repo     string
-	RepoSet  bool
-	State    string
-	StateSet bool
+	BaseArgs    []string
+	Repo        string
+	RepoSet     bool
+	State       string
+	StateSet    bool
+	Pipeline    string
+	PipelineSet bool
+	TargetAgent string
+	TargetSet   bool
 }
 
 type jobReconcileGitHubApplyCommandOptions struct {
@@ -14507,6 +14527,12 @@ func jobReconcileApplyCommandArgs(opts jobReconcileApplyCommandOptions) []string
 	}
 	if opts.StateSet && strings.TrimSpace(opts.State) != "" {
 		args = append(args, "--state", opts.State)
+	}
+	if opts.PipelineSet && strings.TrimSpace(opts.Pipeline) != "" {
+		args = append(args, "--pipeline", opts.Pipeline)
+	}
+	if opts.TargetSet && strings.TrimSpace(opts.TargetAgent) != "" {
+		args = append(args, "--target-agent", opts.TargetAgent)
 	}
 	return args
 }

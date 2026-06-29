@@ -5262,6 +5262,159 @@ func TestJobReconcileEventsFromTerminalMetadata(t *testing.T) {
 	}
 }
 
+func TestJobReconcileEventsFiltersByPipelineAndTargetAgent(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-131",
+			Ticket:    "SQU-131",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Instance:  "worker-squ-131",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-time.Hour),
+			UpdatedAt: now.Add(-time.Hour),
+		},
+		{
+			ID:        "ops-131",
+			Ticket:    "OPS-131",
+			Target:    "worker",
+			Pipeline:  "ops_review",
+			Instance:  "worker-ops-131",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-time.Hour),
+			UpdatedAt: now.Add(-time.Hour),
+		},
+		{
+			ID:        "squ-132",
+			Ticket:    "SQU-132",
+			Target:    "manager",
+			Pipeline:  "ticket_to_pr",
+			Instance:  "manager-squ-132",
+			Status:    job.StatusRunning,
+			CreatedAt: now.Add(-time.Hour),
+			UpdatedAt: now.Add(-time.Hour),
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	exitCode := 0
+	for _, meta := range []*daemon.Metadata{
+		{
+			Instance:  "worker-squ-131",
+			Agent:     "worker",
+			Job:       "squ-131",
+			Ticket:    "SQU-131",
+			Branch:    "worker-squ-131",
+			PR:        "https://github.com/acme/repo/pull/131",
+			Workspace: tmp,
+			Status:    daemon.StatusExited,
+			ExitCode:  &exitCode,
+			StartedAt: now.Add(-30 * time.Minute),
+			ExitedAt:  now,
+		},
+		{
+			Instance:  "worker-ops-131",
+			Agent:     "worker",
+			Job:       "ops-131",
+			Ticket:    "OPS-131",
+			Branch:    "worker-ops-131",
+			PR:        "https://github.com/acme/repo/pull/1131",
+			Workspace: tmp,
+			Status:    daemon.StatusExited,
+			ExitCode:  &exitCode,
+			StartedAt: now.Add(-30 * time.Minute),
+			ExitedAt:  now,
+		},
+		{
+			Instance:  "manager-squ-132",
+			Agent:     "manager",
+			Job:       "squ-132",
+			Ticket:    "SQU-132",
+			Branch:    "manager-squ-132",
+			PR:        "https://github.com/acme/repo/pull/132",
+			Workspace: tmp,
+			Status:    daemon.StatusExited,
+			ExitCode:  &exitCode,
+			StartedAt: now.Add(-30 * time.Minute),
+			ExitedAt:  now,
+		},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("WriteMetadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"job", "reconcile", "events", "--repo", tmp, "--pipeline", "ticket_to_pr", "--target-agent", "worker", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("job reconcile events scoped dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview []jobEventReconcileResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode scoped dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if len(preview) != 1 || preview[0].JobID != "squ-131" || preview[0].After != job.StatusDone || !preview[0].DryRun {
+		t.Fatalf("scoped preview = %+v", preview)
+	}
+	if strings.Contains(dryOut.String(), "ops-131") || strings.Contains(dryOut.String(), "squ-132") {
+		t.Fatalf("scoped dry-run leaked unselected jobs:\n%s", dryOut.String())
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "reconcile", "events", "--repo", tmp, "--pipeline", "ticket_to_pr", "--target-agent", "worker", "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("job reconcile events scoped commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "reconcile", "events", "--repo", tmp, "--pipeline", "ticket_to_pr", "--target-agent", "worker"}), " ") + "\n"
+	if got := commandsOut.String(); got != wantCommand {
+		t.Fatalf("scoped commands = %q, want %q", got, wantCommand)
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"job", "reconcile", "events", "--repo", tmp, "--pipeline", "ticket_to_pr", "--target-agent", "worker", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("job reconcile events scoped apply: %v\nstderr=%s", err, applyErr.String())
+	}
+	var applied []jobEventReconcileResult
+	if err := json.Unmarshal(applyOut.Bytes(), &applied); err != nil {
+		t.Fatalf("decode scoped apply: %v\nbody=%s", err, applyOut.String())
+	}
+	if len(applied) != 1 || applied[0].JobID != "squ-131" || !applied[0].Changed {
+		t.Fatalf("scoped apply = %+v", applied)
+	}
+	for _, tc := range []struct {
+		id     string
+		status job.Status
+	}{
+		{id: "squ-131", status: job.StatusDone},
+		{id: "ops-131", status: job.StatusRunning},
+		{id: "squ-132", status: job.StatusRunning},
+	} {
+		j, err := job.Read(teamDir, tc.id)
+		if err != nil {
+			t.Fatalf("read job %s: %v", tc.id, err)
+		}
+		if j.Status != tc.status {
+			t.Fatalf("job %s status = %s, want %s; job=%+v", tc.id, j.Status, tc.status, j)
+		}
+	}
+}
+
 func TestJobReconcileEventsFromLifecycleEventAfterMetadataRemoved(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
