@@ -4561,6 +4561,7 @@ Flags:
       --json             Emit pipeline doctor findings as JSON.
       --repo string      Repo root containing .agent_team. (default "<repo>")
       --strict-runtime   Fail when a step-declared runtime default cannot be resolved or is not discoverable.
+      --target string    Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 
 ## `agent-team pipeline drain`
@@ -7821,6 +7822,7 @@ Flags:
       --json             Emit team doctor findings as JSON.
       --repo string      Repo root containing .agent_team. (default "<repo>")
       --strict-runtime   Fail when a team-owned step runtime default cannot be resolved or is not discoverable.
+      --target string    Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 
 ## `agent-team team down`

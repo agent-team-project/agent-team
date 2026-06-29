@@ -194,6 +194,7 @@ func newPipelineGraphCmd() *cobra.Command {
 func newPipelineDoctorCmd() *cobra.Command {
 	var (
 		repo          string
+		targetRepo    string
 		all           bool
 		strictRuntime bool
 		jsonOut       bool
@@ -241,7 +242,13 @@ func newPipelineDoctorCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline doctor: %v\n", err)
 				return exitErr(2)
 			}
-			teamDir, err := resolveTeamDir(cmd, repo)
+			selectedRepo := repo
+			repoFlag := "repo"
+			if cmd.Flags().Changed("target") && !cmd.Flags().Changed("repo") {
+				selectedRepo = targetRepo
+				repoFlag = "target"
+			}
+			teamDir, err := resolveTeamDir(cmd, selectedRepo)
 			if err != nil {
 				return err
 			}
@@ -253,10 +260,11 @@ func newPipelineDoctorCmd() *cobra.Command {
 			if strictRuntime {
 				promotePipelineDoctorRuntimeWarnings(result)
 			}
-			return renderPipelineDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, tmpl, operatorCommandScopeFromCommand(cmd, repo, "repo"))
+			return renderPipelineDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, tmpl, operatorCommandScopeFromCommand(cmd, selectedRepo, repoFlag))
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&targetRepo, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&all, "all", false, "Validate all pipelines. This is the default when no pipeline is passed.")
 	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when a step-declared runtime default cannot be resolved or is not discoverable.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline doctor findings as JSON.")

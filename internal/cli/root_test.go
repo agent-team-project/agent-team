@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -69,6 +71,149 @@ func TestRootRepoFlagWorksAfterLegacyTargetCommand(t *testing.T) {
 	}
 	if len(plan.Instances) == 0 {
 		t.Fatalf("plan = %+v, want declared instances", plan)
+	}
+}
+
+func TestRootTargetAliasSelectsRepoForRepoScopedCommands(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "pipeline doctor",
+			args: []string{"pipeline", "doctor", "--target", root, "--all", "--json"},
+			want: []string{`"ok":true`, `"ticket_to_pr"`},
+		},
+		{
+			name: "team doctor",
+			args: []string{"team", "doctor", "--target", root, "--all", "--json"},
+			want: []string{`"ok":true`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("%s with local --target repo alias: %v\nstderr=%s", tc.name, err, stderr.String())
+			}
+			body := out.String()
+			for _, want := range tc.want {
+				if !strings.Contains(body, want) {
+					t.Fatalf("%s output missing %q\nbody:\n%s", tc.name, want, body)
+				}
+			}
+		})
+	}
+}
+
+func TestRootRepoFlagWinsOverDoctorTargetAlias(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+	notARepo := t.TempDir()
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "pipeline repo before target",
+			args: []string{"pipeline", "doctor", "--repo", root, "--target", notARepo, "--all", "--json"},
+		},
+		{
+			name: "pipeline target before repo",
+			args: []string{"pipeline", "doctor", "--target", notARepo, "--repo", root, "--all", "--json"},
+		},
+		{
+			name: "team repo before target",
+			args: []string{"team", "doctor", "--repo", root, "--target", notARepo, "--all", "--json"},
+		},
+		{
+			name: "team target before repo",
+			args: []string{"team", "doctor", "--target", notARepo, "--repo", root, "--all", "--json"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("%s with both repo selectors: %v\nstderr=%s", tc.name, err, stderr.String())
+			}
+			if !strings.Contains(out.String(), `"ok":true`) {
+				t.Fatalf("%s output missing ok=true\nbody:\n%s", tc.name, out.String())
+			}
+		})
+	}
+}
+
+func TestRootTargetAliasCommandsEmitRepoScope(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[agents.worker]
+runtime = "codex"
+runtime_bin = "missing-agent-team-test-runtime"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+runtime = "codex"
+runtime_bin = "missing-agent-team-test-runtime"
+`), 0o644); err != nil {
+		t.Fatalf("write topology: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"pipeline", "doctor", "--target", root, "--strict-runtime", "--commands"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("pipeline doctor strict runtime unexpectedly succeeded")
+	}
+	want := strings.Join([]string{
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", root, "pipeline", "doctor", "ticket_to_pr", "--strict-runtime", "--json"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", root, "pipeline", "graph", "ticket_to_pr", "--routes"}), " "),
+	}, "\n")
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Fatalf("pipeline doctor commands = %q, want %q\nstderr=%s", got, want, stderr.String())
+	}
+	if strings.Contains(out.String(), "--target") {
+		t.Fatalf("pipeline doctor commands should canonicalize repo scope, got:\n%s", out.String())
+	}
+}
+
+func TestRootRepoAliasDoesNotConflictWithJobTargetAgent(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"--repo", root, "job", "create", "SQU-708", "--target", "manager", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job create with root --repo and agent --target: %v\nstderr=%s", err, stderr.String())
+	}
+	var created job.Job
+	if err := json.Unmarshal(out.Bytes(), &created); err != nil {
+		t.Fatalf("decode created job: %v\nbody=%s", err, out.String())
+	}
+	if created.ID != "squ-708" || created.Target != "manager" {
+		t.Fatalf("created = %+v, want manager-targeted squ-708", created)
 	}
 }
 

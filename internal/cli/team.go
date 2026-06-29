@@ -185,6 +185,7 @@ func newTeamGraphCmd() *cobra.Command {
 func newTeamDoctorCmd() *cobra.Command {
 	var (
 		repo          string
+		targetRepo    string
 		all           bool
 		strictRuntime bool
 		jsonOut       bool
@@ -224,7 +225,13 @@ func newTeamDoctorCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team doctor: %v\n", err)
 				return exitErr(2)
 			}
-			teamDir, err := resolveTeamDir(cmd, repo)
+			selectedRepo := repo
+			repoFlag := "repo"
+			if cmd.Flags().Changed("target") && !cmd.Flags().Changed("repo") {
+				selectedRepo = targetRepo
+				repoFlag = "target"
+			}
+			teamDir, err := resolveTeamDir(cmd, selectedRepo)
 			if err != nil {
 				return err
 			}
@@ -237,7 +244,7 @@ func newTeamDoctorCmd() *cobra.Command {
 				if strictRuntime {
 					promoteAllTeamDoctorRuntimeWarnings(result)
 				}
-				return renderAllTeamDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, tmpl, operatorCommandScopeFromCommand(cmd, repo, "repo"))
+				return renderAllTeamDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, tmpl, operatorCommandScopeFromCommand(cmd, selectedRepo, repoFlag))
 			}
 			result, err := collectTeamDoctor(teamDir, args[0])
 			if err != nil {
@@ -247,10 +254,11 @@ func newTeamDoctorCmd() *cobra.Command {
 			if strictRuntime {
 				promoteTeamDoctorRuntimeWarnings(result)
 			}
-			return renderTeamDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, tmpl, operatorCommandScopeFromCommand(cmd, repo, "repo"))
+			return renderTeamDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, tmpl, operatorCommandScopeFromCommand(cmd, selectedRepo, repoFlag))
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&targetRepo, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&all, "all", false, "Validate all declared teams.")
 	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when a team-owned step runtime default cannot be resolved or is not discoverable.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team doctor findings as JSON.")
