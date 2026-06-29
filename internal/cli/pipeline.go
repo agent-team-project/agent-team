@@ -6401,6 +6401,13 @@ func pipelineGraphWithJobState(graph pipelineGraph, j *job.Job) pipelineGraph {
 		return graph
 	}
 	explained := scopePipelineExplainResultActions(graph.Name, explainJobPipeline(j))
+	return pipelineGraphWithExplainedJobState(graph, explained)
+}
+
+func pipelineGraphWithExplainedJobState(graph pipelineGraph, explained jobExplainResult) pipelineGraph {
+	if strings.TrimSpace(explained.JobID) == "" {
+		return graph
+	}
 	graph.JobID = explained.JobID
 	graph.Ticket = explained.Ticket
 	graph.JobStatus = explained.JobStatus
@@ -10862,6 +10869,50 @@ func pipelineGraphActionCommands(graph pipelineGraph) []string {
 		actions = append(actions, node.Actions...)
 	}
 	return commandActionsOnly(actions)
+}
+
+func pipelineGraphNodeStateText(node pipelineGraphNode) string {
+	state := ""
+	if node.State != "" {
+		state = " state=" + node.State
+	}
+	stepStatus := ""
+	if node.StepStatus != "" {
+		stepStatus = " step_status=" + string(node.StepStatus)
+	}
+	ready := ""
+	if node.Ready {
+		ready = " ready=true"
+	}
+	instance := ""
+	if node.Instance != "" {
+		instance = " instance=" + node.Instance
+	}
+	attempts := ""
+	if node.Attempts > 0 {
+		attempts = fmt.Sprintf(" attempts=%d", node.Attempts)
+	}
+	waitingFor := ""
+	if len(node.WaitingFor) > 0 {
+		waitingFor = " waiting_for=" + strings.Join(node.WaitingFor, ",")
+	}
+	message := ""
+	if node.Message != "" {
+		message = fmt.Sprintf(" message=%q", node.Message)
+	}
+	skipped := ""
+	if node.Skipped {
+		skipped = " skipped=true"
+	}
+	skipReason := ""
+	if node.SkipReason != "" {
+		skipReason = fmt.Sprintf(" skip_reason=%q", node.SkipReason)
+	}
+	actions := ""
+	if len(node.Actions) > 0 {
+		actions = fmt.Sprintf(" actions=%q", strings.Join(node.Actions, "; "))
+	}
+	return state + stepStatus + ready + instance + attempts + waitingFor + message + skipped + skipReason + actions
 }
 
 func renderPipelineGraphText(w io.Writer, graph pipelineGraph) {

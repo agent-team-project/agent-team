@@ -237,6 +237,128 @@ since = "2026-06-18T12:00:00Z"
 		t.Fatalf("team graph dot output:\n%s", graphDOTOut.String())
 	}
 
+	graphJob := NewRootCmd()
+	graphJobOut, graphJobErr := &bytes.Buffer{}, &bytes.Buffer{}
+	graphJob.SetOut(graphJobOut)
+	graphJob.SetErr(graphJobErr)
+	graphJob.SetArgs([]string{"team", "graph", "delivery", "--repo", root, "--job", "squ-801", "--json"})
+	if err := graphJob.Execute(); err != nil {
+		t.Fatalf("team graph job json: %v\nstderr=%s", err, graphJobErr.String())
+	}
+	var jobGraph teamGraph
+	if err := json.Unmarshal(graphJobOut.Bytes(), &jobGraph); err != nil {
+		t.Fatalf("decode team graph job: %v\nbody=%s", err, graphJobOut.String())
+	}
+	if len(jobGraph.Pipelines) != 1 || jobGraph.Pipelines[0].JobID != "squ-801" || jobGraph.Pipelines[0].JobState == "" {
+		t.Fatalf("team graph job overlay = %+v", jobGraph.Pipelines)
+	}
+	jobNodes := map[string]pipelineGraphNode{}
+	for _, node := range jobGraph.Pipelines[0].Nodes {
+		jobNodes[node.ID] = node
+	}
+	wantGraphAction := "agent-team team tick delivery --dry-run --preview-routes"
+	if jobNodes["review"].State != "ready" || jobNodes["review"].StepStatus != job.StatusBlocked || !containsString(jobNodes["review"].Actions, wantGraphAction) {
+		t.Fatalf("team graph review overlay = %+v", jobNodes["review"])
+	}
+
+	graphJobText := NewRootCmd()
+	graphJobTextOut, graphJobTextErr := &bytes.Buffer{}, &bytes.Buffer{}
+	graphJobText.SetOut(graphJobTextOut)
+	graphJobText.SetErr(graphJobTextErr)
+	graphJobText.SetArgs([]string{"team", "graph", "delivery", "--repo", root, "--job", "squ-801"})
+	if err := graphJobText.Execute(); err != nil {
+		t.Fatalf("team graph job text: %v\nstderr=%s", err, graphJobTextErr.String())
+	}
+	for _, want := range []string{
+		`ticket_to_pr trigger=ticket.created steps=2 job=squ-801 ticket=SQU-801 status=running`,
+		`review target=manager after=implement state=ready step_status=blocked ready=true message="ready to advance" actions="agent-team team tick delivery --dry-run --preview-routes"`,
+	} {
+		if !strings.Contains(graphJobTextOut.String(), want) {
+			t.Fatalf("team graph job text missing %q:\n%s", want, graphJobTextOut.String())
+		}
+	}
+
+	graphJobMermaid := NewRootCmd()
+	graphJobMermaidOut, graphJobMermaidErr := &bytes.Buffer{}, &bytes.Buffer{}
+	graphJobMermaid.SetOut(graphJobMermaidOut)
+	graphJobMermaid.SetErr(graphJobMermaidErr)
+	graphJobMermaid.SetArgs([]string{"team", "graph", "delivery", "--repo", root, "--job", "squ-801", "--format", "mermaid"})
+	if err := graphJobMermaid.Execute(); err != nil {
+		t.Fatalf("team graph job mermaid: %v\nstderr=%s", err, graphJobMermaidErr.String())
+	}
+	if !strings.Contains(graphJobMermaidOut.String(), "state: ready") || !strings.Contains(graphJobMermaidOut.String(), "actions: "+wantGraphAction) {
+		t.Fatalf("team graph job mermaid output:\n%s", graphJobMermaidOut.String())
+	}
+
+	graphCommands := NewRootCmd()
+	graphCommandsOut, graphCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	graphCommands.SetOut(graphCommandsOut)
+	graphCommands.SetErr(graphCommandsErr)
+	graphCommands.SetArgs([]string{"team", "graph", "delivery", "--repo", root, "--job", "squ-801", "--commands"})
+	if err := graphCommands.Execute(); err != nil {
+		t.Fatalf("team graph commands: %v\nstderr=%s", err, graphCommandsErr.String())
+	}
+	wantGraphCommand := strings.Join(scopedOperatorActions([]string{wantGraphAction}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if graphCommandsOut.String() != wantGraphCommand {
+		t.Fatalf("team graph commands = %q, want %q", graphCommandsOut.String(), wantGraphCommand)
+	}
+
+	graphMismatch := NewRootCmd()
+	graphMismatchOut, graphMismatchErr := &bytes.Buffer{}, &bytes.Buffer{}
+	graphMismatch.SetOut(graphMismatchOut)
+	graphMismatch.SetErr(graphMismatchErr)
+	graphMismatch.SetArgs([]string{"team", "graph", "delivery", "--repo", root, "--job", "oth-801"})
+	err := graphMismatch.Execute()
+	if err == nil {
+		t.Fatal("team graph accepted a job from another team's pipeline")
+	}
+	var mismatchCode ExitCode
+	if !errors.As(err, &mismatchCode) || int(mismatchCode) != 1 {
+		t.Fatalf("team graph mismatch err = %v, want exit 1", err)
+	}
+	if !strings.Contains(graphMismatchErr.String(), `job "oth-801" belongs to pipeline "platform_ops", not a pipeline owned by team "delivery"`) {
+		t.Fatalf("team graph mismatch stderr = %q", graphMismatchErr.String())
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "commands json",
+			args: []string{"team", "graph", "delivery", "--commands", "--json"},
+			want: "--commands cannot be combined with --json",
+		},
+		{
+			name: "commands format",
+			args: []string{"team", "graph", "delivery", "--commands", "--format", "text"},
+			want: "--commands cannot be combined with --format",
+		},
+	} {
+		t.Run("team-graph-validation-"+tc.name, func(t *testing.T) {
+			invalid := NewRootCmd()
+			invalidOut, invalidErr := &bytes.Buffer{}, &bytes.Buffer{}
+			invalid.SetOut(invalidOut)
+			invalid.SetErr(invalidErr)
+			invalid.SetArgs(tc.args)
+			err := invalid.Execute()
+			if err == nil {
+				t.Fatalf("team graph accepted invalid args %v", tc.args)
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 2 {
+				t.Fatalf("team graph invalid args err = %v, want exit 2", err)
+			}
+			if !strings.Contains(invalidErr.String(), tc.want) {
+				t.Fatalf("team graph invalid args stderr = %q, want %q", invalidErr.String(), tc.want)
+			}
+			if invalidOut.Len() != 0 {
+				t.Fatalf("team graph invalid args wrote stdout: %q", invalidOut.String())
+			}
+		})
+	}
+
 	ps := NewRootCmd()
 	psOut, psErr := &bytes.Buffer{}, &bytes.Buffer{}
 	ps.SetOut(psOut)

@@ -146,6 +146,8 @@ func newTeamGraphCmd() *cobra.Command {
 		graphFormat   string
 		includeRoutes bool
 		jsonOut       bool
+		jobID         string
+		commands      bool
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -158,6 +160,14 @@ func newTeamGraphCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team graph: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team graph: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && cmd.Flags().Changed("format") {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team graph: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			format, err := parsePipelineGraphFormat(graphFormat)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team graph: %v\n", err)
@@ -167,10 +177,13 @@ func newTeamGraphCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			graph, err := collectTeamGraph(teamDir, args[0], includeRoutes)
+			graph, err := collectTeamGraph(teamDir, args[0], includeRoutes, jobID)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team graph: %v\n", err)
 				return exitErr(1)
+			}
+			if commands {
+				return renderTeamGraphCommands(cmd.OutOrStdout(), graph, operatorCommandScopeFromCommand(cmd, repo, "repo"))
 			}
 			return renderTeamGraph(cmd.OutOrStdout(), graph, format, jsonOut)
 		},
@@ -179,6 +192,8 @@ func newTeamGraphCmd() *cobra.Command {
 	cmd.Flags().StringVar(&graphFormat, "format", "text", "Graph output format: text, mermaid, or dot.")
 	cmd.Flags().BoolVar(&includeRoutes, "routes", false, "Annotate pipeline steps with matching agent.dispatch routes.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit graph nodes and edges as JSON.")
+	cmd.Flags().StringVar(&jobID, "job", "", "Overlay durable job step state on a team-owned pipeline graph.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended commands from graph action hints, one per line. agent-team follow-ups preserve the selected repo scope.")
 	return cmd
 }
 
@@ -8036,8 +8051,12 @@ func loadTopologyTeam(teamDir, name string) (*topology.Topology, *topology.Team,
 	return top, top.Teams[name], nil
 }
 
-func collectTeamGraph(teamDir, name string, includeRoutes bool) (teamGraph, error) {
+func collectTeamGraph(teamDir, name string, includeRoutes bool, jobID string) (teamGraph, error) {
 	top, team, err := loadTopologyTeam(teamDir, name)
+	if err != nil {
+		return teamGraph{}, err
+	}
+	overlayJob, err := readTeamGraphOverlayJob(teamDir, team, jobID)
 	if err != nil {
 		return teamGraph{}, err
 	}
@@ -8071,6 +8090,10 @@ func collectTeamGraph(teamDir, name string, includeRoutes bool) (teamGraph, erro
 			continue
 		}
 		pg := pipelineGraphFromTopology(top, pipeline, includeRoutes)
+		if overlayJob != nil && strings.TrimSpace(overlayJob.Pipeline) == name {
+			explained := scopeTeamExplainResultActions(team.Name, name, explainJobPipeline(overlayJob))
+			pg = pipelineGraphWithExplainedJobState(pg, explained)
+		}
 		graph.Pipelines = append(graph.Pipelines, pg)
 		graph.Edges = append(graph.Edges, teamGraphEdge{From: teamNode, To: "pipeline:" + name, Kind: "owns_pipeline"})
 		graph.Edges = append(graph.Edges, teamGraphEdge{From: "pipeline:" + name, To: "pipeline:" + name + ":trigger", Kind: "has_trigger"})
@@ -8130,6 +8153,30 @@ func collectTeamGraph(teamDir, name string, includeRoutes bool) (teamGraph, erro
 		}
 	}
 	return graph, nil
+}
+
+func readTeamGraphOverlayJob(teamDir string, team *topology.Team, id string) (*job.Job, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, nil
+	}
+	if team == nil {
+		return nil, fmt.Errorf("team is required")
+	}
+	j, err := job.Read(teamDir, id)
+	if err != nil {
+		return nil, err
+	}
+	pipeline := strings.TrimSpace(j.Pipeline)
+	if pipeline == "" {
+		return nil, fmt.Errorf("job %q is not a pipeline job", j.ID)
+	}
+	for _, owned := range team.Pipelines {
+		if strings.TrimSpace(owned) == pipeline {
+			return j, nil
+		}
+	}
+	return nil, fmt.Errorf("job %q belongs to pipeline %q, not a pipeline owned by team %q", j.ID, pipeline, team.Name)
 }
 
 func namespacedPipelineGraphNode(pipeline, node string) string {
@@ -12186,6 +12233,14 @@ func renderTeamGraph(w io.Writer, graph teamGraph, format pipelineGraphFormat, j
 	return nil
 }
 
+func renderTeamGraphCommands(w io.Writer, graph teamGraph, scope operatorCommandScope) error {
+	var actions []string
+	for _, pipeline := range graph.Pipelines {
+		actions = append(actions, pipelineGraphActionCommands(pipeline)...)
+	}
+	return renderActionCommands(w, scopedOperatorActions(actions, scope))
+}
+
 func renderTeamGraphText(w io.Writer, graph teamGraph) {
 	fmt.Fprintf(w, "Team: %s\n", graph.Team.Name)
 	if graph.Team.Description != "" {
@@ -12208,7 +12263,11 @@ func renderTeamGraphText(w io.Writer, graph teamGraph) {
 	} else {
 		fmt.Fprintln(w, "Pipelines:")
 		for _, pipeline := range graph.Pipelines {
-			fmt.Fprintf(w, "  %s trigger=%s steps=%d\n", pipeline.Name, emptyDash(pipeline.Summary), len(pipeline.Nodes))
+			jobInfo := ""
+			if pipeline.JobID != "" {
+				jobInfo = fmt.Sprintf(" job=%s ticket=%s status=%s state=%s message=%q", pipeline.JobID, emptyDash(pipeline.Ticket), pipeline.JobStatus, emptyDash(pipeline.JobState), pipeline.Message)
+			}
+			fmt.Fprintf(w, "  %s trigger=%s steps=%d%s\n", pipeline.Name, emptyDash(pipeline.Summary), len(pipeline.Nodes), jobInfo)
 			for _, node := range pipeline.Nodes {
 				after := "-"
 				if len(node.After) > 0 {
@@ -12238,7 +12297,7 @@ func renderTeamGraphText(w io.Writer, graph teamGraph) {
 				if node.Missing {
 					missing = " missing=true"
 				}
-				fmt.Fprintf(w, "    %s target=%s after=%s%s%s%s%s%s%s\n", node.ID, emptyDash(node.Target), after, gate, optional, timeout, maxAttempts, routes, missing)
+				fmt.Fprintf(w, "    %s target=%s after=%s%s%s%s%s%s%s%s\n", node.ID, emptyDash(node.Target), after, gate, optional, timeout, maxAttempts, routes, missing, pipelineGraphNodeStateText(node))
 			}
 		}
 	}
