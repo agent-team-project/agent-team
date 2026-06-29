@@ -265,8 +265,18 @@ func TestRootGraphShortcutRendersGraphScopes(t *testing.T) {
 			want: []string{"Team: delivery", "Pipelines:", "ticket_to_pr"},
 		},
 		{
+			name: "positional team",
+			args: []string{"graph", "--repo", root, "delivery"},
+			want: []string{"Team: delivery", "Pipelines:", "ticket_to_pr"},
+		},
+		{
 			name: "pipeline",
 			args: []string{"graph", "--repo", root, "--pipeline", "ticket_to_pr"},
+			want: []string{"Pipeline: ticket_to_pr", "Trigger:  ticket.created", "implement target=worker"},
+		},
+		{
+			name: "positional pipeline",
+			args: []string{"graph", "--repo", root, "ticket_to_pr"},
 			want: []string{"Pipeline: ticket_to_pr", "Trigger:  ticket.created", "implement target=worker"},
 		},
 		{
@@ -325,6 +335,16 @@ func TestRootGraphShortcutRejectsConflictingFlags(t *testing.T) {
 			want: "choose at most one of --team or --pipeline",
 		},
 		{
+			name: "selector and team flag",
+			args: []string{"graph", "--repo", root, "ticket_to_pr", "--team", "delivery"},
+			want: "positional selector cannot be combined with --team or --pipeline",
+		},
+		{
+			name: "unknown selector",
+			args: []string{"graph", "--repo", root, "missing"},
+			want: `selector "missing" is not a declared team or pipeline`,
+		},
+		{
 			name: "format and json",
 			args: []string{"graph", "--repo", root, "--json", "--format", "dot"},
 			want: "--format cannot be combined with --json",
@@ -353,6 +373,42 @@ func TestRootGraphShortcutRejectsConflictingFlags(t *testing.T) {
 				t.Fatalf("graph shortcut stderr missing %q\nstderr=%s", tc.want, stderr.String())
 			}
 		})
+	}
+}
+
+func TestRootGraphShortcutRejectsAmbiguousSelector(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+
+	path := filepath.Join(root, ".agent_team", "instances.toml")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read topology: %v", err)
+	}
+	body = append(body, []byte(`
+
+[pipelines.delivery]
+trigger.event = "ticket.created"
+
+[[pipelines.delivery.steps]]
+id = "implement"
+target = "worker"
+`)...)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("write topology: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"graph", "--repo", root, "delivery"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("graph shortcut ambiguous selector unexpectedly succeeded\nstdout=%s", out.String())
+	}
+	want := `selector "delivery" matches both a team and pipeline; use --team or --pipeline`
+	if !strings.Contains(stderr.String(), want) {
+		t.Fatalf("graph shortcut ambiguous stderr missing %q\nstderr=%s", want, stderr.String())
 	}
 }
 

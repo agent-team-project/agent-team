@@ -996,10 +996,10 @@ Inherited Flags:
 
 Render the automation graph.
 
-Render a read-only graph of the repo automation model. By default this shows the full topology; use --team or --pipeline to narrow to one declared workflow owner.
+Render a read-only graph of the repo automation model. By default this shows the full topology; pass a team or pipeline name, or use --team or --pipeline, to narrow to one declared workflow owner.
 
 ```text
-agent-team graph [flags]
+agent-team graph [team-or-pipeline] [flags]
 ```
 
 Flags:
