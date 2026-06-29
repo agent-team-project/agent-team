@@ -25,6 +25,7 @@ as the output directory instead.
 | `agent-team dispatch <target> <ticket>` | Publish or preview an `agent.dispatch` topology event; add `--dry-run --commands` to print the matching dispatch apply command for matched routes |
 | `agent-team docs cli` | Generate or check markdown reference from the live command tree |
 | `agent-team docs site [--commands] [--json]` | Show VitePress developer docs paths, local URL, and dev/build/preview commands |
+| `agent-team shortcuts [--all] [--format <template>] [--json]` | List top-level aliases and Docker-like shortcuts from the live command tree; add `--all` for nested command-group aliases |
 
 ## Runtime and Daemon
 
@@ -77,6 +78,7 @@ Shortcuts:
 | `agent-team exec` | `agent-team attach` |
 
 Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelines`, `queues`, `schedules`, and `teams`.
+Run `agent-team shortcuts` for the live top-level alias list, or `agent-team shortcuts --all` when scripts need nested aliases such as `job exec`, `pipeline top`, or `team start`.
 
 ## Topology and Convergence
 

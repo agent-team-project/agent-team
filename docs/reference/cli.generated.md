@@ -69,6 +69,7 @@ Subcommands:
 - `agent-team runtime` - Inspect the selected LLM runtime profile.
 - `agent-team schedule` - Inspect and run declared schedule events.
 - `agent-team send` - Send a mailbox message to a daemon-managed instance.
+- `agent-team shortcuts` - List command aliases and Docker-like shortcuts.
 - `agent-team snapshot` - Capture a read-only orchestration diagnostic report.
 - `agent-team start` - Start agent-teamd if needed, then start or resume instances.
 - `agent-team stats` - Show CPU and memory usage for daemon-managed instances.
@@ -7361,6 +7362,30 @@ Flags:
       --status strings        Send to daemon-known instances with lifecycle status: running, stopped, exited, crashed, or unknown. Can repeat or comma-separate.
       --target string         Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
       --unhealthy             Send to daemon-known instances that are crashed, status-stale, or runtime-stale.
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team shortcuts`
+
+List command aliases and Docker-like shortcuts.
+
+List command aliases and Docker-like shortcuts from the live command tree. By default this shows top-level shortcuts; use --all to include nested command-group aliases.
+
+```text
+agent-team shortcuts [flags]
+```
+
+Flags:
+
+```text
+      --all             Include nested aliases under command groups.
+      --format string   Render each shortcut with a Go template, e.g. '{{.Alias}} -> {{.Command}}'.
+      --json            Emit shortcuts as JSON.
 ```
 
 Inherited Flags:
