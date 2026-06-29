@@ -4677,6 +4677,7 @@ Flags:
 
 ```text
       --format string   Graph output format: text, mermaid, or dot. (default "text")
+      --job string      Overlay durable job step state on the declared pipeline graph.
       --json            Emit graph nodes and edges as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
       --routes          Annotate step targets with matching agent.dispatch route instances.

@@ -155,6 +155,7 @@ func newPipelineGraphCmd() *cobra.Command {
 		graphFormat   string
 		includeRoutes bool
 		jsonOut       bool
+		jobID         string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -176,7 +177,7 @@ func newPipelineGraphCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			graph, err := collectPipelineGraph(teamDir, args[0], includeRoutes)
+			graph, err := collectPipelineGraph(teamDir, args[0], includeRoutes, jobID)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline graph: %v\n", err)
 				return exitErr(1)
@@ -188,6 +189,7 @@ func newPipelineGraphCmd() *cobra.Command {
 	cmd.Flags().StringVar(&graphFormat, "format", "text", "Graph output format: text, mermaid, or dot.")
 	cmd.Flags().BoolVar(&includeRoutes, "routes", false, "Annotate step targets with matching agent.dispatch route instances.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit graph nodes and edges as JSON.")
+	cmd.Flags().StringVar(&jobID, "job", "", "Overlay durable job step state on the declared pipeline graph.")
 	return cmd
 }
 
@@ -6006,29 +6008,44 @@ type pipelineStepInfo struct {
 }
 
 type pipelineGraph struct {
-	Name    string              `json:"name"`
-	Trigger map[string]any      `json:"trigger,omitempty"`
-	Summary string              `json:"summary"`
-	Nodes   []pipelineGraphNode `json:"nodes"`
-	Edges   []pipelineGraphEdge `json:"edges"`
+	Name      string              `json:"name"`
+	Trigger   map[string]any      `json:"trigger,omitempty"`
+	Summary   string              `json:"summary"`
+	JobID     string              `json:"job_id,omitempty"`
+	Ticket    string              `json:"ticket,omitempty"`
+	JobStatus job.Status          `json:"job_status,omitempty"`
+	JobState  string              `json:"job_state,omitempty"`
+	Message   string              `json:"message,omitempty"`
+	Nodes     []pipelineGraphNode `json:"nodes"`
+	Edges     []pipelineGraphEdge `json:"edges"`
 }
 
 type pipelineGraphNode struct {
-	ID           string   `json:"id"`
-	Label        string   `json:"label,omitempty"`
-	Description  string   `json:"description,omitempty"`
-	Instructions string   `json:"instructions,omitempty"`
-	Target       string   `json:"target,omitempty"`
-	Workspace    string   `json:"workspace,omitempty"`
-	Runtime      string   `json:"runtime,omitempty"`
-	RuntimeBin   string   `json:"runtime_bin,omitempty"`
-	After        []string `json:"after,omitempty"`
-	Gate         string   `json:"gate,omitempty"`
-	Optional     bool     `json:"optional,omitempty"`
-	Timeout      string   `json:"timeout,omitempty"`
-	MaxAttempts  int      `json:"max_attempts,omitempty"`
-	Routes       []string `json:"routes,omitempty"`
-	Missing      bool     `json:"missing,omitempty"`
+	ID           string     `json:"id"`
+	Label        string     `json:"label,omitempty"`
+	Description  string     `json:"description,omitempty"`
+	Instructions string     `json:"instructions,omitempty"`
+	Target       string     `json:"target,omitempty"`
+	Workspace    string     `json:"workspace,omitempty"`
+	Runtime      string     `json:"runtime,omitempty"`
+	RuntimeBin   string     `json:"runtime_bin,omitempty"`
+	After        []string   `json:"after,omitempty"`
+	Gate         string     `json:"gate,omitempty"`
+	Optional     bool       `json:"optional,omitempty"`
+	Timeout      string     `json:"timeout,omitempty"`
+	MaxAttempts  int        `json:"max_attempts,omitempty"`
+	StepStatus   job.Status `json:"step_status,omitempty"`
+	State        string     `json:"state,omitempty"`
+	Ready        bool       `json:"ready,omitempty"`
+	Instance     string     `json:"instance,omitempty"`
+	Attempts     int        `json:"attempts,omitempty"`
+	WaitingFor   []string   `json:"waiting_for,omitempty"`
+	Actions      []string   `json:"actions,omitempty"`
+	Skipped      bool       `json:"skipped,omitempty"`
+	SkipReason   string     `json:"skip_reason,omitempty"`
+	Message      string     `json:"message,omitempty"`
+	Routes       []string   `json:"routes,omitempty"`
+	Missing      bool       `json:"missing,omitempty"`
 }
 
 type pipelineGraphEdge struct {
@@ -6340,7 +6357,7 @@ func loadPipelineInfo(teamDir, name string) (pipelineInfo, error) {
 	return pipelineInfoFromTopology(top.Pipelines[name]), nil
 }
 
-func collectPipelineGraph(teamDir, name string, includeRoutes bool) (pipelineGraph, error) {
+func collectPipelineGraph(teamDir, name string, includeRoutes bool, jobID string) (pipelineGraph, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return pipelineGraph{}, fmt.Errorf("pipeline name is required")
@@ -6352,7 +6369,51 @@ func collectPipelineGraph(teamDir, name string, includeRoutes bool) (pipelineGra
 	if top == nil || top.Pipelines[name] == nil {
 		return pipelineGraph{}, fmt.Errorf("pipeline %q not found", name)
 	}
-	return pipelineGraphFromTopology(top, top.Pipelines[name], includeRoutes), nil
+	graph := pipelineGraphFromTopology(top, top.Pipelines[name], includeRoutes)
+	if strings.TrimSpace(jobID) == "" {
+		return graph, nil
+	}
+	j, err := job.Read(teamDir, jobID)
+	if err != nil {
+		return pipelineGraph{}, err
+	}
+	if strings.TrimSpace(j.Pipeline) != name {
+		return pipelineGraph{}, fmt.Errorf("job %q belongs to pipeline %q, not %q", j.ID, emptyDash(j.Pipeline), name)
+	}
+	return pipelineGraphWithJobState(graph, j), nil
+}
+
+func pipelineGraphWithJobState(graph pipelineGraph, j *job.Job) pipelineGraph {
+	if j == nil {
+		return graph
+	}
+	explained := explainJobPipeline(j)
+	graph.JobID = explained.JobID
+	graph.Ticket = explained.Ticket
+	graph.JobStatus = explained.JobStatus
+	graph.JobState = explained.State
+	graph.Message = explained.Message
+	steps := make(map[string]jobExplainStep, len(explained.Steps))
+	for _, step := range explained.Steps {
+		steps[step.ID] = step
+	}
+	for i := range graph.Nodes {
+		step, ok := steps[graph.Nodes[i].ID]
+		if !ok {
+			continue
+		}
+		graph.Nodes[i].StepStatus = step.Status
+		graph.Nodes[i].State = step.State
+		graph.Nodes[i].Ready = step.Ready
+		graph.Nodes[i].Instance = step.Instance
+		graph.Nodes[i].Attempts = step.Attempts
+		graph.Nodes[i].WaitingFor = append([]string(nil), step.WaitingFor...)
+		graph.Nodes[i].Actions = append([]string(nil), step.Actions...)
+		graph.Nodes[i].Skipped = step.Skipped
+		graph.Nodes[i].SkipReason = step.SkipReason
+		graph.Nodes[i].Message = step.Message
+	}
+	return graph
 }
 
 func pipelineGraphFromTopology(top *topology.Topology, pipeline *topology.Pipeline, includeRoutes bool) pipelineGraph {
@@ -10781,6 +10842,9 @@ func renderPipelineGraph(w io.Writer, graph pipelineGraph, format pipelineGraphF
 func renderPipelineGraphText(w io.Writer, graph pipelineGraph) {
 	fmt.Fprintf(w, "Pipeline: %s\n", graph.Name)
 	fmt.Fprintf(w, "Trigger:  %s\n", graph.Summary)
+	if graph.JobID != "" {
+		fmt.Fprintf(w, "Job:      %s ticket=%s status=%s state=%s message=%q\n", graph.JobID, graph.Ticket, graph.JobStatus, graph.JobState, graph.Message)
+	}
 	if len(graph.Nodes) == 0 {
 		fmt.Fprintln(w, "Steps:    -")
 		return
@@ -10811,6 +10875,42 @@ func renderPipelineGraphText(w io.Writer, graph pipelineGraph) {
 		if node.MaxAttempts > 0 {
 			maxAttempts = fmt.Sprintf(" max_attempts=%d", node.MaxAttempts)
 		}
+		state := ""
+		if node.State != "" {
+			state = " state=" + node.State
+		}
+		stepStatus := ""
+		if node.StepStatus != "" {
+			stepStatus = " step_status=" + string(node.StepStatus)
+		}
+		ready := ""
+		if node.Ready {
+			ready = " ready=true"
+		}
+		instance := ""
+		if node.Instance != "" {
+			instance = " instance=" + node.Instance
+		}
+		attempts := ""
+		if node.Attempts > 0 {
+			attempts = fmt.Sprintf(" attempts=%d", node.Attempts)
+		}
+		waitingFor := ""
+		if len(node.WaitingFor) > 0 {
+			waitingFor = " waiting_for=" + strings.Join(node.WaitingFor, ",")
+		}
+		message := ""
+		if node.Message != "" {
+			message = fmt.Sprintf(" message=%q", node.Message)
+		}
+		skipped := ""
+		if node.Skipped {
+			skipped = " skipped=true"
+		}
+		skipReason := ""
+		if node.SkipReason != "" {
+			skipReason = fmt.Sprintf(" skip_reason=%q", node.SkipReason)
+		}
 		label := ""
 		if node.Label != "" {
 			label = fmt.Sprintf(" label=%q", node.Label)
@@ -10835,7 +10935,7 @@ func renderPipelineGraphText(w io.Writer, graph pipelineGraph) {
 		if node.Missing {
 			missing = " missing=true"
 		}
-		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s%s%s%s%s%s\n", node.ID, node.Target, after, workspace, runtime, label, description, instructions, gate, optional, timeout, maxAttempts, routes, missing)
+		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n", node.ID, node.Target, after, workspace, runtime, label, description, instructions, gate, optional, timeout, maxAttempts, state, stepStatus, ready, instance, attempts, waitingFor, message, skipped, skipReason, routes, missing)
 	}
 	if len(graph.Edges) == 0 {
 		return
@@ -10919,6 +11019,33 @@ func pipelineGraphNodeLabel(node pipelineGraphNode, sep string) string {
 	}
 	if node.MaxAttempts > 0 {
 		parts = append(parts, fmt.Sprintf("max attempts: %d", node.MaxAttempts))
+	}
+	if node.State != "" {
+		parts = append(parts, "state: "+node.State)
+	}
+	if node.StepStatus != "" {
+		parts = append(parts, "status: "+string(node.StepStatus))
+	}
+	if node.Ready {
+		parts = append(parts, "ready")
+	}
+	if node.Instance != "" {
+		parts = append(parts, "instance: "+node.Instance)
+	}
+	if node.Attempts > 0 {
+		parts = append(parts, fmt.Sprintf("attempts: %d", node.Attempts))
+	}
+	if len(node.WaitingFor) > 0 {
+		parts = append(parts, "waiting for: "+strings.Join(node.WaitingFor, ","))
+	}
+	if node.Message != "" {
+		parts = append(parts, "message: "+node.Message)
+	}
+	if node.Skipped {
+		parts = append(parts, "skipped")
+	}
+	if node.SkipReason != "" {
+		parts = append(parts, "skip reason: "+node.SkipReason)
 	}
 	if node.Missing {
 		parts = append(parts, "missing dependency")

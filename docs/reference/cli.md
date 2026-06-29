@@ -222,7 +222,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | --- | --- |
 | `agent-team pipeline ls` | List pipeline declarations |
 | `agent-team pipeline show <pipeline>` | Show one declaration; `inspect` is an alias |
-| `agent-team pipeline graph <pipeline>` | Render text, Mermaid, DOT, or JSON step graphs |
+| `agent-team pipeline graph <pipeline>` | Render text, Mermaid, DOT, or JSON step graphs; add `--job <id>` to overlay durable job step state |
 | `agent-team pipeline doctor --all [--commands]` | Validate workflows; add `--strict-runtime` to fail on unavailable step runtime defaults or `--commands` for route-aware graph/detail follow-ups |
 | `agent-team pipeline run <pipeline> <ticket>` | Create pipeline job; `--commands` scripts dry-run previews, `--dispatch` accepts workspace/runtime overrides, and `--wait-next-state`/`--wait-step` can block for the first stage handoff |
 | `agent-team pipeline status` | Summarize or watch pipeline jobs plus owned queue/outbox and quarantine counts; sort rows and cap output with `--limit`; add `--commands` for one repo-scoped row action command per line |
