@@ -158,6 +158,17 @@ func DefaultBinaryForKind(kind Kind) string {
 	return defaultBinary(kind)
 }
 
+// CodexAutonomousExecArgs are the `codex exec` flags that let a daemon-spawned
+// worker actually do its job. `codex exec` defaults to a read-only,
+// network-disabled sandbox, which makes an autonomous worker a no-op — it
+// cannot write files, reach the network (Linear / GitHub), build (write
+// ~/.cargo), or push. The daemon exists to run autonomous agents on a trusted,
+// operator-controlled machine, so it bypasses the in-process sandbox;
+// isolation comes from the per-worker git worktree, not from Codex's sandbox.
+func CodexAutonomousExecArgs() []string {
+	return []string{"--dangerously-bypass-approvals-and-sandbox"}
+}
+
 // CodexAgentTeamEnvConfigArgs returns Codex -c overrides that expose the
 // daemon/session contract to shell commands without broadly inheriting the
 // parent process environment.
