@@ -39,7 +39,7 @@ as the output directory instead.
 | `agent-team runtime set` | Persist the repo default runtime profile in `.agent_team/config.toml`; add `--dry-run --commands` for the apply command |
 | `agent-team runtime unset` | Remove the repo default runtime profile from `.agent_team/config.toml`; add `--dry-run --commands` for the apply command |
 | `agent-team runtime profile` | Explicit profile view, with `show` as a shorter alias |
-| `agent-team runtime ls` | List supported runtime profiles, availability, and capabilities |
+| `agent-team runtime ls` | List supported runtime profiles, availability, capabilities, and probe/select command hints; add `--commands` to print scoped probe commands |
 | `agent-team runtime metadata ls [<instance>...]` | List raw persisted daemon runtime metadata without declared placeholders; filter by runtime/status/agent/instance, isolate stale or unhealthy records, sort/cap/template, summarize rows, or print drill-down commands with `--commands` |
 | `agent-team runtime metadata show <instance>` | Show one raw persisted daemon runtime metadata record with job ownership enrichment; add `--json` or `--format` for scripts, or `--commands` for inspect/logs/resume-plan follow-ups |
 | `agent-team runtime probe` | Probe runtime selection, daemon readiness, Codex doctor health, optional Codex exec readiness, preferred one-flag Codex daemon reachability with `--codex-daemon-check`, lower-level HTTP/socket checks, repo-scoped follow-up commands with `--commands`, and diagnostics with `--output`; aliases: `doctor`, `check` |

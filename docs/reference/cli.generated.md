@@ -6840,6 +6840,7 @@ Aliases: `list`
 Flags:
 
 ```text
+      --commands        Print runtime probe commands, one per line. agent-team follow-ups preserve the selected repo scope.
       --format string   Render each runtime row with a Go template, e.g. '{{.Runtime}} {{.Available}}'.
       --json            Emit machine-readable JSON.
       --target string   Repo root or any path under a repo. (default "<repo>")

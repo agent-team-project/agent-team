@@ -307,37 +307,40 @@ type runtimeUnsetApplyCommandOptions struct {
 }
 
 type runtimeInfo struct {
-	Runtime        string   `json:"runtime"`
-	Lifecycle      string   `json:"lifecycle,omitempty"`
-	Agent          string   `json:"agent,omitempty"`
-	Selected       bool     `json:"selected,omitempty"`
-	Binary         string   `json:"binary"`
-	RuntimeBinary  string   `json:"runtime_binary,omitempty"`
-	Path           string   `json:"path,omitempty"`
-	Available      bool     `json:"available"`
-	DirectRun      bool     `json:"direct_run"`
-	DaemonDispatch bool     `json:"daemon_dispatch"`
-	DirectResume   bool     `json:"direct_resume"`
-	ManagedResume  bool     `json:"managed_resume"`
-	Resume         bool     `json:"resume"`
-	Subagents      bool     `json:"subagents"`
-	EnvRuntime     string   `json:"env_runtime,omitempty"`
-	EnvBinary      string   `json:"env_binary,omitempty"`
-	ConfigPath     string   `json:"config_path,omitempty"`
-	Job            string   `json:"job,omitempty"`
-	Ticket         string   `json:"ticket,omitempty"`
-	Branch         string   `json:"branch,omitempty"`
-	PR             string   `json:"pr,omitempty"`
-	PID            int      `json:"pid,omitempty"`
-	Workspace      string   `json:"workspace,omitempty"`
-	SessionID      string   `json:"session_id,omitempty"`
-	StartedAt      string   `json:"started_at,omitempty"`
-	StoppedAt      string   `json:"stopped_at,omitempty"`
-	ExitedAt       string   `json:"exited_at,omitempty"`
-	ExitCode       *int     `json:"exit_code,omitempty"`
-	LogPath        string   `json:"log_path,omitempty"`
-	Adopted        bool     `json:"adopted,omitempty"`
-	Notes          []string `json:"notes,omitempty"`
+	Runtime            string   `json:"runtime"`
+	Lifecycle          string   `json:"lifecycle,omitempty"`
+	Agent              string   `json:"agent,omitempty"`
+	Selected           bool     `json:"selected,omitempty"`
+	Binary             string   `json:"binary"`
+	RuntimeBinary      string   `json:"runtime_binary,omitempty"`
+	Path               string   `json:"path,omitempty"`
+	Available          bool     `json:"available"`
+	DirectRun          bool     `json:"direct_run"`
+	DaemonDispatch     bool     `json:"daemon_dispatch"`
+	DirectResume       bool     `json:"direct_resume"`
+	ManagedResume      bool     `json:"managed_resume"`
+	Resume             bool     `json:"resume"`
+	Subagents          bool     `json:"subagents"`
+	EnvRuntime         string   `json:"env_runtime,omitempty"`
+	EnvBinary          string   `json:"env_binary,omitempty"`
+	ConfigPath         string   `json:"config_path,omitempty"`
+	Job                string   `json:"job,omitempty"`
+	Ticket             string   `json:"ticket,omitempty"`
+	Branch             string   `json:"branch,omitempty"`
+	PR                 string   `json:"pr,omitempty"`
+	PID                int      `json:"pid,omitempty"`
+	Workspace          string   `json:"workspace,omitempty"`
+	SessionID          string   `json:"session_id,omitempty"`
+	StartedAt          string   `json:"started_at,omitempty"`
+	StoppedAt          string   `json:"stopped_at,omitempty"`
+	ExitedAt           string   `json:"exited_at,omitempty"`
+	ExitCode           *int     `json:"exit_code,omitempty"`
+	LogPath            string   `json:"log_path,omitempty"`
+	Adopted            bool     `json:"adopted,omitempty"`
+	ProbeCommand       string   `json:"probe_command,omitempty"`
+	DaemonProbeCommand string   `json:"daemon_probe_command,omitempty"`
+	SelectCommand      string   `json:"select_command,omitempty"`
+	Notes              []string `json:"notes,omitempty"`
 }
 
 type runtimeSelection struct {
@@ -347,9 +350,10 @@ type runtimeSelection struct {
 
 func newRuntimeLsCmd() *cobra.Command {
 	var (
-		target  string
-		jsonOut bool
-		format  string
+		target   string
+		jsonOut  bool
+		commands bool
+		format   string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -360,6 +364,14 @@ func newRuntimeLsCmd() *cobra.Command {
 			"The selected row is the profile the current environment or repo config would use by default.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime ls: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime ls: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime ls: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -377,6 +389,9 @@ func newRuntimeLsCmd() *cobra.Command {
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(rows)
 			}
+			if commands {
+				return renderRuntimeListCommands(cmd.OutOrStdout(), rows, operatorCommandScopeFromCommand(cmd, target, "target"))
+			}
 			if tmpl != nil {
 				return renderRuntimeListFormat(cmd.OutOrStdout(), rows, tmpl)
 			}
@@ -386,6 +401,7 @@ func newRuntimeLsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root or any path under a repo.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print runtime probe commands, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each runtime row with a Go template, e.g. '{{.Runtime}} {{.Available}}'.")
 	return cmd
 }
@@ -1061,6 +1077,7 @@ func collectRuntimeListForConfig(configPath string) ([]runtimeInfo, error) {
 			return nil, err
 		}
 		info.Selected = isSelected
+		addRuntimeListCommandHints(&info)
 		rows = append(rows, info)
 	}
 	return rows, nil
@@ -1230,6 +1247,53 @@ func renderRuntimeList(w fmtWriter, rows []runtimeInfo) {
 		)
 	}
 	_ = tw.Flush()
+}
+
+func addRuntimeListCommandHints(info *runtimeInfo) {
+	if info == nil {
+		return
+	}
+	kind, err := runtimebin.ParseKind(info.Runtime)
+	if err != nil {
+		return
+	}
+	probeArgs := []string{"agent-team", "runtime", "probe", "--runtime", string(kind)}
+	if runtimeInfoUsesCustomBinary(*info, kind) {
+		probeArgs = append(probeArgs, "--runtime-bin", info.Binary)
+	}
+	info.ProbeCommand = strings.Join(shellQuoteArgs(probeArgs), " ")
+	if kind == runtimebin.KindCodex {
+		daemonProbeArgs := []string{"agent-team", "runtime", "probe", "--codex-daemon-check"}
+		if runtimeInfoUsesCustomBinary(*info, kind) {
+			daemonProbeArgs = append(daemonProbeArgs, "--runtime-bin", info.Binary)
+		}
+		info.DaemonProbeCommand = strings.Join(shellQuoteArgs(daemonProbeArgs), " ")
+	}
+	selectArgs := []string{"agent-team", "runtime", "set", string(kind)}
+	if runtimeInfoUsesCustomBinary(*info, kind) {
+		selectArgs = append(selectArgs, "--runtime-bin", info.Binary)
+	}
+	info.SelectCommand = strings.Join(shellQuoteArgs(selectArgs), " ")
+}
+
+func runtimeInfoUsesCustomBinary(info runtimeInfo, kind runtimebin.Kind) bool {
+	binary := strings.TrimSpace(info.Binary)
+	return binary != "" && binary != runtimebin.DefaultBinaryForKind(kind)
+}
+
+func renderRuntimeListCommands(w fmtWriter, rows []runtimeInfo, scope operatorCommandScope) error {
+	for _, row := range rows {
+		for _, command := range []string{row.ProbeCommand, row.DaemonProbeCommand} {
+			command = strings.TrimSpace(command)
+			if command == "" {
+				continue
+			}
+			if _, err := fmt.Fprintln(w, scopedOperatorAction(command, scope)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func parseRuntimeFormat(format string) (*texttemplate.Template, error) {

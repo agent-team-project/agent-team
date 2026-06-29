@@ -576,8 +576,14 @@ func TestRuntimeLsJSONListsSupportedRuntimes(t *testing.T) {
 	if row := byRuntime["claude"]; !row.Selected || !row.Available || row.Path != "/usr/local/bin/claude" {
 		t.Fatalf("claude row = %+v, want selected available path", row)
 	}
+	if row := byRuntime["claude"]; row.ProbeCommand != "agent-team runtime probe --runtime claude" || row.SelectCommand != "agent-team runtime set claude" {
+		t.Fatalf("claude commands = %+v, want probe and select hints", row)
+	}
 	if row := byRuntime["codex"]; row.Selected || row.Available || row.Binary != "codex" {
 		t.Fatalf("codex row = %+v, want unselected unavailable default", row)
+	}
+	if row := byRuntime["codex"]; row.ProbeCommand != "agent-team runtime probe --runtime codex" || row.DaemonProbeCommand != "agent-team runtime probe --codex-daemon-check" || row.SelectCommand != "agent-team runtime set codex" {
+		t.Fatalf("codex commands = %+v, want probe, daemon probe, and select hints", row)
 	}
 }
 
@@ -608,6 +614,69 @@ func TestRuntimeLsUsesRepoSelectedBinary(t *testing.T) {
 	}
 	if !seen["claude"] || !seen["codex-wrapper"] || seen["codex"] {
 		t.Fatalf("looked up binaries = %+v, want claude and selected codex-wrapper only", seen)
+	}
+}
+
+func TestRuntimeLsCommandsPreserveRepoScopeAndCustomBinary(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	appendRuntimeConfigForRuntimeTest(t, tmp, "codex", "codex-wrapper")
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		return "/usr/local/bin/" + bin, nil
+	})
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"--repo", tmp, "runtime", "ls", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("runtime ls --commands failed: %v\nstderr: %s", err, errOut.String())
+	}
+	want := strings.Join([]string{
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", tmp, "runtime", "probe", "--runtime", "claude"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", tmp, "runtime", "probe", "--runtime", "codex", "--runtime-bin", "codex-wrapper"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", tmp, "runtime", "probe", "--codex-daemon-check", "--runtime-bin", "codex-wrapper"}), " "),
+		"",
+	}, "\n")
+	if out.String() != want {
+		t.Fatalf("commands = %q, want %q", out.String(), want)
+	}
+}
+
+func TestRuntimeLsCommandsRejectsStructuredModes(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "json", args: []string{"runtime", "ls", "--commands", "--json"}, want: "--commands cannot be combined with --json"},
+		{name: "format", args: []string{"runtime", "ls", "--commands", "--format", "{{.Runtime}}"}, want: "--commands cannot be combined with --format"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(errOut)
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("%v succeeded", tt.args)
+			}
+			var ec ExitCode
+			if !errors.As(err, &ec) || int(ec) != 2 {
+				t.Fatalf("error = %v, want exit 2", err)
+			}
+			if !strings.Contains(errOut.String(), tt.want) {
+				t.Fatalf("stderr = %q, want %q", errOut.String(), tt.want)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("stdout = %q, want empty", out.String())
+			}
+		})
 	}
 }
 

@@ -10,6 +10,9 @@ Use this page when choosing a runtime, configuring `.agent_team/config.toml`, or
 agent-team runtime
 agent-team runtime --json
 agent-team runtime --format '{{.Runtime}} {{.Available}} {{.DirectResume}} {{.ManagedResume}} {{.Subagents}}'
+agent-team runtime ls
+agent-team runtime ls --json
+agent-team runtime ls --commands
 agent-team runtime --runtime codex --runtime-bin /opt/bin/codex-wrapper
 ```
 
@@ -21,6 +24,12 @@ The command reports:
 - environment overrides
 - direct-run, daemon-dispatch, direct-resume, managed-resume, and subagent capabilities
 - adapter notes and missing-binary warnings
+
+Use `runtime ls` when comparing the supported runtime profiles side by side.
+Its JSON rows include `probe_command`, `select_command`, and, for Codex,
+`daemon_probe_command` fields. Add `--commands` when a script should receive
+only probe commands for the listed runtimes; command-only `agent-team`
+follow-ups preserve the selected `--repo` or `--target` scope.
 
 ## Probe Runtime Health
 
