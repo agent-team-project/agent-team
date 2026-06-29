@@ -877,7 +877,7 @@ Flags:
       --runtime string       Runtime profile to validate for this invocation (claude or codex). Overrides env and repo config.
       --runtime-bin string   Runtime binary to validate for this invocation. Overrides env and repo config.
       --strict-daemon        Fail when the companion agent-teamd binary is not discoverable.
-      --strict-runtime       Fail when the selected LLM runtime binary or pipeline/team step runtime defaults are not discoverable.
+      --strict-runtime       Fail when the selected LLM runtime binary or pipeline/team step and agent runtime defaults are not discoverable.
       --strict-template      Fail when .template.lock no longer matches its resolved template ref.
       --target string        Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
@@ -4639,7 +4639,7 @@ Flags:
       --format string    Render the doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.
       --json             Emit pipeline doctor findings as JSON.
       --repo string      Repo root containing .agent_team. (default "<repo>")
-      --strict-runtime   Fail when a step-declared runtime default cannot be resolved or is not discoverable.
+      --strict-runtime   Fail when a step-declared or target-agent runtime default cannot be resolved or is not discoverable.
       --target string    Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 
@@ -7936,7 +7936,7 @@ Flags:
       --format string    Render the team doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.
       --json             Emit team doctor findings as JSON.
       --repo string      Repo root containing .agent_team. (default "<repo>")
-      --strict-runtime   Fail when a team-owned step runtime default cannot be resolved or is not discoverable.
+      --strict-runtime   Fail when a team-owned step or target-agent runtime default cannot be resolved or is not discoverable.
       --target string    Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 

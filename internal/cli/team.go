@@ -275,7 +275,7 @@ func newTeamDoctorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&targetRepo, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&all, "all", false, "Validate all declared teams.")
-	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when a team-owned step runtime default cannot be resolved or is not discoverable.")
+	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when a team-owned step or target-agent runtime default cannot be resolved or is not discoverable.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team doctor findings as JSON.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the team doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.")
@@ -1075,6 +1075,7 @@ type teamDoctorFinding struct {
 	Pipeline     string   `json:"pipeline,omitempty"`
 	Step         string   `json:"step,omitempty"`
 	Target       string   `json:"target,omitempty"`
+	Agent        string   `json:"agent,omitempty"`
 	Runtime      string   `json:"runtime,omitempty"`
 	RuntimeBin   string   `json:"runtime_bin,omitempty"`
 	Routes       []string `json:"routes,omitempty"`
@@ -1157,7 +1158,7 @@ func promoteTeamRuntimeFindings(problems, warnings []teamDoctorFinding) ([]teamD
 
 func teamRuntimeFindingIsStrict(finding teamDoctorFinding) bool {
 	switch strings.TrimSpace(finding.Code) {
-	case "step_runtime_invalid", "step_runtime_unavailable":
+	case "step_runtime_invalid", "step_runtime_unavailable", "agent_runtime_invalid", "agent_runtime_unavailable":
 		return true
 	default:
 		return false
@@ -1257,6 +1258,7 @@ func teamDoctorFindingFromPipeline(teamName string, finding pipelineDoctorFindin
 		Pipeline:     finding.Pipeline,
 		Step:         finding.Step,
 		Target:       finding.Target,
+		Agent:        finding.Agent,
 		Runtime:      finding.Runtime,
 		RuntimeBin:   finding.RuntimeBin,
 		Routes:       append([]string(nil), finding.Routes...),

@@ -17,6 +17,7 @@ import (
 
 	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/jamesaud/agent-team/internal/job"
+	"github.com/jamesaud/agent-team/internal/loader"
 	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
 )
@@ -281,7 +282,7 @@ func newPipelineDoctorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&targetRepo, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&all, "all", false, "Validate all pipelines. This is the default when no pipeline is passed.")
-	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when a step-declared runtime default cannot be resolved or is not discoverable.")
+	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when a step-declared or target-agent runtime default cannot be resolved or is not discoverable.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline doctor findings as JSON.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.")
@@ -6340,6 +6341,7 @@ type pipelineDoctorFinding struct {
 	Pipeline     string   `json:"pipeline,omitempty"`
 	Step         string   `json:"step,omitempty"`
 	Target       string   `json:"target,omitempty"`
+	Agent        string   `json:"agent,omitempty"`
 	Runtime      string   `json:"runtime,omitempty"`
 	RuntimeBin   string   `json:"runtime_bin,omitempty"`
 	Routes       []string `json:"routes,omitempty"`
@@ -6574,7 +6576,7 @@ func promotePipelineRuntimeFindings(problems, warnings []pipelineDoctorFinding) 
 
 func pipelineRuntimeFindingIsStrict(finding pipelineDoctorFinding) bool {
 	switch strings.TrimSpace(finding.Code) {
-	case "step_runtime_invalid", "step_runtime_unavailable":
+	case "step_runtime_invalid", "step_runtime_unavailable", "agent_runtime_invalid", "agent_runtime_unavailable":
 		return true
 	default:
 		return false
@@ -6608,12 +6610,12 @@ func doctorPipeline(top *topology.Topology, pipeline *topology.Pipeline, teamDir
 	report.Warnings = append(report.Warnings, routeWarnings...)
 	report.Warnings = append(report.Warnings, pipelineScheduleWarnings(top, pipeline)...)
 	report.Warnings = append(report.Warnings, pipelineOrderingWarnings(pipeline)...)
-	report.Warnings = append(report.Warnings, pipelineRuntimeWarnings(teamDir, pipeline)...)
+	report.Warnings = append(report.Warnings, pipelineRuntimeWarnings(teamDir, top, pipeline)...)
 	report.OK = len(report.Problems) == 0
 	return report
 }
 
-func pipelineRuntimeWarnings(teamDir string, pipeline *topology.Pipeline) []pipelineDoctorFinding {
+func pipelineRuntimeWarnings(teamDir string, top *topology.Topology, pipeline *topology.Pipeline) []pipelineDoctorFinding {
 	if pipeline == nil {
 		return nil
 	}
@@ -6625,6 +6627,7 @@ func pipelineRuntimeWarnings(teamDir string, pipeline *topology.Pipeline) []pipe
 		}
 		selection := runtimeSelection{Kind: strings.TrimSpace(step.Runtime), Binary: strings.TrimSpace(step.RuntimeBin)}
 		if selection.Kind == "" && selection.Binary == "" {
+			warnings = append(warnings, pipelineAgentRuntimeWarnings(teamDir, top, pipeline, step)...)
 			continue
 		}
 		info, err := collectRuntimeInfoForConfigWithSelection(configPath, selection)
@@ -6653,6 +6656,84 @@ func pipelineRuntimeWarnings(teamDir string, pipeline *topology.Pipeline) []pipe
 		}
 	}
 	return warnings
+}
+
+func pipelineAgentRuntimeWarnings(teamDir string, top *topology.Topology, pipeline *topology.Pipeline, step *topology.PipelineStep) []pipelineDoctorFinding {
+	if top == nil || pipeline == nil || step == nil {
+		return nil
+	}
+	target := strings.TrimSpace(step.Target)
+	if target == "" {
+		return nil
+	}
+	routes := pipelineDispatchRoutes(top, target)
+	if len(routes) == 0 {
+		return nil
+	}
+	configPath := filepath.Join(teamDir, "config.toml")
+	seen := map[string]struct{}{}
+	var warnings []pipelineDoctorFinding
+	for _, route := range routes {
+		agentName := pipelineRouteAgent(top, route)
+		if agentName == "" {
+			continue
+		}
+		if _, ok := seen[agentName]; ok {
+			continue
+		}
+		seen[agentName] = struct{}{}
+		agent, err := loader.LoadAgent(filepath.Join(teamDir, "agents", agentName), teamDir)
+		if err != nil {
+			continue
+		}
+		runtime := strings.TrimSpace(agent.Runtime)
+		runtimeBin := strings.TrimSpace(agent.RuntimeBin)
+		if runtime == "" && runtimeBin == "" {
+			continue
+		}
+		base := pipelineDoctorFinding{
+			Pipeline:   pipeline.Name,
+			Step:       step.ID,
+			Target:     target,
+			Agent:      agent.Name,
+			Runtime:    runtime,
+			RuntimeBin: runtimeBin,
+		}
+		if runtime == "" {
+			base.Code = "agent_runtime_bin_ignored"
+			base.Message = fmt.Sprintf("pipeline %q step %q targets agent %q, which declares runtime_bin %q without runtime; agent-level runtime_bin is ignored until runtime is set", pipeline.Name, step.ID, agent.Name, runtimeBin)
+			warnings = append(warnings, base)
+			continue
+		}
+		info, err := collectRuntimeInfoForConfigWithSelection(configPath, runtimeSelection{Kind: runtime, Binary: runtimeBin})
+		if err != nil {
+			base.Code = "agent_runtime_invalid"
+			base.Message = fmt.Sprintf("pipeline %q step %q targets agent %q, whose runtime default could not be resolved: %v", pipeline.Name, step.ID, agent.Name, err)
+			warnings = append(warnings, base)
+			continue
+		}
+		if !info.Available {
+			base.Code = "agent_runtime_unavailable"
+			base.Message = fmt.Sprintf("pipeline %q step %q targets agent %q, which defaults to runtime %q with binary %q, but that binary was not found in PATH", pipeline.Name, step.ID, agent.Name, info.Runtime, info.Binary)
+			base.Runtime = info.Runtime
+			base.RuntimeBin = info.Binary
+			warnings = append(warnings, base)
+		}
+	}
+	return warnings
+}
+
+func pipelineRouteAgent(top *topology.Topology, route string) string {
+	route = strings.TrimSpace(route)
+	if top == nil || route == "" {
+		return route
+	}
+	if inst := top.Instances[route]; inst != nil {
+		if agent := strings.TrimSpace(inst.Agent); agent != "" {
+			return agent
+		}
+	}
+	return route
 }
 
 func pipelineRouteFindings(top *topology.Topology, pipeline *topology.Pipeline) ([]pipelineDoctorFinding, []pipelineDoctorFinding) {

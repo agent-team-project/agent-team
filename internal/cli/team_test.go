@@ -6013,6 +6013,95 @@ pipelines = ["ticket_to_pr"]
 	}
 }
 
+func TestTeamDoctorIncludesAgentRuntimeWarnings(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Join(root, ".agent_team")
+	agentDir := filepath.Join(teamDir, "agents", "worker")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "agent.md"), []byte(`---
+description: Worker
+runtime: codex
+runtime_bin: missing-codex
+---
+Implement the assigned work.
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.worker]
+agent = "worker"
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[teams.delivery]
+instances = ["worker"]
+pipelines = ["ticket_to_pr"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "missing-codex" {
+			t.Fatalf("look path bin = %q, want missing-codex", bin)
+		}
+		return "", exec.ErrNotFound
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"team", "doctor", "delivery", "--repo", root, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("team doctor json: %v\nstderr=%s", err, stderr.String())
+	}
+	var result teamDoctorResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode team doctor agent runtime warning: %v\nbody=%s", err, out.String())
+	}
+	if !result.OK || len(result.Problems) != 0 || len(result.Warnings) != 1 {
+		t.Fatalf("team doctor result = %+v", result)
+	}
+	got := result.Warnings[0]
+	if got.Code != "agent_runtime_unavailable" || got.Team != "delivery" || got.Pipeline != "ticket_to_pr" || got.Step != "implement" || got.Agent != "worker" || got.Runtime != "codex" || got.RuntimeBin != "missing-codex" {
+		t.Fatalf("agent runtime warning = %+v", got)
+	}
+
+	strict := NewRootCmd()
+	strictOut, strictErr := &bytes.Buffer{}, &bytes.Buffer{}
+	strict.SetOut(strictOut)
+	strict.SetErr(strictErr)
+	strict.SetArgs([]string{"team", "doctor", "delivery", "--repo", root, "--strict-runtime", "--json"})
+	err := strict.Execute()
+	if err == nil {
+		t.Fatal("team doctor strict agent runtime unexpectedly succeeded")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("strict err = %v, want exit 1", err)
+	}
+	var strictResult teamDoctorResult
+	if err := json.Unmarshal(strictOut.Bytes(), &strictResult); err != nil {
+		t.Fatalf("decode strict team doctor json: %v\nbody=%s", err, strictOut.String())
+	}
+	if strictResult.OK || !hasTeamDoctorFinding(strictResult.Problems, "agent_runtime_unavailable") || len(strictResult.Warnings) != 0 {
+		t.Fatalf("strict team doctor result = %+v", strictResult)
+	}
+	if strictErr.Len() != 0 {
+		t.Fatalf("strict stderr = %q", strictErr.String())
+	}
+}
+
 func TestTeamRunCreatesPipelineJob(t *testing.T) {
 	root := t.TempDir()
 	initInto(t, root)

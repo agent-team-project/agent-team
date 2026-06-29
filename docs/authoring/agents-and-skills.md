@@ -40,7 +40,10 @@ Supported frontmatter values are scalar and block-scalar fields needed by agent 
 `runtime` can be `claude` or `codex`, and `runtime_bin` can point at a binary
 or wrapper for that runtime. These agent-level defaults apply when dispatch does
 not pass an explicit runtime and `AGENT_TEAM_RUNTIME` is not set. Repo runtime
-config remains the fallback after agent frontmatter.
+config remains the fallback after agent frontmatter. Use
+`agent-team pipeline doctor --strict-runtime` or
+`agent-team team doctor --strict-runtime` to fail fast when a pipeline route
+would rely on an unavailable agent-level runtime binary.
 
 ## Inspecting Installed Agents
 
