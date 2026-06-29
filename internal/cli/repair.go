@@ -727,21 +727,11 @@ func runRepair(cmd *cobra.Command, target, teamDir string, opts repairOptions) (
 	if opts.SkipQueue {
 		result.Queue = repairQueueStep{Action: "skipped", Reason: "--skip-queue set"}
 	} else {
-		filters, err := parseQueueListFilters(daemon.QueueStateDead, nil, nil, nil, false, time.Now().UTC())
+		queue, err := runRepairQueueStep(teamDir, opts)
 		if err != nil {
 			return nil, err
 		}
-		retries, err := queueRetryAllResults(teamDir, filters, "state", opts.Limit, opts.DryRun)
-		if err != nil {
-			return nil, err
-		}
-		result.Queue = repairQueueStep{Action: "retried", Results: retries}
-		if opts.DryRun {
-			result.Queue.Action = "would_retry"
-		}
-		if len(retries) == 0 {
-			result.Queue.Action = "none"
-		}
+		result.Queue = queue
 	}
 
 	result.Intake = collectRepairIntakeStep(teamDir, opts)
@@ -924,8 +914,47 @@ func runRepairPipelineRetryStep(cmd *cobra.Command, teamDir string, opts repairO
 	return repairPipelineRetryStep{Action: action, Results: results}, nil
 }
 
+func runRepairQueueStep(teamDir string, opts repairOptions) (repairQueueStep, error) {
+	filters, err := parseQueueListFilters(daemon.QueueStateDead, nil, nil, nil, false, time.Now().UTC())
+	if err != nil {
+		return repairQueueStep{Action: "error", Reason: err.Error()}, err
+	}
+	var retries []queueRetryResult
+	if repairHasScopedJobFilters(opts) {
+		jobs, err := repairScopedCandidateJobs(teamDir, opts)
+		if err != nil {
+			return repairQueueStep{Action: "error", Reason: err.Error()}, err
+		}
+		items, err := daemon.ListQueueItems(daemon.DaemonRoot(teamDir))
+		if err != nil {
+			return repairQueueStep{Action: "error", Reason: err.Error()}, err
+		}
+		runtimeByInstance := queueRuntimeMap(teamDir)
+		matches := filterQueueItems(items, filters.withNow(time.Now().UTC()).withRuntimeByInstance(runtimeByInstance))
+		matches = queueItemsForJobs(matches, jobs)
+		matches = prepareQueueActionMatches(matches, "state", opts.Limit, runtimeByInstance)
+		retries, err = retryQueueItemMatches(teamDir, matches, opts.DryRun)
+		if err != nil {
+			return repairQueueStep{Action: "error", Reason: err.Error()}, err
+		}
+	} else {
+		retries, err = queueRetryAllResults(teamDir, filters, "state", opts.Limit, opts.DryRun)
+		if err != nil {
+			return repairQueueStep{Action: "error", Reason: err.Error()}, err
+		}
+	}
+	action := "retried"
+	if opts.DryRun {
+		action = "would_retry"
+	}
+	if len(retries) == 0 {
+		action = "none"
+	}
+	return repairQueueStep{Action: action, Results: retries}, nil
+}
+
 func runRepairJobEventsStep(teamDir string, opts repairOptions) (repairJobEventsStep, error) {
-	jobs, err := repairJobEventCandidateJobs(teamDir, opts)
+	jobs, err := repairScopedCandidateJobs(teamDir, opts)
 	if err != nil {
 		return repairJobEventsStep{Action: "error", Reason: err.Error()}, err
 	}
@@ -936,7 +965,7 @@ func runRepairJobEventsStep(teamDir string, opts repairOptions) (repairJobEvents
 	return repairJobEventsStepFromResults(results, opts.DryRun), nil
 }
 
-func repairJobEventCandidateJobs(teamDir string, opts repairOptions) ([]*job.Job, error) {
+func repairScopedCandidateJobs(teamDir string, opts repairOptions) ([]*job.Job, error) {
 	jobs, err := job.List(teamDir)
 	if err != nil {
 		return nil, err
@@ -949,7 +978,7 @@ func repairJobEventCandidateJobs(teamDir string, opts repairOptions) ([]*job.Job
 		pipelines[pipeline] = true
 	}
 	target := strings.TrimSpace(opts.TimeoutTarget)
-	if len(pipelines) == 0 && target == "" {
+	if !repairHasScopedJobFilters(opts) {
 		return jobs, nil
 	}
 	out := make([]*job.Job, 0, len(jobs))
@@ -966,6 +995,12 @@ func repairJobEventCandidateJobs(teamDir string, opts repairOptions) ([]*job.Job
 		out = append(out, j)
 	}
 	return out, nil
+}
+
+func repairHasScopedJobFilters(opts repairOptions) bool {
+	return strings.TrimSpace(opts.TimeoutPipeline) != "" ||
+		strings.TrimSpace(opts.RetryPipeline) != "" ||
+		strings.TrimSpace(opts.TimeoutTarget) != ""
 }
 
 func jobEventReconcileResultsHaveChanges(results []jobEventReconcileResult) bool {

@@ -312,7 +312,8 @@ history. Use `repair --dry-run --skip-tick --json` to preview `job_events`, or
 `--commands` to emit the matching apply command.
 When top-level repair is scoped with `--timeout-pipeline`,
 `--timeout-target-agent`, or `--retry-pipeline`, the `job_events` phase is
-scoped before stale timeout and retry phases run.
+scoped before stale timeout and retry phases run, and dead-letter queue retry
+uses the same job scope.
 `pipeline repair <pipeline>` and `team repair <team>` include the same phase,
 filtered to jobs owned by that pipeline or team.
 For direct reconciliation outside a repair pass, use

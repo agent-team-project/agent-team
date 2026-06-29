@@ -107,6 +107,164 @@ func TestRepairDryRunPreviewsDeadQueueWithoutDaemon(t *testing.T) {
 	}
 }
 
+func TestRepairQueueRetryRespectsScopedTimeoutFilters(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	for _, j := range []*job.Job{
+		{
+			ID:        "squ-230",
+			Ticket:    "SQU-230",
+			Target:    "worker",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusQueued,
+			CreatedAt: now.Add(-time.Hour),
+			UpdatedAt: now,
+		},
+		{
+			ID:        "ops-230",
+			Ticket:    "OPS-230",
+			Target:    "worker",
+			Pipeline:  "ops_review",
+			Status:    job.StatusQueued,
+			CreatedAt: now.Add(-time.Hour),
+			UpdatedAt: now,
+		},
+		{
+			ID:        "squ-231",
+			Ticket:    "SQU-231",
+			Target:    "manager",
+			Pipeline:  "ticket_to_pr",
+			Status:    job.StatusQueued,
+			CreatedAt: now.Add(-time.Hour),
+			UpdatedAt: now,
+		},
+	} {
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", j.ID, err)
+		}
+	}
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:         "q-repair-selected",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-230",
+			Payload: map[string]any{
+				"job_id": "squ-230",
+				"ticket": "SQU-230",
+			},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "selected failed",
+			QueuedAt:       now.Add(-time.Hour),
+			UpdatedAt:      now,
+			DeadLetteredAt: now,
+		},
+		{
+			ID:         "q-repair-other-pipeline",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-ops-230",
+			Payload: map[string]any{
+				"job_id": "ops-230",
+				"ticket": "OPS-230",
+			},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "other pipeline failed",
+			QueuedAt:       now.Add(-time.Hour),
+			UpdatedAt:      now,
+			DeadLetteredAt: now,
+		},
+		{
+			ID:         "q-repair-other-target",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "manager",
+			InstanceID: "manager-squ-231",
+			Payload: map[string]any{
+				"job_id": "squ-231",
+				"ticket": "SQU-231",
+			},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "other target failed",
+			QueuedAt:       now.Add(-time.Hour),
+			UpdatedAt:      now,
+			DeadLetteredAt: now,
+		},
+	} {
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+			t.Fatalf("write queue item %s: %v", item.ID, err)
+		}
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--timeout-jobs", "--timeout-pipeline", "ticket_to_pr", "--timeout-target-agent", "worker", "--skip-daemon", "--skip-tick", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("repair scoped queue dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview repairResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode scoped queue dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if preview.Queue.Action != "would_retry" || len(preview.Queue.Results) != 1 || preview.Queue.Results[0].ID != "q-repair-selected" {
+		t.Fatalf("scoped queue preview = %+v", preview.Queue)
+	}
+	if strings.Contains(dryOut.String(), "q-repair-other-pipeline") || strings.Contains(dryOut.String(), "q-repair-other-target") {
+		t.Fatalf("scoped queue dry-run leaked unselected items:\n%s", dryOut.String())
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--timeout-jobs", "--timeout-pipeline", "ticket_to_pr", "--timeout-target-agent", "worker", "--skip-daemon", "--skip-tick", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("repair scoped queue commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "repair", "--repo", tmp, "--skip-daemon", "--skip-tick", "--timeout-jobs", "--timeout-pipeline", "ticket_to_pr", "--timeout-target-agent", "worker"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("repair scoped queue commands = %q, want %q", got, wantCommand)
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"repair", "--target", tmp, "--timeout-jobs", "--timeout-pipeline", "ticket_to_pr", "--timeout-target-agent", "worker", "--skip-daemon", "--skip-tick", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("repair scoped queue apply: %v\nstderr=%s", err, applyErr.String())
+	}
+	var result repairResult
+	if err := json.Unmarshal(applyOut.Bytes(), &result); err != nil {
+		t.Fatalf("decode scoped queue apply: %v\nbody=%s", err, applyOut.String())
+	}
+	if result.Queue.Action != "retried" || len(result.Queue.Results) != 1 || result.Queue.Results[0].ID != "q-repair-selected" || result.Queue.Results[0].Action != "reset" {
+		t.Fatalf("scoped queue apply = %+v", result.Queue)
+	}
+	selected, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-repair-selected")
+	if err != nil {
+		t.Fatalf("read selected queue item: %v", err)
+	}
+	if selected.State != daemon.QueueStatePending {
+		t.Fatalf("selected queue item state = %s, want pending", selected.State)
+	}
+	for _, id := range []string{"q-repair-other-pipeline", "q-repair-other-target"} {
+		item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id)
+		if err != nil {
+			t.Fatalf("read unselected queue item %s: %v", id, err)
+		}
+		if item.State != daemon.QueueStateDead {
+			t.Fatalf("unselected queue item %s state = %s, want dead", id, item.State)
+		}
+	}
+}
+
 func TestRepairLastMessageRewritesRuntimeHealthActions(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
