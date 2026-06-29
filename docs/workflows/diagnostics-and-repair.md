@@ -43,9 +43,8 @@ underlying overview counts; they only select which action hints are rendered in
 text, JSON, templates, or `--commands` output.
 
 When daemon metadata contains crashed instances or stale recorded running PIDs,
-overview includes runtime counts and suggests `agent-team resume-plan
---status crashed --sort action --limit 10`, `agent-team resume-plan
---runtime-stale --sort stale --limit 10`, or the matching team- or
+overview includes runtime counts and suggests `agent-team resume-plan --status crashed --sort action --limit 10`,
+`agent-team resume-plan --runtime-stale --sort stale --limit 10`, or the matching team- or
 pipeline-scoped `resume-plan` command. Add `--unhealthy` when one report
 should include both crashed and stale-running metadata,
 `--action start|attach|resume|logs` when you only want one recovery class, or
@@ -328,8 +327,8 @@ queue-state recovery should stay scoped.
 Use `drain` when a script should keep running global maintenance cycles until
 the daemon has no immediate schedule, outbox, queue, or pipeline work left.
 Add `--wait --wait-status running` when it should then wait for jobs advanced
-during those drain cycles to have live owners. Use `team drain <team> --wait
---wait-status running` for the same bounded handoff inside one declared team.
+during those drain cycles to have live owners. Use `team drain <team> --wait --wait-status running`
+for the same bounded handoff inside one declared team.
 Use `pipeline drain <pipeline> --wait --wait-status running` when the finite
 drain should stay inside one workflow's queue and ready steps.
 Use `tick --wait --wait-status running` for one foreground maintenance cycle
@@ -351,8 +350,8 @@ Use `--retry-step <id>` with `--retry-pipelines` when a broad repair pass should
 Use `pipeline repair <pipeline> --retry-pipelines --wait --wait-status running`
 when a scoped repair should block until every retried or newly advanced job has
 a live owner. Use `repair --retry-pipelines --wait --wait-status running` for
-the same bounded handoff across workflows, or `team repair <team>
---retry-pipelines --wait --wait-status running` to keep it inside one declared
+the same bounded handoff across workflows, or `team repair <team> --retry-pipelines --wait --wait-status running`
+to keep it inside one declared
 team. The wait applies to dispatched retry rows and final ready-step advance
 rows.
 Add `--runtime codex` or `--runtime-bin <path>` when repair retry or final tick advancement should use a one-off runtime override instead of the repo default.

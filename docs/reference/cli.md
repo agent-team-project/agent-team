@@ -19,11 +19,12 @@ as the output directory instead.
 | `agent-team template rm <ref> [--dry-run] [--commands] [--format <template>] [--json]` | Remove a cached template, or preview/print the apply command |
 | `agent-team template smoke [ref] [--format <template>] [--json]` | Render a template in a temp repo and validate it; add `--strict-runtime` for CI runtime checks |
 | `agent-team template run <ref> <agent>` | One-shot init plus run in a temp or target dir |
-| `agent-team upgrade --check|--apply` | Compare current template lock to target or apply clean template changes; add `--apply --dry-run --commands` for the clean apply command |
+| `agent-team upgrade --check\|--apply` | Compare current template lock to target or apply clean template changes; add `--apply --dry-run --commands` for the clean apply command |
 | `agent-team agent ls` / `agent-team agent show <agent>` | List or inspect runnable agent definitions installed under `.agent_team/agents`; `agents` is a plural alias |
 | `agent-team doctor [--commands]` | Validate local layout, durable job files, runtime availability, and workflow runtime defaults; print aggregate remediation commands for scripts |
 | `agent-team dispatch <target> <ticket>` | Publish or preview an `agent.dispatch` topology event; add `--dry-run --commands` to print the matching dispatch apply command for matched routes |
 | `agent-team docs cli` | Generate or check markdown reference from the live command tree |
+| `agent-team docs site [--commands] [--json]` | Show VitePress developer docs paths, local URL, and dev/build/preview commands |
 
 ## Runtime and Daemon
 
@@ -61,7 +62,7 @@ as the output directory instead.
 | `agent-team stats` | Show CPU/RSS data |
 | `agent-team attach <instance>` | Interactive runtime resume handoff; `exec` is a Docker-like alias; add `--dry-run --commands` to print the safe apply command or unmanaged resume/log fallbacks |
 | `agent-team wait [instances...]` | Wait for lifecycle or phase conditions; add `--dry-run --commands` to print the scoped replay command for the selected instances |
-| `agent-team instance up|down|rm` | Namespaced lifecycle controls; add `--dry-run --commands` to print matching `instance` apply commands for actionable previews |
+| `agent-team instance up\|down\|rm` | Namespaced lifecycle controls; add `--dry-run --commands` to print matching `instance` apply commands for actionable previews |
 | `agent-team rm [instances...]` | Remove state and metadata; add `--dry-run --commands` to print the matching remove command when the preview has actionable work |
 | `agent-team prune` | Remove finished old metadata/state; add `--dry-run --commands` to print the matching prune apply command when the preview has actionable work |
 
@@ -82,7 +83,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | Command | Purpose |
 | --- | --- |
 | `agent-team topology show` | Render loaded topology |
-| `agent-team graph [team-or-pipeline] [--team <team>|--pipeline <pipeline>]` | Shortcut for full topology, team, or pipeline graph output with the same text, Mermaid, DOT, JSON, job overlay, route, and command-hint flags |
+| `agent-team graph [team-or-pipeline] [--team <team>\|--pipeline <pipeline>]` | Shortcut for full topology, team, or pipeline graph output with the same text, Mermaid, DOT, JSON, job overlay, route, and command-hint flags |
 | `agent-team topology graph` | Render full topology graph |
 | `agent-team topology summary` | Summarize topology health |
 | `agent-team topology reload` | Reload daemon topology, with JSON/template output for scripts |
@@ -110,7 +111,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job stats <job-id>` | Show CPU and memory usage for one job's instances; add `--step` for one pipeline stage |
 | `agent-team job top <job-id>` | `agent-team job stats <job-id>` |
 | `agent-team job exec <job-id>` | `agent-team job attach <job-id>` |
-| `agent-team job start|stop|kill <job-id>` | Control a job's owning instance; add `--step` for a pipeline stage and `--dry-run --commands` for the selected lifecycle apply command |
+| `agent-team job start\|stop\|kill <job-id>` | Control a job's owning instance; add `--step` for a pipeline stage and `--dry-run --commands` for the selected lifecycle apply command |
 | `agent-team job snapshot <job-id>` | Capture one job's post-mortem metadata, provenance, event tails ordered with `--events-sort`, combined timeline rows, inboxes, queue/outbox ownership including quarantine, state files, optional log tails, formatted summary fields, or follow-up commands with `--commands` |
 | `agent-team job explain <job-id>` | Explain or watch pipeline step readiness, blockers, gates, and next actions; add `--state` or `--step` to focus one state or stage, or `--commands` for repo-scoped nested action commands |
 | `agent-team job watch <job-id>` | Continuous job explanation shortcut for next-step readiness, blockers, gates, and actions |
@@ -123,7 +124,7 @@ Collection groups also accept natural plural aliases: `agents`, `jobs`, `pipelin
 | `agent-team job note <job-id>` | Append an operator or automation note to the job audit log; add `--dry-run --commands` for the apply command |
 | `agent-team job block <job-id>` | Mark a job blocked and record the reason; add `--dry-run --commands` for the apply command |
 | `agent-team job unblock <job-id>` | Send answer and mark blocked job running; add `--dry-run --commands` for the apply command |
-| `agent-team job reopen|retry <job-id>` | Reopen/retry a failed or closed job; add `--dry-run --commands` for the apply command or `--dispatch --wait --wait-next-state`/`--wait-step` for pipeline recovery handoff |
+| `agent-team job reopen\|retry <job-id>` | Reopen/retry a failed or closed job; add `--dry-run --commands` for the apply command or `--dispatch --wait --wait-next-state`/`--wait-step` for pipeline recovery handoff |
 | `agent-team job update <job-id>` | Update job metadata; add `--dry-run --commands` for the apply command, `--advance --dry-run` to preview unblocked steps, or `--advance --wait --wait-next-state`/`--wait-step` for PR-gate handoff |
 | `agent-team job hold <job-id>` | Pause readiness/advance automation without changing lifecycle status; use `--all` for repo-wide freezes, add `--for` or `--until` for a deadline, or `--dry-run --commands` for the apply command |
 | `agent-team job release <job-id>` | Resume readiness/advance automation for a held job; use `--all --expired` for elapsed time-boxed holds or `--dry-run --commands` for the apply command |

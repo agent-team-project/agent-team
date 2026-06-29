@@ -8,6 +8,13 @@ export default defineConfig({
   markdown: {
     lineNumbers: true
   },
+  vue: {
+    template: {
+      compilerOptions: {
+        delimiters: ['[[[', ']]]']
+      }
+    }
+  },
   themeConfig: {
     logo: { text: 'agent-team' },
     search: {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -135,6 +136,110 @@ func TestDocsCLIRejectsOutputAndCheck(t *testing.T) {
 		t.Fatalf("error = %v, want exit 2", err)
 	}
 	if !strings.Contains(stderr.String(), "--output cannot be combined with --check") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if out.Len() != 0 {
+		t.Fatalf("validation wrote stdout: %s", out.String())
+	}
+}
+
+func TestDocsSiteShowsLocalCommands(t *testing.T) {
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"docs", "site"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("docs site: %v\nstderr=%s", err, stderr.String())
+	}
+	body := out.String()
+	for _, want := range []string{
+		"Developer docs site",
+		"available:     true",
+		"docs/.vitepress/config.mts",
+		"docs/reference/cli.generated.md",
+		"http://localhost:5173/",
+		"npm run docs:dev",
+		"npm run docs:build",
+		"npm run docs:preview",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("docs site output missing %q\nbody:\n%s", want, body)
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("docs site wrote stderr: %s", stderr.String())
+	}
+}
+
+func TestDocsSiteCommandsOnly(t *testing.T) {
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"docs", "site", "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("docs site --commands: %v\nstderr=%s", err, stderr.String())
+	}
+	body := strings.TrimSpace(out.String())
+	lines := strings.Split(body, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("commands = %q, want three lines", body)
+	}
+	for _, want := range []string{"npm run docs:dev", "npm run docs:build", "npm run docs:preview"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("docs site commands missing %q\nbody:\n%s", want, body)
+		}
+	}
+	for _, unwanted := range []string{"Developer docs site", "dev_url:"} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("docs site commands included %q\nbody:\n%s", unwanted, body)
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("docs site --commands wrote stderr: %s", stderr.String())
+	}
+}
+
+func TestDocsSiteJSON(t *testing.T) {
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"docs", "site", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("docs site --json: %v\nstderr=%s", err, stderr.String())
+	}
+	var info docsSiteInfo
+	if err := json.Unmarshal(out.Bytes(), &info); err != nil {
+		t.Fatalf("decode docs site json: %v\nbody=%s", err, out.String())
+	}
+	if !info.Available || info.DevURL != "http://localhost:5173/" || len(info.Commands) != 3 {
+		t.Fatalf("docs site json = %+v", info)
+	}
+	if !strings.HasSuffix(info.Config, filepath.Join("docs", ".vitepress", "config.mts")) {
+		t.Fatalf("docs site config = %q", info.Config)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("docs site --json wrote stderr: %s", stderr.String())
+	}
+}
+
+func TestDocsSiteRejectsCommandsAndJSON(t *testing.T) {
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"docs", "site", "--commands", "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("docs site accepted --commands with --json")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 2 {
+		t.Fatalf("error = %v, want exit 2", err)
+	}
+	if !strings.Contains(stderr.String(), "--commands cannot be combined with --json") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	if out.Len() != 0 {

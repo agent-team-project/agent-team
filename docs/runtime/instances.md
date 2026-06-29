@@ -111,8 +111,8 @@ also include the matching `job show`, `job logs`, and `job resume-plan`
 follow-up actions.
 
 `agent-team runtime adopt` and `agent-team daemon adopt` are the same metadata
-operation from narrower namespaces. Use `agent-team job adopt <job-id> --pid
-<pid>` or `agent-team job adopt <job-id> --pid-file <path>` when you want to
+operation from narrower namespaces. Use `agent-team job adopt <job-id> --pid <pid>`
+or `agent-team job adopt <job-id> --pid-file <path>` when you want to
 start from a durable job instead of an instance name.
 
 ## Remove and Prune

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -19,6 +20,7 @@ func newDocsCmd() *cobra.Command {
 		Short: "Generate developer documentation from the command tree.",
 	}
 	cmd.AddCommand(newDocsCLICmd())
+	cmd.AddCommand(newDocsSiteCmd())
 	return cmd
 }
 
@@ -68,6 +70,119 @@ func newDocsCLICmd() *cobra.Command {
 	cmd.Flags().StringVar(&check, "check", "", "Exit non-zero if this markdown file does not match generated output.")
 	cmd.Flags().BoolVar(&includeHidden, "include-hidden", false, "Include hidden commands.")
 	return cmd
+}
+
+func newDocsSiteCmd() *cobra.Command {
+	var (
+		commands bool
+		jsonOut  bool
+	)
+	cmd := &cobra.Command{
+		Use:   "site",
+		Short: "Show developer docs website commands.",
+		Long:  "Show the local VitePress developer docs website commands and paths for this source checkout.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team docs site: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			info := collectDocsSiteInfo()
+			if commands {
+				for _, command := range info.Commands {
+					fmt.Fprintln(cmd.OutOrStdout(), command)
+				}
+				return nil
+			}
+			if jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(info)
+			}
+			return renderDocsSiteInfo(cmd.OutOrStdout(), info)
+		},
+	}
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print only shell commands for dev, build, and preview.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit docs site paths and commands as JSON.")
+	return cmd
+}
+
+type docsSiteInfo struct {
+	Root           string   `json:"root"`
+	DocsDir        string   `json:"docs_dir"`
+	Config         string   `json:"config"`
+	PackageJSON    string   `json:"package_json"`
+	CLIReference   string   `json:"cli_reference"`
+	Available      bool     `json:"available"`
+	DevURL         string   `json:"dev_url"`
+	DevCommand     string   `json:"dev_command"`
+	BuildCommand   string   `json:"build_command"`
+	PreviewCommand string   `json:"preview_command"`
+	Commands       []string `json:"commands"`
+}
+
+func collectDocsSiteInfo() docsSiteInfo {
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
+	root := findDocsSiteRoot(cwd)
+	info := docsSiteInfo{
+		Root:         root,
+		DocsDir:      filepath.Join(root, "docs"),
+		Config:       filepath.Join(root, "docs", ".vitepress", "config.mts"),
+		PackageJSON:  filepath.Join(root, "package.json"),
+		CLIReference: filepath.Join(root, "docs", "reference", "cli.generated.md"),
+		DevURL:       "http://localhost:5173/",
+	}
+	info.Available = fileExists(info.PackageJSON) && fileExists(info.Config)
+	info.DevCommand = docsSiteShellCommand(root, "npm", "run", "docs:dev")
+	info.BuildCommand = docsSiteShellCommand(root, "npm", "run", "docs:build")
+	info.PreviewCommand = docsSiteShellCommand(root, "npm", "run", "docs:preview")
+	info.Commands = []string{info.DevCommand, info.BuildCommand, info.PreviewCommand}
+	return info
+}
+
+func findDocsSiteRoot(start string) string {
+	abs, err := filepath.Abs(start)
+	if err != nil {
+		return start
+	}
+	if eval, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = eval
+	}
+	for {
+		if fileExists(filepath.Join(abs, "package.json")) && fileExists(filepath.Join(abs, "docs", ".vitepress", "config.mts")) {
+			return abs
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return filepath.Clean(start)
+		}
+		abs = parent
+	}
+}
+
+func fileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
+}
+
+func docsSiteShellCommand(root string, args ...string) string {
+	return strings.Join(shellQuoteArgs([]string{"cd", root}), " ") + " && " + strings.Join(shellQuoteArgs(args), " ")
+}
+
+func renderDocsSiteInfo(w io.Writer, info docsSiteInfo) error {
+	fmt.Fprintln(w, "Developer docs site")
+	fmt.Fprintf(w, "root:          %s\n", info.Root)
+	fmt.Fprintf(w, "available:     %t\n", info.Available)
+	fmt.Fprintf(w, "docs:          %s\n", info.DocsDir)
+	fmt.Fprintf(w, "config:        %s\n", info.Config)
+	fmt.Fprintf(w, "cli_reference: %s\n", info.CLIReference)
+	fmt.Fprintf(w, "dev_url:       %s\n", info.DevURL)
+	fmt.Fprintln(w, "commands:")
+	for _, command := range info.Commands {
+		fmt.Fprintf(w, "  %s\n", command)
+	}
+	return nil
 }
 
 func checkCLIReferenceMarkdown(cmd *cobra.Command, path string, want []byte) error {

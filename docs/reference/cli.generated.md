@@ -807,6 +807,7 @@ Inherited Flags:
 Subcommands:
 
 - `agent-team docs cli` - Generate a markdown CLI reference.
+- `agent-team docs site` - Show developer docs website commands.
 
 ## `agent-team docs cli`
 
@@ -825,6 +826,29 @@ Flags:
   -h, --help             help for cli
       --include-hidden   Include hidden commands.
   -o, --output string    Write markdown to this path instead of stdout. Use '-' for stdout.
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team docs site`
+
+Show developer docs website commands.
+
+Show the local VitePress developer docs website commands and paths for this source checkout.
+
+```text
+agent-team docs site [flags]
+```
+
+Flags:
+
+```text
+      --commands   Print only shell commands for dev, build, and preview.
+      --json       Emit docs site paths and commands as JSON.
 ```
 
 Inherited Flags:

@@ -75,6 +75,13 @@ npm run docs:dev
 npm run docs:build
 ```
 
+Use the CLI helper when you need the exact local paths, URL, or commands:
+
+```sh
+agent-team docs site
+agent-team docs site --commands
+```
+
 After changing CLI commands or flags, regenerate a command reference from the
 live Cobra tree:
 
@@ -226,8 +233,8 @@ agent-team adopt <instance> (--pid <pid>|--pid-file <path>) [--agent worker] [--
                                                 # shortcut for adopting an external runtime process into daemon metadata
 agent-team resume-plan [<instance>...] [--job squ-42] [--step <id>] [--status crashed] [--runtime codex] [--action start|attach|resume|logs] [--runtime-stale|--unhealthy] [--sort stale] [--limit N] [--summary] [--last-message] [--commands] [--format '{{.Instance}} {{.RecommendedAction}}'] [--json]
                                                 # shortcut for runtime resume recovery commands from daemon metadata
-agent-team docs cli [--output docs/reference/cli.generated.md | --check docs/reference/cli.generated.md]
-                                                # generate or check markdown CLI reference from the live command tree
+agent-team docs cli [--output docs/reference/cli.generated.md | --check docs/reference/cli.generated.md] | site [--commands] [--json]
+                                                # generate/check markdown CLI reference, or show local developer docs site commands
 agent-team snapshot [--events N|-1] [--events-sort newest] [--intake-deliveries N|-1] [--schedule-limit N] [--no-redact] [--commands] [--format '{{.Repo}} {{len .Jobs}}'] [--json | --output snapshot.json] | diff <before.json> <after.json> | diff <snapshot.json> (--current-after|--current-before) [--events N|-1] [--events-sort newest] [--timeline N|all] [--intake-deliveries N|-1] [--schedule-limit N] [--no-redact] [--section provenance|git|runtime|health|plan|triage|next|actions|commands|instances|jobs|job_quarantine|inbox|outbox|outbox_quarantine|queue|queue_quarantine|quarantine|schedules|intake|events|timeline|timelines|pipelines|pipeline_metrics|advance|ready_advance|section_errors] [--action added|removed|changed] [--commands] [--summary] [--sort section|action|id] [--limit N] [--format '{{.Summary.TotalChanges}}'] [--json | --output diff.json] [--exit-code]
                                                 # capture a redacted read-only diagnostic report with command provenance, health, plan, jobs, job quarantine, job-status previews, inbox, outbox/quarantine, queue/quarantine, schedules, runtime, and recent events
 agent-team watch [--no-clear] [-a] [--summary [--resources]] [--last-message] [--plan [--stop-extras] [--action start]] [--jobs] [--schedules] [--latest | --last N] [--events N [--events-sort newest] [--event-action stop] [--since 10m]] [--sort status|agent|phase|stale|runtime-stale|unhealthy|started|stopped|exited|name] [--stats-sort cpu|mem|rss|status|agent|phase|stale|runtime-stale|unhealthy|name] [--format '{{.Health.Healthy}} {{len .Instances}}'] [--json] [--interval 2s] [--strict-topology] [--agent manager] [--instance manager] [--status running] [--runtime codex] [--phase idle] [--stale] [--runtime-stale] [--unhealthy]
