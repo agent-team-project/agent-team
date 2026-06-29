@@ -311,9 +311,12 @@ worker already exited and whose runtime metadata has been reduced to lifecycle
 history. Use `repair --dry-run --skip-tick --json` to preview `job_events`, or
 `--commands` to emit the matching apply command.
 When top-level repair is scoped with `--timeout-pipeline`,
-`--timeout-target-agent`, or `--retry-pipeline`, the `job_events` phase is
-scoped before stale timeout and retry phases run, and dead-letter queue retry
-uses the same job scope.
+`--timeout-target-agent`, `--timeout-step`, `--retry-pipeline`, or
+`--retry-step`, the `job_events` phase is scoped before stale timeout and retry
+phases run, and dead-letter queue retry uses the same job scope. If a queued
+dispatch records `pipeline_step`, dead-letter queue retry also honors the step
+scope so one-stage repair does not reset unrelated stage dispatches for the
+same job.
 `pipeline repair <pipeline>` and `team repair <team>` include the same phase,
 filtered to jobs owned by that pipeline or team.
 For direct reconciliation outside a repair pass, use
@@ -341,9 +344,9 @@ or `--skip-advance`.
 Use `--timeout-jobs` after status/event reconciliation when stale running work
 should become failed before a retry pass. It covers stale pipeline steps and
 stale step-less running jobs; use `--timeout-pipelines` when you only want the
-older pipeline-step expiration scope. Add `--timeout-pipeline` or
-`--timeout-target-agent` with either timeout mode to stay inside one workflow or
-agent role.
+older pipeline-step expiration scope. Add `--timeout-pipeline`,
+`--timeout-target-agent`, or `--timeout-step` with either timeout mode to stay
+inside one workflow, agent role, or stage.
 Use `--retry-step <id>` with `--retry-pipelines` when a broad repair pass should target only one failed stage, such as rerunning review jobs after fixing a reviewer prompt. Add `--retry-force` only when capped steps should be retried after the underlying external issue has been fixed.
 Use `pipeline repair <pipeline> --retry-pipelines --wait --wait-status running`
 when a scoped repair should block until every retried or newly advanced job has

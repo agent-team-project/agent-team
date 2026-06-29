@@ -199,7 +199,6 @@ func TestRepairQueueRetryRespectsScopedTimeoutFilters(t *testing.T) {
 			t.Fatalf("write queue item %s: %v", item.ID, err)
 		}
 	}
-
 	dry := NewRootCmd()
 	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
 	dry.SetOut(dryOut)
@@ -262,6 +261,196 @@ func TestRepairQueueRetryRespectsScopedTimeoutFilters(t *testing.T) {
 		if item.State != daemon.QueueStateDead {
 			t.Fatalf("unselected queue item %s state = %s, want dead", id, item.State)
 		}
+	}
+}
+
+func TestRepairQueueRetryRespectsScopedStepFilters(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-232",
+		Ticket:    "SQU-232",
+		Target:    "worker",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		CreatedAt: now.Add(-time.Hour),
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusRunning, Instance: "worker-squ-232-implement"},
+			{ID: "review", Target: "manager", Status: job.StatusQueued, Instance: "manager-squ-232-review"},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	for _, item := range []*daemon.QueueItem{
+		{
+			ID:         "q-repair-review-step",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "manager",
+			InstanceID: "manager-squ-232-review",
+			Payload: map[string]any{
+				"job_id":        "squ-232",
+				"ticket":        "SQU-232",
+				"pipeline_step": "review",
+			},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "review dispatch failed",
+			QueuedAt:       now.Add(-time.Hour),
+			UpdatedAt:      now,
+			DeadLetteredAt: now,
+		},
+		{
+			ID:         "q-repair-implement-step",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-232-implement",
+			Payload: map[string]any{
+				"job_id":        "squ-232",
+				"ticket":        "SQU-232",
+				"pipeline_step": "implement",
+			},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "implement dispatch failed",
+			QueuedAt:       now.Add(-time.Hour),
+			UpdatedAt:      now,
+			DeadLetteredAt: now,
+		},
+		{
+			ID:         "q-repair-stepless",
+			State:      daemon.QueueStateDead,
+			EventType:  "agent.dispatch",
+			Instance:   "worker",
+			InstanceID: "worker-squ-232",
+			Payload: map[string]any{
+				"job_id": "squ-232",
+				"ticket": "SQU-232",
+			},
+			Attempts:       daemon.MaxQueueAttempts,
+			LastError:      "stepless dispatch failed",
+			QueuedAt:       now.Add(-time.Hour),
+			UpdatedAt:      now,
+			DeadLetteredAt: now,
+		},
+	} {
+		if err := daemon.WriteQueueItem(daemon.DaemonRoot(teamDir), item); err != nil {
+			t.Fatalf("write queue item %s: %v", item.ID, err)
+		}
+	}
+	zeroExit, oneExit := 0, 1
+	for _, meta := range []*daemon.Metadata{
+		{
+			Instance:  "worker-squ-232-implement",
+			Agent:     "worker",
+			Job:       "SQU-232",
+			Ticket:    "SQU-232",
+			Status:    daemon.StatusCrashed,
+			PID:       1234,
+			StartedAt: now.Add(-2 * time.Hour),
+			ExitedAt:  now.Add(-30 * time.Minute),
+			ExitCode:  &oneExit,
+		},
+		{
+			Instance:  "manager-squ-232-review",
+			Agent:     "manager",
+			Job:       "SQU-232",
+			Ticket:    "SQU-232",
+			Status:    daemon.StatusExited,
+			PID:       1235,
+			StartedAt: now.Add(-2 * time.Hour),
+			ExitedAt:  now.Add(-30 * time.Minute),
+			ExitCode:  &zeroExit,
+		},
+	} {
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), meta); err != nil {
+			t.Fatalf("write metadata %s: %v", meta.Instance, err)
+		}
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--timeout-jobs", "--timeout-step", "review", "--skip-daemon", "--skip-tick", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("repair step-scoped queue dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview repairResult
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode step-scoped queue dry-run: %v\nbody=%s", err, dryOut.String())
+	}
+	if preview.Queue.Action != "would_retry" || len(preview.Queue.Results) != 1 || preview.Queue.Results[0].ID != "q-repair-review-step" {
+		t.Fatalf("step-scoped queue preview = %+v", preview.Queue)
+	}
+	if preview.JobEvents.Action != "would_reconcile" || len(preview.JobEvents.Results) != 1 || preview.JobEvents.Results[0].StepID != "review" {
+		t.Fatalf("step-scoped job events preview = %+v", preview.JobEvents)
+	}
+	for _, unwanted := range []string{"q-repair-implement-step", "q-repair-stepless"} {
+		if strings.Contains(dryOut.String(), unwanted) {
+			t.Fatalf("step-scoped queue dry-run leaked %s:\n%s", unwanted, dryOut.String())
+		}
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"repair", "--target", tmp, "--dry-run", "--timeout-jobs", "--timeout-step", "review", "--skip-daemon", "--skip-tick", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("repair step-scoped queue commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "repair", "--repo", tmp, "--skip-daemon", "--skip-tick", "--timeout-jobs", "--timeout-step", "review"}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("repair step-scoped queue commands = %q, want %q", got, wantCommand)
+	}
+
+	apply := NewRootCmd()
+	applyOut, applyErr := &bytes.Buffer{}, &bytes.Buffer{}
+	apply.SetOut(applyOut)
+	apply.SetErr(applyErr)
+	apply.SetArgs([]string{"repair", "--target", tmp, "--timeout-jobs", "--timeout-step", "review", "--skip-daemon", "--skip-tick", "--json"})
+	if err := apply.Execute(); err != nil {
+		t.Fatalf("repair step-scoped queue apply: %v\nstderr=%s", err, applyErr.String())
+	}
+	var result repairResult
+	if err := json.Unmarshal(applyOut.Bytes(), &result); err != nil {
+		t.Fatalf("decode step-scoped queue apply: %v\nbody=%s", err, applyOut.String())
+	}
+	if result.Queue.Action != "retried" || len(result.Queue.Results) != 1 || result.Queue.Results[0].ID != "q-repair-review-step" || result.Queue.Results[0].Action != "reset" {
+		t.Fatalf("step-scoped queue apply = %+v", result.Queue)
+	}
+	if result.JobEvents.Action != "reconciled" || len(result.JobEvents.Results) != 1 || result.JobEvents.Results[0].StepID != "review" {
+		t.Fatalf("step-scoped job events apply = %+v", result.JobEvents)
+	}
+	selected, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), "q-repair-review-step")
+	if err != nil {
+		t.Fatalf("read selected step queue item: %v", err)
+	}
+	if selected.State != daemon.QueueStatePending {
+		t.Fatalf("selected step queue item state = %s, want pending", selected.State)
+	}
+	for _, id := range []string{"q-repair-implement-step", "q-repair-stepless"} {
+		item, err := daemon.ReadQueueItem(daemon.DaemonRoot(teamDir), id)
+		if err != nil {
+			t.Fatalf("read unselected step queue item %s: %v", id, err)
+		}
+		if item.State != daemon.QueueStateDead {
+			t.Fatalf("unselected step queue item %s state = %s, want dead", id, item.State)
+		}
+	}
+	updated, err := job.Read(teamDir, "squ-232")
+	if err != nil {
+		t.Fatalf("read updated job: %v", err)
+	}
+	if updated.Steps[0].ID != "implement" || updated.Steps[0].Status != job.StatusRunning {
+		t.Fatalf("implement step changed during review-scoped repair = %+v", updated.Steps[0])
+	}
+	if updated.Steps[1].ID != "review" || updated.Steps[1].Status != job.StatusDone {
+		t.Fatalf("review step not reconciled during review-scoped repair = %+v", updated.Steps[1])
 	}
 }
 

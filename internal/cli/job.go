@@ -11788,7 +11788,13 @@ func reconcileJobsFromEvents(teamDir string, dryRun bool, now time.Time) ([]jobE
 	return reconcileSelectedJobsFromEvents(teamDir, jobs, dryRun, now)
 }
 
+type jobEventReconcileResultFilter func(jobEventReconcileResult) bool
+
 func reconcileSelectedJobsFromEvents(teamDir string, jobs []*job.Job, dryRun bool, now time.Time) ([]jobEventReconcileResult, error) {
+	return reconcileSelectedJobsFromEventsWithFilter(teamDir, jobs, dryRun, now, nil)
+}
+
+func reconcileSelectedJobsFromEventsWithFilter(teamDir string, jobs []*job.Job, dryRun bool, now time.Time, filter jobEventReconcileResultFilter) ([]jobEventReconcileResult, error) {
 	daemonRoot := daemon.DaemonRoot(teamDir)
 	metas, err := daemon.ListMetadata(daemonRoot)
 	if err != nil {
@@ -11804,7 +11810,13 @@ func reconcileSelectedJobsFromEvents(teamDir string, jobs []*job.Job, dryRun boo
 		if j == nil {
 			continue
 		}
-		result := reconcileJobFromDaemonMetadata(j, meta, matchedBy, dryRun, now)
+		result := reconcileJobFromDaemonMetadata(j, meta, matchedBy, true, now)
+		if filter != nil && !filter(result) {
+			continue
+		}
+		if !dryRun {
+			result = reconcileJobFromDaemonMetadata(j, meta, matchedBy, false, now)
+		}
 		if result.Changed && !dryRun {
 			if err := writeJobWithAudit(teamDir, j, result.Event, "cli", result.Message, jobEventReconcileData(meta, matchedBy)); err != nil {
 				return nil, err
@@ -11813,7 +11825,7 @@ func reconcileSelectedJobsFromEvents(teamDir string, jobs []*job.Job, dryRun boo
 		results = append(results, result)
 		reconciledInstances[strings.TrimSpace(meta.Instance)] = true
 	}
-	lifecycleResults, err := reconcileJobsFromLifecycleEvents(teamDir, daemonRoot, jobs, reconciledInstances, dryRun, now)
+	lifecycleResults, err := reconcileJobsFromLifecycleEvents(teamDir, daemonRoot, jobs, reconciledInstances, dryRun, now, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -11833,7 +11845,7 @@ func daemonMetadataTerminal(meta *daemon.Metadata) bool {
 	}
 }
 
-func reconcileJobsFromLifecycleEvents(teamDir, daemonRoot string, jobs []*job.Job, reconciledInstances map[string]bool, dryRun bool, now time.Time) ([]jobEventReconcileResult, error) {
+func reconcileJobsFromLifecycleEvents(teamDir, daemonRoot string, jobs []*job.Job, reconciledInstances map[string]bool, dryRun bool, now time.Time, filter jobEventReconcileResultFilter) ([]jobEventReconcileResult, error) {
 	events, err := daemon.ListLifecycleEvents(daemonRoot)
 	if err != nil {
 		return nil, err
@@ -11865,7 +11877,13 @@ func reconcileJobsFromLifecycleEvents(teamDir, daemonRoot string, jobs []*job.Jo
 		if j == nil {
 			continue
 		}
-		result := reconcileJobFromDaemonMetadata(j, meta, matchedBy, dryRun, now)
+		result := reconcileJobFromDaemonMetadata(j, meta, matchedBy, true, now)
+		if filter != nil && !filter(result) {
+			continue
+		}
+		if !dryRun {
+			result = reconcileJobFromDaemonMetadata(j, meta, matchedBy, false, now)
+		}
 		if result.Changed && !dryRun {
 			data := jobEventReconcileDataWithSource(meta, matchedBy, "lifecycle_event")
 			if ev.ID != "" {

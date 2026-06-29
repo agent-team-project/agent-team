@@ -931,7 +931,7 @@ func runRepairQueueStep(teamDir string, opts repairOptions) (repairQueueStep, er
 		}
 		runtimeByInstance := queueRuntimeMap(teamDir)
 		matches := filterQueueItems(items, filters.withNow(time.Now().UTC()).withRuntimeByInstance(runtimeByInstance))
-		matches = queueItemsForJobs(matches, jobs)
+		matches = queueItemsForRepairScope(matches, jobs, opts)
 		matches = prepareQueueActionMatches(matches, "state", opts.Limit, runtimeByInstance)
 		retries, err = retryQueueItemMatches(teamDir, matches, opts.DryRun)
 		if err != nil {
@@ -958,7 +958,7 @@ func runRepairJobEventsStep(teamDir string, opts repairOptions) (repairJobEvents
 	if err != nil {
 		return repairJobEventsStep{Action: "error", Reason: err.Error()}, err
 	}
-	results, err := reconcileSelectedJobsFromEvents(teamDir, jobs, opts.DryRun, time.Now().UTC())
+	results, err := reconcileSelectedJobsFromEventsWithFilter(teamDir, jobs, opts.DryRun, time.Now().UTC(), repairJobEventResultFilter(opts))
 	if err != nil {
 		return repairJobEventsStep{Action: "error", Reason: err.Error()}, err
 	}
@@ -977,6 +977,7 @@ func repairScopedCandidateJobs(teamDir string, opts repairOptions) ([]*job.Job, 
 	if pipeline := strings.TrimSpace(opts.RetryPipeline); pipeline != "" {
 		pipelines[pipeline] = true
 	}
+	steps := repairStepFilterSet(opts)
 	target := strings.TrimSpace(opts.TimeoutTarget)
 	if !repairHasScopedJobFilters(opts) {
 		return jobs, nil
@@ -992,6 +993,9 @@ func repairScopedCandidateJobs(teamDir string, opts repairOptions) ([]*job.Job, 
 		if target != "" && !jobTargetsAgent(j, target) {
 			continue
 		}
+		if len(steps) > 0 && !jobHasAnyStep(j, steps) {
+			continue
+		}
 		out = append(out, j)
 	}
 	return out, nil
@@ -1000,7 +1004,76 @@ func repairScopedCandidateJobs(teamDir string, opts repairOptions) ([]*job.Job, 
 func repairHasScopedJobFilters(opts repairOptions) bool {
 	return strings.TrimSpace(opts.TimeoutPipeline) != "" ||
 		strings.TrimSpace(opts.RetryPipeline) != "" ||
-		strings.TrimSpace(opts.TimeoutTarget) != ""
+		strings.TrimSpace(opts.TimeoutTarget) != "" ||
+		strings.TrimSpace(opts.TimeoutStep) != "" ||
+		strings.TrimSpace(opts.RetryStep) != ""
+}
+
+func repairStepFilterSet(opts repairOptions) map[string]bool {
+	steps := map[string]bool{}
+	if step := strings.TrimSpace(opts.TimeoutStep); step != "" {
+		steps[step] = true
+	}
+	if step := strings.TrimSpace(opts.RetryStep); step != "" {
+		steps[step] = true
+	}
+	if len(steps) == 0 {
+		return nil
+	}
+	return steps
+}
+
+func jobHasAnyStep(j *job.Job, steps map[string]bool) bool {
+	if j == nil || len(steps) == 0 {
+		return true
+	}
+	for _, step := range j.Steps {
+		if steps[strings.TrimSpace(step.ID)] {
+			return true
+		}
+	}
+	return false
+}
+
+func queueItemsForRepairScope(items []*daemon.QueueItem, jobs []*job.Job, opts repairOptions) []*daemon.QueueItem {
+	if len(items) == 0 || len(jobs) == 0 {
+		return nil
+	}
+	steps := repairStepFilterSet(opts)
+	out := make([]*daemon.QueueItem, 0, len(items))
+	for _, item := range items {
+		if !queueItemMatchesRepairSteps(item, steps) {
+			continue
+		}
+		for _, j := range jobs {
+			if queueItemMatchesJob(item, j) {
+				out = append(out, item)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func queueItemMatchesRepairSteps(item *daemon.QueueItem, steps map[string]bool) bool {
+	if len(steps) == 0 {
+		return true
+	}
+	if item == nil {
+		return false
+	}
+	step := queuePayloadString(item.Payload, "pipeline_step")
+	return step != "" && steps[step]
+}
+
+func repairJobEventResultFilter(opts repairOptions) jobEventReconcileResultFilter {
+	steps := repairStepFilterSet(opts)
+	if len(steps) == 0 {
+		return nil
+	}
+	return func(result jobEventReconcileResult) bool {
+		return steps[strings.TrimSpace(result.StepID)]
+	}
 }
 
 func jobEventReconcileResultsHaveChanges(results []jobEventReconcileResult) bool {
