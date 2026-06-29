@@ -6875,6 +6875,7 @@ Flags:
 
 ```text
       --agent strings      Only show metadata for this agent. Can repeat or comma-separate.
+      --commands           Print one runtime metadata show command per matching row. agent-team follow-ups preserve the selected repo scope.
       --format string      Render each runtime metadata row with a Go template, e.g. '{{.Instance}} {{.Runtime}} {{.Status}}'.
       --instance strings   Only show metadata with this instance name. Can repeat or comma-separate.
       --json               Emit runtime metadata as JSON.
@@ -6910,6 +6911,7 @@ Aliases: `get`, `inspect`
 Flags:
 
 ```text
+      --commands        Print follow-up inspect, logs, resume-plan, and job show commands. agent-team follow-ups preserve the selected repo scope.
       --format string   Render the runtime metadata row with a Go template, e.g. '{{.Instance}} {{.Runtime}} {{.Status}}'.
       --json            Emit runtime metadata as JSON.
       --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")

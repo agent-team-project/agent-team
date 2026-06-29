@@ -415,6 +415,7 @@ func newRuntimeMetadataLsCmd() *cobra.Command {
 		last             int
 		sortBy           string
 		summary          bool
+		commands         bool
 		jsonOut          bool
 		format           string
 	)
@@ -426,6 +427,10 @@ func newRuntimeMetadataLsCmd() *cobra.Command {
 		Long:    "List raw daemon runtime metadata persisted for this repo without adding declared-but-not-started placeholders.",
 		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && (jsonOut || summary || format != "") {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime metadata ls: --commands cannot be combined with --json, --summary, or --format.")
+				return exitErr(2)
+			}
 			if format != "" && (jsonOut || summary) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime metadata ls: --format cannot be combined with --json or --summary.")
 				return exitErr(2)
@@ -476,6 +481,13 @@ func newRuntimeMetadataLsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime metadata ls: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				return renderRuntimeMetadataListCommands(cmd.OutOrStdout(), rows, runtimeMetadataCommandOptions{
+					Repo:     runtimeCommandRepo(cmd, target),
+					RepoSet:  runtimeCommandRepoSet(cmd),
+					RepoFlag: runtimeCommandRepoFlag(cmd),
+				})
+			}
 			if summary {
 				out := summarizeTeamRuntimeRows(rows)
 				if jsonOut {
@@ -503,6 +515,7 @@ func newRuntimeMetadataLsCmd() *cobra.Command {
 	cmd.Flags().IntVarP(&last, "last", "n", 0, "Show only the N most recently started runtime metadata records after other filters (0 = all).")
 	cmd.Flags().StringVar(&sortBy, "sort", "instance", "Sort runtime metadata rows by instance, status, runtime, agent, stale, unhealthy, job, started, stopped, or exited.")
 	cmd.Flags().BoolVar(&summary, "summary", false, "Summarize matching runtime metadata by status, runtime, and agent.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print one runtime metadata show command per matching row. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit runtime metadata as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render each runtime metadata row with a Go template, e.g. '{{.Instance}} {{.Runtime}} {{.Status}}'.")
 	return cmd
@@ -510,9 +523,10 @@ func newRuntimeMetadataLsCmd() *cobra.Command {
 
 func newRuntimeMetadataShowCmd() *cobra.Command {
 	var (
-		target  string
-		jsonOut bool
-		format  string
+		target   string
+		commands bool
+		jsonOut  bool
+		format   string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -522,6 +536,10 @@ func newRuntimeMetadataShowCmd() *cobra.Command {
 		Long:    "Show one raw daemon runtime metadata record persisted for this repo, enriching job ownership fields from durable job files when possible.",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if commands && (jsonOut || format != "") {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime metadata show: --commands cannot be combined with --json or --format.")
+				return exitErr(2)
+			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team runtime metadata show: --format cannot be combined with --json.")
 				return exitErr(2)
@@ -545,6 +563,13 @@ func newRuntimeMetadataShowCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team runtime metadata show: %v\n", err)
 				return exitErr(1)
 			}
+			if commands {
+				return renderRuntimeMetadataShowCommands(cmd.OutOrStdout(), row, runtimeMetadataCommandOptions{
+					Repo:     runtimeCommandRepo(cmd, target),
+					RepoSet:  runtimeCommandRepoSet(cmd),
+					RepoFlag: runtimeCommandRepoFlag(cmd),
+				})
+			}
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(row)
 			}
@@ -555,6 +580,7 @@ func newRuntimeMetadataShowCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, "Repo root containing .agent_team (legacy; prefer global --repo).")
+	cmd.Flags().BoolVar(&commands, "commands", false, "Print follow-up inspect, logs, resume-plan, and job show commands. agent-team follow-ups preserve the selected repo scope.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit runtime metadata as JSON.")
 	cmd.Flags().StringVar(&format, "format", "", "Render the runtime metadata row with a Go template, e.g. '{{.Instance}} {{.Runtime}} {{.Status}}'.")
 	return cmd
@@ -653,6 +679,60 @@ func renderRuntimeMetadataField(w fmtWriter, key, value string) {
 		return
 	}
 	fmt.Fprintf(w, "  %-14s %s\n", key+":", value)
+}
+
+type runtimeMetadataCommandOptions struct {
+	Repo     string
+	RepoSet  bool
+	RepoFlag string
+}
+
+func renderRuntimeMetadataListCommands(w fmtWriter, rows []teamRuntimeRow, opts runtimeMetadataCommandOptions) error {
+	for _, row := range rows {
+		instance := strings.TrimSpace(row.Instance)
+		if instance == "" {
+			continue
+		}
+		args := []string{"agent-team", "runtime", "metadata", "show"}
+		args = appendRuntimeRepoArgs(args, opts.RepoFlag, opts.Repo, opts.RepoSet)
+		args = append(args, instance)
+		if _, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(args), " ")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderRuntimeMetadataShowCommands(w fmtWriter, row teamRuntimeRow, opts runtimeMetadataCommandOptions) error {
+	for _, args := range runtimeMetadataShowCommandArgs(row, opts) {
+		if _, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(args), " ")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runtimeMetadataShowCommandArgs(row teamRuntimeRow, opts runtimeMetadataCommandOptions) [][]string {
+	instance := strings.TrimSpace(row.Instance)
+	var out [][]string
+	if jobID := strings.TrimSpace(row.Job); jobID != "" {
+		args := []string{"agent-team", "job", "show"}
+		args = appendRuntimeRepoArgs(args, opts.RepoFlag, opts.Repo, opts.RepoSet)
+		out = append(out, append(args, jobID))
+	}
+	if instance == "" {
+		return out
+	}
+	for _, base := range [][]string{
+		{"agent-team", "inspect"},
+		{"agent-team", "logs"},
+		{"agent-team", "resume-plan"},
+	} {
+		args := append([]string(nil), base...)
+		args = appendRuntimeRepoArgs(args, opts.RepoFlag, opts.Repo, opts.RepoSet)
+		out = append(out, append(args, instance))
+	}
+	return out
 }
 
 func runtimeFromConfigWithOverrides(configPath string, selection runtimeSelection) (runtimebin.Runtime, error) {

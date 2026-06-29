@@ -731,6 +731,22 @@ func TestRuntimeMetadataLsFiltersSummaryAndFormat(t *testing.T) {
 		t.Fatalf("runtime metadata format = %q, want %q", got, want)
 	}
 
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"--repo", tmp, "runtime", "metadata", "ls", "--runtime", "codex", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("runtime metadata commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommands := strings.Join([]string{
+		strings.Join(shellQuoteArgs([]string{"agent-team", "runtime", "metadata", "show", "--repo", tmp, "adhoc-codex"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "runtime", "metadata", "show", "--repo", tmp, "worker-squ-130"}), " "),
+	}, "\n")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommands {
+		t.Fatalf("runtime metadata commands = %q, want %q", got, wantCommands)
+	}
+
 	unhealthy := NewRootCmd()
 	unhealthyOut, unhealthyErr := &bytes.Buffer{}, &bytes.Buffer{}
 	unhealthy.SetOut(unhealthyOut)
@@ -755,6 +771,21 @@ func TestRuntimeMetadataLsRejectsInvalidModes(t *testing.T) {
 			name: "format json",
 			args: []string{"runtime", "metadata", "ls", "--target", tmp, "--format", "{{.Instance}}", "--json"},
 			want: "--format cannot be combined",
+		},
+		{
+			name: "commands json",
+			args: []string{"runtime", "metadata", "ls", "--target", tmp, "--commands", "--json"},
+			want: "--commands cannot be combined",
+		},
+		{
+			name: "commands summary",
+			args: []string{"runtime", "metadata", "ls", "--target", tmp, "--commands", "--summary"},
+			want: "--commands cannot be combined",
+		},
+		{
+			name: "commands format",
+			args: []string{"runtime", "metadata", "ls", "--target", tmp, "--commands", "--format", "{{.Instance}}"},
+			want: "--commands cannot be combined",
 		},
 		{
 			name: "format summary",
@@ -904,6 +935,24 @@ func TestRuntimeMetadataShowEnrichesAndRenders(t *testing.T) {
 	if got, want := strings.TrimSpace(formattedOut.String()), "worker-squ-131 SQU-131 true"; got != want {
 		t.Fatalf("runtime metadata show format = %q, want %q", got, want)
 	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"--repo", tmp, "runtime", "metadata", "show", "worker-squ-131", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("runtime metadata show commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommands := strings.Join([]string{
+		strings.Join(shellQuoteArgs([]string{"agent-team", "job", "show", "--repo", tmp, "squ-131"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "inspect", "--repo", tmp, "worker-squ-131"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "logs", "--repo", tmp, "worker-squ-131"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "resume-plan", "--repo", tmp, "worker-squ-131"}), " "),
+	}, "\n")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommands {
+		t.Fatalf("runtime metadata show commands = %q, want %q", got, wantCommands)
+	}
 }
 
 func TestRuntimeMetadataShowRejectsInvalidModesAndMissingRecords(t *testing.T) {
@@ -918,6 +967,16 @@ func TestRuntimeMetadataShowRejectsInvalidModesAndMissingRecords(t *testing.T) {
 			name: "format json",
 			args: []string{"runtime", "metadata", "show", "worker", "--target", tmp, "--format", "{{.Instance}}", "--json"},
 			want: "--format cannot be combined with --json",
+		},
+		{
+			name: "commands json",
+			args: []string{"runtime", "metadata", "show", "worker", "--target", tmp, "--commands", "--json"},
+			want: "--commands cannot be combined",
+		},
+		{
+			name: "commands format",
+			args: []string{"runtime", "metadata", "show", "worker", "--target", tmp, "--commands", "--format", "{{.Instance}}"},
+			want: "--commands cannot be combined",
 		},
 		{
 			name: "empty instance",
