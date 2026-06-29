@@ -55,11 +55,11 @@ after filtering, sorting, and limiting.
 Resume-plan also probes positive recorded PIDs for `running` metadata; stale
 rows are marked in JSON/text, unhealthy totals count crashed plus stale-running
 rows, and summaries expose both counts before recommending the right start,
-resume, or log fallback. Overview and monitor JSON/text also count runtime
-resume capabilities as `managed_resume`, `can_managed_resume`, and
-`direct_resume`, so dashboards can tell whether recovery can stay
-daemon-managed or needs a direct runtime fallback before running a detailed
-`resume-plan`.
+resume, or log fallback. Overview and monitor JSON/text, plus status summary
+text and enriched status-summary JSON, also count runtime resume capabilities
+as `managed_resume`, `can_managed_resume`, and `direct_resume`, so dashboards
+can tell whether recovery can stay daemon-managed or needs a direct runtime
+fallback before running a detailed `resume-plan`.
 Add `--last-message` to `overview`, `team overview`, `next`, `team next`, or
 the resume-plan command itself when Codex log fallbacks should point at the
 clean final response sidecar rather than raw daemon logs.

@@ -1134,6 +1134,8 @@ type statusSummaryOptions struct {
 
 type statusSummarySnapshot struct {
 	Health         *healthResult                 `json:"health"`
+	Runtime        overviewRuntimeSummary        `json:"runtime"`
+	RuntimeError   string                        `json:"runtime_error,omitempty"`
 	Resources      *statsSummaryJSON             `json:"resources,omitempty"`
 	ResourcesError string                        `json:"resources_error,omitempty"`
 	Plan           *lifecycleActionSummaryResult `json:"plan,omitempty"`
@@ -1149,11 +1151,13 @@ type statusSummaryCommandOptions struct {
 
 func runStatusSummaryWithOptions(w io.Writer, teamDir string, now time.Time, jsonOut bool, opts statusSummaryOptions) error {
 	if !opts.IncludeResources && !opts.IncludePlan && opts.EventTail <= 0 {
-		result, err := collectHealthWithOptions(teamDir, now, opts.Health)
-		if err != nil {
-			return err
+		if jsonOut {
+			result, err := collectHealthWithOptions(teamDir, now, opts.Health)
+			if err != nil {
+				return err
+			}
+			return writeHealthResult(w, result, true)
 		}
-		return writeHealthResult(w, result, jsonOut)
 	}
 	snapshot, err := collectStatusSummarySnapshot(teamDir, now, opts)
 	if err != nil {
@@ -1194,6 +1198,15 @@ func collectStatusSummarySnapshot(teamDir string, now time.Time, opts statusSumm
 		return nil, err
 	}
 	snapshot := &statusSummarySnapshot{Health: health}
+	runtimeSelectedInstances, err := monitorSummaryRuntimeSelectedInstanceSet(teamDir, now, opts.Health.filters)
+	if err != nil {
+		return nil, err
+	}
+	if runtime, err := collectMonitorRuntimeSummary(teamDir, runtimeSelectedInstances); err != nil {
+		snapshot.RuntimeError = err.Error()
+	} else {
+		snapshot.Runtime = runtime
+	}
 	var selectedInstances map[string]bool
 	if opts.IncludeResources || opts.IncludePlan || opts.EventTail > 0 {
 		selectedInstances, err = monitorSummarySelectedInstanceSet(teamDir, now, opts.Health.filters)
@@ -1268,6 +1281,8 @@ func statusSummaryEventFilters(opts statusSummaryOptions, instances map[string]b
 
 func renderStatusSummarySnapshot(w io.Writer, snapshot *statusSummarySnapshot) {
 	renderHealth(w, snapshot.Health)
+	fmt.Fprintln(w)
+	renderMonitorRuntimeSummary(w, snapshot.Runtime, snapshot.RuntimeError)
 	if snapshot.ResourcesError == "" && snapshot.Resources == nil && snapshot.Plan == nil && snapshot.EventsError == "" && snapshot.Events == nil {
 		return
 	}
@@ -1310,7 +1325,7 @@ func runStatusSummaryHealthWatchWithClear(ctx context.Context, w io.Writer, team
 }
 
 func runStatusSummaryWatchWithOptions(ctx context.Context, w io.Writer, teamDir string, interval time.Duration, now func() time.Time, jsonOut bool, opts statusSummaryOptions, clear bool) error {
-	if !opts.IncludeResources && !opts.IncludePlan && opts.EventTail <= 0 {
+	if !opts.IncludeResources && !opts.IncludePlan && opts.EventTail <= 0 && jsonOut {
 		return runHealthWatchWithClear(ctx, w, teamDir, interval, now, jsonOut, opts.Health, clear)
 	}
 	if interval <= 0 {

@@ -3415,6 +3415,44 @@ func TestStatusSummaryJSONShowsHealthWithoutFailing(t *testing.T) {
 	}
 }
 
+func TestStatusSummaryReportsRuntimeResumeCapabilities(t *testing.T) {
+	root := writeOverviewRuntimeFixture(t)
+
+	text := NewRootCmd()
+	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
+	text.SetOut(textOut)
+	text.SetErr(textErr)
+	text.SetArgs([]string{"status", "--summary", "--target", root})
+	if err := text.Execute(); err != nil {
+		t.Fatalf("status summary runtime text: %v\nstderr=%s", err, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "runtime: total=4 running=0 stopped=0 exited=1 crashed=3 unknown=0 stale_running=0 managed_resume=2 can_managed_resume=1 direct_resume=2") {
+		t.Fatalf("status summary text missing runtime capabilities:\n%s", textOut.String())
+	}
+
+	filtered := NewRootCmd()
+	filteredOut, filteredErr := &bytes.Buffer{}, &bytes.Buffer{}
+	filtered.SetOut(filteredOut)
+	filtered.SetErr(filteredErr)
+	filtered.SetArgs([]string{"status", "--summary", "--resources", "--runtime", "codex", "--json", "--target", root})
+	if err := filtered.Execute(); err != nil {
+		t.Fatalf("status summary filtered runtime json: %v\nstderr=%s", err, filteredErr.String())
+	}
+	var snapshot statusSummarySnapshot
+	if err := json.Unmarshal(filteredOut.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode status summary filtered runtime json: %v\nbody=%s", err, filteredOut.String())
+	}
+	if snapshot.Runtime.Total != 2 || snapshot.Runtime.Crashed != 1 || snapshot.Runtime.Exited != 1 {
+		t.Fatalf("filtered runtime summary = %+v", snapshot.Runtime)
+	}
+	if snapshot.Runtime.ManagedResume != 0 || snapshot.Runtime.CanManagedResume != 0 || snapshot.Runtime.DirectResume != 1 {
+		t.Fatalf("filtered runtime resume capability summary = %+v", snapshot.Runtime)
+	}
+	if snapshot.Resources == nil || snapshot.Resources.Total != 2 {
+		t.Fatalf("filtered resources = %+v, want codex rows only", snapshot.Resources)
+	}
+}
+
 func TestStatusSummaryEventsJSONIncludesEventSummary(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
