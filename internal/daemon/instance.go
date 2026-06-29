@@ -324,7 +324,10 @@ func dispatchArgs(rt runtimebin.Runtime, sessionID string, in DispatchInput) ([]
 		if strings.TrimSpace(in.Prompt) == "" {
 			return nil, errors.New("codex daemon dispatch requires exec args or a prompt")
 		}
-		return []string{rt.Binary, "exec", "-"}, nil
+		codexArgs := []string{rt.Binary, "exec"}
+		codexArgs = append(codexArgs, runtimebin.CodexAutonomousExecArgs()...)
+		codexArgs = append(codexArgs, "-")
+		return codexArgs, nil
 	default:
 		return nil, fmt.Errorf("unsupported runtime %q", rt.Kind)
 	}

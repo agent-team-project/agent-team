@@ -321,8 +321,11 @@ func TestInstance_DispatchCodexPromptUsesStdin(t *testing.T) {
 		t.Fatalf("dispatch: %v", err)
 	}
 	args := fake.lastCall()
-	if len(args) != 3 || args[0] != "codex" || args[1] != "exec" || args[2] != "-" {
-		t.Fatalf("spawn args = %v, want codex exec -", args)
+	// codex exec runs unsandboxed for autonomous work; the prompt still arrives
+	// over stdin (final arg "-").
+	if len(args) != 4 || args[0] != "codex" || args[1] != "exec" ||
+		args[2] != "--dangerously-bypass-approvals-and-sandbox" || args[3] != "-" {
+		t.Fatalf("spawn args = %v, want codex exec --dangerously-bypass-approvals-and-sandbox -", args)
 	}
 	if got := fake.lastStdin(); got != "hello from stdin" {
 		t.Fatalf("stdin = %q, want prompt", got)

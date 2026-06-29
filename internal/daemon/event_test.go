@@ -402,6 +402,12 @@ func TestEvent_EphemeralDispatchUsesCodexRuntime(t *testing.T) {
 			t.Fatalf("codex spawn call missing %q: %#v", want, call)
 		}
 	}
+	// Autonomous workers must run unsandboxed (codex exec is read-only /
+	// no-network by default, which makes a worker a no-op). Isolation comes
+	// from the per-worker git worktree, not the codex sandbox.
+	if !containsString(call, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("codex spawn call must bypass the sandbox for autonomous work: %#v", call)
+	}
 	wantLastMessage := filepath.Join(teamDir, "state", "worker-squ-42", runtimebin.CodexLastMessageFile)
 	if got, ok := argValue(call, "--output-last-message"); !ok || got != wantLastMessage {
 		t.Fatalf("codex spawn call last-message path = %q, %v; want %q in %#v", got, ok, wantLastMessage, call)

@@ -985,6 +985,7 @@ func (r *EventResolver) prepareEphemeralAgentArgs(agentName, instance, stateDir,
 			return nil, "", runtimebin.Runtime{}, fmt.Errorf("event runtime: remove stale Codex last message: %w", err)
 		}
 		args := []string{"exec"}
+		args = append(args, runtimebin.CodexAutonomousExecArgs()...)
 		args = append(args, runtimebin.CodexAgentTeamEnvConfigArgs(env)...)
 		args = append(args,
 			"-C", r.teamDirParent(),
