@@ -896,6 +896,7 @@ Flags:
       --json                 Emit machine-readable JSON.
       --runtime string       Runtime profile to validate for this invocation (claude or codex). Overrides env and repo config.
       --runtime-bin string   Runtime binary to validate for this invocation. Overrides env and repo config.
+      --strict               Fail on daemon binary, selected/runtime-default binary, and template provenance warnings.
       --strict-daemon        Fail when the companion agent-teamd binary is not discoverable.
       --strict-runtime       Fail when the selected LLM runtime binary or pipeline/team step and agent runtime defaults are not discoverable.
       --strict-template      Fail when .template.lock no longer matches its resolved template ref.

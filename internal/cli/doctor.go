@@ -20,6 +20,7 @@ import (
 func newDoctorCmd() *cobra.Command {
 	var (
 		target         string
+		strict         bool
 		strictDaemon   bool
 		strictRuntime  bool
 		strictTemplate bool
@@ -55,6 +56,11 @@ func newDoctorCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team doctor: %v\n", err)
 				return exitErr(2)
 			}
+			if strict {
+				strictDaemon = true
+				strictRuntime = true
+				strictTemplate = true
+			}
 			return runDoctor(cmd, target, strictDaemon, strictRuntime, strictTemplate, jsonOut, commands, tmpl, runtimeSelection{
 				Kind:   runtimeKind,
 				Binary: runtimeBinary,
@@ -62,6 +68,7 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
+	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on daemon binary, selected/runtime-default binary, and template provenance warnings.")
 	cmd.Flags().BoolVar(&strictDaemon, "strict-daemon", false, "Fail when the companion agent-teamd binary is not discoverable.")
 	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when the selected LLM runtime binary or pipeline/team step and agent runtime defaults are not discoverable.")
 	cmd.Flags().BoolVar(&strictTemplate, "strict-template", false, "Fail when .template.lock no longer matches its resolved template ref.")

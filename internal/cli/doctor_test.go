@@ -303,6 +303,54 @@ func TestDoctorStrictRuntimeFailsWhenRuntimeBinaryMissing(t *testing.T) {
 	}
 }
 
+func TestDoctorStrictEnablesDaemonAndRuntimeChecks(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "missing-runtime")
+	withRuntimeLookPath(t, func(bin string) (string, error) {
+		if bin != "missing-runtime" {
+			t.Fatalf("look path bin = %q, want missing-runtime", bin)
+		}
+		return "", exec.ErrNotFound
+	})
+	oldFind := findAgentTeamd
+	findAgentTeamd = func() (string, error) {
+		return "", errors.New("missing")
+	}
+	defer func() { findAgentTeamd = oldFind }()
+
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"doctor", "--strict", "--target", tmp, "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected aggregate strict doctor check to fail")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("strict doctor err = %v, want exit 1", err)
+	}
+	var result doctorResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode strict doctor json: %v\nbody=%s", err, out.String())
+	}
+	for _, want := range []string{"agent-teamd binary not found", `runtime binary "missing-runtime"`} {
+		if !containsDoctorMessage(result.Problems, want) {
+			t.Fatalf("strict doctor problems missing %q: %+v", want, result.Problems)
+		}
+		if containsDoctorMessage(result.Warnings, want) {
+			t.Fatalf("strict doctor left %q as warning: %+v", want, result.Warnings)
+		}
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("doctor --strict --json stderr = %q", errOut.String())
+	}
+}
+
 func TestDoctorStrictRuntimePromotesPipelineAndTeamRuntimeWarnings(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "")
 	t.Setenv(runtimebin.EnvBinary, "")
