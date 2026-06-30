@@ -2410,6 +2410,9 @@ func TestIntakeDoctorWarnsDuplicateProviderRequestID(t *testing.T) {
 	if duplicate == nil || len(duplicate.Actions) != 1 || !strings.Contains(duplicate.Actions[0], "agent-team intake duplicates --provider github --request-id delivery-1") {
 		t.Fatalf("duplicate request actions = %+v", result.Warnings)
 	}
+	if len(result.Actions) != 1 || result.Actions[0] != duplicate.Actions[0] {
+		t.Fatalf("doctor top-level actions = %+v, want duplicate warning action %q", result.Actions, duplicate.Actions[0])
+	}
 
 	text := NewRootCmd()
 	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}

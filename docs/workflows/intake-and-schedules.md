@@ -138,7 +138,8 @@ Delivery history records:
 `agent-team intake doctor` warns when the ledger contains repeated provider
 request IDs, such as duplicate GitHub delivery IDs, while keeping warning-only
 ledgers exit-code clean. Add `--commands` when automation should print only
-the duplicate-inspection commands from warning rows.
+the duplicate-inspection commands from warning rows. `--json` includes the same
+top-level `actions` list for dashboards and handoff snapshots.
 
 `agent-team intake summary` reports duplicate request-id group counts and
 replay/prune actions. Use `agent-team intake duplicates` to list duplicate

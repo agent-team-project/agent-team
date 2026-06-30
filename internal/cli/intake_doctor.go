@@ -26,6 +26,7 @@ type intakeDoctorResult struct {
 	Exists     bool                  `json:"exists"`
 	Deliveries int                   `json:"deliveries"`
 	Summary    intakeSummaryResult   `json:"summary"`
+	Actions    []string              `json:"actions,omitempty"`
 	Problems   []intakeDoctorFinding `json:"problems,omitempty"`
 	Warnings   []intakeDoctorFinding `json:"warnings,omitempty"`
 }
@@ -107,6 +108,7 @@ func collectIntakeDoctor(teamDir string) (intakeDoctorResult, error) {
 	result.Problems = problems
 	result.Warnings = warnings
 	result.OK = len(problems) == 0
+	result.Actions = intakeDoctorActions(result)
 	return result, nil
 }
 
@@ -242,7 +244,7 @@ func renderIntakeDoctor(stdout, stderr io.Writer, result intakeDoctorResult, jso
 		return json.NewEncoder(stdout).Encode(result)
 	}
 	if commands {
-		return renderOperatorActionCommands(stdout, intakeDoctorActions(result), scope)
+		return renderOperatorActionCommands(stdout, result.Actions, scope)
 	}
 	if tmpl != nil {
 		return renderIntakeDoctorFormat(stdout, result, tmpl)
