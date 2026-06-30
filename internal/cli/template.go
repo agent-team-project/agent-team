@@ -297,16 +297,18 @@ func newTemplateSmokeCmd() *cobra.Command {
 				strictRuntime = true
 				strictTemplate = true
 			}
+			strictActionFlag := scopedDoctorStrictActionFlag(strict, strictRuntime)
 			result, err := runTemplateSmoke(cmd, ref, setFlags, templateSmokeOptions{
 				Keep:           keep || commands,
 				StrictDaemon:   strictDaemon,
 				StrictRuntime:  strictRuntime,
 				StrictTemplate: strictTemplate,
+				StrictAction:   strictActionFlag,
 			})
 			if err != nil {
 				return err
 			}
-			if err := renderTemplateSmoke(cmd.OutOrStdout(), result, jsonOut, commands, tmpl, strictRuntime); err != nil {
+			if err := renderTemplateSmoke(cmd.OutOrStdout(), result, jsonOut, commands, tmpl, strictRuntime, strictActionFlag); err != nil {
 				return err
 			}
 			if !result.OK {
@@ -332,6 +334,7 @@ type templateSmokeOptions struct {
 	StrictDaemon   bool
 	StrictRuntime  bool
 	StrictTemplate bool
+	StrictAction   string
 }
 
 type templateSmokeResult struct {
@@ -426,7 +429,7 @@ func runTemplateSmokeDoctor(target string, opts templateSmokeOptions) (*doctorRe
 	var out, stderr bytes.Buffer
 	smokeCmd.SetOut(&out)
 	smokeCmd.SetErr(&stderr)
-	err := runDoctor(smokeCmd, target, opts.StrictDaemon, opts.StrictRuntime, opts.StrictTemplate, true, false, nil, runtimeSelection{})
+	err := runDoctor(smokeCmd, target, opts.StrictDaemon, opts.StrictRuntime, opts.StrictTemplate, opts.StrictAction, true, false, nil, runtimeSelection{})
 	var result doctorResult
 	if out.Len() > 0 {
 		_ = json.Unmarshal(out.Bytes(), &result)
@@ -513,12 +516,12 @@ func firstTeamProblem(result *allTeamDoctorResult) string {
 	return ""
 }
 
-func renderTemplateSmoke(w io.Writer, result templateSmokeResult, jsonOut, commands bool, tmpl *texttemplate.Template, strictRuntime bool) error {
+func renderTemplateSmoke(w io.Writer, result templateSmokeResult, jsonOut, commands bool, tmpl *texttemplate.Template, strictRuntime bool, strictActionFlag string) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(result)
 	}
 	if commands {
-		return renderTemplateSmokeCommands(w, result, strictRuntime)
+		return renderTemplateSmokeCommands(w, result, strictActionFlag)
 	}
 	if tmpl != nil {
 		if err := tmpl.Execute(w, result); err != nil {
@@ -551,8 +554,8 @@ func renderTemplateSmoke(w io.Writer, result templateSmokeResult, jsonOut, comma
 	return nil
 }
 
-func renderTemplateSmokeCommands(w io.Writer, result templateSmokeResult, strictRuntime bool) error {
-	actions := templateSmokeActions(result, strictRuntime)
+func renderTemplateSmokeCommands(w io.Writer, result templateSmokeResult, strictActionFlag string) error {
+	actions := templateSmokeActionsWithFlag(result, strictActionFlag)
 	scope := operatorCommandScope{
 		Repo: filepath.FromSlash(result.Target),
 		Set:  strings.TrimSpace(result.Target) != "",
@@ -561,18 +564,22 @@ func renderTemplateSmokeCommands(w io.Writer, result templateSmokeResult, strict
 }
 
 func templateSmokeActions(result templateSmokeResult, strictRuntime bool) []string {
+	return templateSmokeActionsWithFlag(result, strictRuntimeActionFlag(strictRuntime))
+}
+
+func templateSmokeActionsWithFlag(result templateSmokeResult, strictActionFlag string) []string {
 	var actions []string
 	if result.Doctor != nil {
 		actions = appendDoctorActions(actions, result.Doctor.Actions...)
 	}
 	if result.AgentDoctor != nil {
-		actions = appendDoctorActions(actions, agentDoctorActions(result.AgentDoctor, strictRuntime)...)
+		actions = appendDoctorActions(actions, agentDoctorActionsWithFlag(result.AgentDoctor, strictActionFlag)...)
 	}
 	if result.PipelineDoctor != nil {
-		actions = appendDoctorActions(actions, pipelineDoctorCommandActions(result.PipelineDoctor, strictRuntime)...)
+		actions = appendDoctorActions(actions, pipelineDoctorCommandActionsWithFlag(result.PipelineDoctor, strictActionFlag)...)
 	}
 	if result.TeamDoctor != nil {
-		actions = appendDoctorActions(actions, allTeamDoctorActions(result.TeamDoctor, strictRuntime)...)
+		actions = appendDoctorActions(actions, allTeamDoctorActionsWithFlag(result.TeamDoctor, strictActionFlag)...)
 	}
 	return actions
 }

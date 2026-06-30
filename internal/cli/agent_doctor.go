@@ -54,6 +54,7 @@ func newAgentDoctorCmd() *cobra.Command {
 			if strict {
 				strictRuntime = true
 			}
+			strictActionFlag := scopedDoctorStrictActionFlag(strict, strictRuntime)
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -66,7 +67,7 @@ func newAgentDoctorCmd() *cobra.Command {
 			if strictRuntime {
 				promoteAgentDoctorRuntimeWarnings(result)
 			}
-			return renderAgentDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, tmpl, operatorCommandScopeFromCommand(cmd, repo, "repo"))
+			return renderAgentDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, strictActionFlag, tmpl, operatorCommandScopeFromCommand(cmd, repo, "repo"))
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -235,7 +236,21 @@ func agentRuntimeFindingIsStrict(finding agentDoctorFinding) bool {
 	}
 }
 
-func renderAgentDoctor(stdout, stderr io.Writer, result *agentDoctorResult, jsonOut, commands, strictRuntime bool, tmpl *template.Template, scope operatorCommandScope) error {
+func scopedDoctorStrictActionFlag(strict, strictRuntime bool) string {
+	if strict {
+		return "--strict"
+	}
+	return strictRuntimeActionFlag(strictRuntime)
+}
+
+func strictRuntimeActionFlag(strictRuntime bool) string {
+	if strictRuntime {
+		return "--strict-runtime"
+	}
+	return ""
+}
+
+func renderAgentDoctor(stdout, stderr io.Writer, result *agentDoctorResult, jsonOut, commands, strictRuntime bool, strictActionFlag string, tmpl *template.Template, scope operatorCommandScope) error {
 	if result == nil {
 		result = &agentDoctorResult{OK: true}
 	}
@@ -249,7 +264,7 @@ func renderAgentDoctor(stdout, stderr io.Writer, result *agentDoctorResult, json
 		return nil
 	}
 	if commands {
-		if err := renderOperatorActionCommands(stdout, agentDoctorActions(result, strictRuntime), scope); err != nil {
+		if err := renderOperatorActionCommands(stdout, agentDoctorActionsWithFlag(result, strictActionFlag), scope); err != nil {
 			return err
 		}
 		if !result.OK {
@@ -296,6 +311,10 @@ func renderAgentDoctor(stdout, stderr io.Writer, result *agentDoctorResult, json
 }
 
 func agentDoctorActions(result *agentDoctorResult, strictRuntime bool) []string {
+	return agentDoctorActionsWithFlag(result, strictRuntimeActionFlag(strictRuntime))
+}
+
+func agentDoctorActionsWithFlag(result *agentDoctorResult, strictActionFlag string) []string {
 	if result == nil {
 		return nil
 	}
@@ -324,7 +343,7 @@ func agentDoctorActions(result *agentDoctorResult, strictRuntime bool) []string 
 	sort.Strings(names)
 	actions := make([]string, 0, len(names)*2)
 	for _, name := range names {
-		actions = append(actions, agentDoctorDetailAction(name, strictRuntime), strings.Join(shellQuoteArgs([]string{"agent-team", "agent", "show", name, "--json"}), " "))
+		actions = append(actions, agentDoctorDetailActionWithFlag(name, strictActionFlag), strings.Join(shellQuoteArgs([]string{"agent-team", "agent", "show", name, "--json"}), " "))
 	}
 	if len(actions) == 0 && len(result.Warnings) > 0 {
 		actions = append(actions, strings.Join(shellQuoteArgs([]string{"agent-team", "agent", "ls"}), " "))
@@ -333,6 +352,10 @@ func agentDoctorActions(result *agentDoctorResult, strictRuntime bool) []string 
 }
 
 func agentDoctorDetailAction(name string, strictRuntime bool) string {
+	return agentDoctorDetailActionWithFlag(name, strictRuntimeActionFlag(strictRuntime))
+}
+
+func agentDoctorDetailActionWithFlag(name, strictActionFlag string) string {
 	args := []string{"agent-team", "agent", "doctor"}
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -340,8 +363,8 @@ func agentDoctorDetailAction(name string, strictRuntime bool) string {
 	} else {
 		args = append(args, name)
 	}
-	if strictRuntime {
-		args = append(args, "--strict-runtime")
+	if strictActionFlag != "" {
+		args = append(args, strictActionFlag)
 	}
 	args = append(args, "--json")
 	return strings.Join(shellQuoteArgs(args), " ")

@@ -194,6 +194,25 @@ runtime_bin = "missing-agent-team-test-runtime"
 	if strings.Contains(out.String(), "--target") {
 		t.Fatalf("pipeline doctor commands should canonicalize repo scope, got:\n%s", out.String())
 	}
+
+	alias := NewRootCmd()
+	aliasOut, aliasErr := &bytes.Buffer{}, &bytes.Buffer{}
+	alias.SetOut(aliasOut)
+	alias.SetErr(aliasErr)
+	alias.SetArgs([]string{"pipeline", "doctor", "--target", root, "--strict", "--commands"})
+	if err := alias.Execute(); err == nil {
+		t.Fatalf("pipeline doctor strict alias unexpectedly succeeded")
+	}
+	wantAlias := strings.Join([]string{
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", root, "pipeline", "doctor", "ticket_to_pr", "--strict", "--json"}), " "),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "--repo", root, "pipeline", "graph", "ticket_to_pr", "--routes"}), " "),
+	}, "\n")
+	if got := strings.TrimSpace(aliasOut.String()); got != wantAlias {
+		t.Fatalf("pipeline doctor strict alias commands = %q, want %q\nstderr=%s", got, wantAlias, aliasErr.String())
+	}
+	if strings.Contains(aliasOut.String(), "--strict-runtime") || strings.Contains(aliasOut.String(), "--target") {
+		t.Fatalf("pipeline doctor strict alias commands should preserve --strict and canonicalize repo scope, got:\n%s", aliasOut.String())
+	}
 }
 
 func TestRootRepoAliasDoesNotConflictWithJobTargetAgent(t *testing.T) {

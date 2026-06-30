@@ -61,7 +61,8 @@ func newDoctorCmd() *cobra.Command {
 				strictRuntime = true
 				strictTemplate = true
 			}
-			return runDoctor(cmd, target, strictDaemon, strictRuntime, strictTemplate, jsonOut, commands, tmpl, runtimeSelection{
+			strictActionFlag := scopedDoctorStrictActionFlag(strict, strictRuntime)
+			return runDoctor(cmd, target, strictDaemon, strictRuntime, strictTemplate, strictActionFlag, jsonOut, commands, tmpl, runtimeSelection{
 				Kind:   runtimeKind,
 				Binary: runtimeBinary,
 			})
@@ -80,7 +81,7 @@ func newDoctorCmd() *cobra.Command {
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, strictTemplate, jsonOut, commands bool, tmpl *texttemplate.Template, selection runtimeSelection) error {
+func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, strictTemplate bool, strictActionFlag string, jsonOut, commands bool, tmpl *texttemplate.Template, selection runtimeSelection) error {
 	target = effectiveRepoTarget(cmd, target)
 	abs, err := filepath.Abs(target)
 	if err != nil {
@@ -202,7 +203,7 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 					warnings = append(warnings, "agents: "+warning.Message)
 				}
 				if len(agentRuntimeProblems) > 0 || len(agentRuntimeWarnings) > 0 {
-					actions = appendDoctorActions(actions, agentDoctorDetailAction("", strictRuntime))
+					actions = appendDoctorActions(actions, agentDoctorDetailActionWithFlag("", strictActionFlag))
 				}
 			}
 		}
@@ -227,7 +228,7 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 			hasPipelineDoctorFindings = true
 		}
 		if hasPipelineDoctorFindings {
-			actions = appendDoctorActions(actions, doctorPipelineDetailAction(strictRuntime))
+			actions = appendDoctorActions(actions, doctorPipelineDetailActionWithFlag(strictActionFlag))
 		}
 	}
 	if teamDoctor, err := collectAllTeamDoctor(teamDir); err != nil {
@@ -252,7 +253,7 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 			hasTeamDoctorFindings = true
 		}
 		if hasTeamDoctorFindings {
-			actions = appendDoctorActions(actions, doctorTeamDetailAction(strictRuntime))
+			actions = appendDoctorActions(actions, doctorTeamDetailActionWithFlag(strictActionFlag))
 		}
 	}
 	if jobDoctor, err := collectJobDoctor(teamDir); err != nil {
@@ -391,18 +392,26 @@ func appendDoctorActions(actions []string, next ...string) []string {
 }
 
 func doctorPipelineDetailAction(strictRuntime bool) string {
+	return doctorPipelineDetailActionWithFlag(strictRuntimeActionFlag(strictRuntime))
+}
+
+func doctorPipelineDetailActionWithFlag(strictActionFlag string) string {
 	args := []string{"agent-team", "pipeline", "doctor", "--all"}
-	if strictRuntime {
-		args = append(args, "--strict-runtime")
+	if strictActionFlag != "" {
+		args = append(args, strictActionFlag)
 	}
 	args = append(args, "--json")
 	return strings.Join(shellQuoteArgs(args), " ")
 }
 
 func doctorTeamDetailAction(strictRuntime bool) string {
+	return doctorTeamDetailActionWithFlag(strictRuntimeActionFlag(strictRuntime))
+}
+
+func doctorTeamDetailActionWithFlag(strictActionFlag string) string {
 	args := []string{"agent-team", "team", "doctor", "--all"}
-	if strictRuntime {
-		args = append(args, "--strict-runtime")
+	if strictActionFlag != "" {
+		args = append(args, strictActionFlag)
 	}
 	args = append(args, "--json")
 	return strings.Join(shellQuoteArgs(args), " ")

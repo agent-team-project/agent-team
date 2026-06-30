@@ -269,6 +269,32 @@ Run Codex work.
 	if strictAliasErr.Len() != 0 {
 		t.Fatalf("strict alias stderr = %q", strictAliasErr.String())
 	}
+
+	strictCommands := NewRootCmd()
+	strictCommandsOut, strictCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	strictCommands.SetOut(strictCommandsOut)
+	strictCommands.SetErr(strictCommandsErr)
+	strictCommands.SetArgs([]string{"agent", "doctor", "codex-worker", "--repo", root, "--strict", "--commands"})
+	err = strictCommands.Execute()
+	if err == nil {
+		t.Fatal("agent doctor strict commands unexpectedly succeeded")
+	}
+	if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("strict commands err = %v, want exit 1", err)
+	}
+	wantStrictCommands := strings.Join(scopedOperatorActions([]string{
+		agentDoctorDetailActionWithFlag("codex-worker", "--strict"),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "agent", "show", "codex-worker", "--json"}), " "),
+	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	if got := strictCommandsOut.String(); got != wantStrictCommands {
+		t.Fatalf("strict commands output = %q, want %q", got, wantStrictCommands)
+	}
+	if strings.Contains(strictCommandsOut.String(), "--strict-runtime") {
+		t.Fatalf("strict commands should preserve --strict spelling, got:\n%s", strictCommandsOut.String())
+	}
+	if strictCommandsErr.Len() != 0 {
+		t.Fatalf("strict commands stderr = %q", strictCommandsErr.String())
+	}
 }
 
 func TestAgentDoctorWarnsWhenRuntimeBinHasNoRuntime(t *testing.T) {

@@ -244,6 +244,7 @@ func newTeamDoctorCmd() *cobra.Command {
 			if strict {
 				strictRuntime = true
 			}
+			strictActionFlag := scopedDoctorStrictActionFlag(strict, strictRuntime)
 			selectedRepo := repo
 			repoFlag := "repo"
 			if cmd.Flags().Changed("target") && !cmd.Flags().Changed("repo") {
@@ -263,7 +264,7 @@ func newTeamDoctorCmd() *cobra.Command {
 				if strictRuntime {
 					promoteAllTeamDoctorRuntimeWarnings(result)
 				}
-				return renderAllTeamDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, tmpl, operatorCommandScopeFromCommand(cmd, selectedRepo, repoFlag))
+				return renderAllTeamDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, strictActionFlag, tmpl, operatorCommandScopeFromCommand(cmd, selectedRepo, repoFlag))
 			}
 			result, err := collectTeamDoctor(teamDir, args[0])
 			if err != nil {
@@ -273,7 +274,7 @@ func newTeamDoctorCmd() *cobra.Command {
 			if strictRuntime {
 				promoteTeamDoctorRuntimeWarnings(result)
 			}
-			return renderTeamDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, tmpl, operatorCommandScopeFromCommand(cmd, selectedRepo, repoFlag))
+			return renderTeamDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, strictActionFlag, tmpl, operatorCommandScopeFromCommand(cmd, selectedRepo, repoFlag))
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -1317,7 +1318,7 @@ func teamScheduleRoutes(top *topology.Topology, team *topology.Team, schedule *t
 	return teamRoutes, outsideRoutes
 }
 
-func renderTeamDoctor(stdout, stderr io.Writer, result *teamDoctorResult, jsonOut, commands, strictRuntime bool, tmpl *template.Template, scope operatorCommandScope) error {
+func renderTeamDoctor(stdout, stderr io.Writer, result *teamDoctorResult, jsonOut, commands, strictRuntime bool, strictActionFlag string, tmpl *template.Template, scope operatorCommandScope) error {
 	if result == nil {
 		result = &teamDoctorResult{}
 	}
@@ -1331,7 +1332,7 @@ func renderTeamDoctor(stdout, stderr io.Writer, result *teamDoctorResult, jsonOu
 		return nil
 	}
 	if commands {
-		if err := renderOperatorActionCommands(stdout, teamDoctorActions(result, strictRuntime), scope); err != nil {
+		if err := renderOperatorActionCommands(stdout, teamDoctorActionsWithFlag(result, strictActionFlag), scope); err != nil {
 			return err
 		}
 		if !result.OK {
@@ -1365,7 +1366,7 @@ func renderTeamDoctor(stdout, stderr io.Writer, result *teamDoctorResult, jsonOu
 	return exitErr(1)
 }
 
-func renderAllTeamDoctor(stdout, stderr io.Writer, result *allTeamDoctorResult, jsonOut, commands, strictRuntime bool, tmpl *template.Template, scope operatorCommandScope) error {
+func renderAllTeamDoctor(stdout, stderr io.Writer, result *allTeamDoctorResult, jsonOut, commands, strictRuntime bool, strictActionFlag string, tmpl *template.Template, scope operatorCommandScope) error {
 	if result == nil {
 		result = &allTeamDoctorResult{OK: true}
 	}
@@ -1379,7 +1380,7 @@ func renderAllTeamDoctor(stdout, stderr io.Writer, result *allTeamDoctorResult, 
 		return nil
 	}
 	if commands {
-		if err := renderOperatorActionCommands(stdout, allTeamDoctorActions(result, strictRuntime), scope); err != nil {
+		if err := renderOperatorActionCommands(stdout, allTeamDoctorActionsWithFlag(result, strictActionFlag), scope); err != nil {
 			return err
 		}
 		if !result.OK {
@@ -1414,19 +1415,27 @@ func renderAllTeamDoctor(stdout, stderr io.Writer, result *allTeamDoctorResult, 
 }
 
 func teamDoctorActions(result *teamDoctorResult, strictRuntime bool) []string {
+	return teamDoctorActionsWithFlag(result, strictRuntimeActionFlag(strictRuntime))
+}
+
+func teamDoctorActionsWithFlag(result *teamDoctorResult, strictActionFlag string) []string {
 	names := teamDoctorAffectedTeams(result)
 	actions := make([]string, 0, len(names)*2)
 	for _, name := range names {
-		actions = append(actions, teamDoctorDetailAction(name, strictRuntime), teamDoctorGraphAction(name))
+		actions = append(actions, teamDoctorDetailActionWithFlag(name, strictActionFlag), teamDoctorGraphAction(name))
 	}
 	return actions
 }
 
 func allTeamDoctorActions(result *allTeamDoctorResult, strictRuntime bool) []string {
+	return allTeamDoctorActionsWithFlag(result, strictRuntimeActionFlag(strictRuntime))
+}
+
+func allTeamDoctorActionsWithFlag(result *allTeamDoctorResult, strictActionFlag string) []string {
 	names := allTeamDoctorAffectedTeams(result)
 	actions := make([]string, 0, len(names)*2)
 	for _, name := range names {
-		actions = append(actions, teamDoctorDetailAction(name, strictRuntime), teamDoctorGraphAction(name))
+		actions = append(actions, teamDoctorDetailActionWithFlag(name, strictActionFlag), teamDoctorGraphAction(name))
 	}
 	return actions
 }
@@ -1476,9 +1485,13 @@ func allTeamDoctorAffectedTeams(result *allTeamDoctorResult) []string {
 }
 
 func teamDoctorDetailAction(name string, strictRuntime bool) string {
+	return teamDoctorDetailActionWithFlag(name, strictRuntimeActionFlag(strictRuntime))
+}
+
+func teamDoctorDetailActionWithFlag(name, strictActionFlag string) string {
 	args := []string{"agent-team", "team", "doctor", strings.TrimSpace(name)}
-	if strictRuntime {
-		args = append(args, "--strict-runtime")
+	if strictActionFlag != "" {
+		args = append(args, strictActionFlag)
 	}
 	args = append(args, "--json")
 	return strings.Join(shellQuoteArgs(args), " ")

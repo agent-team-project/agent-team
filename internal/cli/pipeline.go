@@ -262,6 +262,7 @@ func newPipelineDoctorCmd() *cobra.Command {
 			if strict {
 				strictRuntime = true
 			}
+			strictActionFlag := scopedDoctorStrictActionFlag(strict, strictRuntime)
 			selectedRepo := repo
 			repoFlag := "repo"
 			if cmd.Flags().Changed("target") && !cmd.Flags().Changed("repo") {
@@ -280,7 +281,7 @@ func newPipelineDoctorCmd() *cobra.Command {
 			if strictRuntime {
 				promotePipelineDoctorRuntimeWarnings(result)
 			}
-			return renderPipelineDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, tmpl, operatorCommandScopeFromCommand(cmd, selectedRepo, repoFlag))
+			return renderPipelineDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), result, jsonOut, commands, strictRuntime, strictActionFlag, tmpl, operatorCommandScopeFromCommand(cmd, selectedRepo, repoFlag))
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
@@ -11351,7 +11352,7 @@ func renderPipelineInfoFormat(w io.Writer, info pipelineInfo, tmpl *template.Tem
 	return err
 }
 
-func renderPipelineDoctor(stdout, stderr io.Writer, result *pipelineDoctorResult, jsonOut, commands, strictRuntime bool, tmpl *template.Template, scope operatorCommandScope) error {
+func renderPipelineDoctor(stdout, stderr io.Writer, result *pipelineDoctorResult, jsonOut, commands, strictRuntime bool, strictActionFlag string, tmpl *template.Template, scope operatorCommandScope) error {
 	if result == nil {
 		result = &pipelineDoctorResult{OK: true}
 	}
@@ -11365,7 +11366,7 @@ func renderPipelineDoctor(stdout, stderr io.Writer, result *pipelineDoctorResult
 		return nil
 	}
 	if commands {
-		if err := renderOperatorActionCommands(stdout, pipelineDoctorCommandActions(result, strictRuntime), scope); err != nil {
+		if err := renderOperatorActionCommands(stdout, pipelineDoctorCommandActionsWithFlag(result, strictActionFlag), scope); err != nil {
 			return err
 		}
 		if !result.OK {
@@ -11412,10 +11413,14 @@ func renderPipelineDoctor(stdout, stderr io.Writer, result *pipelineDoctorResult
 }
 
 func pipelineDoctorCommandActions(result *pipelineDoctorResult, strictRuntime bool) []string {
+	return pipelineDoctorCommandActionsWithFlag(result, strictRuntimeActionFlag(strictRuntime))
+}
+
+func pipelineDoctorCommandActionsWithFlag(result *pipelineDoctorResult, strictActionFlag string) []string {
 	names := pipelineDoctorAffectedPipelines(result)
 	actions := make([]string, 0, len(names)*2)
 	for _, name := range names {
-		actions = append(actions, pipelineDoctorDetailAction(name, strictRuntime), pipelineDoctorGraphAction(name))
+		actions = append(actions, pipelineDoctorDetailActionWithFlag(name, strictActionFlag), pipelineDoctorGraphAction(name))
 	}
 	return actions
 }
@@ -11451,6 +11456,10 @@ func pipelineDoctorAffectedPipelines(result *pipelineDoctorResult) []string {
 }
 
 func pipelineDoctorDetailAction(name string, strictRuntime bool) string {
+	return pipelineDoctorDetailActionWithFlag(name, strictRuntimeActionFlag(strictRuntime))
+}
+
+func pipelineDoctorDetailActionWithFlag(name, strictActionFlag string) string {
 	args := []string{"agent-team", "pipeline", "doctor"}
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -11458,8 +11467,8 @@ func pipelineDoctorDetailAction(name string, strictRuntime bool) string {
 	} else {
 		args = append(args, name)
 	}
-	if strictRuntime {
-		args = append(args, "--strict-runtime")
+	if strictActionFlag != "" {
+		args = append(args, strictActionFlag)
 	}
 	args = append(args, "--json")
 	return strings.Join(shellQuoteArgs(args), " ")
