@@ -260,6 +260,12 @@ func (r *EventResolver) dispatchPipelineStep(pipeline *topology.Pipeline, step *
 	dispatchPayload["pipeline"] = pipeline.Name
 	dispatchPayload["pipeline_step"] = step.ID
 	dispatchPayload["ticket"] = j.Ticket
+	// Thread the step's runtime budget through so the ephemeral spawn arms a
+	// per-instance watchdog (a hung worker/reviewer otherwise holds a replica
+	// slot forever). A zero step timeout leaves it to the env-level default.
+	if ts := pipelineStepTimeoutString(step.Timeout); ts != "" {
+		dispatchPayload["timeout"] = ts
+	}
 	kickoff := jobstore.StepDispatchKickoff(j.Kickoff, step.ID, step.Instructions)
 	// Best-effort context passing: if the caller threaded the prior step's final
 	// output through the payload (auto-advance does), hand it to this step so e.g.
@@ -370,6 +376,31 @@ func pipelineStepTimeoutString(timeout time.Duration) string {
 		return ""
 	}
 	return timeout.String()
+}
+
+// envInstanceMaxRuntime is the daemon-wide default runtime budget for ephemeral
+// instances (workers/reviewers/spawned steps). It opts the whole deployment into
+// the per-instance watchdog without per-step config — the backstop for codex/
+// Claude children that wedge on the model backend and hold a replica slot.
+const envInstanceMaxRuntime = "AGENT_TEAM_INSTANCE_MAX_RUNTIME"
+
+// ephemeralRuntimeBudget resolves the wall-clock budget for an ephemeral spawn,
+// in precedence order: the per-step `timeout` threaded through the payload, then
+// the AGENT_TEAM_INSTANCE_MAX_RUNTIME env default, else 0 (watchdog disabled).
+// Unparseable values are ignored so a bad config never accidentally arms — or,
+// worse, never disarms by erroring — the watchdog; it simply falls through.
+func ephemeralRuntimeBudget(payload map[string]any) time.Duration {
+	if ts := strings.TrimSpace(payloadString(payload, "timeout")); ts != "" {
+		if d, err := time.ParseDuration(ts); err == nil && d > 0 {
+			return d
+		}
+	}
+	if env := strings.TrimSpace(os.Getenv(envInstanceMaxRuntime)); env != "" {
+		if d, err := time.ParseDuration(env); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 func firstRunnablePipelineStep(pipeline *topology.Pipeline) *topology.PipelineStep {
@@ -657,6 +688,7 @@ func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, p
 		Args:          args,
 		Env:           env,
 		Stdin:         stdin,
+		Budget:        ephemeralRuntimeBudget(payload),
 	})
 	if err != nil {
 		cleanupWorkspace()

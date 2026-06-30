@@ -123,6 +123,14 @@ type DispatchInput struct {
 	Args          []string
 	Env           []string
 	Stdin         string
+	// Budget, if > 0, is a hard wall-clock runtime budget for the dispatched
+	// instance. When it elapses before the process exits on its own, a watchdog
+	// finalises the instance as Crashed and force-kills its process group (see
+	// watchdog). Zero disables the watchdog — the default, so existing callers
+	// are unaffected. The ephemeral pipeline spawn path derives this from a step
+	// timeout or AGENT_TEAM_INSTANCE_MAX_RUNTIME; persistent/manual dispatches
+	// that leave it zero are never watchdogged.
+	Budget time.Duration
 }
 
 // StopOptions controls graceful stop escalation. The default Stop path sends
@@ -266,6 +274,9 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 	m.mu.Unlock()
 	m.recordEvent("dispatch", meta, "instance dispatched")
 	go m.reap(in.Name, proc, reaped)
+	if in.Budget > 0 {
+		go m.watchdog(in.Name, proc, reaped, in.Budget)
+	}
 	return meta, nil
 }
 
@@ -809,8 +820,12 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 		t.meta.Status = StatusExited
 		eventAction = "exit"
 	case state.ExitCode() == 0:
-		// Clean exit. Preserve StatusStopped if the user asked for stop.
-		if t.meta.Status != StatusStopped {
+		// Clean exit. Only promote from Running; never clobber a status that was
+		// already finalised before the reaper ran (StatusStopped from a stop, or
+		// StatusCrashed from the watchdog force-killing a hung instance — a wedged
+		// child that traps SIGTERM and exits 0 must still be treated as a crash so
+		// the pipeline retries rather than advancing as if it succeeded).
+		if t.meta.Status == StatusRunning {
 			t.meta.Status = StatusExited
 			eventAction = "exit"
 		}
@@ -819,9 +834,10 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 	default:
 		ec := state.ExitCode()
 		t.meta.ExitCode = &ec
-		// If we issued a stop, the non-zero exit is the SIGTERM result —
-		// keep it as stopped.
-		if t.meta.Status != StatusStopped {
+		// Only promote from Running. A pre-set terminal status is authoritative:
+		// StatusStopped means the user issued a stop (the non-zero exit is the
+		// SIGTERM result); StatusCrashed means the watchdog already finalised it.
+		if t.meta.Status == StatusRunning {
 			t.meta.Status = StatusCrashed
 			eventAction = "crash"
 		}
@@ -840,6 +856,68 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 	if hook != nil {
 		hook(instance)
 	}
+}
+
+// watchdog enforces a hard wall-clock runtime budget on a dispatched instance.
+// Codex/Claude children can wedge on the model's streaming backend between turns
+// with no client-side timeout, holding a replica slot and stalling the pipeline
+// indefinitely. When the budget elapses before the reaper fires, the watchdog
+// finalises the instance as Crashed — deliberately NOT Stopped, because Stopped
+// suppresses pipeline auto-advance, which is the exact stall we are breaking —
+// then force-kills the process group. The already-running reaper observes the
+// exit and fires the reap hook, so the pipeline retries the step (MaxAttempts)
+// exactly as it would for any other crash.
+//
+// The reaper remains the SOLE finaliser that fires the hook: the watchdog only
+// pre-marks status and kills, so the pipeline still advances exactly once. A
+// non-positive budget disables the watchdog (the default).
+func (m *InstanceManager) watchdog(instance string, proc *os.Process, reaped <-chan struct{}, budget time.Duration) {
+	if budget <= 0 || proc == nil {
+		return
+	}
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+	select {
+	case <-reaped:
+		// Exited on its own within budget — nothing to enforce.
+		return
+	case <-timer.C:
+	}
+
+	// Budget elapsed. Re-validate under the lock that THIS process is still the
+	// live, running incarnation before touching anything: the reaper may have
+	// just finalised it, a stop may have set Stopped, or a newer dispatch may
+	// have replaced it. Any of those → no-op (the watchdog never double-kills).
+	m.mu.Lock()
+	t, ok := m.instances[instance]
+	if !ok || t.process != proc || t.meta.Status != StatusRunning {
+		m.mu.Unlock()
+		return
+	}
+	pid := t.meta.PID
+	// Mark Crashed and persist BEFORE killing: the terminal intent is then durable
+	// across a daemon restart in the kill→reap window, and the reaper (which only
+	// promotes from Running) preserves Crashed instead of recording a plain exit
+	// if the child happens to exit 0 on the signal.
+	t.meta.Status = StatusCrashed
+	out := *t.meta
+	if err := WriteMetadata(m.daemonRoot, t.meta); err != nil {
+		// Nowhere to surface this; the reaper + next reconcile still finalise.
+		_ = err
+	}
+	m.mu.Unlock()
+	m.recordEvent("watchdog", &out, fmt.Sprintf("instance exceeded runtime budget %s; killing", budget))
+
+	// SIGTERM the process group, allow a short grace, then SIGKILL. A wedged child
+	// commonly ignores SIGTERM, so escalation is expected. Signal errors are
+	// best-effort and unactionable from this goroutine: if the process is already
+	// gone (ErrProcessDone/ESRCH) the reaper handles the wait; any other failure
+	// still leaves the reaper as the finaliser.
+	_ = signalProcessGroupOrProcess(proc, pid, syscall.SIGTERM)
+	if waitForProcessExit(pid, reaped, stopKillWaitTimeout) {
+		return
+	}
+	_ = signalProcessGroupOrProcess(proc, pid, syscall.SIGKILL)
 }
 
 // SetReapHook installs (or replaces) a callback invoked after each reaper
