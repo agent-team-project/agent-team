@@ -100,6 +100,10 @@ func newOutboxDoctorCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox doctor: --dry-run requires --quarantine.")
 				return exitErr(2)
 			}
+			if commands && quarantine && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team outbox doctor: --commands with --quarantine requires --dry-run.")
+				return exitErr(2)
+			}
 			tmpl, err := parseOutboxDoctorFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team outbox doctor: %v\n", err)

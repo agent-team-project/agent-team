@@ -92,6 +92,10 @@ func newJobDoctorCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job doctor: --dry-run requires --quarantine.")
 				return exitErr(2)
 			}
+			if commands && quarantine && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job doctor: --commands with --quarantine requires --dry-run.")
+				return exitErr(2)
+			}
 			tmpl, err := parseJobDoctorFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job doctor: %v\n", err)

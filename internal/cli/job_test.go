@@ -201,6 +201,8 @@ func TestJobDoctorRenderValidation(t *testing.T) {
 	}{
 		{[]string{"job", "doctor", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"job", "doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
+		{[]string{"job", "doctor", "--quarantine", "--commands"}, "--commands with --quarantine requires --dry-run"},
+		{[]string{"job", "doctor", "--dry-run"}, "--dry-run requires --quarantine"},
 		{[]string{"job", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
 		{[]string{"job", "doctor", "--format", "{{"}, "invalid --format template"},
 	}

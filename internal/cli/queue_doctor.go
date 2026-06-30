@@ -99,6 +99,10 @@ func newQueueDoctorCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue doctor: --dry-run requires --quarantine.")
 				return exitErr(2)
 			}
+			if commands && quarantine && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team queue doctor: --commands with --quarantine requires --dry-run.")
+				return exitErr(2)
+			}
 			tmpl, err := parseQueueDoctorFormat(format)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team queue doctor: %v\n", err)

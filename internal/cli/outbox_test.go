@@ -698,6 +698,8 @@ func TestOutboxDoctorFormatValidation(t *testing.T) {
 	}{
 		{[]string{"outbox", "doctor", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"outbox", "doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
+		{[]string{"outbox", "doctor", "--quarantine", "--commands"}, "--commands with --quarantine requires --dry-run"},
+		{[]string{"outbox", "doctor", "--dry-run"}, "--dry-run requires --quarantine"},
 		{[]string{"outbox", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
 		{[]string{"outbox", "doctor", "--format", "{{"}, "invalid --format template"},
 		{[]string{"outbox", "ls", "--commands", "--json"}, "--commands cannot be combined with --json"},

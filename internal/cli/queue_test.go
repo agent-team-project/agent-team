@@ -474,6 +474,8 @@ func TestQueueDoctorFormatValidation(t *testing.T) {
 	}{
 		{[]string{"queue", "doctor", "--commands", "--json"}, "--commands cannot be combined with --json"},
 		{[]string{"queue", "doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
+		{[]string{"queue", "doctor", "--quarantine", "--commands"}, "--commands with --quarantine requires --dry-run"},
+		{[]string{"queue", "doctor", "--dry-run"}, "--dry-run requires --quarantine"},
 		{[]string{"queue", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
 		{[]string{"queue", "doctor", "--format", "{{"}, "invalid --format template"},
 		{[]string{"queue", "ls", "--commands", "--json"}, "--commands cannot be combined with --json"},
