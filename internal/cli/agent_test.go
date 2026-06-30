@@ -188,6 +188,13 @@ Run Codex work.
 	if got.Code != "agent_runtime_unavailable" || got.Agent != "codex-worker" || got.Runtime != "codex" || got.RuntimeBin != "missing-codex" {
 		t.Fatalf("runtime warning = %+v", got)
 	}
+	wantActions := []string{
+		agentDoctorDetailAction("codex-worker", false),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "agent", "show", "codex-worker", "--json"}), " "),
+	}
+	if strings.Join(result.Actions, "\n") != strings.Join(wantActions, "\n") {
+		t.Fatalf("agent doctor json actions = %+v, want %+v", result.Actions, wantActions)
+	}
 
 	text := NewRootCmd()
 	textOut, textErr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -212,10 +219,7 @@ Run Codex work.
 	if err := commands.Execute(); err != nil {
 		t.Fatalf("agent doctor commands: %v\nstderr=%s", err, commandsErr.String())
 	}
-	wantCommands := strings.Join(scopedOperatorActions([]string{
-		agentDoctorDetailAction("codex-worker", false),
-		strings.Join(shellQuoteArgs([]string{"agent-team", "agent", "show", "codex-worker", "--json"}), " "),
-	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	wantCommands := strings.Join(scopedOperatorActions(wantActions, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
 	if got := commandsOut.String(); got != wantCommands {
 		t.Fatalf("agent doctor commands output = %q, want %q", got, wantCommands)
 	}
@@ -243,6 +247,13 @@ Run Codex work.
 	if strictResult.OK || len(strictResult.Problems) != 1 || len(strictResult.Warnings) != 0 || strictResult.Problems[0].Code != "agent_runtime_unavailable" {
 		t.Fatalf("strict agent doctor result = %+v", strictResult)
 	}
+	wantStrictRuntimeActions := []string{
+		agentDoctorDetailActionWithFlag("codex-worker", "--strict-runtime"),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "agent", "show", "codex-worker", "--json"}), " "),
+	}
+	if strings.Join(strictResult.Actions, "\n") != strings.Join(wantStrictRuntimeActions, "\n") {
+		t.Fatalf("strict agent doctor json actions = %+v, want %+v", strictResult.Actions, wantStrictRuntimeActions)
+	}
 	if strictErr.Len() != 0 {
 		t.Fatalf("strict stderr = %q", strictErr.String())
 	}
@@ -266,6 +277,13 @@ Run Codex work.
 	if strictAliasResult.OK || len(strictAliasResult.Problems) != 1 || len(strictAliasResult.Warnings) != 0 || strictAliasResult.Problems[0].Code != "agent_runtime_unavailable" {
 		t.Fatalf("strict alias agent doctor result = %+v", strictAliasResult)
 	}
+	wantStrictActions := []string{
+		agentDoctorDetailActionWithFlag("codex-worker", "--strict"),
+		strings.Join(shellQuoteArgs([]string{"agent-team", "agent", "show", "codex-worker", "--json"}), " "),
+	}
+	if strings.Join(strictAliasResult.Actions, "\n") != strings.Join(wantStrictActions, "\n") {
+		t.Fatalf("strict alias agent doctor json actions = %+v, want %+v", strictAliasResult.Actions, wantStrictActions)
+	}
 	if strictAliasErr.Len() != 0 {
 		t.Fatalf("strict alias stderr = %q", strictAliasErr.String())
 	}
@@ -282,10 +300,7 @@ Run Codex work.
 	if !errors.As(err, &code) || int(code) != 1 {
 		t.Fatalf("strict commands err = %v, want exit 1", err)
 	}
-	wantStrictCommands := strings.Join(scopedOperatorActions([]string{
-		agentDoctorDetailActionWithFlag("codex-worker", "--strict"),
-		strings.Join(shellQuoteArgs([]string{"agent-team", "agent", "show", "codex-worker", "--json"}), " "),
-	}, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
+	wantStrictCommands := strings.Join(scopedOperatorActions(wantStrictActions, operatorCommandScope{Repo: root, Set: true}), "\n") + "\n"
 	if got := strictCommandsOut.String(); got != wantStrictCommands {
 		t.Fatalf("strict commands output = %q, want %q", got, wantStrictCommands)
 	}

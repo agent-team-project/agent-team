@@ -83,6 +83,7 @@ func newAgentDoctorCmd() *cobra.Command {
 type agentDoctorResult struct {
 	OK       bool                 `json:"ok"`
 	Agents   []agentDoctorAgent   `json:"agents"`
+	Actions  []string             `json:"actions,omitempty"`
 	Problems []agentDoctorFinding `json:"problems,omitempty"`
 	Warnings []agentDoctorFinding `json:"warnings,omitempty"`
 }
@@ -254,6 +255,7 @@ func renderAgentDoctor(stdout, stderr io.Writer, result *agentDoctorResult, json
 	if result == nil {
 		result = &agentDoctorResult{OK: true}
 	}
+	result.Actions = agentDoctorActionsWithFlag(result, strictActionFlag)
 	if jsonOut {
 		if err := json.NewEncoder(stdout).Encode(result); err != nil {
 			return err
@@ -264,7 +266,7 @@ func renderAgentDoctor(stdout, stderr io.Writer, result *agentDoctorResult, json
 		return nil
 	}
 	if commands {
-		if err := renderOperatorActionCommands(stdout, agentDoctorActionsWithFlag(result, strictActionFlag), scope); err != nil {
+		if err := renderOperatorActionCommands(stdout, result.Actions, scope); err != nil {
 			return err
 		}
 		if !result.OK {
