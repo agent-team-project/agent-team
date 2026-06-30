@@ -18,6 +18,7 @@ func newAgentDoctorCmd() *cobra.Command {
 	var (
 		repo          string
 		all           bool
+		strict        bool
 		strictRuntime bool
 		jsonOut       bool
 		commands      bool
@@ -50,6 +51,9 @@ func newAgentDoctorCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team agent doctor: %v\n", err)
 				return exitErr(2)
 			}
+			if strict {
+				strictRuntime = true
+			}
 			teamDir, err := resolveTeamDir(cmd, repo)
 			if err != nil {
 				return err
@@ -67,6 +71,7 @@ func newAgentDoctorCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().BoolVar(&all, "all", false, "Validate all installed agents. This is the default when no agent is passed.")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on all strict agent doctor checks. Currently aliases --strict-runtime.")
 	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when an agent runtime default cannot be resolved or is not discoverable.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit agent doctor findings as JSON.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line. agent-team follow-ups preserve the selected repo scope.")

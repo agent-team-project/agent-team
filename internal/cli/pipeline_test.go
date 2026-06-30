@@ -958,6 +958,32 @@ runtime_bin = "missing-codex"
 	if strictErr.Len() != 0 {
 		t.Fatalf("strict stderr = %q", strictErr.String())
 	}
+
+	strictAlias := NewRootCmd()
+	strictAliasOut, strictAliasErr := &bytes.Buffer{}, &bytes.Buffer{}
+	strictAlias.SetOut(strictAliasOut)
+	strictAlias.SetErr(strictAliasErr)
+	strictAlias.SetArgs([]string{"pipeline", "doctor", "ticket_to_pr", "--repo", root, "--strict", "--json"})
+	err = strictAlias.Execute()
+	if err == nil {
+		t.Fatal("pipeline doctor strict alias unexpectedly succeeded")
+	}
+	if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("strict alias err = %v, want exit 1", err)
+	}
+	var strictAliasResult pipelineDoctorResult
+	if err := json.Unmarshal(strictAliasOut.Bytes(), &strictAliasResult); err != nil {
+		t.Fatalf("decode strict alias pipeline doctor json: %v\nbody=%s", err, strictAliasOut.String())
+	}
+	if strictAliasResult.OK || !hasPipelineDoctorFinding(strictAliasResult.Problems, "step_runtime_unavailable") || len(strictAliasResult.Warnings) != 0 {
+		t.Fatalf("strict alias doctor result = %+v", strictAliasResult)
+	}
+	if len(strictAliasResult.Pipelines) != 1 || strictAliasResult.Pipelines[0].OK || !hasPipelineDoctorFinding(strictAliasResult.Pipelines[0].Problems, "step_runtime_unavailable") || len(strictAliasResult.Pipelines[0].Warnings) != 0 {
+		t.Fatalf("strict alias pipeline result = %+v", strictAliasResult.Pipelines)
+	}
+	if strictAliasErr.Len() != 0 {
+		t.Fatalf("strict alias stderr = %q", strictAliasErr.String())
+	}
 }
 
 func TestPipelineDoctorWarnsWhenAgentRuntimeDefaultUnavailable(t *testing.T) {

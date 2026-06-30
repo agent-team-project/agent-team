@@ -246,6 +246,29 @@ Run Codex work.
 	if strictErr.Len() != 0 {
 		t.Fatalf("strict stderr = %q", strictErr.String())
 	}
+
+	strictAlias := NewRootCmd()
+	strictAliasOut, strictAliasErr := &bytes.Buffer{}, &bytes.Buffer{}
+	strictAlias.SetOut(strictAliasOut)
+	strictAlias.SetErr(strictAliasErr)
+	strictAlias.SetArgs([]string{"agent", "doctor", "codex-worker", "--repo", root, "--strict", "--json"})
+	err = strictAlias.Execute()
+	if err == nil {
+		t.Fatal("agent doctor strict alias unexpectedly succeeded")
+	}
+	if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("strict alias err = %v, want exit 1", err)
+	}
+	var strictAliasResult agentDoctorResult
+	if err := json.Unmarshal(strictAliasOut.Bytes(), &strictAliasResult); err != nil {
+		t.Fatalf("decode strict alias agent doctor json: %v\nbody=%s", err, strictAliasOut.String())
+	}
+	if strictAliasResult.OK || len(strictAliasResult.Problems) != 1 || len(strictAliasResult.Warnings) != 0 || strictAliasResult.Problems[0].Code != "agent_runtime_unavailable" {
+		t.Fatalf("strict alias agent doctor result = %+v", strictAliasResult)
+	}
+	if strictAliasErr.Len() != 0 {
+		t.Fatalf("strict alias stderr = %q", strictAliasErr.String())
+	}
 }
 
 func TestAgentDoctorWarnsWhenRuntimeBinHasNoRuntime(t *testing.T) {

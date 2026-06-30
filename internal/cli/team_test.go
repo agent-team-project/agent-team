@@ -5986,6 +5986,29 @@ pipelines = ["ticket_to_pr"]
 		t.Fatalf("strict stderr = %q", strictErr.String())
 	}
 
+	strictAlias := NewRootCmd()
+	strictAliasOut, strictAliasErr := &bytes.Buffer{}, &bytes.Buffer{}
+	strictAlias.SetOut(strictAliasOut)
+	strictAlias.SetErr(strictAliasErr)
+	strictAlias.SetArgs([]string{"team", "doctor", "delivery", "--repo", root, "--strict", "--json"})
+	err = strictAlias.Execute()
+	if err == nil {
+		t.Fatal("team doctor strict alias unexpectedly succeeded")
+	}
+	if !errors.As(err, &code) || int(code) != 1 {
+		t.Fatalf("strict alias err = %v, want exit 1", err)
+	}
+	var strictAliasResult teamDoctorResult
+	if err := json.Unmarshal(strictAliasOut.Bytes(), &strictAliasResult); err != nil {
+		t.Fatalf("decode strict alias team doctor json: %v\nbody=%s", err, strictAliasOut.String())
+	}
+	if strictAliasResult.OK || !hasTeamDoctorFinding(strictAliasResult.Problems, "step_runtime_unavailable") || len(strictAliasResult.Warnings) != 0 {
+		t.Fatalf("strict alias team doctor result = %+v", strictAliasResult)
+	}
+	if strictAliasErr.Len() != 0 {
+		t.Fatalf("strict alias stderr = %q", strictAliasErr.String())
+	}
+
 	strictAll := NewRootCmd()
 	strictAllOut, strictAllErr := &bytes.Buffer{}, &bytes.Buffer{}
 	strictAll.SetOut(strictAllOut)

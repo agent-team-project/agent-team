@@ -159,6 +159,7 @@ Flags:
       --format string    Render the agent doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.
       --json             Emit agent doctor findings as JSON.
       --repo string      Repo root containing .agent_team. (default "<repo>")
+      --strict           Fail on all strict agent doctor checks. Currently aliases --strict-runtime.
       --strict-runtime   Fail when an agent runtime default cannot be resolved or is not discoverable.
 ```
 
@@ -4660,6 +4661,7 @@ Flags:
       --format string    Render the doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.
       --json             Emit pipeline doctor findings as JSON.
       --repo string      Repo root containing .agent_team. (default "<repo>")
+      --strict           Fail on all strict pipeline doctor checks. Currently aliases --strict-runtime.
       --strict-runtime   Fail when a step-declared or target-agent runtime default cannot be resolved or is not discoverable.
       --target string    Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
@@ -7957,6 +7959,7 @@ Flags:
       --format string    Render the team doctor result with a Go template, e.g. '{{.OK}} {{len .Problems}}'.
       --json             Emit team doctor findings as JSON.
       --repo string      Repo root containing .agent_team. (default "<repo>")
+      --strict           Fail on all strict team doctor checks. Currently aliases --strict-runtime.
       --strict-runtime   Fail when a team-owned step or target-agent runtime default cannot be resolved or is not discoverable.
       --target string    Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```

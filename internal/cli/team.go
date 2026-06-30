@@ -202,6 +202,7 @@ func newTeamDoctorCmd() *cobra.Command {
 		repo          string
 		targetRepo    string
 		all           bool
+		strict        bool
 		strictRuntime bool
 		jsonOut       bool
 		commands      bool
@@ -240,6 +241,9 @@ func newTeamDoctorCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team team doctor: %v\n", err)
 				return exitErr(2)
 			}
+			if strict {
+				strictRuntime = true
+			}
 			selectedRepo := repo
 			repoFlag := "repo"
 			if cmd.Flags().Changed("target") && !cmd.Flags().Changed("repo") {
@@ -275,6 +279,7 @@ func newTeamDoctorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&targetRepo, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&all, "all", false, "Validate all declared teams.")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on all strict team doctor checks. Currently aliases --strict-runtime.")
 	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when a team-owned step or target-agent runtime default cannot be resolved or is not discoverable.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit team doctor findings as JSON.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line. agent-team follow-ups preserve the selected repo scope.")

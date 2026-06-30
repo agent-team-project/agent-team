@@ -212,6 +212,7 @@ func newPipelineDoctorCmd() *cobra.Command {
 		repo          string
 		targetRepo    string
 		all           bool
+		strict        bool
 		strictRuntime bool
 		jsonOut       bool
 		commands      bool
@@ -258,6 +259,9 @@ func newPipelineDoctorCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team pipeline doctor: %v\n", err)
 				return exitErr(2)
 			}
+			if strict {
+				strictRuntime = true
+			}
 			selectedRepo := repo
 			repoFlag := "repo"
 			if cmd.Flags().Changed("target") && !cmd.Flags().Changed("repo") {
@@ -282,6 +286,7 @@ func newPipelineDoctorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&targetRepo, "target", cwd, legacyRepoTargetFlagHelp)
 	cmd.Flags().BoolVar(&all, "all", false, "Validate all pipelines. This is the default when no pipeline is passed.")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on all strict pipeline doctor checks. Currently aliases --strict-runtime.")
 	cmd.Flags().BoolVar(&strictRuntime, "strict-runtime", false, "Fail when a step-declared or target-agent runtime default cannot be resolved or is not discoverable.")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit pipeline doctor findings as JSON.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "Print recommended follow-up commands, one per line. agent-team follow-ups preserve the selected repo scope.")
