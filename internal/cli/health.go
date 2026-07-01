@@ -1472,13 +1472,8 @@ func renderHealth(w io.Writer, result *healthResult) {
 		)
 	}
 	if result.Jobs != nil {
-		fmt.Fprintf(w, "jobs: total=%d queued=%d running=%d blocked=%d done=%d failed=%d attention=%d ready_steps=%d\n",
-			result.Jobs.Summary.Total,
-			result.Jobs.Summary.Queued,
-			result.Jobs.Summary.Running,
-			result.Jobs.Summary.Blocked,
-			result.Jobs.Summary.Done,
-			result.Jobs.Summary.Failed,
+		fmt.Fprintf(w, "jobs: %s attention=%d ready_steps=%d\n",
+			jobSummaryCountsText(result.Jobs.Summary),
 			len(result.Jobs.Attention),
 			len(result.Jobs.ReadySteps),
 		)

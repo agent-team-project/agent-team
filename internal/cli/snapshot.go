@@ -1240,18 +1240,5 @@ func countChangedJobStatusPreviews(results []jobStatusReconcileResult) int {
 }
 
 func renderSnapshotJobSummary(w io.Writer, jobs []*job.Job) {
-	counts := map[job.Status]int{}
-	for _, j := range jobs {
-		if j == nil {
-			continue
-		}
-		counts[j.Status]++
-	}
-	fmt.Fprintf(w, "jobs: total=%d queued=%d running=%d blocked=%d done=%d failed=%d\n",
-		len(jobs),
-		counts[job.StatusQueued],
-		counts[job.StatusRunning],
-		counts[job.StatusBlocked],
-		counts[job.StatusDone],
-		counts[job.StatusFailed])
+	fmt.Fprintf(w, "jobs: %s\n", jobSummaryCountsText(summarizeJobs(jobs)))
 }

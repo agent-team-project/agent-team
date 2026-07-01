@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func TestOverviewReportsAttentionAndActions(t *testing.T) {
 	if overview.Topology == nil || overview.Topology.Instances != 2 || overview.Topology.Pipelines != 1 {
 		t.Fatalf("topology = %+v", overview.Topology)
 	}
-	if overview.Jobs.Summary.Total != 1 || overview.Jobs.Summary.Blocked != 1 || overview.Jobs.Attention != 1 {
+	if overview.Jobs.Summary.Total != 1 || overview.Jobs.Summary.Active != 1 || overview.Jobs.Summary.Terminal != 0 || overview.Jobs.Summary.Blocked != 1 || overview.Jobs.Attention != 1 {
 		t.Fatalf("jobs = %+v", overview.Jobs)
 	}
 	if overview.Queue.Total != 1 || overview.Queue.Dead != 1 || overview.Queue.Attempts != daemon.MaxQueueAttempts {
@@ -1402,7 +1403,7 @@ func TestOverviewTextRendersOperatorSummary(t *testing.T) {
 		"overview: attention",
 		"health: unhealthy daemon=down",
 		"topology: instances=2 persistent=1 ephemeral=1",
-		"jobs: total=1 queued=0 running=0 blocked=1 done=0 failed=0 attention=1",
+		"jobs: active=1 (queued=0 running=0 blocked=1) terminal=0 (done=0 failed=0) total=1 attention=1",
 		"queue: total=1 pending=0 dead=1",
 		"pipelines: total=1 jobs=1 ready_steps=1 parallel_ready_steps=0 stale_running_steps=0 blocked_steps=0 failed_steps=0",
 		"schedules: declared=1 due=1 upcoming=1",
@@ -1413,6 +1414,87 @@ func TestOverviewTextRendersOperatorSummary(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("overview text missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestOverviewJobSummarySeparatesActiveAndTerminalJobs(t *testing.T) {
+	root := writeOverviewJobSummaryFixture(t, map[string]job.Status{
+		"SQU-720": job.StatusQueued,
+		"SQU-721": job.StatusRunning,
+		"SQU-722": job.StatusBlocked,
+		"SQU-723": job.StatusDone,
+		"SQU-724": job.StatusFailed,
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview text: %v\nstderr=%s", err, stderr.String())
+	}
+	wantLine := "jobs: active=3 (queued=1 running=1 blocked=1) terminal=2 (done=1 failed=1) total=5"
+	if !strings.Contains(out.String(), wantLine) {
+		t.Fatalf("overview text missing %q:\n%s", wantLine, out.String())
+	}
+	if strings.Contains(out.String(), "jobs: total=5") {
+		t.Fatalf("overview text still leads with total:\n%s", out.String())
+	}
+
+	jsonCmd := NewRootCmd()
+	jsonOut, jsonErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jsonCmd.SetOut(jsonOut)
+	jsonCmd.SetErr(jsonErr)
+	jsonCmd.SetArgs([]string{"overview", "--target", root, "--json"})
+	if err := jsonCmd.Execute(); err != nil {
+		t.Fatalf("overview json: %v\nstderr=%s", err, jsonErr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(jsonOut.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview json: %v\nbody=%s", err, jsonOut.String())
+	}
+	if overview.Jobs.Summary.Total != 5 || overview.Jobs.Summary.Active != 3 || overview.Jobs.Summary.Terminal != 2 {
+		t.Fatalf("overview job summary = %+v", overview.Jobs.Summary)
+	}
+}
+
+func TestOverviewJobSummaryRendersTerminalOnlyAsZeroActive(t *testing.T) {
+	root := writeOverviewJobSummaryFixture(t, map[string]job.Status{
+		"SQU-725": job.StatusDone,
+		"SQU-726": job.StatusFailed,
+	})
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"overview", "--target", root})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("overview text: %v\nstderr=%s", err, stderr.String())
+	}
+	wantLine := "jobs: active=0 (queued=0 running=0 blocked=0) terminal=2 (done=1 failed=1) total=2"
+	if !strings.Contains(out.String(), wantLine) {
+		t.Fatalf("overview terminal-only text missing %q:\n%s", wantLine, out.String())
+	}
+	if strings.Contains(out.String(), "jobs: total=2") {
+		t.Fatalf("overview terminal-only text still leads with total:\n%s", out.String())
+	}
+
+	jsonCmd := NewRootCmd()
+	jsonOut, jsonErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jsonCmd.SetOut(jsonOut)
+	jsonCmd.SetErr(jsonErr)
+	jsonCmd.SetArgs([]string{"overview", "--target", root, "--json"})
+	if err := jsonCmd.Execute(); err != nil {
+		t.Fatalf("overview terminal-only json: %v\nstderr=%s", err, jsonErr.String())
+	}
+	var overview overviewResult
+	if err := json.Unmarshal(jsonOut.Bytes(), &overview); err != nil {
+		t.Fatalf("decode terminal-only overview json: %v\nbody=%s", err, jsonOut.String())
+	}
+	if overview.Jobs.Summary.Total != 2 || overview.Jobs.Summary.Active != 0 || overview.Jobs.Summary.Terminal != 2 {
+		t.Fatalf("terminal-only overview job summary = %+v", overview.Jobs.Summary)
 	}
 }
 
@@ -1542,7 +1624,7 @@ func TestOverviewRecommendsBatchCleanupReadyJobs(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &overview); err != nil {
 		t.Fatalf("decode overview cleanup: %v\nbody=%s", err, out.String())
 	}
-	if overview.Jobs.Summary.Total != 1 || overview.Jobs.Summary.Done != 1 || overview.Jobs.Attention != 1 || overview.Jobs.CleanupReady != 1 {
+	if overview.Jobs.Summary.Total != 1 || overview.Jobs.Summary.Active != 0 || overview.Jobs.Summary.Terminal != 1 || overview.Jobs.Summary.Done != 1 || overview.Jobs.Attention != 1 || overview.Jobs.CleanupReady != 1 {
 		t.Fatalf("jobs = %+v", overview.Jobs)
 	}
 	for _, want := range []string{
@@ -1842,7 +1924,7 @@ func TestTeamOverviewScopesCountsAndActions(t *testing.T) {
 	if overview.Topology == nil || overview.Topology.Instances != 2 || overview.Topology.Teams != 1 || overview.Topology.Pipelines != 1 || overview.Topology.Schedules != 1 {
 		t.Fatalf("topology = %+v", overview.Topology)
 	}
-	if overview.Jobs.Summary.Total != 1 || overview.Jobs.Attention != 1 || overview.Queue.Dead != 1 || overview.Queue.Quarantined != 1 || overview.Queue.QuarantineRestorable != 1 || overview.Queue.QuarantineUnrestorable != 0 || overview.Pipelines.ReadySteps != 1 || overview.Schedules.Due != 1 {
+	if overview.Jobs.Summary.Total != 1 || overview.Jobs.Summary.Active != 1 || overview.Jobs.Summary.Terminal != 0 || overview.Jobs.Attention != 1 || overview.Queue.Dead != 1 || overview.Queue.Quarantined != 1 || overview.Queue.QuarantineRestorable != 1 || overview.Queue.QuarantineUnrestorable != 0 || overview.Pipelines.ReadySteps != 1 || overview.Schedules.Due != 1 {
 		t.Fatalf("overview = %+v", overview)
 	}
 	for _, want := range []string{
@@ -1939,7 +2021,7 @@ func TestTeamOverviewTextRendersTeamSummary(t *testing.T) {
 		"overview: attention",
 		"team: delivery",
 		"topology: instances=2 persistent=1 ephemeral=1",
-		"jobs: total=1 queued=0 running=0 blocked=1 done=0 failed=0 attention=1",
+		"jobs: active=1 (queued=0 running=0 blocked=1) terminal=0 (done=0 failed=0) total=1 attention=1",
 		"queue: total=1 pending=0 dead=1 delayed=0 attempts=3 quarantined=1 restorable=1 unrestorable=0",
 		"schedules: declared=1 due=1 upcoming=1",
 		"agent-team team repair delivery --dry-run --jobs",
@@ -2558,6 +2640,31 @@ target = "worker"
 	} {
 		if err := job.Write(teamDir, j); err != nil {
 			t.Fatalf("write %s: %v", j.ID, err)
+		}
+	}
+	return root
+}
+
+func writeOverviewJobSummaryFixture(t *testing.T, statuses map[string]job.Status) string {
+	t.Helper()
+	root := t.TempDir()
+	initInto(t, root)
+	teamDir := filepath.Join(root, ".agent_team")
+	now := time.Now().UTC()
+	tickets := make([]string, 0, len(statuses))
+	for ticket := range statuses {
+		tickets = append(tickets, ticket)
+	}
+	sort.Strings(tickets)
+	for _, ticket := range tickets {
+		j, err := job.New(ticket, "worker", "test kickoff", now)
+		if err != nil {
+			t.Fatalf("job.New %s: %v", ticket, err)
+		}
+		j.Status = statuses[ticket]
+		j.UpdatedAt = now
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", ticket, err)
 		}
 	}
 	return root
