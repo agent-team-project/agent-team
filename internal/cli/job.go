@@ -9050,6 +9050,8 @@ type jobCleanupCommandOptions struct {
 
 type jobSummary struct {
 	Total        int            `json:"total"`
+	Active       int            `json:"active"`
+	Terminal     int            `json:"terminal"`
 	Queued       int            `json:"queued"`
 	Running      int            `json:"running"`
 	Blocked      int            `json:"blocked"`
@@ -9436,7 +9438,15 @@ func summarizeJobs(jobs []*job.Job) jobSummary {
 	}
 	now := time.Now().UTC()
 	for _, j := range jobs {
+		if j == nil {
+			continue
+		}
 		summary.Total++
+		if jobStatusTerminal(j.Status) {
+			summary.Terminal++
+		} else {
+			summary.Active++
+		}
 		switch j.Status {
 		case job.StatusQueued:
 			summary.Queued++
@@ -10141,8 +10151,8 @@ func appendStringOnce(items []string, value string) []string {
 }
 
 func renderJobSummary(w io.Writer, summary jobSummary) {
-	fmt.Fprintf(w, "jobs: total=%d queued=%d running=%d blocked=%d done=%d failed=%d held=%d expired_held=%d\n",
-		summary.Total, summary.Queued, summary.Running, summary.Blocked, summary.Done, summary.Failed, summary.Held, summary.ExpiredHeld)
+	fmt.Fprintf(w, "jobs: %s held=%d expired_held=%d\n",
+		jobSummaryCountsText(summary), summary.Held, summary.ExpiredHeld)
 	if len(summary.Targets) > 0 {
 		fmt.Fprint(w, "targets:")
 		for _, key := range sortedCountKeys(summary.Targets) {
@@ -10166,6 +10176,18 @@ func renderJobSummary(w io.Writer, summary jobSummary) {
 	}
 	fmt.Fprintf(w, "ownership: instance=%d branch=%d worktree=%d pr=%d\n",
 		summary.WithInstance, summary.WithBranch, summary.WithWorktree, summary.WithPR)
+}
+
+func jobSummaryCountsText(summary jobSummary) string {
+	return fmt.Sprintf("active=%d (queued=%d running=%d blocked=%d) terminal=%d (done=%d failed=%d) total=%d",
+		summary.Active,
+		summary.Queued,
+		summary.Running,
+		summary.Blocked,
+		summary.Terminal,
+		summary.Done,
+		summary.Failed,
+		summary.Total)
 }
 
 func parseJobPruneStatuses(raw []string, useDefault bool) (map[job.Status]bool, error) {

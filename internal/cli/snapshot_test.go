@@ -2089,7 +2089,7 @@ func TestSnapshotDiffCommandReportsTriageChanges(t *testing.T) {
 		CapturedAt: now.Format(time.RFC3339),
 		Repo:       "/repo",
 		JobTriage: &jobTriageSnapshot{
-			Summary: jobSummary{Total: 3, Running: 2, Blocked: 1},
+			Summary: jobSummary{Total: 3, Active: 3, Running: 2, Blocked: 1},
 			Queue:   queueSummary{Total: 1, Dead: 1},
 			Attention: []jobTriageItem{
 				{
@@ -2145,7 +2145,7 @@ func TestSnapshotDiffCommandReportsTriageChanges(t *testing.T) {
 		CapturedAt: now.Add(5 * time.Minute).Format(time.RFC3339),
 		Repo:       "/repo",
 		JobTriage: &jobTriageSnapshot{
-			Summary: jobSummary{Total: 3, Running: 1, Blocked: 1, Done: 1},
+			Summary: jobSummary{Total: 3, Active: 2, Terminal: 1, Running: 1, Blocked: 1, Done: 1},
 			Queue:   queueSummary{},
 			Attention: []jobTriageItem{
 				{
@@ -2567,7 +2567,7 @@ func TestSnapshotSummaryIncludesJobTriage(t *testing.T) {
 			{ID: "squ-601", Ticket: "SQU-601", Target: "worker", Status: job.StatusFailed, CreatedAt: now, UpdatedAt: now},
 		},
 		JobTriage: &jobTriageSnapshot{
-			Summary: jobSummary{Total: 1, Failed: 1},
+			Summary: jobSummary{Total: 1, Terminal: 1, Failed: 1},
 			Attention: []jobTriageItem{{
 				JobID:    "squ-601",
 				Ticket:   "SQU-601",
@@ -2635,7 +2635,7 @@ func TestSnapshotSummaryIncludesJobTriage(t *testing.T) {
 
 	var out bytes.Buffer
 	renderSnapshotSummary(&out, snapshot)
-	for _, want := range []string{"command: agent-team snapshot scope=global", "git: branch=main commit=abcdef123456 dirty=yes changes=2 ahead=1 behind=0", "jobs: total=1", "job triage: attention=1 ready_steps=0", "job quarantine: quarantined=1 restorable=1 unrestorable=0", "job status: previews=1 changes=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1 manual_gates=0 stale_running_steps=0 failed_steps=0", "pipeline advance: ready=1 route_previews=1", "teams doctor: teams=1 problems=1 warnings=1", "team doctor: problems=1 warnings=0", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "inbox: instances=2 total=3 unread=1 unread_instances=1", "intake: deliveries=1 errors=1 recovered=0 replayable=1 duplicate_request_ids=1"} {
+	for _, want := range []string{"command: agent-team snapshot scope=global", "git: branch=main commit=abcdef123456 dirty=yes changes=2 ahead=1 behind=0", "jobs: active=0 (queued=0 running=0 blocked=0) terminal=1 (done=0 failed=1) total=1", "job triage: attention=1 ready_steps=0", "job quarantine: quarantined=1 restorable=1 unrestorable=0", "job status: previews=1 changes=1", "pipeline status: pipelines=1 jobs=1 ready_steps=1 manual_gates=0 stale_running_steps=0 failed_steps=0", "pipeline advance: ready=1 route_previews=1", "teams doctor: teams=1 problems=1 warnings=1", "team doctor: problems=1 warnings=0", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "inbox: instances=2 total=3 unread=1 unread_instances=1", "intake: deliveries=1 errors=1 recovered=0 replayable=1 duplicate_request_ids=1"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, out.String())
 		}

@@ -1785,6 +1785,8 @@ func addSnapshotDiffIntakeSummary(out map[string]string, prefix string, summary 
 
 func addSnapshotDiffJobSummary(out map[string]string, prefix string, summary jobSummary) {
 	setSnapshotDiffInt(out, prefix+".total", summary.Total)
+	setSnapshotDiffInt(out, prefix+".active", summary.Active)
+	setSnapshotDiffInt(out, prefix+".terminal", summary.Terminal)
 	setSnapshotDiffInt(out, prefix+".queued", summary.Queued)
 	setSnapshotDiffInt(out, prefix+".running", summary.Running)
 	setSnapshotDiffInt(out, prefix+".blocked", summary.Blocked)

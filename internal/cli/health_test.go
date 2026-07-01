@@ -1342,7 +1342,7 @@ func TestHealthCommandJobsReportsJobAttention(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
 		t.Fatalf("decode health jobs json: %v\nbody=%s stderr=%s", err, out.String(), stderr.String())
 	}
-	if body.Jobs == nil || body.Jobs.Summary.Total != 1 || len(body.Jobs.Attention) != 1 {
+	if body.Jobs == nil || body.Jobs.Summary.Total != 1 || body.Jobs.Summary.Active != 0 || body.Jobs.Summary.Terminal != 1 || len(body.Jobs.Attention) != 1 {
 		t.Fatalf("jobs = %+v", body.Jobs)
 	}
 	var sawJobIssue bool
@@ -1366,7 +1366,7 @@ func TestHealthCommandJobsReportsJobAttention(t *testing.T) {
 	if err := text.Execute(); err == nil {
 		t.Fatal("health --jobs text succeeded unexpectedly")
 	}
-	for _, want := range []string{"jobs: total=1", "attention=1", "job_attention", "job=squ-91", "action=agent-team job retry squ-91 --dispatch"} {
+	for _, want := range []string{"jobs: active=0 (queued=0 running=0 blocked=0) terminal=1 (done=0 failed=1) total=1", "attention=1", "job_attention", "job=squ-91", "action=agent-team job retry squ-91 --dispatch"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("health text missing %q:\n%s", want, textOut.String())
 		}

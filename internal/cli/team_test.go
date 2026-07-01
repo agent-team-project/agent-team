@@ -1187,7 +1187,7 @@ since = "2026-06-18T12:00:00Z"
 	if err := json.Unmarshal(statusOut.Bytes(), &snapshot); err != nil {
 		t.Fatalf("decode team status: %v\nbody=%s", err, statusOut.String())
 	}
-	if snapshot.Team.Name != "delivery" || snapshot.InstanceSummary.Total != 3 || snapshot.JobSummary.Total != 1 {
+	if snapshot.Team.Name != "delivery" || snapshot.InstanceSummary.Total != 3 || snapshot.JobSummary.Total != 1 || snapshot.JobSummary.Active != 1 || snapshot.JobSummary.Terminal != 0 {
 		t.Fatalf("team status summary = %+v", snapshot)
 	}
 	if snapshot.Queue.Total != 1 || snapshot.Queue.Dead != 1 || snapshot.Queue.Pending != 0 || snapshot.Queue.Quarantined != 1 || snapshot.Queue.QuarantineRestorable != 1 || snapshot.Queue.QuarantineUnrestorable != 0 {
@@ -1220,7 +1220,7 @@ since = "2026-06-18T12:00:00Z"
 	if err := text.Execute(); err != nil {
 		t.Fatalf("team status text: %v\nstderr=%s", err, textErr.String())
 	}
-	for _, want := range []string{"Team: delivery", "instances: total=3", "jobs: total=1", "queue: total=1 pending=0 dead=1 delayed=0 attempts=3 quarantined=1 restorable=1 unrestorable=0", "pipeline status: pipelines=1 jobs=1 ready_steps=1", "Actions:", "agent-team team sync delivery --wait", "agent-team team queue retry delivery --all --job squ-801 --sort attempts --limit 10 --dry-run", "agent-team team queue quarantine delivery", "agent-team team queue quarantine delivery --restorable", "agent-team team tick delivery --dry-run --preview-routes"} {
+	for _, want := range []string{"Team: delivery", "instances: total=3", "jobs: active=1 (queued=0 running=1 blocked=0) terminal=0 (done=0 failed=0) total=1", "queue: total=1 pending=0 dead=1 delayed=0 attempts=3 quarantined=1 restorable=1 unrestorable=0", "pipeline status: pipelines=1 jobs=1 ready_steps=1", "Actions:", "agent-team team sync delivery --wait", "agent-team team queue retry delivery --all --job squ-801 --sort attempts --limit 10 --dry-run", "agent-team team queue quarantine delivery", "agent-team team queue quarantine delivery --restorable", "agent-team team tick delivery --dry-run --preview-routes"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("team status text missing %q:\n%s", want, textOut.String())
 		}
@@ -2468,7 +2468,7 @@ instances = ["platform-worker"]
 	if err := watch.Execute(); err != nil {
 		t.Fatalf("team jobs summary watch: %v\nstderr=%s", err, watchErr.String())
 	}
-	if !strings.Contains(watchOut.String(), "jobs: total=1") || strings.Contains(watchOut.String(), watchClearSequence) {
+	if !strings.Contains(watchOut.String(), "jobs: active=1 (queued=0 running=1 blocked=0) terminal=0 (done=0 failed=0) total=1") || strings.Contains(watchOut.String(), watchClearSequence) {
 		t.Fatalf("team jobs summary watch = %q", watchOut.String())
 	}
 
@@ -10445,7 +10445,7 @@ branch = "other-oth-701"
 		t.Fatalf("team snapshot text: %v\nstderr=%s", err, textErr.String())
 	}
 	textBody := textOut.String()
-	for _, want := range []string{"team: delivery", "command: agent-team team snapshot scope=team subject=delivery", "next: state=", "jobs: total=1", "outbox: total=1 pending=1 failed=0 processed=0", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "inbox: instances=1 total=1 unread=1 unread_instances=1", "pipeline status: pipelines=1", "pipeline explain: pipelines=1 jobs=1 steps=1", "team doctor: problems=0 warnings=1", "events: 0"} {
+	for _, want := range []string{"team: delivery", "command: agent-team team snapshot scope=team subject=delivery", "next: state=", "jobs: active=1 (queued=0 running=1 blocked=0) terminal=0 (done=0 failed=0) total=1", "outbox: total=1 pending=1 failed=0 processed=0", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "queue: total=1 pending=1 dead=0 delayed=0 attempts=0 quarantined=1 restorable=1 unrestorable=0", "inbox: instances=1 total=1 unread=1 unread_instances=1", "pipeline status: pipelines=1", "pipeline explain: pipelines=1 jobs=1 steps=1", "team doctor: problems=0 warnings=1", "events: 0"} {
 		if !strings.Contains(textBody, want) {
 			t.Fatalf("team snapshot text missing %q:\n%s", want, textBody)
 		}
@@ -12999,7 +12999,7 @@ pipelines = ["ticket_to_pr"]
 	if snapshot.Team.Name != "delivery" || snapshot.Health == nil || snapshot.Health.Healthy {
 		t.Fatalf("team health snapshot = %+v", snapshot)
 	}
-	if snapshot.Health.Jobs == nil || snapshot.Health.Jobs.Summary.Total != 1 || snapshot.Health.Jobs.Summary.Failed != 1 {
+	if snapshot.Health.Jobs == nil || snapshot.Health.Jobs.Summary.Total != 1 || snapshot.Health.Jobs.Summary.Active != 0 || snapshot.Health.Jobs.Summary.Terminal != 1 || snapshot.Health.Jobs.Summary.Failed != 1 {
 		t.Fatalf("team job summary = %+v", snapshot.Health.Jobs)
 	}
 	if snapshot.Health.Queue.Dead != 1 || snapshot.Health.Queue.Quarantined != 1 || snapshot.Health.Queue.QuarantineRestorable != 1 || snapshot.Health.Queue.QuarantineUnrestorable != 0 {
@@ -13071,7 +13071,7 @@ pipelines = ["ticket_to_pr"]
 	if err := text.Execute(); err == nil {
 		t.Fatal("team health text unexpectedly succeeded")
 	}
-	for _, want := range []string{"Team: delivery", "health: unhealthy", "jobs: total=1", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "pipeline_failed_step", "queue_dead_letter", "queue_quarantined", "outbox_quarantined", "agent-team team retry delivery --dry-run --dispatch --preview-routes", "agent-team team repair delivery --retry-pipelines --dry-run --preview-routes", "agent-team team queue quarantine delivery --restorable", "agent-team team outbox quarantine delivery --restorable"} {
+	for _, want := range []string{"Team: delivery", "health: unhealthy", "jobs: active=0 (queued=0 running=0 blocked=0) terminal=1 (done=0 failed=1) total=1", "outbox quarantine: quarantined=1 restorable=1 unrestorable=0", "pipeline_failed_step", "queue_dead_letter", "queue_quarantined", "outbox_quarantined", "agent-team team retry delivery --dry-run --dispatch --preview-routes", "agent-team team repair delivery --retry-pipelines --dry-run --preview-routes", "agent-team team queue quarantine delivery --restorable", "agent-team team outbox quarantine delivery --restorable"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Fatalf("team health text missing %q:\n%s", want, textOut.String())
 		}

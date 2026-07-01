@@ -4079,7 +4079,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 		t.Fatalf("job triage: %v\nstderr=%s", err, stderr.String())
 	}
 	for _, want := range []string{
-		"jobs: total=9",
+		"jobs: active=7 (queued=6 running=1 blocked=0) terminal=2 (done=1 failed=1) total=9",
 		"queue: total=1 pending=0 dead=1",
 		"quarantined=1 restorable=1 unrestorable=0",
 		"outbox quarantine: quarantined=1 restorable=1 unrestorable=0",
@@ -4135,7 +4135,7 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	if err := json.Unmarshal(jsonOut.Bytes(), &snapshot); err != nil {
 		t.Fatalf("decode triage json: %v\nbody=%s", err, jsonOut.String())
 	}
-	if snapshot.Summary.Total != 9 || snapshot.Queue.Dead != 1 || snapshot.Queue.Quarantined != 1 || snapshot.Queue.QuarantineRestorable != 1 || snapshot.OutboxQuarantine.Quarantined != 1 || snapshot.OutboxQuarantine.Restorable != 1 || len(snapshot.Attention) != 7 || len(snapshot.ReadySteps) != 2 {
+	if snapshot.Summary.Total != 9 || snapshot.Summary.Active != 7 || snapshot.Summary.Terminal != 2 || snapshot.Queue.Dead != 1 || snapshot.Queue.Quarantined != 1 || snapshot.Queue.QuarantineRestorable != 1 || snapshot.OutboxQuarantine.Quarantined != 1 || snapshot.OutboxQuarantine.Restorable != 1 || len(snapshot.Attention) != 7 || len(snapshot.ReadySteps) != 2 {
 		t.Fatalf("triage snapshot = %+v", snapshot)
 	}
 	reasons := map[string][]string{}
@@ -4289,6 +4289,116 @@ func TestJobTriageShowsAttentionAndReadySteps(t *testing.T) {
 	}
 	if len(cleanupReasonSnapshot.Attention) != 1 || cleanupReasonSnapshot.Attention[0].JobID != "squ-206" {
 		t.Fatalf("cleanup reason triage attention = %+v", cleanupReasonSnapshot.Attention)
+	}
+}
+
+func TestJobTriageSummarySeparatesActiveAndTerminalJobs(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	statuses := map[string]job.Status{
+		"SQU-720": job.StatusQueued,
+		"SQU-721": job.StatusRunning,
+		"SQU-722": job.StatusBlocked,
+		"SQU-723": job.StatusDone,
+		"SQU-724": job.StatusFailed,
+	}
+	tickets := make([]string, 0, len(statuses))
+	for ticket := range statuses {
+		tickets = append(tickets, ticket)
+	}
+	sort.Strings(tickets)
+	for _, ticket := range tickets {
+		j := mustNewJob(t, ticket, "worker")
+		j.Status = statuses[ticket]
+		j.UpdatedAt = now
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", ticket, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "triage", "--repo", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job triage text: %v\nstderr=%s", err, stderr.String())
+	}
+	wantLine := "jobs: active=3 (queued=1 running=1 blocked=1) terminal=2 (done=1 failed=1) total=5"
+	if !strings.Contains(out.String(), wantLine) {
+		t.Fatalf("job triage text missing %q:\n%s", wantLine, out.String())
+	}
+	if strings.Contains(out.String(), "jobs: total=5") {
+		t.Fatalf("job triage still leads with total:\n%s", out.String())
+	}
+
+	jsonCmd := NewRootCmd()
+	jsonOut, jsonErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jsonCmd.SetOut(jsonOut)
+	jsonCmd.SetErr(jsonErr)
+	jsonCmd.SetArgs([]string{"job", "triage", "--repo", tmp, "--json"})
+	if err := jsonCmd.Execute(); err != nil {
+		t.Fatalf("job triage json: %v\nstderr=%s", err, jsonErr.String())
+	}
+	var snapshot jobTriageSnapshot
+	if err := json.Unmarshal(jsonOut.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode triage json: %v\nbody=%s", err, jsonOut.String())
+	}
+	if snapshot.Summary.Total != 5 || snapshot.Summary.Active != 3 || snapshot.Summary.Terminal != 2 {
+		t.Fatalf("job triage summary = %+v", snapshot.Summary)
+	}
+}
+
+func TestJobTriageSummaryRendersTerminalOnlyAsZeroActive(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	for _, spec := range []struct {
+		ticket string
+		status job.Status
+	}{
+		{ticket: "SQU-725", status: job.StatusDone},
+		{ticket: "SQU-726", status: job.StatusFailed},
+	} {
+		j := mustNewJob(t, spec.ticket, "worker")
+		j.Status = spec.status
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", spec.ticket, err)
+		}
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "triage", "--repo", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job triage text: %v\nstderr=%s", err, stderr.String())
+	}
+	wantLine := "jobs: active=0 (queued=0 running=0 blocked=0) terminal=2 (done=1 failed=1) total=2"
+	if !strings.Contains(out.String(), wantLine) {
+		t.Fatalf("terminal-only triage text missing %q:\n%s", wantLine, out.String())
+	}
+	if strings.Contains(out.String(), "jobs: total=2") {
+		t.Fatalf("terminal-only triage still leads with total:\n%s", out.String())
+	}
+
+	jsonCmd := NewRootCmd()
+	jsonOut, jsonErr := &bytes.Buffer{}, &bytes.Buffer{}
+	jsonCmd.SetOut(jsonOut)
+	jsonCmd.SetErr(jsonErr)
+	jsonCmd.SetArgs([]string{"job", "triage", "--repo", tmp, "--json"})
+	if err := jsonCmd.Execute(); err != nil {
+		t.Fatalf("terminal-only triage json: %v\nstderr=%s", err, jsonErr.String())
+	}
+	var snapshot jobTriageSnapshot
+	if err := json.Unmarshal(jsonOut.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode terminal-only triage json: %v\nbody=%s", err, jsonOut.String())
+	}
+	if snapshot.Summary.Total != 2 || snapshot.Summary.Active != 0 || snapshot.Summary.Terminal != 2 {
+		t.Fatalf("terminal-only job triage summary = %+v", snapshot.Summary)
 	}
 }
 
@@ -4948,7 +5058,7 @@ func TestJobTriageWatchRendersOnceWhenContextCancelled(t *testing.T) {
 	if strings.Contains(out.String(), watchClearSequence) {
 		t.Fatalf("watch with clear=false wrote clear sequence: %q", out.String())
 	}
-	for _, want := range []string{"jobs: total=1", "Attention:", "squ-206", "failed"} {
+	for _, want := range []string{"jobs: active=0 (queued=0 running=0 blocked=0) terminal=1 (done=0 failed=1) total=1", "Attention:", "squ-206", "failed"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("triage watch missing %q:\n%s", want, out.String())
 		}
@@ -6796,7 +6906,7 @@ func TestJobListSummary(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
 		t.Fatalf("decode summary json: %v\nbody=%s", err, out.String())
 	}
-	if summary.Total != 2 || summary.Queued != 1 || summary.Running != 1 || summary.Done != 0 {
+	if summary.Total != 2 || summary.Active != 2 || summary.Terminal != 0 || summary.Queued != 1 || summary.Running != 1 || summary.Done != 0 {
 		t.Fatalf("summary = %+v", summary)
 	}
 	if summary.Targets["worker"] != 2 || summary.Pipelines["ticket_to_pr"] != 1 {
@@ -6818,7 +6928,7 @@ func TestJobListSummary(t *testing.T) {
 		t.Fatalf("job ls summary text: %v\nstderr=%s", err, textErr.String())
 	}
 	for _, want := range []string{
-		"jobs: total=1 queued=0 running=0 blocked=0 done=1 failed=0",
+		"jobs: active=0 (queued=0 running=0 blocked=0) terminal=1 (done=1 failed=0) total=1",
 		"targets: manager=1",
 		"ownership: instance=0 branch=0 worktree=0 pr=0",
 	} {
@@ -6833,7 +6943,7 @@ func TestJobListSummary(t *testing.T) {
 	if err := runJobSummaryWatch(ctx, &watchOut, teamDir, jobListFilters{}, false, time.Millisecond, false); err != nil {
 		t.Fatalf("runJobSummaryWatch: %v", err)
 	}
-	if !strings.Contains(watchOut.String(), "jobs: total=3") || strings.Contains(watchOut.String(), watchClearSequence) {
+	if !strings.Contains(watchOut.String(), "jobs: active=2 (queued=1 running=1 blocked=0) terminal=1 (done=1 failed=0) total=3") || strings.Contains(watchOut.String(), watchClearSequence) {
 		t.Fatalf("watch summary output = %q", watchOut.String())
 	}
 }
