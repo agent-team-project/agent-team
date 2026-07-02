@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -768,6 +769,69 @@ func TestEvent_EphemeralDispatchRejectsDuplicateRequestedChildName(t *testing.T)
 	}
 }
 
+func TestEvent_TicketWorktreeDispatchNamesBranchFromTicket(t *testing.T) {
+	root := t.TempDir()
+	repoRoot := t.TempDir()
+	runGit(t, repoRoot, "init")
+	runGit(t, repoRoot, "config", "user.email", "test@example.com")
+	runGit(t, repoRoot, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoRoot, "add", "README.md")
+	runGit(t, repoRoot, "commit", "-m", "init")
+	teamDir := filepath.Join(repoRoot, ".agent_team")
+	writeFixtureAgent(t, teamDir, "worker")
+
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
+	srv := httptest.NewServer(Handler(m, nil, resolver, root))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"agent.dispatch","payload":{"target":"worker","name":"worker-squ-42","ticket":"SQU-42","workspace":"worktree","kickoff":"implement SQU-42"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var got struct {
+		Dispatched []map[string]any `json:"dispatched"`
+		Rejected   []map[string]any `json:"rejected"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Rejected) != 0 || len(got.Dispatched) != 1 {
+		t.Fatalf("dispatch response = %+v", got)
+	}
+	meta, err := ReadMetadata(root, "worker-squ-42")
+	if err != nil {
+		t.Fatalf("metadata: %v", err)
+	}
+	if !regexp.MustCompile(`^squ-42-[0-9a-f]{8}$`).MatchString(meta.Branch) {
+		t.Fatalf("branch = %q, want squ-42-<8hex>", meta.Branch)
+	}
+	current, err := exec.Command("git", "-C", meta.Workspace, "branch", "--show-current").Output()
+	if err != nil {
+		t.Fatalf("show worktree branch: %v", err)
+	}
+	if strings.TrimSpace(string(current)) != meta.Branch {
+		t.Fatalf("worktree branch = %q, want metadata branch %q", strings.TrimSpace(string(current)), meta.Branch)
+	}
+	j, err := jobstore.Read(teamDir, "squ-42")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if j.Branch != meta.Branch || j.Worktree != meta.Workspace {
+		t.Fatalf("job ownership = branch %q worktree %q, want %q %q", j.Branch, j.Worktree, meta.Branch, meta.Workspace)
+	}
+	if !containsString(fake.lastEnv(), "AGENT_TEAM_BRANCH="+meta.Branch) {
+		t.Fatalf("env missing AGENT_TEAM_BRANCH=%s in %v", meta.Branch, fake.lastEnv())
+	}
+	_, _ = m.Stop("worker-squ-42")
+	_ = m.WaitForReaper("worker-squ-42", 5*time.Second)
+}
+
 func TestEvent_EphemeralDispatchCanCreateWorktreeWorkspace(t *testing.T) {
 	root := t.TempDir()
 	repoRoot := t.TempDir()
@@ -810,6 +874,10 @@ func TestEvent_EphemeralDispatchCanCreateWorktreeWorkspace(t *testing.T) {
 	wantPrefix := filepath.Join(repoRoot, ".claude", "worktrees", "worker-squ-42-")
 	if !strings.HasPrefix(meta.Workspace, wantPrefix) {
 		t.Fatalf("workspace = %q, want prefix %q", meta.Workspace, wantPrefix)
+	}
+	wantBranchPrefix := "worktree-worker-squ-42-"
+	if !strings.HasPrefix(meta.Branch, wantBranchPrefix) || len(meta.Branch) != len(wantBranchPrefix)+8 {
+		t.Fatalf("branch = %q, want prefix %q plus 8-char tag", meta.Branch, wantBranchPrefix)
 	}
 	if _, err := os.Stat(filepath.Join(meta.Workspace, "README.md")); err != nil {
 		t.Fatalf("worktree missing README: %v", err)
