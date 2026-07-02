@@ -14,6 +14,8 @@ import (
 )
 
 func TestDispatchPayloadDefaults(t *testing.T) {
+	t.Setenv("AGENT_TEAM_INSTANCE", "")
+
 	payload, name, err := buildDispatchEventPayload("worker", "SQU-42", "SQU-42: fix it", "", "", "auto")
 	if err != nil {
 		t.Fatalf("buildDispatchEventPayload: %v", err)

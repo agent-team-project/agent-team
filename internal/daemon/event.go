@@ -696,7 +696,7 @@ func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, p
 	branch := ""
 	cleanupWorkspace := func() {}
 	if payloadString(payload, "workspace") == "worktree" || payloadString(payload, "isolation") == "worktree" {
-		workspace, branch, cleanupWorkspace, err = r.prepareEphemeralWorktree(name)
+		workspace, branch, cleanupWorkspace, err = r.prepareEphemeralWorktree(name, payloadString(payload, "ticket"))
 		if err != nil {
 			return nil, err
 		}
@@ -1141,13 +1141,13 @@ func codexEventPrompt(kickoff, prompt string, agents []*loader.Agent) string {
 	return b.String()
 }
 
-func (r *EventResolver) prepareEphemeralWorktree(instance string) (string, string, func(), error) {
+func (r *EventResolver) prepareEphemeralWorktree(instance, ticket string) (string, string, func(), error) {
 	repoRoot := r.teamDirParent()
 	if repoRoot == "" {
 		return "", "", nil, errors.New("event worktree: repo root is required")
 	}
 	tag := newSessionID()[0:8]
-	branch := "worktree-" + instance + "-" + tag
+	branch := ephemeralWorktreeBranch(instance, ticket, tag)
 	worktreePath := filepath.Join(repoRoot, ".claude", "worktrees", instance+"-"+tag)
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 		return "", "", nil, fmt.Errorf("event worktree: create parent: %w", err)
@@ -1166,6 +1166,13 @@ func (r *EventResolver) prepareEphemeralWorktree(instance string) (string, strin
 		_ = exec.Command("git", "-C", repoRoot, "branch", "-D", branch).Run()
 	}
 	return worktreePath, branch, cleanup, nil
+}
+
+func ephemeralWorktreeBranch(instance, ticket, tag string) string {
+	if slug := jobstore.IDFromInput(ticket); slug != "" {
+		return slug + "-" + tag
+	}
+	return "worktree-" + instance + "-" + tag
 }
 
 // excludeWorktreeWorkerScratch appends `.worker_agent/` to the worktree's own
