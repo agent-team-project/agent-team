@@ -64,6 +64,15 @@ Subscription-auth Codex flips to API billing if `OPENAI_API_KEY` is present in t
 
 The difference between a smooth operating day and a grinding one is almost always noise, not hard failures: idle pings, spurious bounces, stale registry rows. When supervision feels expensive, fix the signal path (transition-only notifications, structured gate results, terminal-entry retention — SQU-37/36/40) before adding more supervision.
 
+## Upgrading binaries on a box with running daemons
+
+A long-running daemon plus an independently updated CLI is the *normal* state, and two traps live there (both hit in production):
+
+- `go install` replaces the shared binaries, but every running daemon keeps executing the old code — and `daemon restart` relaunches whatever path its launch-env snapshot recorded, which may not be the binary you just rebuilt. `daemon status`/`doctor` warn on CLI↔daemon build mismatch (SQU-54); trust that warning over your memory of what you built.
+- Wire compatibility is additive-tolerant (daemons ignore unknown request fields — SQU-55), but don't lean on it across large version gaps.
+
+The validated upgrade sequence: `go install ./cmd/agent-team ./cmd/agent-teamd` → wait for an empty fleet (or accept orphaned-adoption on running workers) → `agent-team daemon restart` (it prints which binary path it relaunched) → `agent-team doctor --canary` before dispatching real work.
+
 ## Recovery expectations
 
 - The daemon plane survives supervisor loss; re-attach with `agent-team overview` / `next` / `monitor`, then read owned jobs (`job ls`, `team triage`).
