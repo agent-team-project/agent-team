@@ -282,12 +282,12 @@ type codexDoctorProbe struct {
 }
 
 type codexDoctorCheckSummary struct {
-	ID          string            `json:"id"`
-	Category    string            `json:"category,omitempty"`
-	Status      string            `json:"status"`
-	Summary     string            `json:"summary"`
-	Details     map[string]string `json:"details,omitempty"`
-	Remediation string            `json:"remediation,omitempty"`
+	ID          string             `json:"id"`
+	Category    string             `json:"category,omitempty"`
+	Status      string             `json:"status"`
+	Summary     string             `json:"summary"`
+	Details     codexDoctorDetails `json:"details,omitempty"`
+	Remediation string             `json:"remediation,omitempty"`
 }
 
 type runtimeExecProbe struct {
@@ -317,12 +317,90 @@ type codexDoctorReport struct {
 }
 
 type codexDoctorCheck struct {
-	ID          string            `json:"id"`
-	Category    string            `json:"category"`
-	Status      string            `json:"status"`
-	Summary     string            `json:"summary"`
-	Details     map[string]string `json:"details"`
-	Remediation string            `json:"remediation"`
+	ID          string             `json:"id"`
+	Category    string             `json:"category"`
+	Status      string             `json:"status"`
+	Summary     string             `json:"summary"`
+	Details     codexDoctorDetails `json:"details"`
+	Remediation string             `json:"remediation"`
+}
+
+type codexDoctorDetails map[string]string
+
+func (d *codexDoctorDetails) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		*d = nil
+		return nil
+	}
+	if trimmed[0] != '{' {
+		value, err := codexDoctorDetailString(trimmed)
+		if err != nil {
+			return err
+		}
+		*d = codexDoctorDetails{"details": value}
+		return nil
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &raw); err != nil {
+		return err
+	}
+	out := make(codexDoctorDetails, len(raw))
+	for key, value := range raw {
+		text, err := codexDoctorDetailString(value)
+		if err != nil {
+			return fmt.Errorf("details[%q]: %w", key, err)
+		}
+		out[key] = text
+	}
+	*d = out
+	return nil
+}
+
+func codexDoctorDetailString(data []byte) (string, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return "", nil
+	}
+	var text *string
+	if err := json.Unmarshal(trimmed, &text); err == nil && text != nil {
+		return *text, nil
+	}
+	if trimmed[0] != '[' {
+		return compactJSONString(trimmed)
+	}
+
+	var values []json.RawMessage
+	if err := json.Unmarshal(trimmed, &values); err != nil {
+		return "", err
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		part, err := codexDoctorArrayDetailString(value)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", "), nil
+}
+
+func codexDoctorArrayDetailString(data []byte) (string, error) {
+	trimmed := bytes.TrimSpace(data)
+	var text *string
+	if err := json.Unmarshal(trimmed, &text); err == nil && text != nil {
+		return *text, nil
+	}
+	return compactJSONString(trimmed)
+}
+
+func compactJSONString(data []byte) (string, error) {
+	var out bytes.Buffer
+	if err := json.Compact(&out, data); err != nil {
+		return "", err
+	}
+	return out.String(), nil
 }
 
 type runtimeProbeCommandResult struct {
