@@ -586,10 +586,13 @@ Required parameters: `linear.team_id`, `linear.ticket_prefix`. Run `agent-team t
 
 `agent-team init --template empty` skips the bundled content and gives you just the directory scaffold + a stub `config.toml`.
 
-## Forward-looking design
+## Design docs
 
 - [`documentation/templates.md`](./documentation/templates.md) — full templates-as-images model: parameter declarations, layered config resolution, `upgrade` semantics, worked example.
-- [`documentation/orchestrator.md`](./documentation/orchestrator.md) — v1.1+ `agent-teamd` daemon: persistent instance lifecycle, runtime-agnostic execution, replacement of in-session dispatch primitives.
+- [`documentation/orchestrator.md`](./documentation/orchestrator.md) — the `agent-teamd` daemon: persistent instance lifecycle, runtime-agnostic execution, daemon API.
+- [`documentation/topology.md`](./documentation/topology.md) — declarative topology (`instances.toml`): declared instances, pipelines, teams, event triggers.
+- [`documentation/operating-model.md`](./documentation/operating-model.md) — field-tested operating defaults for production-volume teams: pipeline shape, gate discipline, capacity planning.
+- [`documentation/recoverable-managers.md`](./documentation/recoverable-managers.md) — design for daemon-owned recoverable managers (restart policy, catch-up briefs, Codex managed resume).
 
 ## Working on agent-team itself
 
