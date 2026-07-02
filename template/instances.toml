@@ -30,10 +30,11 @@ description = "Reads, files, and triages Linear tickets in scope of this repo."
 event = "user_invocation"
 
 [instances.worker]
-agent       = "worker"
-ephemeral   = true
-replicas    = 3
-description = "Code-writing agent. Spawned on `agent.dispatch` (see assign-worker skill)."
+agent         = "worker"
+ephemeral     = true
+replicas      = 3
+reap_worktree = "on_merge"   # reap the job worktree + local branch after its PR merges; `agent-team job keep-worktree <id>` opts one job out
+description   = "Code-writing agent. Spawned on `agent.dispatch` (see assign-worker skill)."
 
 [[instances.worker.triggers]]
 event        = "agent.dispatch"

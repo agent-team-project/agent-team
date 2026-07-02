@@ -20,3 +20,8 @@ foundation         = "3d07030a-a372-41a2-b01e-1b4116d0f151"   # plugin scaffoldi
 skill_extraction   = "50b6cd55-5760-4fd3-9bbe-acb17e544aa2"   # pull-request & linear
 agent_extraction   = "d51edd22-00be-4a24-b9a8-01d27187717b"   # worker, assign-worker, ticket-manager
 self_dogfooding    = "f8a115f9-dea7-4927-a214-c0da54c6a7c0"   # v1 sign-off
+
+[health]
+# SQU-40: archive terminal jobs + daemon records older than this into
+# .agent_team/daemon/archive/YYYY-MM.jsonl during maintenance ticks.
+terminal_retention = "14d"
