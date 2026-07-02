@@ -99,7 +99,7 @@ func TestRuntimeProbeCodexDoctorFailureJSON(t *testing.T) {
 		      "category": "websocket",
 		      "status": "warning",
 		      "summary": "Responses WebSocket failed; HTTPS fallback may still work",
-		      "details": {"DNS": "lookup failed"},
+		      "details": ["DNS lookup failed", {"fallback": true}],
 		      "remediation": "Check proxy, VPN, firewall, DNS, custom CA, and WebSocket policy support."
 		    },
 		    "terminal.env": {
@@ -107,7 +107,7 @@ func TestRuntimeProbeCodexDoctorFailureJSON(t *testing.T) {
 		      "category": "terminal",
 		      "status": "fail",
 		      "summary": "TERM=dumb - colors and cursor control are disabled",
-		      "details": {"TERM": "dumb"},
+		      "details": {"TERMINFO_DIRS entry list": ["/Applications/iTerm 2.app/Contents/Resources/terminfo (dir)", "/usr/share/terminfo (dir)"]},
 		      "remediation": "Set TERM to a real value."
 		    },
 		    "auth.credentials": {
@@ -146,6 +146,12 @@ func TestRuntimeProbeCodexDoctorFailureJSON(t *testing.T) {
 	if len(result.CodexDoctor.Warnings) != 1 || result.CodexDoctor.Warnings[0].ID != "network.websocket_reachability" {
 		t.Fatalf("warnings = %+v", result.CodexDoctor.Warnings)
 	}
+	if got, want := result.CodexDoctor.Failures[1].Details["TERMINFO_DIRS entry list"], "/Applications/iTerm 2.app/Contents/Resources/terminfo (dir), /usr/share/terminfo (dir)"; got != want {
+		t.Fatalf("terminal details = %q, want %q", got, want)
+	}
+	if got, want := result.CodexDoctor.Warnings[0].Details["details"], "DNS lookup failed, {\"fallback\":true}"; got != want {
+		t.Fatalf("array-shaped warning details = %q, want %q", got, want)
+	}
 	if !containsRuntimeProbeIssue(result.Issues, "fail", "codex_doctor", "network.provider_reachability") {
 		t.Fatalf("issues = %+v, want provider reachability failure", result.Issues)
 	}
@@ -160,6 +166,41 @@ func TestRuntimeProbeCodexDoctorFailureJSON(t *testing.T) {
 			if strings.Contains(action, disallowed) {
 				t.Fatalf("actions = %+v, should not suggest Codex execution while provider is unreachable", result.Actions)
 			}
+		}
+	}
+}
+
+func TestCodexDoctorDetailsNormalizeJSONValues(t *testing.T) {
+	var report codexDoctorReport
+	if err := json.Unmarshal([]byte(`{
+	  "checks": {
+	    "mixed": {
+	      "id": "mixed",
+	      "details": {
+	        "string": "plain",
+	        "number": 12,
+	        "bool": true,
+	        "null": null,
+	        "object": {"nested": ["value"]},
+	        "array": ["one", 2, false, null, {"kind": "object"}]
+	      }
+	    }
+	  }
+	}`), &report); err != nil {
+		t.Fatalf("decode report: %v", err)
+	}
+	details := report.Checks["mixed"].Details
+	want := map[string]string{
+		"string": "plain",
+		"number": "12",
+		"bool":   "true",
+		"null":   "null",
+		"object": "{\"nested\":[\"value\"]}",
+		"array":  "one, 2, false, null, {\"kind\":\"object\"}",
+	}
+	for key, value := range want {
+		if got := details[key]; got != value {
+			t.Fatalf("details[%q] = %q, want %q", key, got, value)
 		}
 	}
 }
