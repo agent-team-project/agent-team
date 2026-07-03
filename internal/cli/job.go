@@ -1713,6 +1713,7 @@ func jobStepsFromPipeline(p *topology.Pipeline) []job.Step {
 			Optional:         step.Optional,
 			Timeout:          formatPipelineStepTimeout(step.Timeout),
 			MaxAttempts:      step.MaxAttempts,
+			RetryOnCrash:     step.RetryOnCrash,
 		})
 	}
 	return steps
@@ -11558,6 +11559,7 @@ func jobReadyRowFromJob(j *job.Job, next jobNextResult) jobReadyRow {
 		row.Optional = next.Step.Optional
 		row.Attempts = next.Step.Attempts
 		row.MaxAttempts = next.Step.MaxAttempts
+		row.RetryOnCrash = next.Step.RetryOnCrash
 	}
 	row.Actions = actionsForJobReadyRow(row)
 	return row
@@ -13702,6 +13704,7 @@ type jobExplainStep struct {
 	Timeout          string             `json:"timeout,omitempty"`
 	Attempts         int                `json:"attempts,omitempty"`
 	MaxAttempts      int                `json:"max_attempts,omitempty"`
+	RetryOnCrash     bool               `json:"retry_on_crash,omitempty"`
 	WaitingFor       []string           `json:"waiting_for,omitempty"`
 	Actions          []string           `json:"actions,omitempty"`
 	Skipped          bool               `json:"skipped,omitempty"`
@@ -13735,6 +13738,7 @@ type jobReadyRow struct {
 	Optional           bool               `json:"optional,omitempty"`
 	Attempts           int                `json:"attempts,omitempty"`
 	MaxAttempts        int                `json:"max_attempts,omitempty"`
+	RetryOnCrash       bool               `json:"retry_on_crash,omitempty"`
 	WaitingFor         []string           `json:"waiting_for,omitempty"`
 	UpdatedAt          time.Time          `json:"updated_at"`
 	Message            string             `json:"message"`
@@ -14149,6 +14153,7 @@ func explainJobPipeline(j *job.Job) jobExplainResult {
 			Timeout:      step.Timeout,
 			Attempts:     step.Attempts,
 			MaxAttempts:  step.MaxAttempts,
+			RetryOnCrash: step.RetryOnCrash,
 			WaitingFor:   waiting,
 			Skipped:      step.Skipped,
 			SkipReason:   step.SkipReason,
@@ -14855,6 +14860,10 @@ func renderJobNextResult(w io.Writer, res jobNextResult, jsonOut bool, tmpl *tem
 	if res.Step.Optional {
 		optional = " optional=true"
 	}
+	retryOnCrash := ""
+	if res.Step.RetryOnCrash {
+		retryOnCrash = " retry_on_crash=true"
+	}
 	waiting := "-"
 	if len(res.WaitingFor) > 0 {
 		waiting = strings.Join(res.WaitingFor, ",")
@@ -14864,8 +14873,8 @@ func renderJobNextResult(w io.Writer, res jobNextResult, jsonOut bool, tmpl *tem
 		actions = strings.Join(res.Actions, "; ")
 	}
 	attempts := formatJobStepAttempts(res.Step.Attempts, res.Step.MaxAttempts)
-	fmt.Fprintf(w, "Job: %s next step=%s state=%s status=%s target=%s workspace=%s runtime=%s instance=%s after=%s gate=%s%s attempts=%s waiting_for=%s actions=%s\n",
-		res.JobID, res.Step.ID, res.State, res.Step.Status, res.Step.Target, emptyDash(res.Step.Workspace), emptyDash(formatStepRuntime(res.Step.Runtime, res.Step.RuntimeBin)), emptyDash(res.Step.Instance), after, gate, optional, attempts, waiting, actions)
+	fmt.Fprintf(w, "Job: %s next step=%s state=%s status=%s target=%s workspace=%s runtime=%s instance=%s after=%s gate=%s%s%s attempts=%s waiting_for=%s actions=%s\n",
+		res.JobID, res.Step.ID, res.State, res.Step.Status, res.Step.Target, emptyDash(res.Step.Workspace), emptyDash(formatStepRuntime(res.Step.Runtime, res.Step.RuntimeBin)), emptyDash(res.Step.Instance), after, gate, optional, retryOnCrash, attempts, waiting, actions)
 	return nil
 }
 
@@ -17287,6 +17296,9 @@ func renderJobDetailWithRuntime(w io.Writer, teamDir string, j *job.Job, queueIt
 			}
 			if step.Gate != "" {
 				parts = append(parts, "gate="+step.Gate)
+			}
+			if step.RetryOnCrash {
+				parts = append(parts, "retry_on_crash=true")
 			}
 			if step.ApprovalRequired {
 				parts = append(parts, "approval_required=true")

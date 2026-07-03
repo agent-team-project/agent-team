@@ -36,15 +36,32 @@ type fakeSpawner struct {
 	calls    [][]string
 	envs     [][]string
 	stdins   []string
-	holdSecs string // duration for the spawned sleep
+	holdSecs string   // duration for the spawned sleep
+	holdSeq  []string // optional per-call sleep durations
 }
 
 func newFakeSpawner(hold time.Duration) *fakeSpawner {
+	return &fakeSpawner{holdSecs: fakeHoldSeconds(hold)}
+}
+
+func newSequencedFakeSpawner(holds ...time.Duration) *fakeSpawner {
+	seq := make([]string, 0, len(holds))
+	for _, hold := range holds {
+		seq = append(seq, fakeHoldSeconds(hold))
+	}
+	holdSecs := "1"
+	if len(seq) > 0 {
+		holdSecs = seq[len(seq)-1]
+	}
+	return &fakeSpawner{holdSecs: holdSecs, holdSeq: seq}
+}
+
+func fakeHoldSeconds(hold time.Duration) string {
 	s := int(hold.Seconds())
 	if s < 1 {
 		s = 1
 	}
-	return &fakeSpawner{holdSecs: strconv.Itoa(s)}
+	return strconv.Itoa(s)
 }
 
 func (f *fakeSpawner) spawn(args []string, env []string, workspace, stdoutPath, stderrPath, stdinContent string) (*os.Process, error) {
@@ -52,6 +69,15 @@ func (f *fakeSpawner) spawn(args []string, env []string, workspace, stdoutPath, 
 	f.calls = append(f.calls, append([]string(nil), args...))
 	f.envs = append(f.envs, append([]string(nil), env...))
 	f.stdins = append(f.stdins, stdinContent)
+	holdSecs := f.holdSecs
+	callIndex := len(f.calls) - 1
+	if len(f.holdSeq) > 0 {
+		if callIndex < len(f.holdSeq) {
+			holdSecs = f.holdSeq[callIndex]
+		} else {
+			holdSecs = f.holdSeq[len(f.holdSeq)-1]
+		}
+	}
 	f.mu.Unlock()
 	bin, err := exec.LookPath("sleep")
 	if err != nil {
@@ -63,7 +89,7 @@ func (f *fakeSpawner) spawn(args []string, env []string, workspace, stdoutPath, 
 	defer stdin.Close()
 	defer stdout.Close()
 	defer stderr.Close()
-	return os.StartProcess(bin, []string{"sleep", f.holdSecs}, &os.ProcAttr{
+	return os.StartProcess(bin, []string{"sleep", holdSecs}, &os.ProcAttr{
 		Dir:   workspace,
 		Env:   env,
 		Files: []*os.File{stdin, stdout, stderr},

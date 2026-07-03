@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -250,4 +251,240 @@ after = ["implement"]
 	if j.Steps[1].Status != jobstore.StatusBlocked || j.Steps[1].Instance != "" {
 		t.Fatalf("review step = %+v, want still blocked+undispatched without auto_advance", j.Steps[1])
 	}
+}
+
+func TestEvent_PipelineAutoRetriesReviewCrashWithoutGateOnce(t *testing.T) {
+	root := t.TempDir()
+	teamDir := autoAdvanceTeamDir(t)
+	top := mustParseCustomTopo(t, `
+[instances.worker]
+agent = "worker"
+ephemeral = true
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[instances.reviewer]
+agent = "reviewer"
+ephemeral = true
+[[instances.reviewer.triggers]]
+event = "agent.dispatch"
+match.target = "reviewer"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+auto_advance = true
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+max_attempts = 1
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "reviewer"
+after = ["implement"]
+max_attempts = 1
+retry_on_crash = true
+`)
+
+	fake := newSequencedFakeSpawner(time.Second, 30*time.Second, 30*time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+	srv := httptest.NewServer(Handler(m, nil, resolver, teamDir))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"ticket.created","payload":{"ticket":"SQU-172","kickoff":"implement SQU-172","workspace":"repo"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	if err := m.WaitForReaper("worker-squ-172", 5*time.Second); err != nil {
+		t.Fatalf("wait worker reaper: %v", err)
+	}
+	if fake.callCount() != 2 {
+		t.Fatalf("spawn calls after implement=%d, want review dispatched", fake.callCount())
+	}
+	killInstance(t, root, "reviewer-squ-172")
+	if err := m.WaitForReaper("reviewer-squ-172", 5*time.Second); err != nil {
+		t.Fatalf("wait first reviewer reaper: %v", err)
+	}
+	if fake.callCount() != 3 {
+		t.Fatalf("spawn calls after review crash=%d, want one auto-retry", fake.callCount())
+	}
+
+	j, err := jobstore.Read(teamDir, "squ-172")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if j.Steps[1].Status != jobstore.StatusRunning || j.Steps[1].Attempts != 2 || !j.Steps[1].RetryOnCrash {
+		t.Fatalf("review step after retry = %+v, want running attempts=2 retry_on_crash", j.Steps[1])
+	}
+	events, err := jobstore.ListEvents(teamDir, "squ-172")
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if !jobEventsContain(events, "pipeline_advanced", "auto-retried crashed step review") {
+		t.Fatalf("events missing auto-retry record: %+v", events)
+	}
+
+	killInstance(t, root, "reviewer-squ-172")
+	if err := m.WaitForReaper("reviewer-squ-172", 5*time.Second); err != nil {
+		t.Fatalf("wait second reviewer reaper: %v", err)
+	}
+	if fake.callCount() != 3 {
+		t.Fatalf("spawn calls after second crash=%d, want no second auto-retry", fake.callCount())
+	}
+}
+
+func TestEvent_PipelineDoesNotAutoRetryCrashWithRecordedGate(t *testing.T) {
+	root := t.TempDir()
+	teamDir := autoAdvanceTeamDir(t)
+	top := mustParseCustomTopo(t, `
+[instances.worker]
+agent = "worker"
+ephemeral = true
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[instances.reviewer]
+agent = "reviewer"
+ephemeral = true
+[[instances.reviewer.triggers]]
+event = "agent.dispatch"
+match.target = "reviewer"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+auto_advance = true
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "reviewer"
+after = ["implement"]
+retry_on_crash = true
+`)
+
+	fake := newSequencedFakeSpawner(time.Second, 30*time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+	srv := httptest.NewServer(Handler(m, nil, resolver, teamDir))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"ticket.created","payload":{"ticket":"SQU-173","kickoff":"implement SQU-173","workspace":"repo"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	if err := m.WaitForReaper("worker-squ-173", 5*time.Second); err != nil {
+		t.Fatalf("wait worker reaper: %v", err)
+	}
+	if err := jobstore.AppendGateRecord(teamDir, &jobstore.GateRecord{
+		JobID:  "squ-173",
+		Name:   "review",
+		Status: jobstore.GateStatusFail,
+		Actor:  "reviewer-squ-173",
+	}); err != nil {
+		t.Fatalf("append gate: %v", err)
+	}
+	killInstance(t, root, "reviewer-squ-173")
+	if err := m.WaitForReaper("reviewer-squ-173", 5*time.Second); err != nil {
+		t.Fatalf("wait reviewer reaper: %v", err)
+	}
+	if fake.callCount() != 2 {
+		t.Fatalf("spawn calls after gated crash=%d, want no auto-retry", fake.callCount())
+	}
+	j, err := jobstore.Read(teamDir, "squ-173")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if j.Steps[1].Status != jobstore.StatusFailed || j.Steps[1].Attempts != 1 {
+		t.Fatalf("review step after gated crash = %+v, want failed attempts=1", j.Steps[1])
+	}
+}
+
+func TestEvent_PipelineDoesNotAutoRetryImplementationCrash(t *testing.T) {
+	root := t.TempDir()
+	teamDir := autoAdvanceTeamDir(t)
+	top := mustParseCustomTopo(t, `
+[instances.worker]
+agent = "worker"
+ephemeral = true
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[instances.reviewer]
+agent = "reviewer"
+ephemeral = true
+[[instances.reviewer.triggers]]
+event = "agent.dispatch"
+match.target = "reviewer"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+auto_advance = true
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+max_attempts = 2
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "reviewer"
+after = ["implement"]
+retry_on_crash = true
+`)
+
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+	srv := httptest.NewServer(Handler(m, nil, resolver, teamDir))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"ticket.created","payload":{"ticket":"SQU-174","kickoff":"implement SQU-174","workspace":"repo"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	killInstance(t, root, "worker-squ-174")
+	if err := m.WaitForReaper("worker-squ-174", 5*time.Second); err != nil {
+		t.Fatalf("wait worker reaper: %v", err)
+	}
+	if fake.callCount() != 1 {
+		t.Fatalf("spawn calls after implement crash=%d, want no auto-retry despite max_attempts", fake.callCount())
+	}
+	j, err := jobstore.Read(teamDir, "squ-174")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if j.Steps[0].Status != jobstore.StatusFailed || j.Steps[0].Attempts != 1 {
+		t.Fatalf("implement step after crash = %+v, want failed attempts=1", j.Steps[0])
+	}
+}
+
+func killInstance(t *testing.T, root, instance string) {
+	t.Helper()
+	meta, err := ReadMetadata(root, instance)
+	if err != nil {
+		t.Fatalf("read metadata for %s: %v", instance, err)
+	}
+	if err := syscall.Kill(meta.PID, syscall.SIGKILL); err != nil {
+		t.Fatalf("kill %s pid %d: %v", instance, meta.PID, err)
+	}
+}
+
+func jobEventsContain(events []jobstore.Event, typ, message string) bool {
+	for _, ev := range events {
+		if ev.Type == typ && ev.Message == message {
+			return true
+		}
+	}
+	return false
 }

@@ -1617,8 +1617,8 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 // finalises the instance as Crashed — deliberately NOT Stopped, because Stopped
 // suppresses pipeline auto-advance, which is the exact stall we are breaking —
 // then force-kills the process group. The already-running reaper observes the
-// exit and fires the reap hook, so the pipeline retries the step (MaxAttempts)
-// exactly as it would for any other crash.
+// exit and fires the reap hook, so eligible read-only pipeline steps can use
+// the daemon's retry_on_crash policy.
 //
 // The reaper remains the SOLE finaliser that fires the hook: the watchdog only
 // pre-marks status and kills, so the pipeline still advances exactly once. A

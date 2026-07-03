@@ -269,6 +269,7 @@ type eventPipelineStepPreview struct {
 	Timeout      string     `json:"timeout,omitempty"`
 	Attempts     int        `json:"attempts,omitempty"`
 	MaxAttempts  int        `json:"max_attempts,omitempty"`
+	RetryOnCrash bool       `json:"retry_on_crash,omitempty"`
 }
 
 type eventPublishApplyCommandOptions struct {
@@ -405,6 +406,7 @@ func previewPipelineSteps(steps []job.Step) []eventPipelineStepPreview {
 			Timeout:      step.Timeout,
 			Attempts:     step.Attempts,
 			MaxAttempts:  step.MaxAttempts,
+			RetryOnCrash: step.RetryOnCrash,
 		})
 	}
 	return out

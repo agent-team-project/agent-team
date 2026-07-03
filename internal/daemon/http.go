@@ -1103,6 +1103,9 @@ func marshalPipelineSteps(steps []*topology.PipelineStep) []map[string]any {
 		if step.MaxAttempts > 0 {
 			row["max_attempts"] = step.MaxAttempts
 		}
+		if step.RetryOnCrash {
+			row["retry_on_crash"] = true
+		}
 		out = append(out, row)
 	}
 	return out

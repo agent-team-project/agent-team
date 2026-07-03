@@ -100,6 +100,7 @@ type Step struct {
 	Timeout          string         `toml:"timeout,omitempty"`
 	Attempts         int            `toml:"attempts,omitempty"`
 	MaxAttempts      int            `toml:"max_attempts,omitempty"`
+	RetryOnCrash     bool           `toml:"retry_on_crash,omitempty"`
 	Skipped          bool           `toml:"skipped,omitempty"`
 	SkipReason       string         `toml:"skip_reason,omitempty"`
 	StartedAt        time.Time      `toml:"started_at,omitempty"`

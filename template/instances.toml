@@ -53,8 +53,10 @@ match.target = "reviewer"
 # The field-proven pipeline shape (see documentation/operating-model.md):
 # headless implement -> adversarial review chain on process exit; the manual
 # gate stops exactly where merge judgment is needed. Watchdog timeouts rescue
-# wedged runtimes; max_attempts = 1 because a hang can strike after the PR
-# opens and a retry would open a duplicate — the manager re-dispatches instead.
+# wedged runtimes; implement keeps max_attempts = 1 because a hang can strike
+# after the PR opens and a retry would open a duplicate. Review is read-only, so
+# retry_on_crash allows one automatic retry only when the reviewer crashes before
+# recording a gate/verdict.
 [pipelines.ticket_to_pr]
 trigger.event = "ticket.created"
 auto_advance  = true
@@ -72,6 +74,7 @@ target       = "reviewer"
 after        = ["implement"]
 timeout      = "30m"
 max_attempts = 1
+retry_on_crash = true
 instructions = """
 Hand-verify, in order: (1) the ticket's acceptance criteria are actually met —
 check the specific behaviors, not the PR description; (2) tests cover the

@@ -145,6 +145,7 @@ runtime = "claude"
 after  = ["implement"]
 gate   = "manual"
 max_attempts = 2
+retry_on_crash = true
 
 [schedules.nightly]
 every = "24h"
@@ -218,6 +219,7 @@ Pipelines live under `[pipelines.<name>]`. A pipeline trigger creates or updates
 | `steps[].optional` | no | `false` | If `true`, a failed step does not block downstream dependencies. |
 | `steps[].timeout` | no | empty | Duration string used by stale-step timeout commands before falling back to repo stale-job thresholds. |
 | `steps[].max_attempts` | no | unlimited | Positive integer cap for dispatch attempts. Retry commands skip failed steps once the stored attempt count reaches this value. |
+| `steps[].retry_on_crash` | no | `false` | If `true`, daemon auto-advance may retry this step once after an instance crash/nonzero exit, but only when that instance recorded no job gate/verdict. Use only for read-only/idempotent steps such as reviewers; implementation steps should leave this false to avoid duplicate PR side effects. |
 
 Operators can intentionally bypass a stored step with `agent-team job step <job-id> <step-id> --skip`. The job records `status = "done"` and `skipped = true` on that step, so later `after` dependencies treat it as terminal while `job show` still surfaces the bypass.
 

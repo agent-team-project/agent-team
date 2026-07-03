@@ -703,6 +703,9 @@ func pipelineStepsAsMaps(steps []*topology.PipelineStep) []map[string]any {
 		if step.MaxAttempts > 0 {
 			row["max_attempts"] = step.MaxAttempts
 		}
+		if step.RetryOnCrash {
+			row["retry_on_crash"] = true
+		}
 		out = append(out, row)
 	}
 	return out
@@ -924,6 +927,9 @@ func summarisePipelineStepMaps(steps []map[string]interface{}) string {
 		if maxAttempts, _ := step["max_attempts"].(int); maxAttempts > 0 {
 			suffix += fmt.Sprintf(" max_attempts=%d", maxAttempts)
 		}
+		if retryOnCrash, _ := step["retry_on_crash"].(bool); retryOnCrash {
+			suffix += " retry_on_crash=true"
+		}
 		if label, _ := step["label"].(string); label != "" {
 			suffix = fmt.Sprintf(" label=%q", label) + suffix
 		}
@@ -950,6 +956,9 @@ func summariseLocalPipelineSteps(steps []*topology.PipelineStep) string {
 		}
 		if step.MaxAttempts > 0 {
 			suffix += fmt.Sprintf(" max_attempts=%d", step.MaxAttempts)
+		}
+		if step.RetryOnCrash {
+			suffix += " retry_on_crash=true"
 		}
 		if step.Label != "" {
 			suffix = fmt.Sprintf(" label=%q", step.Label) + suffix

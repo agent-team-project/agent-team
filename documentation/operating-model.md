@@ -41,7 +41,7 @@ gate = "manual"
 
 - `auto_advance` chains headless steps on process exit; the manual gate stops exactly where merge judgment is needed.
 - **Watchdog timeouts on every headless step** (45–60m implement, 30m review). Runtimes can wedge mid-stream with no client-side timeout; force-kill + crash-finalize + freed slot is the correct recovery.
-- **`max_attempts = 1`, always.** A hang can strike *after* the PR opens; an auto-retry then opens a duplicate. Let the manager re-dispatch — it knows whether the artifact already exists.
+- **`max_attempts = 1` for implementation.** A hang can strike *after* the PR opens; an auto-retry then opens a duplicate. Let the manager re-dispatch — it knows whether the artifact already exists. Read-only/idempotent review steps can opt into `retry_on_crash = true`, which retries once only after a crash/nonzero exit with no recorded gate/verdict.
 - Run parallel pipelines distinguished by trigger event; distinct events mean zero cross-dispatch.
 
 ## Reviewer instructions are checklists
