@@ -480,6 +480,7 @@ func pipelineJobSteps(pipeline *topology.Pipeline) []jobstore.Step {
 			Optional:         step.Optional,
 			Timeout:          pipelineStepTimeoutString(step.Timeout),
 			MaxAttempts:      step.MaxAttempts,
+			RetryOnCrash:     step.RetryOnCrash,
 		})
 	}
 	return steps
@@ -1911,7 +1912,7 @@ func (r *EventResolver) reconcileEphemeralJobExit(meta *Metadata) {
 	// Opt-in: dispatch the next ready step without waiting for a manual
 	// `agent-team pipeline tick`. Safe to call here — onReap has already released
 	// r.mu, and this reuses the normal dispatch path (which does its own locking).
-	r.tryAutoAdvancePipeline(j, meta.Instance, status)
+	r.tryAutoAdvancePipeline(j, meta, status)
 	r.autoReapJob(meta.Job, worktreepolicy.OnClose)
 }
 
@@ -1989,7 +1990,7 @@ func (r *EventResolver) reapWorktreePolicyForJob(j *jobstore.Job) string {
 // locking and running-count bookkeeping (so no manual tr.running changes here).
 // Best-effort: any miss (feature off, gate pending, nothing ready, retries
 // exhausted) simply leaves the job for manual advancement.
-func (r *EventResolver) tryAutoAdvancePipeline(j *jobstore.Job, prevInstance string, prevStatus jobstore.Status) {
+func (r *EventResolver) tryAutoAdvancePipeline(j *jobstore.Job, meta *Metadata, prevStatus jobstore.Status) {
 	if j == nil || strings.TrimSpace(j.Pipeline) == "" {
 		return
 	}
@@ -2005,6 +2006,10 @@ func (r *EventResolver) tryAutoAdvancePipeline(j *jobstore.Job, prevInstance str
 	}
 
 	// Locate the step that just exited (for retry + prior-output context).
+	prevInstance := ""
+	if meta != nil {
+		prevInstance = meta.Instance
+	}
 	var prevStep *jobstore.Step
 	for i := range j.Steps {
 		if j.Steps[i].Instance == prevInstance {
@@ -2013,10 +2018,11 @@ func (r *EventResolver) tryAutoAdvancePipeline(j *jobstore.Job, prevInstance str
 		}
 	}
 
-	// On failure: retry the SAME step if attempts remain, else stop and leave the
-	// job failed. MaxAttempts defaults to 0, so the default stays "no auto-retry".
+	// On failure: only retry opt-in crash-without-verdict steps. This deliberately
+	// does not use max_attempts as a generic auto-retry policy: implementation
+	// steps can fail after opening a PR, and retrying them risks duplicate PRs.
 	if prevStatus == jobstore.StatusFailed {
-		if prevStep == nil || prevStep.MaxAttempts <= 0 || prevStep.Attempts >= prevStep.MaxAttempts {
+		if !r.shouldAutoRetryCrashedStep(j, prevStep, meta) {
 			return
 		}
 		topoStep := pipelineTopologyStep(pipeline, prevStep.ID)
@@ -2025,7 +2031,7 @@ func (r *EventResolver) tryAutoAdvancePipeline(j *jobstore.Job, prevInstance str
 		}
 		prevStep.Instance = ""
 		prevStep.FinishedAt = time.Time{}
-		r.dispatchAndRecord(pipeline, topoStep, j, nil, "auto-retried step "+topoStep.ID)
+		r.dispatchAndRecord(pipeline, topoStep, j, nil, "auto-retried crashed step "+topoStep.ID)
 		return
 	}
 
@@ -2047,6 +2053,74 @@ func (r *EventResolver) tryAutoAdvancePipeline(j *jobstore.Job, prevInstance str
 		}
 	}
 	r.dispatchAndRecord(pipeline, topoStep, j, payload, "auto-advanced to step "+topoStep.ID)
+}
+
+func (r *EventResolver) shouldAutoRetryCrashedStep(j *jobstore.Job, step *jobstore.Step, meta *Metadata) bool {
+	if j == nil || step == nil || meta == nil {
+		return false
+	}
+	if !step.RetryOnCrash {
+		return false
+	}
+	if !metadataFinalizedAsCrash(meta) {
+		return false
+	}
+	if effectiveStepAttempts(step) != 1 {
+		return false
+	}
+	return !r.instanceHasRecordedOutputOrGate(j.ID, meta.Instance)
+}
+
+func metadataFinalizedAsCrash(meta *Metadata) bool {
+	if meta == nil {
+		return false
+	}
+	if meta.Status == StatusCrashed {
+		return true
+	}
+	return meta.ExitCode != nil && *meta.ExitCode != 0
+}
+
+func effectiveStepAttempts(step *jobstore.Step) int {
+	if step == nil {
+		return 0
+	}
+	if step.Attempts > 0 {
+		return step.Attempts
+	}
+	if !step.StartedAt.IsZero() || !step.FinishedAt.IsZero() || strings.TrimSpace(step.Instance) != "" {
+		return 1
+	}
+	switch step.Status {
+	case jobstore.StatusRunning, jobstore.StatusQueued, jobstore.StatusDone, jobstore.StatusFailed:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func (r *EventResolver) jobHasGateFromInstance(jobID, instance string) bool {
+	instance = strings.TrimSpace(instance)
+	if strings.TrimSpace(jobID) == "" || instance == "" || strings.TrimSpace(r.teamDir) == "" {
+		return false
+	}
+	records, err := jobstore.ListGateRecords(r.teamDir, jobID)
+	if err != nil {
+		return false
+	}
+	for _, record := range records {
+		if strings.TrimSpace(record.Actor) == instance {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *EventResolver) instanceHasRecordedOutputOrGate(jobID, instance string) bool {
+	if r.jobHasGateFromInstance(jobID, instance) {
+		return true
+	}
+	return strings.TrimSpace(r.readInstanceFinalMessage(instance)) != ""
 }
 
 // dispatchAndRecord dispatches one pipeline step, records the outcome on the job,

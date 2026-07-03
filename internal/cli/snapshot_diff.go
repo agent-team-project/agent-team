@@ -287,19 +287,20 @@ type snapshotDiffDetailedJob struct {
 }
 
 type snapshotDiffDetailedJobStep struct {
-	ID          string
-	Target      string
-	Workspace   string
-	Runtime     string
-	RuntimeBin  string
-	Status      string
-	Instance    string
-	Gate        string
-	Optional    bool
-	Attempts    int
-	MaxAttempts int
-	Skipped     bool
-	SkipReason  string
+	ID           string
+	Target       string
+	Workspace    string
+	Runtime      string
+	RuntimeBin   string
+	Status       string
+	Instance     string
+	Gate         string
+	Optional     bool
+	Attempts     int
+	MaxAttempts  int
+	RetryOnCrash bool
+	Skipped      bool
+	SkipReason   string
 }
 
 type snapshotDiffStatus struct {
@@ -1537,6 +1538,7 @@ func addSnapshotDiffTriageReadyStep(out map[string]string, row jobReadyRow) {
 		row.Runtime,
 		row.RuntimeBin,
 		boolSnapshotDiffValue("optional", row.Optional),
+		boolSnapshotDiffValue("retry_on_crash", row.RetryOnCrash),
 		intSnapshotDiffValue("attempts", row.Attempts),
 		intSnapshotDiffValue("max_attempts", row.MaxAttempts),
 		intSnapshotDiffValue("parallel_ready", row.ParallelReadySteps),
@@ -1671,6 +1673,7 @@ func addSnapshotDiffJobSnapshot(out map[string]string, input snapshotDiffInput) 
 			step.RuntimeBin,
 			step.Gate,
 			boolSnapshotDiffValue("optional", step.Optional),
+			boolSnapshotDiffValue("retry_on_crash", step.RetryOnCrash),
 			intSnapshotDiffValue("attempts", step.Attempts),
 			intSnapshotDiffValue("max_attempts", step.MaxAttempts),
 			boolSnapshotDiffValue("skipped", step.Skipped),

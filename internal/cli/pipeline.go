@@ -6056,6 +6056,7 @@ type pipelineStepInfo struct {
 	Optional         bool     `json:"optional,omitempty"`
 	Timeout          string   `json:"timeout,omitempty"`
 	MaxAttempts      int      `json:"max_attempts,omitempty"`
+	RetryOnCrash     bool     `json:"retry_on_crash,omitempty"`
 }
 
 type pipelineGraph struct {
@@ -6088,6 +6089,7 @@ type pipelineGraphNode struct {
 	Optional         bool               `json:"optional,omitempty"`
 	Timeout          string             `json:"timeout,omitempty"`
 	MaxAttempts      int                `json:"max_attempts,omitempty"`
+	RetryOnCrash     bool               `json:"retry_on_crash,omitempty"`
 	StepStatus       job.Status         `json:"step_status,omitempty"`
 	State            string             `json:"state,omitempty"`
 	Ready            bool               `json:"ready,omitempty"`
@@ -6469,6 +6471,9 @@ func pipelineGraphWithExplainedJobState(graph pipelineGraph, explained jobExplai
 		graph.Nodes[i].Ready = step.Ready
 		graph.Nodes[i].Instance = step.Instance
 		graph.Nodes[i].Attempts = step.Attempts
+		if step.RetryOnCrash {
+			graph.Nodes[i].RetryOnCrash = true
+		}
 		graph.Nodes[i].WaitingFor = append([]string(nil), step.WaitingFor...)
 		graph.Nodes[i].Actions = append([]string(nil), step.Actions...)
 		graph.Nodes[i].Skipped = step.Skipped
@@ -6511,6 +6516,7 @@ func pipelineGraphFromTopology(top *topology.Topology, pipeline *topology.Pipeli
 			Optional:         step.Optional,
 			Timeout:          formatPipelineStepTimeout(step.Timeout),
 			MaxAttempts:      step.MaxAttempts,
+			RetryOnCrash:     step.RetryOnCrash,
 		}
 		if includeRoutes && node.Target != "" {
 			node.Routes = pipelineDispatchRoutes(top, node.Target)
@@ -6969,6 +6975,7 @@ func pipelineInfoFromTopology(p *topology.Pipeline) pipelineInfo {
 			Optional:         step.Optional,
 			Timeout:          formatPipelineStepTimeout(step.Timeout),
 			MaxAttempts:      step.MaxAttempts,
+			RetryOnCrash:     step.RetryOnCrash,
 		})
 	}
 	return pipelineInfo{
@@ -10941,6 +10948,10 @@ func renderPipelineDetail(w io.Writer, info pipelineInfo, jsonOut bool, tmpl *te
 		if step.MaxAttempts > 0 {
 			maxAttempts = fmt.Sprintf(" max_attempts=%d", step.MaxAttempts)
 		}
+		retryOnCrash := ""
+		if step.RetryOnCrash {
+			retryOnCrash = " retry_on_crash=true"
+		}
 		label := ""
 		if step.Label != "" {
 			label = fmt.Sprintf(" label=%q", step.Label)
@@ -10961,7 +10972,7 @@ func renderPipelineDetail(w io.Writer, info pipelineInfo, jsonOut bool, tmpl *te
 		if formatted := formatStepRuntime(step.Runtime, step.RuntimeBin); formatted != "" {
 			runtime = " runtime=" + formatted
 		}
-		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s%s%s%s%s\n", step.ID, step.Target, after, workspace, runtime, label, description, instructions, gate, approvalRequired, optional, timeout, maxAttempts)
+		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s%s%s%s%s%s\n", step.ID, step.Target, after, workspace, runtime, label, description, instructions, gate, approvalRequired, optional, timeout, maxAttempts, retryOnCrash)
 	}
 	return nil
 }
@@ -11109,6 +11120,10 @@ func pipelineGraphNodeTopologyText(node pipelineGraphNode) string {
 	if node.MaxAttempts > 0 {
 		maxAttempts = fmt.Sprintf(" max_attempts=%d", node.MaxAttempts)
 	}
+	retryOnCrash := ""
+	if node.RetryOnCrash {
+		retryOnCrash = " retry_on_crash=true"
+	}
 	routes := ""
 	if len(node.Routes) > 0 {
 		routes = " routes=" + strings.Join(node.Routes, ",")
@@ -11117,7 +11132,7 @@ func pipelineGraphNodeTopologyText(node pipelineGraphNode) string {
 	if node.Missing {
 		missing = " missing=true"
 	}
-	return workspace + runtime + label + description + instructions + gate + optional + timeout + maxAttempts + routes + missing + pipelineGraphNodeStateText(node)
+	return workspace + runtime + label + description + instructions + gate + optional + timeout + maxAttempts + retryOnCrash + routes + missing + pipelineGraphNodeStateText(node)
 }
 
 func renderPipelineGraphText(w io.Writer, graph pipelineGraph) {
@@ -11155,6 +11170,10 @@ func renderPipelineGraphText(w io.Writer, graph pipelineGraph) {
 		maxAttempts := ""
 		if node.MaxAttempts > 0 {
 			maxAttempts = fmt.Sprintf(" max_attempts=%d", node.MaxAttempts)
+		}
+		retryOnCrash := ""
+		if node.RetryOnCrash {
+			retryOnCrash = " retry_on_crash=true"
 		}
 		state := ""
 		if node.State != "" {
@@ -11220,7 +11239,7 @@ func renderPipelineGraphText(w io.Writer, graph pipelineGraph) {
 		if len(node.Actions) > 0 {
 			actions = fmt.Sprintf(" actions=%q", strings.Join(node.Actions, "; "))
 		}
-		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n", node.ID, node.Target, after, workspace, runtime, label, description, instructions, gate, optional, timeout, maxAttempts, state, stepStatus, ready, instance, attempts, waitingFor, message, skipped, skipReason, routes, missing, actions)
+		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n", node.ID, node.Target, after, workspace, runtime, label, description, instructions, gate, optional, timeout, maxAttempts, retryOnCrash, state, stepStatus, ready, instance, attempts, waitingFor, message, skipped, skipReason, routes, missing, actions)
 	}
 	if len(graph.Edges) == 0 {
 		return
@@ -11331,6 +11350,9 @@ func pipelineGraphNodeLabel(node pipelineGraphNode, sep string) string {
 	}
 	if node.MaxAttempts > 0 {
 		parts = append(parts, fmt.Sprintf("max attempts: %d", node.MaxAttempts))
+	}
+	if node.RetryOnCrash {
+		parts = append(parts, "retry on crash")
 	}
 	if node.State != "" {
 		parts = append(parts, "state: "+node.State)
@@ -11582,6 +11604,10 @@ func summarisePipelineInfoSteps(steps []pipelineStepInfo) string {
 		if step.MaxAttempts > 0 {
 			maxAttempts = fmt.Sprintf(" max_attempts=%d", step.MaxAttempts)
 		}
+		retryOnCrash := ""
+		if step.RetryOnCrash {
+			retryOnCrash = " retry_on_crash=true"
+		}
 		workspace := ""
 		if step.Workspace != "" {
 			workspace = " workspace=" + step.Workspace
@@ -11595,9 +11621,9 @@ func summarisePipelineInfoSteps(steps []pipelineStepInfo) string {
 			label = fmt.Sprintf(" label=%q", step.Label)
 		}
 		if len(step.After) > 0 {
-			parts = append(parts, fmt.Sprintf("%s:%s%s%s%s after=%s%s%s%s%s", step.ID, step.Target, workspace, runtime, label, strings.Join(step.After, ","), gate, optional, timeout, maxAttempts))
+			parts = append(parts, fmt.Sprintf("%s:%s%s%s%s after=%s%s%s%s%s%s", step.ID, step.Target, workspace, runtime, label, strings.Join(step.After, ","), gate, optional, timeout, maxAttempts, retryOnCrash))
 		} else {
-			parts = append(parts, fmt.Sprintf("%s:%s%s%s%s%s%s%s%s", step.ID, step.Target, workspace, runtime, label, gate, optional, timeout, maxAttempts))
+			parts = append(parts, fmt.Sprintf("%s:%s%s%s%s%s%s%s%s%s", step.ID, step.Target, workspace, runtime, label, gate, optional, timeout, maxAttempts, retryOnCrash))
 		}
 	}
 	return strings.Join(parts, " -> ")

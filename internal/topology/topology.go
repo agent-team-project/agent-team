@@ -161,6 +161,7 @@ type PipelineStep struct {
 	Optional         bool
 	Timeout          time.Duration
 	MaxAttempts      int
+	RetryOnCrash     bool
 }
 
 // Schedule is a periodic source of `schedule` events.
@@ -978,11 +979,15 @@ func parsePipelineSteps(name string, raw []map[string]any) ([]*PipelineStep, err
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
 		}
+		retryOnCrash, err := parseStepRetryOnCrash(body["retry_on_crash"])
+		if err != nil {
+			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
+		}
 		locks, err := parsePipelineStepLocks(name, id, body["locks"])
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
 		}
-		steps = append(steps, &PipelineStep{ID: id, Label: label, Description: description, Instructions: instructions, Target: target, Locks: locks, Workspace: workspace, Runtime: runtime, RuntimeBin: runtimeBin, After: after, Gate: gate, ApprovalRequired: approvalRequired, Optional: optional, Timeout: timeout, MaxAttempts: maxAttempts})
+		steps = append(steps, &PipelineStep{ID: id, Label: label, Description: description, Instructions: instructions, Target: target, Locks: locks, Workspace: workspace, Runtime: runtime, RuntimeBin: runtimeBin, After: after, Gate: gate, ApprovalRequired: approvalRequired, Optional: optional, Timeout: timeout, MaxAttempts: maxAttempts, RetryOnCrash: retryOnCrash})
 	}
 	for _, step := range steps {
 		for _, dep := range step.After {
@@ -1151,6 +1156,17 @@ func parseStepOptional(raw any) (bool, error) {
 	value, ok := raw.(bool)
 	if !ok {
 		return false, fmt.Errorf("optional must be a boolean")
+	}
+	return value, nil
+}
+
+func parseStepRetryOnCrash(raw any) (bool, error) {
+	if raw == nil {
+		return false, nil
+	}
+	value, ok := raw.(bool)
+	if !ok {
+		return false, fmt.Errorf("retry_on_crash must be a boolean")
 	}
 	return value, nil
 }

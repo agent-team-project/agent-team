@@ -282,6 +282,7 @@ gate = "pr"
 optional = true
 timeout = "30m"
 max_attempts = 2
+retry_on_crash = true
 `))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -305,7 +306,7 @@ max_attempts = 2
 	if p.InfraSignatures["disk_exhaustion"] != "No space left on device" || p.InfraSignatures["missing_binary"] != "error: test binary .* not found" {
 		t.Fatalf("pipeline infra signatures = %+v", p.InfraSignatures)
 	}
-	if len(p.Steps) != 2 || p.Steps[1].Label != "Manager review" || p.Steps[1].Description != "Review implementation and prepare PR handoff." || p.Steps[1].Instructions != "Review the worker branch and decide whether PR follow-up is ready." || p.Steps[1].Workspace != "repo" || p.Steps[1].Runtime != "codex" || p.Steps[1].RuntimeBin != "codex-dev" || p.Steps[1].After[0] != "implement" || p.Steps[1].Gate != "pr" || !p.Steps[1].Optional || p.Steps[1].Timeout != 30*time.Minute || p.Steps[1].MaxAttempts != 2 {
+	if len(p.Steps) != 2 || p.Steps[1].Label != "Manager review" || p.Steps[1].Description != "Review implementation and prepare PR handoff." || p.Steps[1].Instructions != "Review the worker branch and decide whether PR follow-up is ready." || p.Steps[1].Workspace != "repo" || p.Steps[1].Runtime != "codex" || p.Steps[1].RuntimeBin != "codex-dev" || p.Steps[1].After[0] != "implement" || p.Steps[1].Gate != "pr" || !p.Steps[1].Optional || p.Steps[1].Timeout != 30*time.Minute || p.Steps[1].MaxAttempts != 2 || !p.Steps[1].RetryOnCrash {
 		t.Fatalf("steps = %+v", p.Steps)
 	}
 	if worker := top.Instances["worker"]; worker == nil || worker.ReapWorktree != "on_close" {
@@ -584,6 +585,24 @@ target = "worker"
 max_attempts = 0
 `))
 	if err == nil || !strings.Contains(err.Error(), "max_attempts must be greater than zero") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestParse_PipelineRejectsInvalidRetryOnCrash(t *testing.T) {
+	_, err := Parse([]byte(`
+[instances.worker]
+agent = "worker"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "reviewer"
+retry_on_crash = "yes"
+`))
+	if err == nil || !strings.Contains(err.Error(), "retry_on_crash must be a boolean") {
 		t.Fatalf("err = %v", err)
 	}
 }
