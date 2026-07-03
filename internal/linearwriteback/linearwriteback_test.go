@@ -28,8 +28,28 @@ pm_tool = "none"
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	if len(events) != 0 {
-		t.Fatalf("events = %+v, want no audit for disabled Linear", events)
+	if len(events) != 1 || events[0].Type != "linear_writeback_skipped" || events[0].Message != "Linear not configured for this repo" || events[0].Data["action"] != string(ActionDispatchInProgress) {
+		t.Fatalf("events = %+v, want skipped audit for disabled Linear", events)
+	}
+}
+
+func TestWriteBackMissingAPIKeyAuditsSkip(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "")
+	t.Setenv("LINEAR_USER_API_KEY", "")
+	teamDir := testLinearTeamDir(t, `in_progress_state = "In Progress"`)
+	j := testJob()
+	client := &Client{}
+
+	result := client.WriteBack(context.Background(), teamDir, Request{Action: ActionDispatchInProgress, Job: j, Actor: "test"})
+	if !result.Skipped || result.Message != errNoAPIKey.Error() || result.State != "In Progress" || result.AuditErr != nil {
+		t.Fatalf("result = %+v, want skipped missing-key audit", result)
+	}
+	events, err := job.ListEvents(teamDir, j.ID)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "linear_writeback_skipped" || events[0].Message != errNoAPIKey.Error() || events[0].Data["action"] != string(ActionDispatchInProgress) || events[0].Data["state"] != "In Progress" {
+		t.Fatalf("events = %+v, want skipped missing-key audit", events)
 	}
 }
 

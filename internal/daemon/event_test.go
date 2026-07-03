@@ -17,6 +17,7 @@ import (
 	"time"
 
 	jobstore "github.com/jamesaud/agent-team/internal/job"
+	"github.com/jamesaud/agent-team/internal/linearwriteback"
 	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/jamesaud/agent-team/internal/worktreecleanup"
@@ -2070,6 +2071,83 @@ timeout = "2h"
 	}
 	if j.Steps[1].ID != "review" || j.Steps[1].Label != "Manager review" || j.Steps[1].Description != "Review the worker output." || j.Steps[1].Instructions != "Prepare review notes for the implementation branch." || !j.Steps[1].Optional || j.Steps[1].Timeout != "2h0m0s" {
 		t.Fatalf("optional review step = %+v", j.Steps[1])
+	}
+}
+
+func TestEvent_PipelineInitialDispatchRejectionWritesLinearFailureAttention(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "")
+	t.Setenv("LINEAR_USER_API_KEY", "")
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	if err := os.WriteFile(filepath.Join(teamDir, "config.toml"), []byte(`
+[team]
+pm_tool = "linear"
+
+[linear]
+team_id = "team-1"
+ticket_prefix = "SQU"
+attention_state = "Todo"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	top, err := topology.Parse([]byte(`
+[instances.manager]
+agent = "manager"
+
+[[instances.manager.triggers]]
+event = "agent.dispatch"
+match.target = "manager"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+`))
+	if err != nil {
+		t.Fatalf("parse topology: %v", err)
+	}
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+
+	result, err := resolver.EventWithResult("ticket.created", map[string]any{
+		"ticket":  "SQU-95",
+		"kickoff": "implement SQU-95",
+	})
+	if err != nil {
+		t.Fatalf("EventWithResult: %v", err)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Action != "rejected" || !strings.Contains(result.Outcomes[0].Reason, "no agent.dispatch trigger") {
+		t.Fatalf("outcomes = %+v, want rejected no-match dispatch", result.Outcomes)
+	}
+	if fake.callCount() != 0 {
+		t.Fatalf("spawn calls=%d, want no instance start", fake.callCount())
+	}
+	j, err := jobstore.Read(teamDir, "squ-95")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if j.Status != jobstore.StatusFailed || j.Steps[0].Status != jobstore.StatusFailed {
+		t.Fatalf("job = %+v, want failed initial step", j)
+	}
+	events, err := jobstore.ListEvents(teamDir, "squ-95")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	found := false
+	for _, ev := range events {
+		if ev.Type == "linear_writeback_skipped" &&
+			ev.Message == "no Linear API key found" &&
+			ev.Data["action"] == string(linearwriteback.ActionFailureAttention) &&
+			ev.Data["state"] == "Todo" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("events missing failure-attention write-back attempt: %+v", events)
 	}
 }
 

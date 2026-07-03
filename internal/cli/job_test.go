@@ -49,6 +49,15 @@ func jobDoctorHasCode(findings []jobDoctorFinding, code string) bool {
 	return false
 }
 
+func findJobEvent(events []job.Event, eventType string) (job.Event, bool) {
+	for _, event := range events {
+		if event.Type == eventType {
+			return event, true
+		}
+	}
+	return job.Event{}, false
+}
+
 func TestJobDoctorValidAndFormat(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -954,8 +963,13 @@ func TestJobCloseRecordsMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("events: %v", err)
 	}
-	if len(events) != 1 || events[0].Type != "closed" || events[0].Actor != "github" || events[0].Message != "superseded by SQU-71" || events[0].Data["status"] != "failed" {
+	closedEvent, ok := findJobEvent(events, "closed")
+	if !ok || closedEvent.Actor != "github" || closedEvent.Message != "superseded by SQU-71" || closedEvent.Data["status"] != "failed" {
 		t.Fatalf("events = %+v", events)
+	}
+	linearEvent, ok := findJobEvent(events, "linear_writeback_skipped")
+	if !ok || linearEvent.Data["action"] != "failure_attention" {
+		t.Fatalf("events missing Linear skip audit: %+v", events)
 	}
 }
 
@@ -1282,8 +1296,13 @@ func TestJobCancelStopsOwningInstanceAndFailsJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("events: %v", err)
 	}
-	if len(events) != 1 || events[0].Type != "cancelled" || events[0].Actor != "ops" || events[0].Data["instance_action"] != "stop" {
+	cancelledEvent, ok := findJobEvent(events, "cancelled")
+	if !ok || cancelledEvent.Actor != "ops" || cancelledEvent.Data["instance_action"] != "stop" {
 		t.Fatalf("events = %+v", events)
+	}
+	linearEvent, ok := findJobEvent(events, "linear_writeback_skipped")
+	if !ok || linearEvent.Data["action"] != "failure_attention" {
+		t.Fatalf("events missing Linear skip audit: %+v", events)
 	}
 }
 
@@ -1352,8 +1371,13 @@ func TestJobCancelStopsExplicitStepInstanceAndFailsStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("events: %v", err)
 	}
-	if len(events) != 1 || events[0].Type != "cancelled" || events[0].Actor != "ops" || events[0].Data["instance_action"] != "stop" || events[0].Data["instance"] != "worker-squ-165-implement" || events[0].Data["step"] != "implement" {
+	cancelledEvent, ok := findJobEvent(events, "cancelled")
+	if !ok || cancelledEvent.Actor != "ops" || cancelledEvent.Data["instance_action"] != "stop" || cancelledEvent.Data["instance"] != "worker-squ-165-implement" || cancelledEvent.Data["step"] != "implement" {
 		t.Fatalf("events = %+v", events)
+	}
+	linearEvent, ok := findJobEvent(events, "linear_writeback_skipped")
+	if !ok || linearEvent.Data["action"] != "failure_attention" {
+		t.Fatalf("events missing Linear skip audit: %+v", events)
 	}
 }
 
@@ -4748,8 +4772,13 @@ func TestJobTimeoutMarksStaleRunningStepsAndJobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list lifecycle events: %v", err)
 	}
-	if len(events) != 1 || events[0].Type != "job_timeout" || events[0].Message != "job lifecycle timed out" {
+	timeoutEvent, ok := findJobEvent(events, "job_timeout")
+	if !ok || timeoutEvent.Message != "job lifecycle timed out" {
 		t.Fatalf("lifecycle events = %+v", events)
+	}
+	linearEvent, ok := findJobEvent(events, "linear_writeback_skipped")
+	if !ok || linearEvent.Data["action"] != "failure_attention" {
+		t.Fatalf("lifecycle events missing Linear skip audit: %+v", events)
 	}
 }
 
@@ -7714,12 +7743,14 @@ func TestJobRetryDispatchesReopenedJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	if len(events) != 3 ||
+	if len(events) != 4 ||
 		events[0].Type != "reopened" ||
 		events[1].Type != "dispatched" ||
 		events[1].Actor != "daemon" ||
 		events[2].Type != "dispatched" ||
-		events[2].Actor != "cli" {
+		events[2].Actor != "cli" ||
+		events[3].Type != "linear_writeback_skipped" ||
+		events[3].Data["action"] != "dispatch_in_progress" {
 		t.Fatalf("events = %+v", events)
 	}
 	stopAndWaitForTest(t, mgr, "worker-squ-80")
@@ -8113,7 +8144,12 @@ func TestJobBounceRequeuesCompletedStepAndAudits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	if len(events) != 1 || events[0].Type != "bounced" || events[0].Data["step"] != "implement" || events[0].Data["bounce"] != "1" {
+	if len(events) != 2 ||
+		events[0].Type != "bounced" ||
+		events[0].Data["step"] != "implement" ||
+		events[0].Data["bounce"] != "1" ||
+		events[1].Type != "linear_writeback_skipped" ||
+		events[1].Data["action"] != "bounce_back" {
 		t.Fatalf("events = %+v", events)
 	}
 }

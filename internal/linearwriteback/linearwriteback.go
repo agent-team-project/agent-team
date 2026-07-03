@@ -131,6 +131,12 @@ func DefaultClient() *Client {
 
 func (c *Client) WriteBack(ctx context.Context, teamDir string, req Request) Result {
 	result := Result{Action: req.Action}
+	finish := func(result Result) Result {
+		if req.Job != nil {
+			result.AuditErr = appendAudit(teamDir, req.Job, req, result)
+		}
+		return result
+	}
 	if req.Job == nil {
 		result.Skipped = true
 		result.Message = "job is required"
@@ -141,25 +147,24 @@ func (c *Client) WriteBack(ctx context.Context, teamDir string, req Request) Res
 	if issue == "" {
 		result.Skipped = true
 		result.Message = "job has no Linear ticket identifier"
-		return result
+		return finish(result)
 	}
 	cfg, skip, err := loadConfig(teamDir)
 	if err != nil {
 		result.Error = err.Error()
 		result.Message = "linear write-back failed"
-		result.AuditErr = appendAudit(teamDir, req.Job, req, result)
-		return result
+		return finish(result)
 	}
 	if skip != "" {
 		result.Skipped = true
 		result.Message = skip
-		return result
+		return finish(result)
 	}
 	stateName, commentBody, labelNames, skip := requestIntent(cfg, req)
 	if skip != "" {
 		result.Skipped = true
 		result.Message = skip
-		return result
+		return finish(result)
 	}
 	result.State = stateName
 	result.Comment = strings.TrimSpace(commentBody) != ""
@@ -168,12 +173,11 @@ func (c *Client) WriteBack(ctx context.Context, teamDir string, req Request) Res
 		if errors.Is(err, errNoAPIKey) {
 			result.Skipped = true
 			result.Message = err.Error()
-			return result
+			return finish(result)
 		}
 		result.Error = err.Error()
 		result.Message = "linear write-back failed"
-		result.AuditErr = appendAudit(teamDir, req.Job, req, result)
-		return result
+		return finish(result)
 	}
 	ctx, cancel := contextWithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -181,29 +185,25 @@ func (c *Client) WriteBack(ctx context.Context, teamDir string, req Request) Res
 	if err != nil {
 		result.Error = err.Error()
 		result.Message = "linear write-back failed"
-		result.AuditErr = appendAudit(teamDir, req.Job, req, result)
-		return result
+		return finish(result)
 	}
 	issueID := strings.TrimSpace(lookup.Issue.ID)
 	if issueID == "" {
 		result.Error = "Linear issue not found"
 		result.Message = "linear write-back failed"
-		result.AuditErr = appendAudit(teamDir, req.Job, req, result)
-		return result
+		return finish(result)
 	}
 	if stateName != "" {
 		stateID := workflowStateID(lookup, stateName)
 		if stateID == "" {
 			result.Error = fmt.Sprintf("Linear workflow state %q not found", stateName)
 			result.Message = "linear write-back failed"
-			result.AuditErr = appendAudit(teamDir, req.Job, req, result)
-			return result
+			return finish(result)
 		}
 		if err := c.updateIssueState(ctx, apiKey, issueID, stateID); err != nil {
 			result.Error = err.Error()
 			result.Message = "linear write-back failed"
-			result.AuditErr = appendAudit(teamDir, req.Job, req, result)
-			return result
+			return finish(result)
 		}
 		result.Changed = true
 	}
@@ -212,14 +212,12 @@ func (c *Client) WriteBack(ctx context.Context, teamDir string, req Request) Res
 		if len(labelIDs) == 0 {
 			result.Error = fmt.Sprintf("Linear labels not found: %s", strings.Join(labelNames, ", "))
 			result.Message = "linear write-back failed"
-			result.AuditErr = appendAudit(teamDir, req.Job, req, result)
-			return result
+			return finish(result)
 		}
 		if err := c.addIssueLabels(ctx, apiKey, issueID, existingIssueLabelIDs(lookup), labelIDs); err != nil {
 			result.Error = err.Error()
 			result.Message = "linear write-back failed"
-			result.AuditErr = appendAudit(teamDir, req.Job, req, result)
-			return result
+			return finish(result)
 		}
 		result.Labels = strings.Join(labelNames, ",")
 		result.Changed = true
@@ -228,14 +226,12 @@ func (c *Client) WriteBack(ctx context.Context, teamDir string, req Request) Res
 		if err := c.createComment(ctx, apiKey, issueID, commentBody); err != nil {
 			result.Error = err.Error()
 			result.Message = "linear write-back failed"
-			result.AuditErr = appendAudit(teamDir, req.Job, req, result)
-			return result
+			return finish(result)
 		}
 		result.Changed = true
 	}
 	result.Message = successMessage(result)
-	result.AuditErr = appendAudit(teamDir, req.Job, req, result)
-	return result
+	return finish(result)
 }
 
 func loadConfig(teamDir string) (config, string, error) {
