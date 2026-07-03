@@ -1071,10 +1071,15 @@ func (r *EventResolver) updateLockLeasePID(instance string, pid int) {
 	}
 }
 
-func (r *EventResolver) releaseLocksForInstanceLocked(instance string) {
+// releaseLocksForInstanceLocked frees every lock slot held by instance and
+// reports how many were released so callers can kick waiters: lock_held queue
+// items may belong to OTHER declared instances, which the per-instance reap
+// queue pop never retries (SQU-76).
+func (r *EventResolver) releaseLocksForInstanceLocked(instance string) int {
 	if strings.TrimSpace(instance) == "" {
-		return
+		return 0
 	}
+	released := 0
 	for name, tr := range r.locks {
 		if tr == nil || tr.holders == nil {
 			continue
@@ -1084,7 +1089,9 @@ func (r *EventResolver) releaseLocksForInstanceLocked(instance string) {
 		}
 		delete(tr.holders, instance)
 		_ = RemoveLockLease(r.mgr.daemonRoot, name, instance)
+		released++
 	}
+	return released
 }
 
 func (r *EventResolver) recoverLockStateLocked(now time.Time) {
@@ -1961,7 +1968,7 @@ func (r *EventResolver) onReap(spawned string) {
 	if tr.running > 0 {
 		tr.running--
 	}
-	r.releaseLocksForInstanceLocked(spawned)
+	freedLocks := r.releaseLocksForInstanceLocked(spawned)
 	var next *queuedEvent
 	if len(tr.queue) > 0 {
 		next = r.popReadyQueuedEventLocked(declared, tr, time.Now().UTC(), nil)
@@ -1969,6 +1976,12 @@ func (r *EventResolver) onReap(spawned string) {
 	r.mu.Unlock()
 	if meta, err := ReadMetadata(r.mgr.daemonRoot, spawned); err == nil {
 		r.reconcileEphemeralJobExit(meta)
+	}
+	// Freed lock slots may unblock lock_held waiters queued under other
+	// declared instances; the same-instance pop above cannot reach them, so
+	// run the shared drain pass (the same path as `agent-team queue drain`).
+	if freedLocks > 0 {
+		defer r.DrainQueues()
 	}
 	if next == nil {
 		return

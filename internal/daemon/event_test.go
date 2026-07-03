@@ -1672,6 +1672,92 @@ match.target = "worker"
 	_ = m.WaitForReaper("worker-squ-101", 5*time.Second)
 }
 
+func TestEvent_LockReleaseDrainsCrossInstanceWaiters(t *testing.T) {
+	// SQU-76: lock_held waiters queued under a DIFFERENT declared instance
+	// than the lock holder must dispatch when the lock frees — the reap-time
+	// same-instance queue pop cannot reach them.
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	writeFixtureAgent(t, teamDir, "reviewer")
+	top := mustParseCustomTopo(t, `
+[locks.build]
+slots = 1
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+replicas = 2
+locks = ["build"]
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[instances.reviewer]
+agent = "reviewer"
+ephemeral = true
+replicas = 2
+locks = ["build"]
+
+[[instances.reviewer.triggers]]
+event = "agent.dispatch"
+match.target = "reviewer"
+`)
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+
+	first, err := resolver.EventWithResult(topology.EventAgentDispatch, map[string]any{
+		"target": "worker",
+		"name":   "worker-squ-200",
+		"ticket": "SQU-200",
+	})
+	if err != nil {
+		t.Fatalf("worker dispatch: %v", err)
+	}
+	if len(first.Outcomes) != 1 || first.Outcomes[0].Action != "dispatched" {
+		t.Fatalf("worker outcomes = %+v", first.Outcomes)
+	}
+	second, err := resolver.EventWithResult(topology.EventAgentDispatch, map[string]any{
+		"target": "reviewer",
+		"name":   "reviewer-squ-201",
+		"ticket": "SQU-201",
+	})
+	if err != nil {
+		t.Fatalf("reviewer dispatch: %v", err)
+	}
+	if len(second.Outcomes) != 1 || second.Outcomes[0].Action != "queued" || second.Outcomes[0].Reason != QueueReasonLockHeld {
+		t.Fatalf("reviewer outcomes = %+v, want lock-held queue", second.Outcomes)
+	}
+
+	if _, err := m.Stop("worker-squ-200"); err != nil {
+		t.Fatalf("stop worker: %v", err)
+	}
+	if err := m.WaitForReaper("worker-squ-200", 5*time.Second); err != nil {
+		t.Fatalf("wait worker reap: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for fake.callCount() < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if fake.callCount() != 2 {
+		t.Fatalf("spawn calls=%d, want cross-instance lock waiter dispatched on release", fake.callCount())
+	}
+	items, err := ListQueueItems(root)
+	if err != nil {
+		t.Fatalf("ListQueueItems: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("queue should be empty after cross-instance drain, items=%+v", items)
+	}
+	snapshots := resolver.LockSnapshots()
+	if len(snapshots) != 1 || snapshots[0].Used != 1 || snapshots[0].Holders[0].Instance != "reviewer-squ-201" {
+		t.Fatalf("snapshots after drain = %+v", snapshots)
+	}
+	_, _ = m.Stop("reviewer-squ-201")
+	_ = m.WaitForReaper("reviewer-squ-201", 5*time.Second)
+}
+
 func TestEvent_LockRecoveryDropsDeadLedgerRows(t *testing.T) {
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)
