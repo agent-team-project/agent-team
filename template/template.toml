@@ -58,3 +58,15 @@ key         = "health.terminal_retention"
 type        = "string"
 default     = "0"
 description = "How long terminal jobs and daemon instance records remain in the live registry before maintenance archives them. Set to 14d to retain two weeks, or 0 to disable archival."
+
+[[parameter]]
+key         = "notifications.phase_transitions"
+type        = "list<string>"
+default     = ["blocked"]
+description = "Status phase transitions the daemon publishes to #supervisor. Supported values: idle, blocked."
+
+[[parameter]]
+key         = "notifications.idle_renotify"
+type        = "string"
+default     = "0"
+description = "How often to repeat an idle notification while an instance remains idle. Set to 0 to disable repeats."

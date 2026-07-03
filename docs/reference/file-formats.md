@@ -14,6 +14,10 @@ ticket_prefix = "SQU"
 [health]
 status_stale_after = "10m"
 job_stale_after = "24h"
+
+[notifications]
+phase_transitions = ["blocked"]
+idle_renotify = "0"
 ```
 
 Read by skills and the CLI.
@@ -22,6 +26,12 @@ Read by skills and the CLI.
 instance `status.toml` files are marked stale in `ps`, `health`, `monitor`, and
 related views. `job_stale_after` controls stale queued/running job triage. Set
 either value to `"0"` to disable that stale check.
+
+`[notifications]` is optional. `phase_transitions` controls which daemon-observed
+instance `status.toml` phase transitions are published to `#supervisor`.
+`"blocked"` reports any transition into blocked; `"idle"` reports busy-to-idle
+transitions. `idle_renotify` is a duration string such as `"30m"`; `"0"` disables
+repeat idle notifications.
 
 ## `.agent_team/.template.lock`
 
