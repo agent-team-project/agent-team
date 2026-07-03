@@ -1,7 +1,6 @@
 ---
 name: ticket-manager
 description: Manages Linear tickets for the consumer's project when Linear is configured — fetch, search, comment, update state, create issues, route into the right project, label appropriately. Invoke when the user wants ticket progress updated or a new ticket opened.
-model: claude-opus-4-7
 allowedTools:
   - Bash
   - Read

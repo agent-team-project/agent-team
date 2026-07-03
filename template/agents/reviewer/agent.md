@@ -6,7 +6,6 @@ description: |
   **Spawn recipe:**
   - Daemon mode: pipelines dispatch this agent automatically for `review` steps; direct dispatch posts an `agent.dispatch` event with target `reviewer` and the PR/job context in the kickoff.
   - Legacy teammate mode: spawn via Agent with subagent_type="reviewer" and the PR URL in the prompt. No worktree isolation needed — reviewers read, they don't write.
-model: claude-opus-4-7
 allowedTools:
   - "*"
 ---
