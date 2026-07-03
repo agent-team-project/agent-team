@@ -461,17 +461,18 @@ func pipelineJobSteps(pipeline *topology.Pipeline) []jobstore.Step {
 			status = jobstore.StatusBlocked
 		}
 		steps = append(steps, jobstore.Step{
-			ID:           step.ID,
-			Label:        step.Label,
-			Description:  step.Description,
-			Instructions: step.Instructions,
-			Target:       step.Target,
-			Status:       status,
-			After:        append([]string(nil), step.After...),
-			Gate:         step.Gate,
-			Optional:     step.Optional,
-			Timeout:      pipelineStepTimeoutString(step.Timeout),
-			MaxAttempts:  step.MaxAttempts,
+			ID:               step.ID,
+			Label:            step.Label,
+			Description:      step.Description,
+			Instructions:     step.Instructions,
+			Target:           step.Target,
+			Status:           status,
+			After:            append([]string(nil), step.After...),
+			Gate:             step.Gate,
+			ApprovalRequired: step.ApprovalRequired,
+			Optional:         step.Optional,
+			Timeout:          pipelineStepTimeoutString(step.Timeout),
+			MaxAttempts:      step.MaxAttempts,
 		})
 	}
 	return steps

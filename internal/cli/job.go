@@ -1697,20 +1697,21 @@ func jobStepsFromPipeline(p *topology.Pipeline) []job.Step {
 			status = job.StatusBlocked
 		}
 		steps = append(steps, job.Step{
-			ID:           step.ID,
-			Label:        step.Label,
-			Description:  step.Description,
-			Instructions: step.Instructions,
-			Target:       step.Target,
-			Workspace:    step.Workspace,
-			Runtime:      step.Runtime,
-			RuntimeBin:   step.RuntimeBin,
-			Status:       status,
-			After:        append([]string(nil), step.After...),
-			Gate:         step.Gate,
-			Optional:     step.Optional,
-			Timeout:      formatPipelineStepTimeout(step.Timeout),
-			MaxAttempts:  step.MaxAttempts,
+			ID:               step.ID,
+			Label:            step.Label,
+			Description:      step.Description,
+			Instructions:     step.Instructions,
+			Target:           step.Target,
+			Workspace:        step.Workspace,
+			Runtime:          step.Runtime,
+			RuntimeBin:       step.RuntimeBin,
+			Status:           status,
+			After:            append([]string(nil), step.After...),
+			Gate:             step.Gate,
+			ApprovalRequired: step.ApprovalRequired,
+			Optional:         step.Optional,
+			Timeout:          formatPipelineStepTimeout(step.Timeout),
+			MaxAttempts:      step.MaxAttempts,
 		})
 	}
 	return steps
@@ -11219,6 +11220,9 @@ func jobReadyRowFromJob(j *job.Job, next jobNextResult) jobReadyRow {
 		row.StepStatus = next.Step.Status
 		row.Instance = next.Step.Instance
 		row.Gate = next.Step.Gate
+		row.ApprovalRequired = next.Step.ApprovalRequired
+		row.ApprovalID = next.Step.ApprovalID
+		row.ApprovalStatus = next.Step.ApprovalStatus
 		row.Optional = next.Step.Optional
 		row.Attempts = next.Step.Attempts
 		row.MaxAttempts = next.Step.MaxAttempts
@@ -11241,7 +11245,13 @@ func actionsForJobReadyRow(row jobReadyRow) []string {
 	case "blocked":
 		if row.Gate == job.StepGateManual {
 			if len(row.WaitingFor) == 0 && strings.TrimSpace(row.StepID) != "" {
+				if row.ApprovalRequired {
+					return approvalGateDecisionActions(row.JobID, row.StepID, row.ApprovalID)
+				}
 				return manualGateDecisionActions(row.JobID, row.StepID)
+			}
+			if row.ApprovalRequired {
+				return approvalGateDecisionActions(row.JobID, row.StepID, row.ApprovalID)
 			}
 			return nil
 		}
@@ -13339,58 +13349,64 @@ type jobExplainNext struct {
 }
 
 type jobExplainStep struct {
-	ID           string     `json:"id"`
-	Label        string     `json:"label,omitempty"`
-	Description  string     `json:"description,omitempty"`
-	Instructions string     `json:"instructions,omitempty"`
-	Target       string     `json:"target"`
-	Workspace    string     `json:"workspace,omitempty"`
-	Runtime      string     `json:"runtime,omitempty"`
-	RuntimeBin   string     `json:"runtime_bin,omitempty"`
-	Status       job.Status `json:"status"`
-	State        string     `json:"state"`
-	Ready        bool       `json:"ready,omitempty"`
-	Instance     string     `json:"instance,omitempty"`
-	After        []string   `json:"after,omitempty"`
-	Gate         string     `json:"gate,omitempty"`
-	Optional     bool       `json:"optional,omitempty"`
-	Timeout      string     `json:"timeout,omitempty"`
-	Attempts     int        `json:"attempts,omitempty"`
-	MaxAttempts  int        `json:"max_attempts,omitempty"`
-	WaitingFor   []string   `json:"waiting_for,omitempty"`
-	Actions      []string   `json:"actions,omitempty"`
-	Skipped      bool       `json:"skipped,omitempty"`
-	SkipReason   string     `json:"skip_reason,omitempty"`
-	StartedAt    string     `json:"started_at,omitempty"`
-	FinishedAt   string     `json:"finished_at,omitempty"`
-	Message      string     `json:"message"`
+	ID               string             `json:"id"`
+	Label            string             `json:"label,omitempty"`
+	Description      string             `json:"description,omitempty"`
+	Instructions     string             `json:"instructions,omitempty"`
+	Target           string             `json:"target"`
+	Workspace        string             `json:"workspace,omitempty"`
+	Runtime          string             `json:"runtime,omitempty"`
+	RuntimeBin       string             `json:"runtime_bin,omitempty"`
+	Status           job.Status         `json:"status"`
+	State            string             `json:"state"`
+	Ready            bool               `json:"ready,omitempty"`
+	Instance         string             `json:"instance,omitempty"`
+	After            []string           `json:"after,omitempty"`
+	Gate             string             `json:"gate,omitempty"`
+	ApprovalRequired bool               `json:"approval_required,omitempty"`
+	ApprovalID       string             `json:"approval_id,omitempty"`
+	ApprovalStatus   job.ApprovalStatus `json:"approval_status,omitempty"`
+	Optional         bool               `json:"optional,omitempty"`
+	Timeout          string             `json:"timeout,omitempty"`
+	Attempts         int                `json:"attempts,omitempty"`
+	MaxAttempts      int                `json:"max_attempts,omitempty"`
+	WaitingFor       []string           `json:"waiting_for,omitempty"`
+	Actions          []string           `json:"actions,omitempty"`
+	Skipped          bool               `json:"skipped,omitempty"`
+	SkipReason       string             `json:"skip_reason,omitempty"`
+	StartedAt        string             `json:"started_at,omitempty"`
+	FinishedAt       string             `json:"finished_at,omitempty"`
+	Message          string             `json:"message"`
 }
 
 type jobReadyRow struct {
-	JobID              string     `json:"job_id"`
-	Ticket             string     `json:"ticket"`
-	Pipeline           string     `json:"pipeline,omitempty"`
-	JobStatus          job.Status `json:"job_status"`
-	State              string     `json:"state"`
-	Actions            []string   `json:"actions,omitempty"`
-	StepID             string     `json:"step_id,omitempty"`
-	Label              string     `json:"label,omitempty"`
-	Description        string     `json:"description,omitempty"`
-	Instructions       string     `json:"instructions,omitempty"`
-	Target             string     `json:"target,omitempty"`
-	Workspace          string     `json:"workspace,omitempty"`
-	Runtime            string     `json:"runtime,omitempty"`
-	RuntimeBin         string     `json:"runtime_bin,omitempty"`
-	StepStatus         job.Status `json:"step_status,omitempty"`
-	Instance           string     `json:"instance,omitempty"`
-	Gate               string     `json:"gate,omitempty"`
-	Optional           bool       `json:"optional,omitempty"`
-	Attempts           int        `json:"attempts,omitempty"`
-	MaxAttempts        int        `json:"max_attempts,omitempty"`
-	WaitingFor         []string   `json:"waiting_for,omitempty"`
-	UpdatedAt          time.Time  `json:"updated_at"`
-	Message            string     `json:"message"`
-	ParallelReadySteps int        `json:"parallel_ready_steps,omitempty"`
+	JobID              string             `json:"job_id"`
+	Ticket             string             `json:"ticket"`
+	Pipeline           string             `json:"pipeline,omitempty"`
+	JobStatus          job.Status         `json:"job_status"`
+	State              string             `json:"state"`
+	Actions            []string           `json:"actions,omitempty"`
+	StepID             string             `json:"step_id,omitempty"`
+	Label              string             `json:"label,omitempty"`
+	Description        string             `json:"description,omitempty"`
+	Instructions       string             `json:"instructions,omitempty"`
+	Target             string             `json:"target,omitempty"`
+	Workspace          string             `json:"workspace,omitempty"`
+	Runtime            string             `json:"runtime,omitempty"`
+	RuntimeBin         string             `json:"runtime_bin,omitempty"`
+	StepStatus         job.Status         `json:"step_status,omitempty"`
+	Instance           string             `json:"instance,omitempty"`
+	Gate               string             `json:"gate,omitempty"`
+	ApprovalRequired   bool               `json:"approval_required,omitempty"`
+	ApprovalID         string             `json:"approval_id,omitempty"`
+	ApprovalStatus     job.ApprovalStatus `json:"approval_status,omitempty"`
+	Optional           bool               `json:"optional,omitempty"`
+	Attempts           int                `json:"attempts,omitempty"`
+	MaxAttempts        int                `json:"max_attempts,omitempty"`
+	WaitingFor         []string           `json:"waiting_for,omitempty"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	Message            string             `json:"message"`
+	ParallelReadySteps int                `json:"parallel_ready_steps,omitempty"`
 }
 
 func updateJobStep(j *job.Job, stepID string, status job.Status, update jobStepUpdate) error {
@@ -13884,6 +13900,9 @@ func actionsForJobExplainStep(j *job.Job, step *job.Step, state string) []string
 	case state == "ready":
 		return []string{fmt.Sprintf("agent-team job advance %s", j.ID)}
 	case state == "waiting" && step.Gate == job.StepGateManual:
+		if step.ApprovalRequired {
+			return approvalGateDecisionActions(j.ID, step.ID, step.ApprovalID)
+		}
 		return manualGateDecisionActions(j.ID, step.ID)
 	case state == "waiting" && step.Gate == job.StepGatePR:
 		return prGateRecoveryActions(j.ID)
@@ -13898,6 +13917,16 @@ func manualGateDecisionActions(jobID, stepID string) []string {
 	return []string{
 		fmt.Sprintf("agent-team job approve %s --step %s", jobID, stepID),
 		fmt.Sprintf("agent-team job reject %s --step %s", jobID, stepID),
+	}
+}
+
+func approvalGateDecisionActions(jobID, stepID, approvalID string) []string {
+	if strings.TrimSpace(approvalID) == "" {
+		return []string{fmt.Sprintf("agent-team approval request --job %s --step %s --title ... --body-file <path>", jobID, stepID)}
+	}
+	return []string{
+		fmt.Sprintf("agent-team approval approve --job %s %s", jobID, approvalID),
+		fmt.Sprintf("agent-team approval reject --job %s %s", jobID, approvalID),
 	}
 }
 
@@ -13965,6 +13994,13 @@ func unmetJobStepDependencies(j *job.Job, step *job.Step) []string {
 
 func jobStepWaitingFor(j *job.Job, step *job.Step) []string {
 	waiting := append([]string(nil), unmetJobStepDependencies(j, step)...)
+	if stepApprovalGatePending(step) {
+		if strings.TrimSpace(step.ApprovalID) != "" {
+			waiting = append(waiting, "approval:"+step.ApprovalID)
+		} else {
+			waiting = append(waiting, "approval")
+		}
+	}
 	if stepPRGatePending(j, step) {
 		waiting = append(waiting, "pr")
 	}
@@ -14018,6 +14054,10 @@ func stepManualGatePending(step *job.Step) bool {
 	return job.StepManualGatePending(step)
 }
 
+func stepApprovalGatePending(step *job.Step) bool {
+	return job.StepApprovalGatePending(step)
+}
+
 func selectManualGateForApproval(j *job.Job, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
 	if j == nil || len(j.Steps) == 0 {
@@ -14035,19 +14075,41 @@ func selectManualGateForApproval(j *job.Job, requested string) (string, error) {
 		if step.Status != job.StatusBlocked {
 			return "", fmt.Errorf("step %q is %s, not blocked", requested, step.Status)
 		}
+		if err := validateManualGateStepForJobApprove(j, step); err != nil {
+			return "", err
+		}
 		return step.ID, nil
 	}
 	next := inspectNextJobStep(j)
 	if next.Step != nil && next.Step.Gate == job.StepGateManual && next.Step.Status == job.StatusBlocked {
+		if err := validateManualGateStepForJobApprove(j, next.Step); err != nil {
+			return "", err
+		}
 		return next.Step.ID, nil
 	}
 	for i := range j.Steps {
 		step := &j.Steps[i]
 		if step.Gate == job.StepGateManual && step.Status == job.StatusBlocked {
+			if err := validateManualGateStepForJobApprove(j, step); err != nil {
+				return "", err
+			}
 			return step.ID, nil
 		}
 	}
 	return "", fmt.Errorf("job has no blocked manual gate")
+}
+
+func validateManualGateStepForJobApprove(j *job.Job, step *job.Step) error {
+	if step == nil || !step.ApprovalRequired {
+		return nil
+	}
+	if step.ApprovalStatus == job.ApprovalStatusApproved {
+		return nil
+	}
+	if strings.TrimSpace(step.ApprovalID) == "" {
+		return fmt.Errorf("step %q requires a linked approval request; create one with `agent-team approval request --job %s --step %s --title ... --body-file <path>`", step.ID, j.ID, step.ID)
+	}
+	return fmt.Errorf("step %q requires approval %q to be approved first; use `agent-team approval approve --job %s %s`", step.ID, step.ApprovalID, j.ID, step.ApprovalID)
 }
 
 func optionalSendMessageBody(flagValue, fileValue string, positional []string) (string, error) {
@@ -16596,6 +16658,15 @@ func renderJobDetailWithRuntime(w io.Writer, teamDir string, j *job.Job, queueIt
 			}
 			if step.Gate != "" {
 				parts = append(parts, "gate="+step.Gate)
+			}
+			if step.ApprovalRequired {
+				parts = append(parts, "approval_required=true")
+				if strings.TrimSpace(step.ApprovalID) != "" {
+					parts = append(parts, "approval_id="+strings.TrimSpace(step.ApprovalID))
+				}
+				if step.ApprovalStatus != "" {
+					parts = append(parts, "approval_status="+string(step.ApprovalStatus))
+				}
 			}
 			if strings.TrimSpace(step.Timeout) != "" {
 				parts = append(parts, "timeout="+strings.TrimSpace(step.Timeout))
