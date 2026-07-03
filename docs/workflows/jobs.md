@@ -352,6 +352,23 @@ For pipeline jobs it resets the first failed step whose dependencies are
 satisfied, then advances work. Add `--wait` when recovery automation should
 block until the retried job reaches a lifecycle status or event.
 
+## Bouncing Review Findings
+
+```sh
+agent-team job bounce squ-42 --findings-file review.md --dry-run --commands
+agent-team job bounce squ-42 --findings-file review.md --advance
+agent-team job bounce squ-42 --step implement --findings "Fix the edge case" --advance --wait --wait-status running
+agent-team job update squ-42 --kickoff-file updated-kickoff.md
+```
+
+Use `job bounce` for review feedback that should send a completed pipeline step
+back to its owner. The command appends findings to the job kickoff under a
+numbered `## Review findings (bounce N)` section, re-queues the target step,
+clears stale downstream step ownership, and records a `bounced` audit event.
+When `--step` is omitted, it handles the common case by selecting the single
+completed step with an owning instance. Add `--advance` to dispatch the
+re-queued step immediately.
+
 ## Timing Out Stale Jobs
 
 ```sh

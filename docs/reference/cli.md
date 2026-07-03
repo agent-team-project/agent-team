@@ -131,7 +131,8 @@ Run `agent-team shortcuts` for the live top-level alias list, or `agent-team sho
 | `agent-team job block <job-id>` | Mark a job blocked and record the reason; add `--dry-run --commands` for the apply command |
 | `agent-team job unblock <job-id>` | Send answer and mark blocked job running; add `--dry-run --commands` for the apply command |
 | `agent-team job reopen\|retry <job-id>` | Reopen/retry a failed or closed job; add `--dry-run --commands` for the apply command or `--dispatch --wait --wait-next-state`/`--wait-step` for pipeline recovery handoff |
-| `agent-team job update <job-id>` | Update job metadata; add `--dry-run --commands` for the apply command, `--advance --dry-run` to preview unblocked steps, or `--advance --wait --wait-next-state`/`--wait-step` for PR-gate handoff |
+| `agent-team job bounce <job-id>` | Append review findings to kickoff and re-queue a completed pipeline step; add `--advance` to dispatch it immediately |
+| `agent-team job update <job-id>` | Update job metadata or kickoff; add `--dry-run --commands` for the apply command, `--advance --dry-run` to preview unblocked steps, or `--advance --wait --wait-next-state`/`--wait-step` for PR-gate handoff |
 | `agent-team job hold <job-id>` | Pause readiness/advance automation without changing lifecycle status; use `--all` for repo-wide freezes, add `--for` or `--until` for a deadline, or `--dry-run --commands` for the apply command |
 | `agent-team job release <job-id>` | Resume readiness/advance automation for a held job; use `--all --expired` for elapsed time-boxed holds or `--dry-run --commands` for the apply command |
 | `agent-team job close <job-id>` | Mark done or failed; add `--dry-run --commands` for the apply command |

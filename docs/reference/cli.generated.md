@@ -2130,6 +2130,7 @@ Subcommands:
 - `agent-team job approve` - Approve a blocked manual pipeline gate.
 - `agent-team job attach` - Attach to a job&#39;s owning instance.
 - `agent-team job block` - Mark a job blocked with an operator reason.
+- `agent-team job bounce` - Re-queue a pipeline step with review findings.
 - `agent-team job cancel` - Cancel a job as failed.
 - `agent-team job cleanup` - Remove a done job&#39;s owned worker worktree and branch after merge.
 - `agent-team job close` - Close a job as done or failed.
@@ -2321,6 +2322,41 @@ Flags:
       --message string        Blocked reason recorded on the job.
       --message-file string   Read blocked reason from a file, or '-' for stdin.
       --repo string           Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team job bounce`
+
+Re-queue a pipeline step with review findings.
+
+Re-queue a pipeline step with review findings appended to the job kickoff. By default this selects the common review-bounce target: the single completed step with an owning instance. Pass --step to target a specific step.
+
+```text
+agent-team job bounce <job-id> [flags]
+```
+
+Flags:
+
+```text
+      --advance                   After recording the bounce, dispatch the re-queued step.
+      --commands                  With --dry-run, print the matching job bounce apply command when the preview has actionable work.
+      --dry-run                   Preview the bounce and optional advance dispatch without writing job or daemon state.
+      --fail-on-failed            With --wait, exit 1 if the job resolves to failed.
+      --findings string           Review findings to append to the job kickoff.
+      --findings-file string      Read review findings from a file, or '-' for stdin.
+      --format string             Render the updated job or advance result with a Go template, e.g. '{{.ID}} {{.Status}}' or '{{.Job.ID}} {{.Step.ID}}'.
+      --json                      Emit the updated job or advance result as JSON.
+      --repo string               Repo root containing .agent_team. (default "<repo>")
+      --runtime string            Runtime profile for --advance dispatch (claude or codex). Overrides env and repo config.
+      --runtime-bin string        Runtime binary for --advance dispatch. Overrides env and repo config.
+      --step string               Pipeline step to re-queue. Defaults to the single completed step with an owning instance.
+      --wait                      With --advance, wait for the job to reach a lifecycle status, event, or next-step state.
+      --wait-event strings        With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration    Polling interval with --wait. (default 500ms)
+      --wait-next-state strings   With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --wait-status strings       With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-step string          With --wait, pipeline step id that must be the current next step.
+      --wait-timeout duration     Maximum time to wait with --wait (0 = no timeout).
+      --workspace string          Workspace mode for --advance: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team job cancel`
@@ -4083,6 +4119,8 @@ Flags:
       --format string             Render the updated job or advance result with a Go template, e.g. '{{.ID}} {{.Status}}' or '{{.Job.ID}} {{.Step.ID}}'.
       --instance string           Set owning instance.
       --json                      Emit the updated job or advance result as JSON.
+      --kickoff string            Set kickoff text for future dispatches.
+      --kickoff-file string       Read kickoff text from a file, or '-' for stdin.
       --message string            Status message recorded on the job.
       --pr string                 Set PR URL or number.
       --repo string               Repo root containing .agent_team. (default "<repo>")

@@ -7993,6 +7993,204 @@ func TestJobRetryDispatchResetsFailedPipelineStep(t *testing.T) {
 	}
 }
 
+func TestJobBounceRequeuesCompletedStepAndAudits(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-162",
+		Ticket:    "SQU-162",
+		Target:    "worker",
+		Kickoff:   "SQU-162: implement the ticket",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusBlocked,
+		PR:        "https://github.com/acme/repo/pull/162",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusDone, Instance: "worker-squ-162-implement", StartedAt: now.Add(-20 * time.Minute), FinishedAt: now.Add(-10 * time.Minute)},
+			{ID: "review", Target: "reviewer", Status: job.StatusRunning, Instance: "reviewer-squ-162-review", After: []string{"implement"}, StartedAt: now.Add(-9 * time.Minute)},
+			{ID: "approve", Target: "manager", Status: job.StatusBlocked, After: []string{"review"}, Gate: job.StepGateManual},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"job", "bounce", "squ-162", "--repo", tmp, "--findings", "1. fix missing audit coverage", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("job bounce dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview jobBouncePreview
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode bounce preview: %v\nbody=%s", err, dryOut.String())
+	}
+	if !preview.DryRun || preview.Step == nil || preview.Step.ID != "implement" || preview.Bounce != 1 {
+		t.Fatalf("preview = %+v", preview)
+	}
+	if preview.Job.Steps[0].Status != job.StatusQueued || preview.Job.Steps[0].Instance != "" || preview.Job.Steps[1].Status != job.StatusBlocked || preview.Job.Steps[1].Instance != "" {
+		t.Fatalf("preview job steps = %+v", preview.Job.Steps)
+	}
+	if !strings.Contains(preview.Job.Kickoff, "## Review findings (bounce 1)") || !strings.Contains(preview.Job.Kickoff, "fix missing audit coverage") {
+		t.Fatalf("preview kickoff = %q", preview.Job.Kickoff)
+	}
+	unchanged, err := job.Read(teamDir, "squ-162")
+	if err != nil {
+		t.Fatalf("read unchanged job: %v", err)
+	}
+	if unchanged.Steps[0].Status != job.StatusDone || unchanged.Steps[1].Status != job.StatusRunning {
+		t.Fatalf("dry-run mutated job = %+v", unchanged)
+	}
+	dryEvents, err := job.ListEvents(teamDir, "squ-162")
+	if err != nil {
+		t.Fatalf("ListEvents dry-run: %v", err)
+	}
+	if len(dryEvents) != 0 {
+		t.Fatalf("dry-run wrote events = %+v", dryEvents)
+	}
+
+	findingsPath := filepath.Join(tmp, "findings.md")
+	if err := os.WriteFile(findingsPath, []byte("2. preserve command rendering\n"), 0o644); err != nil {
+		t.Fatalf("write findings file: %v", err)
+	}
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "bounce", "squ-162", "--repo", tmp, "--step", "implement", "--findings-file", findingsPath, "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("job bounce dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "bounce", "squ-162", "--repo", tmp, "--step", "implement", "--findings-file", findingsPath}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("job bounce --commands = %q, want %q", got, wantCommand)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "bounce", "squ-162", "--repo", tmp, "--findings-file", findingsPath, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job bounce: %v\nstderr=%s", err, stderr.String())
+	}
+	var bounced job.Job
+	if err := json.Unmarshal(out.Bytes(), &bounced); err != nil {
+		t.Fatalf("decode bounced job: %v\nbody=%s", err, out.String())
+	}
+	if bounced.Status != job.StatusQueued || bounced.Steps[0].Status != job.StatusQueued || bounced.Steps[0].Instance != "" || bounced.Steps[1].Status != job.StatusBlocked || bounced.Steps[1].Instance != "" {
+		t.Fatalf("bounced job = %+v", bounced)
+	}
+	if !bounced.Steps[0].StartedAt.IsZero() || !bounced.Steps[0].FinishedAt.IsZero() || !bounced.Steps[1].StartedAt.IsZero() || !bounced.Steps[1].FinishedAt.IsZero() {
+		t.Fatalf("bounce kept stale timestamps: %+v", bounced.Steps)
+	}
+	if !strings.Contains(bounced.Kickoff, "## Review findings (bounce 1)") || !strings.Contains(bounced.Kickoff, "preserve command rendering") {
+		t.Fatalf("bounced kickoff = %q", bounced.Kickoff)
+	}
+	events, err := job.ListEvents(teamDir, "squ-162")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "bounced" || events[0].Data["step"] != "implement" || events[0].Data["bounce"] != "1" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestJobBounceAdvanceDispatchesRequeuedStep(t *testing.T) {
+	target, mgr, cleanup := setupDispatchCommandRepo(t)
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "squ-163",
+		Ticket:    "SQU-163",
+		Target:    "worker",
+		Kickoff:   "SQU-163: implement the ticket",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusBlocked,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Workspace: "worktree", Status: job.StatusDone, Instance: "worker-squ-163-implement", StartedAt: now.Add(-20 * time.Minute), FinishedAt: now.Add(-10 * time.Minute)},
+			{ID: "review", Target: "worker", Status: job.StatusDone, Instance: "worker-squ-163-review", After: []string{"implement"}, StartedAt: now.Add(-9 * time.Minute), FinishedAt: now.Add(-5 * time.Minute)},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	dry := NewRootCmd()
+	dryOut, dryErr := &bytes.Buffer{}, &bytes.Buffer{}
+	dry.SetOut(dryOut)
+	dry.SetErr(dryErr)
+	dry.SetArgs([]string{"job", "bounce", "squ-163", "--repo", target, "--step", "implement", "--findings", "repair the edge case", "--advance", "--workspace", "repo", "--dry-run", "--json"})
+	if err := dry.Execute(); err != nil {
+		t.Fatalf("job bounce --advance dry-run: %v\nstderr=%s", err, dryErr.String())
+	}
+	var preview jobAdvancePreview
+	if err := json.Unmarshal(dryOut.Bytes(), &preview); err != nil {
+		t.Fatalf("decode advance preview: %v\nbody=%s", err, dryOut.String())
+	}
+	if !preview.DryRun || preview.Step == nil || preview.Step.ID != "implement" || preview.Dispatch == nil {
+		t.Fatalf("preview = %+v", preview)
+	}
+	payload := preview.Dispatch.Preview.Payload
+	kickoff, _ := payload["kickoff"].(string)
+	if payload["pipeline_step"] != "implement" || payload["workspace"] != "repo" || !strings.Contains(kickoff, "## Review findings (bounce 1)") || !strings.Contains(kickoff, "repair the edge case") {
+		t.Fatalf("preview payload = %+v", payload)
+	}
+	unchanged, err := job.Read(teamDir, "squ-163")
+	if err != nil {
+		t.Fatalf("read unchanged job: %v", err)
+	}
+	if unchanged.Steps[0].Status != job.StatusDone || unchanged.Steps[1].Status != job.StatusDone {
+		t.Fatalf("dry-run mutated job = %+v", unchanged)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "bounce", "squ-163", "--repo", target, "--step", "implement", "--findings", "repair the edge case", "--advance", "--workspace", "repo", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job bounce --advance: %v\nstderr=%s", err, stderr.String())
+	}
+	var result jobAdvanceResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode bounce advance: %v\nbody=%s", err, out.String())
+	}
+	if result.Step == nil || result.Step.ID != "implement" || result.Step.Status != job.StatusRunning || result.Step.Instance == "" {
+		t.Fatalf("result = %+v", result)
+	}
+	updated, err := job.Read(teamDir, "squ-163")
+	if err != nil {
+		t.Fatalf("read updated job: %v", err)
+	}
+	if updated.LastEvent != "advance_dispatched" || updated.Steps[0].Status != job.StatusRunning || updated.Steps[1].Status != job.StatusBlocked || !strings.Contains(updated.Kickoff, "## Review findings (bounce 1)") {
+		t.Fatalf("updated = %+v", updated)
+	}
+	events, err := job.ListEvents(teamDir, "squ-163")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	foundAdvance := false
+	for _, event := range events[1:] {
+		if event.Type == "advance_dispatched" {
+			foundAdvance = true
+			break
+		}
+	}
+	if len(events) < 2 || events[0].Type != "bounced" || !foundAdvance {
+		t.Fatalf("events = %+v", events)
+	}
+	stopAndWaitForTest(t, mgr, result.Step.Instance)
+}
+
 func TestJobReopenRefusesRunningUnlessForced(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -8188,6 +8386,83 @@ func TestJobUpdateRequiresChange(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "pass at least one update flag") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestJobUpdateKickoffFileAndAudit(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	if err := job.Write(teamDir, &job.Job{
+		ID:        "squ-72",
+		Ticket:    "SQU-72",
+		Target:    "worker",
+		Kickoff:   "SQU-72: old kickoff",
+		Status:    job.StatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	kickoffPath := filepath.Join(tmp, "kickoff.txt")
+	if err := os.WriteFile(kickoffPath, []byte("investigate review feedback\n"), 0o644); err != nil {
+		t.Fatalf("write kickoff file: %v", err)
+	}
+
+	commands := NewRootCmd()
+	commandsOut, commandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	commands.SetOut(commandsOut)
+	commands.SetErr(commandsErr)
+	commands.SetArgs([]string{"job", "update", "squ-72", "--repo", tmp, "--kickoff-file", kickoffPath, "--dry-run", "--commands"})
+	if err := commands.Execute(); err != nil {
+		t.Fatalf("job update kickoff dry-run commands: %v\nstderr=%s", err, commandsErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "update", "squ-72", "--repo", tmp, "--kickoff-file", kickoffPath}), " ")
+	if got := strings.TrimSpace(commandsOut.String()); got != wantCommand {
+		t.Fatalf("job update kickoff --commands = %q, want %q", got, wantCommand)
+	}
+	unchanged, err := job.Read(teamDir, "squ-72")
+	if err != nil {
+		t.Fatalf("read unchanged job: %v", err)
+	}
+	if unchanged.Kickoff != "SQU-72: old kickoff" {
+		t.Fatalf("dry-run changed kickoff = %q", unchanged.Kickoff)
+	}
+
+	update := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	update.SetOut(out)
+	update.SetErr(stderr)
+	update.SetArgs([]string{"job", "update", "squ-72", "--repo", tmp, "--kickoff-file", kickoffPath, "--json"})
+	if err := update.Execute(); err != nil {
+		t.Fatalf("job update kickoff: %v\nstderr=%s", err, stderr.String())
+	}
+	var updated job.Job
+	if err := json.Unmarshal(out.Bytes(), &updated); err != nil {
+		t.Fatalf("decode updated job: %v\nbody=%s", err, out.String())
+	}
+	if updated.Kickoff != "SQU-72: investigate review feedback" || updated.LastStatus != "updated kickoff" {
+		t.Fatalf("updated job = %+v", updated)
+	}
+	events, err := job.ListEvents(teamDir, "squ-72")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "updated" || events[0].Data["kickoff"] != "SQU-72: investigate review feedback" {
+		t.Fatalf("events = %+v", events)
+	}
+
+	conflict := NewRootCmd()
+	conflictOut, conflictErr := &bytes.Buffer{}, &bytes.Buffer{}
+	conflict.SetOut(conflictOut)
+	conflict.SetErr(conflictErr)
+	conflict.SetArgs([]string{"job", "update", "squ-72", "--repo", tmp, "--kickoff", "one", "--kickoff-file", kickoffPath})
+	if err := conflict.Execute(); err == nil {
+		t.Fatalf("job update accepted conflicting kickoff sources")
+	}
+	if !strings.Contains(conflictErr.String(), "provide kickoff text using only one of --kickoff or --kickoff-file") {
+		t.Fatalf("conflict stderr = %q", conflictErr.String())
 	}
 }
 
