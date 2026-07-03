@@ -23,8 +23,10 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/jamesaud/agent-team/internal/intake"
 	"github.com/jamesaud/agent-team/internal/job"
+	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
 )
 
@@ -167,9 +169,12 @@ func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event,
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake %s: %v\n", provider, err)
 				return exitErr(2)
 			}
-			if reason := intakeIgnoreReason(cmd, target, provider, ev); reason != "" {
+			if reason, teamDir := intakeIgnoreReason(cmd, target, provider, ev); reason != "" {
 				if dryRun && commands {
 					return nil
+				}
+				if !dryRun {
+					appendIgnoredIntakeLifecycleEvent(teamDir, provider, reason, ev)
 				}
 				return renderIgnoredIntake(cmd.OutOrStdout(), intakePublishResult{Event: ev, Ignored: true, IgnoreReason: reason, DryRun: dryRun}, jsonOut, tmpl)
 			}
@@ -1394,6 +1399,9 @@ func linearWebhookTimestamp(body []byte) (time.Time, error) {
 
 func processIntakeServeEvent(teamDir, provider string, ev *intake.Event, opts intakeServeOptions) (*intakePublishResult, int, error) {
 	if reason := intakeIgnoreReasonForTeamDir(teamDir, provider, ev); reason != "" {
+		if !opts.DryRun {
+			appendIgnoredIntakeLifecycleEvent(teamDir, provider, reason, ev)
+		}
 		return &intakePublishResult{Event: ev, Ignored: true, IgnoreReason: reason, DryRun: opts.DryRun}, http.StatusOK, nil
 	}
 	if opts.DryRun {
@@ -1572,25 +1580,59 @@ func renderIntakeDryRun(w io.Writer, ev *intake.Event, jsonOut bool, tmpl *templ
 	return nil
 }
 
-func intakeIgnoreReason(cmd *cobra.Command, target, provider string, ev *intake.Event) string {
+func intakeIgnoreReason(cmd *cobra.Command, target, provider string, ev *intake.Event) (string, string) {
 	if provider != "linear" {
-		return ""
+		return "", ""
 	}
 	teamDir, err := resolveTeamDir(cmd, target)
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	return intakeIgnoreReasonForTeamDir(teamDir, provider, ev)
+	return intakeIgnoreReasonForTeamDir(teamDir, provider, ev), teamDir
 }
 
 func intakeIgnoreReasonForTeamDir(teamDir, provider string, ev *intake.Event) string {
 	if provider != "linear" {
 		return ""
 	}
-	if ignored, reason := intake.LinearSelfStatusChange(teamDir, ev); ignored {
+	if !linearStatusChangeWouldDispatch(teamDir, ev) {
+		return ""
+	}
+	agentUserID, err := intake.ResolveLinearAgentUserID(teamDir)
+	if err != nil || strings.TrimSpace(agentUserID) == "" {
+		return intake.LinearLoopProtectionUnavailableReason
+	}
+	if ignored, reason := intake.LinearSelfStatusChangeForUser(ev, agentUserID); ignored {
 		return reason
 	}
 	return ""
+}
+
+func linearStatusChangeWouldDispatch(teamDir string, ev *intake.Event) bool {
+	if ev == nil || ev.Type != "ticket.status_changed" {
+		return false
+	}
+	top, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil || top == nil {
+		return false
+	}
+	if len(top.ResolvePipelines(ev.Type, ev.Payload)) > 0 {
+		return true
+	}
+	return len(top.Resolve(ev.Type, ev.Payload)) > 0
+}
+
+func appendIgnoredIntakeLifecycleEvent(teamDir, provider, reason string, ev *intake.Event) {
+	payload := map[string]any{}
+	if ev != nil && ev.Payload != nil {
+		payload = ev.Payload
+	}
+	_ = daemon.AppendLifecycleEvent(daemon.DaemonRoot(teamDir), &daemon.LifecycleEvent{
+		Action:   "intake_ignored",
+		Instance: "intake:" + provider,
+		Ticket:   previewPayloadString(payload, "ticket"),
+		Message:  reason,
+	})
 }
 
 func renderIgnoredIntake(w io.Writer, result intakePublishResult, jsonOut bool, tmpl *template.Template) error {

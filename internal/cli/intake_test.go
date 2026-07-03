@@ -62,7 +62,7 @@ func TestIntakeLinearCreatesPipelineJob(t *testing.T) {
 }
 
 func TestIntakeLinearColumnTransitionDispatches(t *testing.T) {
-	target, _, cleanup := setupLinearColumnPipelineRepo(t, false, "")
+	target, _, cleanup := setupLinearColumnPipelineRepo(t, false, "agent-user")
 	defer cleanup()
 	teamDir := filepath.Join(target, ".agent_team")
 
@@ -95,7 +95,7 @@ func TestIntakeLinearColumnTransitionDispatches(t *testing.T) {
 }
 
 func TestIntakeLinearOtherColumnDoesNotDispatch(t *testing.T) {
-	target, _, cleanup := setupLinearColumnPipelineRepo(t, false, "")
+	target, _, cleanup := setupLinearColumnPipelineRepo(t, false, "agent-user")
 	defer cleanup()
 	teamDir := filepath.Join(target, ".agent_team")
 
@@ -154,10 +154,74 @@ func TestIntakeLinearSelfActorStatusChangeIgnored(t *testing.T) {
 	if len(messages) != 0 {
 		t.Fatalf("messages = %+v, want none", messages)
 	}
+	events, err := daemon.ListLifecycleEvents(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		t.Fatalf("list lifecycle events: %v", err)
+	}
+	if !hasIntakeIgnoredLifecycleEvent(events, "SQU-303", intake.LinearSelfStatusChangeReason) {
+		t.Fatalf("lifecycle events = %+v, want intake_ignored audit event", events)
+	}
+}
+
+func TestIntakeLinearDryRunPreviewResolvesViewerAndIgnoresSelfActor(t *testing.T) {
+	target, _, cleanup := setupLinearColumnPipelineRepo(t, false, "")
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+	viewerID := "17f38fa3-d788-4f96-abbc-dbdb7f435a33"
+	writeFakeLinearViewerScript(t, teamDir, viewerID)
+
+	payload := linearStatusPayload("SQU-306", "Ready for Agent", viewerID)
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "linear", "--payload", payload, "--target", target, "--dry-run", "--preview-triggers", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake linear self actor dry-run preview: %v\nstderr=%s", err, stderr.String())
+	}
+	var result intakePublishResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode intake json: %v\nbody=%s", err, out.String())
+	}
+	if !result.Ignored || result.IgnoreReason != intake.LinearSelfStatusChangeReason || result.Preview != nil || result.Outcome != nil {
+		t.Fatalf("result = %+v, want ignored self actor without preview dispatch", result)
+	}
+	if got := intake.LinearAgentUserID(teamDir); got != viewerID {
+		t.Fatalf("cached viewer id = %q, want %q", got, viewerID)
+	}
+	if _, err := job.Read(teamDir, "squ-306"); !os.IsNotExist(err) {
+		t.Fatalf("self actor dry-run wrote job, err=%v", err)
+	}
+}
+
+func TestIntakeLinearColumnDispatchFailsClosedWithoutViewerID(t *testing.T) {
+	target, _, cleanup := setupLinearColumnPipelineRepo(t, false, "")
+	defer cleanup()
+	teamDir := filepath.Join(target, ".agent_team")
+
+	payload := linearStatusPayload("SQU-307", "Ready for Agent", "human-user")
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"intake", "linear", "--payload", payload, "--target", target, "--dry-run", "--preview-triggers", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("intake linear unresolved viewer dry-run preview: %v\nstderr=%s", err, stderr.String())
+	}
+	var result intakePublishResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode intake json: %v\nbody=%s", err, out.String())
+	}
+	if !result.Ignored || result.IgnoreReason != intake.LinearLoopProtectionUnavailableReason || result.Preview != nil || result.Outcome != nil {
+		t.Fatalf("result = %+v, want ignored loop-protection failure without preview dispatch", result)
+	}
+	if _, err := job.Read(teamDir, "squ-307"); !os.IsNotExist(err) {
+		t.Fatalf("unresolved viewer dry-run wrote job, err=%v", err)
+	}
 }
 
 func TestIntakeLinearReentryDefaultNoopForTerminalJob(t *testing.T) {
-	target, _, cleanup := setupLinearColumnPipelineRepo(t, false, "")
+	target, _, cleanup := setupLinearColumnPipelineRepo(t, false, "agent-user")
 	defer cleanup()
 	teamDir := filepath.Join(target, ".agent_team")
 	payload := linearStatusPayload("SQU-304", "Ready for Agent", "human-user")
@@ -207,7 +271,7 @@ func TestIntakeLinearReentryDefaultNoopForTerminalJob(t *testing.T) {
 }
 
 func TestIntakeLinearReentryRedispatchesTerminalJobWhenEnabled(t *testing.T) {
-	target, _, cleanup := setupLinearColumnPipelineRepo(t, true, "")
+	target, _, cleanup := setupLinearColumnPipelineRepo(t, true, "agent-user")
 	defer cleanup()
 	teamDir := filepath.Join(target, ".agent_team")
 	payload := linearStatusPayload("SQU-305", "Ready for Agent", "human-user")
@@ -3566,6 +3630,27 @@ target = "manager"
 	return target, mgr, func() {
 		cleanupDaemon()
 		_ = os.RemoveAll(target)
+	}
+}
+
+func hasIntakeIgnoredLifecycleEvent(events []*daemon.LifecycleEvent, ticket, reason string) bool {
+	for _, ev := range events {
+		if ev != nil && ev.Action == "intake_ignored" && ev.Instance == "intake:linear" && ev.Ticket == ticket && ev.Message == reason {
+			return true
+		}
+	}
+	return false
+}
+
+func writeFakeLinearViewerScript(t *testing.T, teamDir, viewerID string) {
+	t.Helper()
+	script := filepath.Join(teamDir, "skills", "linear", "scripts", "linear-graphql.sh")
+	if err := os.MkdirAll(filepath.Dir(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf("#!/usr/bin/env bash\nprintf '%%s\\n' '{\"data\":{\"viewer\":{\"id\":\"%s\"}}}'\n", viewerID)
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
 	}
 }
 

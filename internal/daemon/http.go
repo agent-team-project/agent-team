@@ -534,7 +534,8 @@ func HandlerWithLog(m *InstanceManager, channels *ChannelStore, events *EventRes
 			return
 		}
 		if provider == "linear" {
-			if ignored, reason := intake.LinearSelfStatusChange(teamDir, ev); ignored {
+			if reason := linearIntakeIgnoreReason(teamDir, events, ev); reason != "" {
+				appendIgnoredIntakeLifecycleEvent(teamDir, provider, reason, ev)
 				resp := eventResponseMap([]EventOutcome{{
 					Instance: "intake:linear",
 					Action:   "noop",
@@ -839,6 +840,43 @@ func requestBuildIdentity(r *http.Request) (buildinfo.Info, bool) {
 		return buildinfo.Info{}, false
 	}
 	return info, true
+}
+
+func linearIntakeIgnoreReason(teamDir string, events *EventResolver, ev *intake.Event) string {
+	if !linearStatusChangeWouldDispatch(events, ev) {
+		return ""
+	}
+	agentUserID, err := intake.ResolveLinearAgentUserID(teamDir)
+	if err != nil || strings.TrimSpace(agentUserID) == "" {
+		return intake.LinearLoopProtectionUnavailableReason
+	}
+	if ignored, reason := intake.LinearSelfStatusChangeForUser(ev, agentUserID); ignored {
+		return reason
+	}
+	return ""
+}
+
+func linearStatusChangeWouldDispatch(events *EventResolver, ev *intake.Event) bool {
+	if ev == nil || ev.Type != "ticket.status_changed" || events == nil || events.topo == nil {
+		return false
+	}
+	if len(events.topo.ResolvePipelines(ev.Type, ev.Payload)) > 0 {
+		return true
+	}
+	return len(events.topo.Resolve(ev.Type, ev.Payload)) > 0
+}
+
+func appendIgnoredIntakeLifecycleEvent(teamDir, provider, reason string, ev *intake.Event) {
+	payload := map[string]any{}
+	if ev != nil && ev.Payload != nil {
+		payload = ev.Payload
+	}
+	_ = AppendLifecycleEvent(DaemonRoot(teamDir), &LifecycleEvent{
+		Action:   "intake_ignored",
+		Instance: "intake:" + provider,
+		Ticket:   payloadString(payload, "ticket"),
+		Message:  reason,
+	})
 }
 
 func eventResponseMap(outcomes []EventOutcome) map[string]any {

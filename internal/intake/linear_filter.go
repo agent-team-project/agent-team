@@ -2,14 +2,18 @@ package intake
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	teamtemplate "github.com/jamesaud/agent-team/internal/template"
 )
 
 const LinearSelfStatusChangeReason = "self-authored Linear status change ignored"
+const LinearLoopProtectionUnavailableReason = "Linear column trigger loop protection unavailable; set linear.agent_user_id or ensure the Linear API key can resolve viewer { id }"
 
 // LinearSelfStatusChange reports whether a normalized Linear status-change
 // event was authored by the configured agent user. The agent user id comes
@@ -17,6 +21,29 @@ const LinearSelfStatusChangeReason = "self-authored Linear status change ignored
 // query at `.agent_team/state/linear/viewer.json`.
 func LinearSelfStatusChange(teamDir string, ev *Event) (bool, string) {
 	return LinearSelfStatusChangeForUser(ev, LinearAgentUserID(teamDir))
+}
+
+// ResolveLinearAgentUserID returns the configured or cached Linear API user id.
+// If neither exists, it resolves `viewer { id }` through the bundled Linear
+// skill helper and writes `.agent_team/state/linear/viewer.json` for reuse.
+func ResolveLinearAgentUserID(teamDir string) (string, error) {
+	if id := configuredLinearAgentUserID(teamDir); id != "" {
+		return id, nil
+	}
+	if id := cachedLinearViewerID(teamDir); id != "" {
+		return id, nil
+	}
+	id, err := resolveLinearViewerID(teamDir)
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", fmt.Errorf("Linear viewer query did not return an id")
+	}
+	if err := writeLinearViewerCache(teamDir, id); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 // LinearSelfStatusChangeForUser is the pure comparison used by tests and
@@ -37,6 +64,13 @@ func LinearSelfStatusChangeForUser(ev *Event, agentUserID string) (bool, string)
 }
 
 func LinearAgentUserID(teamDir string) string {
+	if id := configuredLinearAgentUserID(teamDir); id != "" {
+		return id
+	}
+	return cachedLinearViewerID(teamDir)
+}
+
+func configuredLinearAgentUserID(teamDir string) string {
 	teamDir = strings.TrimSpace(teamDir)
 	if teamDir == "" {
 		return ""
@@ -49,7 +83,7 @@ func LinearAgentUserID(teamDir string) string {
 			}
 		}
 	}
-	return cachedLinearViewerID(teamDir)
+	return ""
 }
 
 func cachedLinearViewerID(teamDir string) string {
@@ -66,4 +100,65 @@ func cachedLinearViewerID(teamDir string) string {
 		[]string{"viewer", "id"},
 		[]string{"data", "viewer", "id"},
 	))
+}
+
+func resolveLinearViewerID(teamDir string) (string, error) {
+	teamDir = strings.TrimSpace(teamDir)
+	if teamDir == "" {
+		return "", fmt.Errorf("team dir is required")
+	}
+	script := filepath.Join(teamDir, "skills", "linear", "scripts", "linear-graphql.sh")
+	if _, err := os.Stat(script); err != nil {
+		return "", fmt.Errorf("Linear helper unavailable: %w", err)
+	}
+	cmd := exec.Command(script, "query { viewer { id } }")
+	cmd.Dir = filepath.Dir(teamDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail == "" {
+			return "", fmt.Errorf("Linear viewer query failed: %w", err)
+		}
+		return "", fmt.Errorf("Linear viewer query failed: %w: %s", err, detail)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return "", fmt.Errorf("decode Linear viewer response: %w", err)
+	}
+	if errorsValue, ok := raw["errors"]; ok {
+		return "", fmt.Errorf("Linear viewer query returned errors: %v", errorsValue)
+	}
+	return strings.TrimSpace(firstNestedString(raw,
+		[]string{"data", "viewer", "id"},
+		[]string{"viewer", "id"},
+		[]string{"id"},
+	)), nil
+}
+
+func writeLinearViewerCache(teamDir, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("Linear viewer id is required")
+	}
+	dir := filepath.Join(teamDir, "state", "linear")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("write Linear viewer cache: %w", err)
+	}
+	body, err := json.MarshalIndent(map[string]any{
+		"id":        id,
+		"cached_at": time.Now().UTC().Format(time.RFC3339),
+		"source":    "linear.viewer",
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	body = append(body, '\n')
+	tmp := filepath.Join(dir, "viewer.json.tmp")
+	if err := os.WriteFile(tmp, body, 0o644); err != nil {
+		return fmt.Errorf("write Linear viewer cache: %w", err)
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, "viewer.json")); err != nil {
+		return fmt.Errorf("write Linear viewer cache: %w", err)
+	}
+	return nil
 }
