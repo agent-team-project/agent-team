@@ -68,7 +68,44 @@ def main(argv: list[str]) -> int:
 
     problems: list[str] = []
     with tempfile.TemporaryDirectory() as tmp:
-        target = Path(tmp)
+        ticketless_target = Path(tmp) / "ticketless"
+        ticketless_target.mkdir()
+
+        # --- init with zero --set flags, the ticketless quickstart path ---
+        run([str(binary), "init", "--target", str(ticketless_target)])
+        for rel in EXPECTED_AFTER_INIT:
+            if not (ticketless_target / rel).exists():
+                problems.append(f"missing after ticketless init: {rel}")
+        ticketless_cfg_text = (ticketless_target / ".agent_team" / "config.toml").read_text()
+        if 'pm_tool = "none"' not in ticketless_cfg_text:
+            problems.append(f"ticketless init did not default pm_tool to none: {ticketless_cfg_text}")
+        if 'team_id = ""' not in ticketless_cfg_text or 'ticket_prefix = ""' not in ticketless_cfg_text:
+            problems.append(f"ticketless init missing empty Linear placeholders: {ticketless_cfg_text}")
+        try:
+            tomllib.loads(ticketless_cfg_text)
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"ticketless config.toml not valid TOML: {e}")
+
+        ticketless_linear = ticketless_target / ".agent_team" / "skills" / "linear" / "scripts" / "linear-graphql.sh"
+        r = subprocess.run(
+            [str(ticketless_linear), "query { viewer { id } }"],
+            cwd=ticketless_target,
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode == 0 or "Linear not configured" not in r.stderr:
+            problems.append(f"ticketless Linear helper did not fail clearly: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
+
+        r = subprocess.run(
+            [str(binary), "doctor", "--strict-daemon", "--target", str(ticketless_target)],
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode != 0:
+            problems.append(f"doctor --strict-daemon failed on ticketless tree: rc={r.returncode}\nstdout: {r.stdout}\nstderr: {r.stderr}")
+
+        target = Path(tmp) / "linear"
+        target.mkdir()
 
         # --- init with --set, the templates-as-images path ---
         run([
@@ -164,14 +201,14 @@ def main(argv: list[str]) -> int:
         if cfg_path.read_text() != "# user-edited\n":
             problems.append("re-init overwrote a user-edited config.toml (must be untouched)")
 
-        # --- --no-input fails clearly when required params missing ---
+        # --- --no-input fails clearly when Linear mode is selected but required params are missing ---
         with tempfile.TemporaryDirectory() as tmp2:
             r = subprocess.run(
-                [str(binary), "init", "--target", tmp2, "--no-input"],
+                [str(binary), "init", "--target", tmp2, "--set", "team.pm_tool=linear", "--no-input"],
                 capture_output=True, text=True,
             )
             if r.returncode == 0:
-                problems.append("--no-input init succeeded but should have failed")
+                problems.append("--no-input Linear init succeeded but should have failed")
             elif "missing" not in r.stderr.lower():
                 problems.append(f"--no-input error message missing 'missing': {r.stderr}")
 

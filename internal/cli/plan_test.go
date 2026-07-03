@@ -71,6 +71,9 @@ func TestPlanJSONShowsTopologyAndDaemonMetadata(t *testing.T) {
 	if row := byName["worker"]; row.Kind != "ephemeral" || row.Action != "on-demand" {
 		t.Fatalf("worker row = %+v, want ephemeral on-demand", row)
 	}
+	if row := byName["reviewer"]; row.Kind != "ephemeral" || row.Action != "on-demand" {
+		t.Fatalf("reviewer row = %+v, want ephemeral on-demand", row)
+	}
 	if row := byName["adhoc"]; row.Kind != "extra" || row.Action != "extra" || row.Status != "stopped" {
 		t.Fatalf("adhoc row = %+v, want stopped extra", row)
 	}

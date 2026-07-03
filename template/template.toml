@@ -13,15 +13,19 @@ description = "Manager + worker + ticket-manager team for Linear-tracked enginee
 [[parameter]]
 key         = "linear.team_id"
 type        = "string"
-required    = true
-description = "Linear team UUID. Find at linear.app/<workspace>/team/<TEAM>/all (UUID is in the URL)."
+default     = ""
+required_when_key = "team.pm_tool"
+required_when_value = "linear"
+description = "Linear team UUID. Required only when team.pm_tool is linear."
 
 [[parameter]]
 key         = "linear.ticket_prefix"
 type        = "string"
-required    = true
+default     = ""
+required_when_key = "team.pm_tool"
+required_when_value = "linear"
 pattern     = "^[A-Z]{2,5}$"
-description = "Linear ticket prefix, e.g. SQU."
+description = "Linear ticket prefix, e.g. SQU. Required only when team.pm_tool is linear."
 
 [[parameter]]
 key         = "linear.initiative_id"
@@ -38,8 +42,9 @@ description = "Labels to apply to all created tickets."
 [[parameter]]
 key         = "team.pm_tool"
 type        = "string"
-default     = "linear"
-description = "Which PM tool the team talks to. v1 only supports linear."
+default     = "none"
+pattern     = "^(none|linear)$"
+description = "Which PM tool the team talks to. Use none for ticketless jobs or linear for Linear-backed tickets."
 
 [[parameter]]
 key         = "health.status_stale_after"

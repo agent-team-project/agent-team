@@ -315,6 +315,9 @@ func resolveInitConfig(cmd *cobra.Command, m *template.Manifest, sets []template
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team: %v\n", err)
 		return nil, exitErr(2)
 	}
+	if initShouldAutoEnableLinear(m, withSets, sets) {
+		withSets.SetDotted("team.pm_tool", "linear")
+	}
 
 	// Find missing required params.
 	missing := missingRequired(withSets, m)
@@ -347,32 +350,33 @@ func resolveInitConfig(cmd *cobra.Command, m *template.Manifest, sets []template
 // missingRequired returns the keys of required parameters that have no
 // non-empty value in the resolved tree.
 func missingRequired(resolved template.Tree, m *template.Manifest) []string {
-	if m == nil {
-		return nil
-	}
-	var missing []string
-	for _, p := range m.Parameters {
-		if !p.Required {
-			continue
-		}
-		v, ok := resolved.GetDotted(p.Key)
-		if !ok || isEmptyForInit(v) {
-			missing = append(missing, p.Key)
-		}
-	}
-	return missing
+	return template.MissingRequiredKeys(resolved, m)
 }
 
-func isEmptyForInit(v any) bool {
-	switch x := v.(type) {
-	case nil:
-		return true
-	case string:
-		return x == ""
-	case []any:
-		return len(x) == 0
+func initShouldAutoEnableLinear(m *template.Manifest, resolved template.Tree, sets []template.SetSpec) bool {
+	if m == nil || m.FindParameter("team.pm_tool") == nil {
+		return false
 	}
-	return false
+	explicitPMTool := false
+	linearSet := false
+	for _, s := range sets {
+		if s.Key == "team.pm_tool" {
+			explicitPMTool = true
+			continue
+		}
+		if strings.HasPrefix(s.Key, "linear.") {
+			linearSet = true
+		}
+	}
+	if explicitPMTool || !linearSet {
+		return false
+	}
+	pmTool, ok := resolved.GetDotted("team.pm_tool")
+	if !ok || pmTool == nil {
+		return true
+	}
+	pm, ok := pmTool.(string)
+	return ok && (pm == "" || pm == "none")
 }
 
 func printMissingParams(w fmtWriter, m *template.Manifest, keys []string, reason string) {

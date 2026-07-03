@@ -36,12 +36,14 @@ const (
 
 // Parameter is one entry under `[[parameter]]` in a template's manifest.
 type Parameter struct {
-	Key         string        `toml:"key"`
-	Type        ParameterType `toml:"type"`
-	Required    bool          `toml:"required"`
-	Default     any           `toml:"default"`
-	Pattern     string        `toml:"pattern"`
-	Description string        `toml:"description"`
+	Key               string        `toml:"key"`
+	Type              ParameterType `toml:"type"`
+	Required          bool          `toml:"required"`
+	RequiredWhenKey   string        `toml:"required_when_key"`
+	RequiredWhenValue string        `toml:"required_when_value"`
+	Default           any           `toml:"default"`
+	Pattern           string        `toml:"pattern"`
+	Description       string        `toml:"description"`
 }
 
 // Header is the `[template]` block with template-level metadata.
@@ -105,6 +107,12 @@ func (m *Manifest) Validate() error {
 		}
 		if p.Required && p.Default != nil {
 			return fmt.Errorf("parameter[%s]: required parameters cannot have a default", p.Key)
+		}
+		if p.Required && p.RequiredWhenKey != "" {
+			return fmt.Errorf("parameter[%s]: required and required_when_key are mutually exclusive", p.Key)
+		}
+		if (p.RequiredWhenKey == "") != (p.RequiredWhenValue == "") {
+			return fmt.Errorf("parameter[%s]: required_when_key and required_when_value must be set together", p.Key)
 		}
 		if p.Pattern != "" {
 			if _, err := regexp.Compile(p.Pattern); err != nil {

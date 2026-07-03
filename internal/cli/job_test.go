@@ -6358,6 +6358,9 @@ func TestJobCreateFromPipeline(t *testing.T) {
 	if created.Steps[1].ID != "review" || created.Steps[1].Status != job.StatusBlocked || strings.Join(created.Steps[1].After, ",") != "implement" {
 		t.Fatalf("second step = %+v", created.Steps[1])
 	}
+	if created.Steps[2].ID != "approve" || created.Steps[2].Status != job.StatusBlocked || created.Steps[2].Gate != "manual" || strings.Join(created.Steps[2].After, ",") != "review" {
+		t.Fatalf("third step = %+v", created.Steps[2])
+	}
 	events, err := job.ListEvents(teamDir, "squ-214")
 	if err != nil {
 		t.Fatalf("list pipeline create events: %v", err)
@@ -6398,6 +6401,9 @@ func TestJobCreateFromPipeline(t *testing.T) {
 	}
 	if explained.Steps[1].ID != "review" || explained.Steps[1].State != "waiting" || strings.Join(explained.Steps[1].WaitingFor, ",") != "implement" {
 		t.Fatalf("explain second step = %+v", explained.Steps[1])
+	}
+	if explained.Steps[2].ID != "approve" || explained.Steps[2].State != "waiting" || strings.Join(explained.Steps[2].WaitingFor, ",") != "review" {
+		t.Fatalf("explain third step = %+v", explained.Steps[2])
 	}
 	if !containsString(explained.Actions, "agent-team job advance squ-214") {
 		t.Fatalf("explain actions = %+v", explained.Actions)

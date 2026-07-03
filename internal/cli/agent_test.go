@@ -41,12 +41,12 @@ func TestAgentLsJSONListsBundledAgents(t *testing.T) {
 			t.Fatalf("agent ls included prompt for %q", agent.Name)
 		}
 	}
-	for _, name := range []string{"manager", "ticket-manager", "worker"} {
+	for _, name := range []string{"manager", "reviewer", "ticket-manager", "worker"} {
 		if _, ok := byName[name]; !ok {
 			t.Fatalf("missing bundled agent %q in %+v", name, agents)
 		}
 	}
-	if got := byName["worker"].Summary; !strings.Contains(got, "Executes Linear tickets") {
+	if got := byName["worker"].Summary; !strings.Contains(got, "Executes work items end-to-end") {
 		t.Fatalf("worker summary = %q, want frontmatter summary", got)
 	}
 }

@@ -115,14 +115,30 @@ The site covers architecture, templates, agents and skills, topology, daemon run
 
 ## Quickstart
 
+Ticketless setup needs no external services:
+
 ```sh
 mkdir my-app && cd my-app
+git init
+agent-team init
+agent-team daemon start
+agent-team job create "fix the flaky login test" --dispatch --workspace worktree
+agent-team job show <job-id>
+agent-team logs --job <job-id> --follow
+```
+
+`init` defaults `[team].pm_tool` to `"none"`, so workers use the job kickoff text as the work item. The `job create` output prints the normalized `<job-id>` to use with `job show` and `logs`.
+
+To back the team with Linear, opt in during init:
+
+```sh
 agent-team init \
+    --set team.pm_tool=linear \
     --set linear.team_id=<your-team-uuid> \
     --set linear.ticket_prefix=APP
 ```
 
-(Required parameters are prompted for if you omit them; pass `--no-input` to fail-fast in CI.)
+Passing `linear.*` values without `team.pm_tool` also enables Linear for compatibility with older quickstarts. If `team.pm_tool=linear`, missing `linear.team_id` or `linear.ticket_prefix` fails clearly; otherwise Linear stays disabled.
 
 `init` writes a starter `.agent_team/` into the current repo:
 
@@ -158,13 +174,11 @@ For try-out, CI, or a fresh sandbox — anywhere the two-step `init` + `run` is 
 ```sh
 agent-team template run bundled manager \
     --runtime codex \
-    --set linear.team_id=<your-team-uuid> \
-    --set linear.ticket_prefix=APP \
     --last-message \
     -p "kickoff message"
 ```
 
-This instantiates the template into a tempdir under `~/.agent-team/runs/<timestamp>-<agent>/` (or `$XDG_CACHE_HOME/agent-team/runs/...`), spawns the agent against it, and removes the tempdir when the agent exits. Pass `--runtime claude|codex` and `--runtime-bin <path>` for one-off runtime selection, `--last-message` for clean Codex one-shot output, `--keep` to preserve the tempdir, or `--target <dir>` to use a specific directory (which is always preserved). `--no-input` fails if required parameters are missing — useful in CI.
+This instantiates the template into a tempdir under `~/.agent-team/runs/<timestamp>-<agent>/` (or `$XDG_CACHE_HOME/agent-team/runs/...`), spawns the agent against it, and removes the tempdir when the agent exits. Pass `--runtime claude|codex` and `--runtime-bin <path>` for one-off runtime selection, `--last-message` for clean Codex one-shot output, `--keep` to preserve the tempdir, or `--target <dir>` to use a specific directory (which is always preserved). Add `--set team.pm_tool=linear --set linear.team_id=<uuid> --set linear.ticket_prefix=<PREFIX>` when the one-shot run should use Linear.
 
 The daemon is bypassed; the selected runtime is exec'd directly. For long-lived setups where you want `instance ps` / `logs --follow` visibility, use `init` + `run` separately.
 

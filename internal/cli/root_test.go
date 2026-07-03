@@ -301,7 +301,7 @@ func TestRootGraphShortcutRendersGraphScopes(t *testing.T) {
 		{
 			name: "mermaid",
 			args: []string{"graph", "--repo", root, "--pipeline", "ticket_to_pr", "--format", "mermaid"},
-			want: []string{"flowchart TD", "implement", "review"},
+			want: []string{"flowchart TD", "implement", "review", "approve"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

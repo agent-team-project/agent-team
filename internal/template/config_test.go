@@ -119,6 +119,39 @@ func TestValidate_MissingRequiredSurfaced(t *testing.T) {
 	}
 }
 
+func TestValidate_ConditionalRequired(t *testing.T) {
+	m := &Manifest{
+		Template: Header{Name: "x", Version: "0.0.1"},
+		Parameters: []Parameter{
+			{Key: "team.pm_tool", Type: TypeString, Default: "none"},
+			{Key: "linear.team_id", Type: TypeString, Default: "", RequiredWhenKey: "team.pm_tool", RequiredWhenValue: "linear"},
+		},
+	}
+	ticketless := DefaultsFromManifest(m)
+	if err := ValidateAgainstManifest(ticketless, m); err != nil {
+		t.Fatalf("ticketless defaults should validate: %v", err)
+	}
+	if missing := MissingRequiredKeys(ticketless, m); len(missing) != 0 {
+		t.Fatalf("ticketless defaults missing = %v, want none", missing)
+	}
+
+	linear := DefaultsFromManifest(m)
+	linear.SetDotted("team.pm_tool", "linear")
+	err := ValidateAgainstManifest(linear, m)
+	if err == nil {
+		t.Fatal("expected missing conditional required parameter")
+	}
+	var mre *MissingRequiredError
+	if !errors.As(err, &mre) || !reflect.DeepEqual(mre.Keys, []string{"linear.team_id"}) {
+		t.Fatalf("missing conditional required = %v", err)
+	}
+
+	linear.SetDotted("linear.team_id", "team-uuid")
+	if err := ValidateAgainstManifest(linear, m); err != nil {
+		t.Fatalf("linear config with required value should validate: %v", err)
+	}
+}
+
 func TestValidate_PatternMismatch(t *testing.T) {
 	m := &Manifest{
 		Template: Header{Name: "x", Version: "0.0.1"},

@@ -601,12 +601,33 @@ func nonEmptyLines(body string) []string {
 	return lines
 }
 
-func TestTemplateSmokeMissingRequiredParameters(t *testing.T) {
+func TestTemplateSmokeTicketlessDefaultSucceeds(t *testing.T) {
 	cmd := NewRootCmd()
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
 	cmd.SetArgs([]string{"template", "smoke", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("template smoke ticketless default: %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
+	}
+	var result templateSmokeResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode smoke result: %v\nbody=%s", err, out.String())
+	}
+	if !result.OK || len(result.Steps) != 5 {
+		t.Fatalf("ticketless smoke result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.FromSlash(result.Target)); !os.IsNotExist(err) {
+		t.Fatalf("successful smoke target should be removed, stat err=%v target=%s", err, result.Target)
+	}
+}
+
+func TestTemplateSmokeLinearMissingRequiredParameters(t *testing.T) {
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"template", "smoke", "--set", "team.pm_tool=linear", "--json"})
 	err := cmd.Execute()
 	var code ExitCode
 	if !errors.As(err, &code) || int(code) != 1 {
