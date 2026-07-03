@@ -1526,9 +1526,15 @@ func (m *InstanceManager) isRunning(instance string) bool {
 	now := time.Now().UTC()
 	t.meta.Status = StatusExited
 	t.meta.ExitedAt = now
+	usageCaptureErr := captureUsageForMetadata(t.meta, now)
 	meta := *t.meta
 	m.mu.Unlock()
 	if err := WriteMetadata(m.daemonRoot, &meta); err == nil {
+		if usageCaptureErr != nil {
+			m.recordEvent("usage_capture_failed", &meta, usageCaptureErr.Error())
+		} else if usageErr := persistMetadataUsageToJob(m.daemonRoot, &meta); usageErr != nil {
+			m.recordEvent("usage_capture_failed", &meta, usageErr.Error())
+		}
 		m.recordEvent("exit", &meta, "reconciled missing process")
 	}
 	return false
@@ -1594,6 +1600,7 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 			eventAction = "crash"
 		}
 	}
+	usageCaptureErr := captureUsageForMetadata(t.meta, now)
 	if err := WriteMetadata(m.daemonRoot, t.meta); err != nil {
 		// Reaper has nowhere to surface this; the next reconcile will catch
 		// any drift. Don't block the goroutine.
@@ -1602,6 +1609,11 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 	hook := m.reapHook
 	eventMeta := *t.meta
 	m.mu.Unlock()
+	if usageCaptureErr != nil {
+		m.recordEvent("usage_capture_failed", &eventMeta, usageCaptureErr.Error())
+	} else if usageErr := persistMetadataUsageToJob(m.daemonRoot, &eventMeta); usageErr != nil {
+		m.recordEvent("usage_capture_failed", &eventMeta, usageErr.Error())
+	}
 	if eventAction != "" {
 		m.recordEvent(eventAction, &eventMeta, "instance process exited")
 	}

@@ -84,6 +84,7 @@ Subcommands:
 - `agent-team tick` - Run one orchestration maintenance cycle.
 - `agent-team topology` - Show declared instances and triggers (reads .agent_team/instances.toml).
 - `agent-team upgrade` - Check or apply a template upgrade using the repo&#39;s template lock.
+- `agent-team usage` - Show runtime token usage rollups.
 - `agent-team wait` - Wait for daemon-managed instances to reach a lifecycle condition.
 - `agent-team watch` - Watch the combined health, recovery, inbox, instance, and resource monitor.
 
@@ -10530,6 +10531,31 @@ Flags:
       --strict          With --check, exit 1 when the target template differs from the lock.
       --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
       --to string       Template ref to compare against (defaults to the ref in .template.lock).
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team usage`
+
+Show runtime token usage rollups.
+
+Show runtime usage rollups captured from finalized daemon-managed instances and persisted onto durable jobs.
+
+```text
+agent-team usage [flags]
+```
+
+Flags:
+
+```text
+      --by string       Group usage by job, instance, agent, or runtime. (default "job")
+      --json            Emit usage rollups as JSON.
+      --since string    Only include usage captured since a duration ago (for example 7d, 24h) or an RFC3339 timestamp.
+      --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 
 Inherited Flags:

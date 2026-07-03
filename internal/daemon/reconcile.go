@@ -121,8 +121,38 @@ func reconcileCrashOnly(daemonRoot string, m *InstanceManager, teamDir string, t
 			}
 			md.Status = StatusExited
 			md.ExitedAt = now
+			usageCaptureErr := captureUsageForMetadata(md, now)
 			if err := WriteMetadata(daemonRoot, md); err != nil {
 				return err
+			}
+			if usageCaptureErr != nil {
+				_ = AppendLifecycleEvent(daemonRoot, &LifecycleEvent{
+					Action:   "usage_capture_failed",
+					Instance: md.Instance,
+					Agent:    md.Agent,
+					Job:      md.Job,
+					Ticket:   md.Ticket,
+					Branch:   md.Branch,
+					PR:       md.PR,
+					Status:   md.Status,
+					PID:      md.PID,
+					ExitCode: md.ExitCode,
+					Message:  usageCaptureErr.Error(),
+				})
+			} else if err := persistMetadataUsageToJob(daemonRoot, md); err != nil {
+				_ = AppendLifecycleEvent(daemonRoot, &LifecycleEvent{
+					Action:   "usage_capture_failed",
+					Instance: md.Instance,
+					Agent:    md.Agent,
+					Job:      md.Job,
+					Ticket:   md.Ticket,
+					Branch:   md.Branch,
+					PR:       md.PR,
+					Status:   md.Status,
+					PID:      md.PID,
+					ExitCode: md.ExitCode,
+					Message:  err.Error(),
+				})
 			}
 			_ = AppendLifecycleEvent(daemonRoot, &LifecycleEvent{
 				Action:   "exit",
@@ -394,12 +424,18 @@ func (m *InstanceManager) finalizeAdoptedExit(meta Metadata) bool {
 	now := time.Now().UTC()
 	t.meta.Status = StatusExited
 	t.meta.ExitedAt = now
+	usageCaptureErr := captureUsageForMetadata(t.meta, now)
 	out := *t.meta
 	if err := WriteMetadata(m.daemonRoot, t.meta); err != nil {
 		m.mu.Unlock()
 		return false
 	}
 	m.mu.Unlock()
+	if usageCaptureErr != nil {
+		m.recordEvent("usage_capture_failed", &out, usageCaptureErr.Error())
+	} else if usageErr := persistMetadataUsageToJob(m.daemonRoot, &out); usageErr != nil {
+		m.recordEvent("usage_capture_failed", &out, usageErr.Error())
+	}
 	m.recordEvent("exit", &out, "adopted process exited")
 	return true
 }

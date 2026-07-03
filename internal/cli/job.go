@@ -17401,6 +17401,7 @@ func renderJobDetailWithRuntime(w io.Writer, teamDir string, j *job.Job, queueIt
 				preview.Instance, preview.Phase, preview.Before, preview.After, action, emptyDash(preview.Message))
 		}
 	}
+	renderJobUsageSummary(w, "Usage", j.Usage)
 	if len(actions) > 0 {
 		fmt.Fprintln(w, "Actions:")
 		for _, action := range actions {

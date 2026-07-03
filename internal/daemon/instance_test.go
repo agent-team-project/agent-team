@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/jamesaud/agent-team/internal/runtimebin"
 )
 
@@ -517,6 +518,65 @@ func TestInstance_DispatchCodexCapturesThreadIDFromLog(t *testing.T) {
 
 	_, _ = m.Stop("manager")
 	waitForStatusNot(t, m, "manager", StatusRunning)
+}
+
+func TestInstance_ReapCapturesCodexUsageToMetadataAndJob(t *testing.T) {
+	tmp := t.TempDir()
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := DaemonRoot(teamDir)
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	j, err := job.New("SQU-73", "worker", "capture usage", now)
+	if err != nil {
+		t.Fatalf("job.New: %v", err)
+	}
+	j.Status = job.StatusRunning
+	j.Instance = "worker-squ-73"
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("job.Write: %v", err)
+	}
+
+	fake := newFakeSpawner(time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	meta, err := m.Dispatch(DispatchInput{
+		Agent:     "worker",
+		Name:      j.Instance,
+		Job:       j.ID,
+		Ticket:    j.Ticket,
+		Runtime:   "codex",
+		Prompt:    "hello",
+		Workspace: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if err := os.WriteFile(meta.LogPath, []byte(`{"type":"turn.completed","usage":{"input_tokens":123,"cached_input_tokens":100,"output_tokens":9,"reasoning_output_tokens":4}}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write child log: %v", err)
+	}
+	if err := m.WaitForReaper(j.Instance, 10*time.Second); err != nil {
+		t.Fatalf("wait reaper: %v", err)
+	}
+
+	disk, err := ReadMetadata(root, j.Instance)
+	if err != nil {
+		t.Fatalf("ReadMetadata: %v", err)
+	}
+	if disk.Usage == nil || !disk.Usage.TokensAvailable || disk.Usage.InputTokens != 123 || disk.Usage.Turns != 1 {
+		t.Fatalf("metadata usage = %+v", disk.Usage)
+	}
+	stored, err := job.Read(teamDir, j.ID)
+	if err != nil {
+		t.Fatalf("job.Read: %v", err)
+	}
+	if stored.Usage == nil || stored.Usage.Summary.InputTokens != 123 || len(stored.Usage.Records) != 1 {
+		t.Fatalf("job usage = %+v", stored.Usage)
+	}
+	events, err := job.ListEvents(teamDir, j.ID)
+	if err != nil {
+		t.Fatalf("job.ListEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "usage_captured" {
+		t.Fatalf("events = %+v", events)
+	}
 }
 
 func TestInstance_DispatchCodexPromptUsesStdin(t *testing.T) {

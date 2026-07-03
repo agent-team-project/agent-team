@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/archive"
@@ -82,6 +83,37 @@ func ReadArchived(teamDir, rawID string) (*Job, error) {
 		return nil, fmt.Errorf("archived job %s: %w", IDFromInput(rawID), err)
 	}
 	return j, nil
+}
+
+// ListArchived loads the latest archived snapshot for each compacted job.
+func ListArchived(teamDir string) ([]*Job, error) {
+	records, err := readArchivedJobRecords(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	latest := map[string]*archivedJobRecord{}
+	for _, record := range records {
+		if record.Job == nil || record.ID == "" {
+			continue
+		}
+		if prior := latest[record.ID]; prior == nil || record.ArchivedAt.After(prior.ArchivedAt) {
+			copy := record
+			latest[record.ID] = &copy
+		}
+	}
+	out := make([]*Job, 0, len(latest))
+	for id, record := range latest {
+		j := record.Job
+		if j.ID == "" {
+			j.ID = id
+		}
+		if err := Validate(j); err != nil {
+			return nil, fmt.Errorf("archived job %s: %w", id, err)
+		}
+		out = append(out, j)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
 // ArchivedEvents returns the archived event snapshot for a compacted job.
@@ -200,15 +232,31 @@ func readArchivedJobRecord(teamDir, rawID string) (*archivedJobRecord, bool, err
 	if id == "" {
 		return nil, false, fmt.Errorf("job id %q produced an empty normalized id", rawID)
 	}
-	files, err := archive.Files(teamDir)
+	records, err := readArchivedJobRecords(teamDir)
 	if err != nil {
 		return nil, false, err
 	}
 	var found *archivedJobRecord
+	for _, record := range records {
+		if record.ID != id {
+			continue
+		}
+		copy := record
+		found = &copy
+	}
+	return found, found != nil, nil
+}
+
+func readArchivedJobRecords(teamDir string) ([]archivedJobRecord, error) {
+	files, err := archive.Files(teamDir)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]archivedJobRecord, 0)
 	for _, path := range files {
 		f, err := os.Open(path)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
@@ -218,26 +266,22 @@ func readArchivedJobRecord(teamDir, rawID string) (*archivedJobRecord, bool, err
 			var record archivedJobRecord
 			if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
 				_ = f.Close()
-				return nil, false, fmt.Errorf("archive %s line %d: %w", path, line, err)
+				return nil, fmt.Errorf("archive %s line %d: %w", path, line, err)
 			}
-			if record.Type != archiveRecordTypeJob || record.ID != id {
+			if record.Type != archiveRecordTypeJob {
 				continue
 			}
-			copy := record
-			found = &copy
+			records = append(records, record)
 		}
 		if err := scanner.Err(); err != nil {
 			_ = f.Close()
-			return nil, false, err
+			return nil, err
 		}
 		if err := f.Close(); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
-	if found == nil {
-		return nil, false, nil
-	}
-	return found, true, nil
+	return records, nil
 }
 
 func terminalJobTime(j *Job) time.Time {

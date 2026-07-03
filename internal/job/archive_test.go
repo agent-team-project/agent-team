@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/jamesaud/agent-team/internal/usage"
 )
 
 func TestCompactTerminalArchivesJobAndEvents(t *testing.T) {
@@ -20,6 +22,19 @@ func TestCompactTerminalArchivesJobAndEvents(t *testing.T) {
 	j.UpdatedAt = old
 	j.LastEvent = "closed"
 	j.LastStatus = "done"
+	j.Usage, _ = usage.MergeRecord(nil, usage.Record{
+		Instance:          "worker-squ-40",
+		Agent:             "worker",
+		Runtime:           "codex",
+		TokensAvailable:   true,
+		InputTokens:       100,
+		CachedInputTokens: 80,
+		OutputTokens:      12,
+		Turns:             1,
+		DurationMS:        2500,
+		StartedAt:         old.Add(-time.Hour),
+		EndedAt:           old,
+	})
 	if err := Write(teamDir, j); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -62,6 +77,16 @@ func TestCompactTerminalArchivesJobAndEvents(t *testing.T) {
 	}
 	if archived.ID != j.ID || archived.Status != StatusDone || archived.LastEvent != "closed" {
 		t.Fatalf("archived job = %+v", archived)
+	}
+	if archived.Usage == nil || archived.Usage.Summary.InputTokens != 100 || len(archived.Usage.Records) != 1 {
+		t.Fatalf("archived usage = %+v", archived.Usage)
+	}
+	archivedJobs, err := ListArchived(teamDir)
+	if err != nil {
+		t.Fatalf("ListArchived: %v", err)
+	}
+	if len(archivedJobs) != 1 || archivedJobs[0].ID != j.ID || archivedJobs[0].Usage == nil {
+		t.Fatalf("archived jobs = %+v", archivedJobs)
 	}
 	events, err := ListEvents(teamDir, "squ-40")
 	if err != nil {
