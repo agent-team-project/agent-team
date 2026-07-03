@@ -795,6 +795,10 @@ func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, p
 	meta, err := r.mgr.Dispatch(DispatchInput{
 		Agent:         inst.Agent,
 		Name:          name,
+		Job:           eventJobID(payload),
+		Ticket:        payloadString(payload, "ticket"),
+		Branch:        branch,
+		PR:            firstPayloadString(payload, "pr_url", "pr"),
 		Workspace:     workspace,
 		Runtime:       string(rt.Kind),
 		RuntimeBinary: rt.Binary,
@@ -1400,6 +1404,9 @@ func (r *EventResolver) reconcileEphemeralJobExit(meta *Metadata) {
 	}
 	if meta.Branch != "" {
 		j.Branch = meta.Branch
+		if meta.Workspace != "" {
+			j.Worktree = meta.Workspace
+		}
 	}
 	if meta.PR != "" {
 		j.PR = meta.PR

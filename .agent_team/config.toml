@@ -25,3 +25,7 @@ self_dogfooding    = "f8a115f9-dea7-4927-a214-c0da54c6a7c0"   # v1 sign-off
 # SQU-40: archive terminal jobs + daemon records older than this into
 # .agent_team/daemon/archive/YYYY-MM.jsonl during maintenance ticks.
 terminal_retention = "14d"
+
+[notifications]
+phase_transitions = ["blocked"]
+idle_renotify = "0"

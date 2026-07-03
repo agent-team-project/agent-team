@@ -25,6 +25,15 @@ job_stale_after = "24h"
 # during maintenance. Use values like "14d"; "0" disables archival.
 terminal_retention = "0"
 
+[notifications]
+# Daemon-published status phase transitions sent to #supervisor.
+# Include "idle" to notify on busy->idle; "blocked" reports any->blocked.
+phase_transitions = ["blocked"]
+
+# Optional repeat idle notification while an instance remains idle.
+# "0" disables idle repeats.
+idle_renotify = "0"
+
 [linear]
 # UUID of the Linear team this repo's tickets belong to. Find it via:
 #   query { teams(first: 50) { nodes { id key name } } }

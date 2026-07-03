@@ -536,6 +536,16 @@ status_stale_after = "10m"
 job_stale_after = "24h"
 ```
 
+Daemon supervisor notifications are configured in the same file. By default,
+only blocked transitions are published to `#supervisor`; add `"idle"` to notify
+when a persistent instance moves from a busy phase back to idle.
+
+```toml
+[notifications]
+phase_transitions = ["blocked"]
+idle_renotify = "0"
+```
+
 Precedence is `--runtime` / `--runtime-bin`, then environment, then repo config, then built-in defaults. Use command flags for one-off launches or to inspect what a short-lived override would do:
 
 ```sh

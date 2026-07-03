@@ -126,6 +126,10 @@ func openSpawnerStdin(content string) (*os.File, func(), error) {
 type DispatchInput struct {
 	Agent         string
 	Name          string
+	Job           string
+	Ticket        string
+	Branch        string
+	PR            string
 	Prompt        string
 	Workspace     string
 	Runtime       string
@@ -263,6 +267,10 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 	meta := &Metadata{
 		Instance:      in.Name,
 		Agent:         in.Agent,
+		Job:           in.Job,
+		Ticket:        in.Ticket,
+		Branch:        in.Branch,
+		PR:            in.PR,
 		Runtime:       string(rt.Kind),
 		RuntimeBinary: rt.Binary,
 		Workspace:     in.Workspace,
@@ -286,16 +294,17 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 	m.mu.Lock()
 	m.instances[in.Name] = &tracked{meta: meta, process: proc, reaped: reaped}
 	m.mu.Unlock()
-	m.recordEvent("dispatch", meta, "instance dispatched")
+	out := *meta
+	m.recordEvent("dispatch", &out, "instance dispatched")
 	capture := m.startCodexSessionCapture(rt.Kind, *meta)
 	go m.reap(in.Name, proc, reaped)
 	if in.Budget > 0 {
 		go m.watchdog(in.Name, proc, reaped, in.Budget)
 	}
 	if captured := waitForCodexSessionCapture(capture); captured != nil {
-		meta = captured
+		out = *captured
 	}
-	return meta, nil
+	return &out, nil
 }
 
 // dispatchRuntime resolves the runtime for a dispatch with this precedence:
@@ -451,9 +460,11 @@ func (m *InstanceManager) recordCodexSessionID(base Metadata, sessionID string) 
 		return nil, false
 	}
 	t.meta = &updated
+	out := updated
+	eventMeta := updated
 	m.mu.Unlock()
-	m.recordEvent("session_capture", &updated, "codex thread id captured")
-	return &updated, true
+	m.recordEvent("session_capture", &eventMeta, "codex thread id captured")
+	return &out, true
 }
 
 func waitForCodexThreadStarted(logPath string, timeout time.Duration) (string, error) {
@@ -930,9 +941,9 @@ func (m *InstanceManager) start(instance string, expected *Metadata) (*Metadata,
 	}
 	m.mu.Unlock()
 
-	m.recordEvent("start", &meta, "instance resumed")
-	go m.reap(instance, proc, reaped)
 	out := meta
+	m.recordEvent("start", &out, "instance resumed")
+	go m.reap(instance, proc, reaped)
 	return &out, nil
 }
 
