@@ -93,8 +93,9 @@ gate         = "manual"
 instructions = """
 Read the reviewer's verdict and the diff. If REVIEW: APPROVE and gates are
 green, merge with `agent-team job merge <job-id>` (or `gh pr merge`), close the
-ticket, and mark the job done. If REVIEW: BOUNCE, re-dispatch a worker with the
-findings as kickoff — do not amend the branch yourself.
+ticket, and mark the job done. If REVIEW: BOUNCE, run `agent-team job bounce
+<job-id> --findings-file <path> --advance` so the worker gets the findings in
+kickoff — do not amend the branch yourself.
 """
 
 [teams.delivery]

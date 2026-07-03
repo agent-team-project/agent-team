@@ -70,6 +70,7 @@ func newJobCmd() *cobra.Command {
 	cmd.AddCommand(newJobCancelCmd())
 	cmd.AddCommand(newJobTimeoutCmd())
 	cmd.AddCommand(newJobUpdateCmd())
+	cmd.AddCommand(newJobBounceCmd())
 	cmd.AddCommand(newJobHoldCmd())
 	cmd.AddCommand(newJobReleaseCmd())
 	cmd.AddCommand(newJobReopenCmd())
@@ -4880,6 +4881,8 @@ func newJobUpdateCmd() *cobra.Command {
 		branch        string
 		worktree      string
 		pr            string
+		kickoff       string
+		kickoffFile   string
 		message       string
 		clear         []string
 		advance       bool
@@ -4974,6 +4977,11 @@ func newJobUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			kickoffText, err := resolveJobKickoffUpdate(j.Ticket, kickoff, kickoffFile, cmd.Flags().Changed("kickoff"), cmd.Flags().Changed("kickoff-file"))
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job update: %v\n", err)
+				return exitErr(2)
+			}
 			changed := map[string]string{}
 			var statusValue job.Status
 			if cmd.Flags().Changed("status") {
@@ -5014,6 +5022,10 @@ func newJobUpdateCmd() *cobra.Command {
 				j.PR = strings.TrimSpace(pr)
 				changed["pr"] = j.PR
 			}
+			if cmd.Flags().Changed("kickoff") || cmd.Flags().Changed("kickoff-file") {
+				j.Kickoff = kickoffText
+				changed["kickoff"] = j.Kickoff
+			}
 			applyJobUpdateClears(j, clearSet, changed)
 			hasUpdate := len(changed) > 0 || strings.TrimSpace(message) != ""
 			if !hasUpdate && !advance {
@@ -5031,33 +5043,38 @@ func newJobUpdateCmd() *cobra.Command {
 			}
 			if dryRun {
 				commandOptions := jobUpdateApplyCommandOptions{
-					JobID:          j.ID,
-					Repo:           repo,
-					RepoSet:        cmd.Flags().Changed("repo"),
-					Status:         statusValue,
-					StatusSet:      cmd.Flags().Changed("status"),
-					Target:         target,
-					TargetSet:      cmd.Flags().Changed("target"),
-					TicketURL:      ticketURL,
-					TicketURLSet:   cmd.Flags().Changed("ticket-url"),
-					Instance:       instance,
-					InstanceSet:    cmd.Flags().Changed("instance"),
-					Branch:         branch,
-					BranchSet:      cmd.Flags().Changed("branch"),
-					Worktree:       worktree,
-					WorktreeSet:    cmd.Flags().Changed("worktree"),
-					PR:             pr,
-					PRSet:          cmd.Flags().Changed("pr"),
-					Message:        message,
-					MessageSet:     cmd.Flags().Changed("message"),
-					Clear:          jobUpdateClearCommandFields(clearSet),
-					Advance:        advance,
-					Workspace:      workspace,
-					WorkspaceSet:   cmd.Flags().Changed("workspace"),
-					RuntimeKind:    runtimeKind,
-					RuntimeKindSet: cmd.Flags().Changed("runtime"),
-					RuntimeBin:     runtimeBin,
-					RuntimeBinSet:  cmd.Flags().Changed("runtime-bin"),
+					JobID:           j.ID,
+					Repo:            repo,
+					RepoSet:         cmd.Flags().Changed("repo"),
+					Status:          statusValue,
+					StatusSet:       cmd.Flags().Changed("status"),
+					Target:          target,
+					TargetSet:       cmd.Flags().Changed("target"),
+					TicketURL:       ticketURL,
+					TicketURLSet:    cmd.Flags().Changed("ticket-url"),
+					Instance:        instance,
+					InstanceSet:     cmd.Flags().Changed("instance"),
+					Branch:          branch,
+					BranchSet:       cmd.Flags().Changed("branch"),
+					Worktree:        worktree,
+					WorktreeSet:     cmd.Flags().Changed("worktree"),
+					PR:              pr,
+					PRSet:           cmd.Flags().Changed("pr"),
+					Kickoff:         kickoff,
+					KickoffSet:      cmd.Flags().Changed("kickoff"),
+					KickoffFile:     kickoffFile,
+					KickoffFileSet:  cmd.Flags().Changed("kickoff-file"),
+					ResolvedKickoff: kickoffText,
+					Message:         message,
+					MessageSet:      cmd.Flags().Changed("message"),
+					Clear:           jobUpdateClearCommandFields(clearSet),
+					Advance:         advance,
+					Workspace:       workspace,
+					WorkspaceSet:    cmd.Flags().Changed("workspace"),
+					RuntimeKind:     runtimeKind,
+					RuntimeKindSet:  cmd.Flags().Changed("runtime"),
+					RuntimeBin:      runtimeBin,
+					RuntimeBinSet:   cmd.Flags().Changed("runtime-bin"),
 				}
 				if advance {
 					preview, err := previewJobAdvanceDispatch(teamDir, j, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin})
@@ -5132,6 +5149,8 @@ func newJobUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&branch, "branch", "", "Set branch.")
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Set worktree path.")
 	cmd.Flags().StringVar(&pr, "pr", "", "Set PR URL or number.")
+	cmd.Flags().StringVar(&kickoff, "kickoff", "", "Set kickoff text for future dispatches.")
+	cmd.Flags().StringVar(&kickoffFile, "kickoff-file", "", "Read kickoff text from a file, or '-' for stdin.")
 	cmd.Flags().StringVar(&message, "message", "", "Status message recorded on the job.")
 	cmd.Flags().StringSliceVar(&clear, "clear", nil, "Clear metadata fields: ticket-url, instance, branch, worktree, pr, or pipeline. Can repeat or comma-separate.")
 	cmd.Flags().BoolVar(&advance, "advance", false, "After updating metadata, dispatch the next ready pipeline step.")
@@ -5140,6 +5159,226 @@ func newJobUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtimeBin, "runtime-bin", "", "Runtime binary for --advance dispatch. Overrides env and repo config.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview metadata updates and optional advance dispatch without writing job or daemon state.")
 	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching job update apply command when the preview has actionable work.")
+	cmd.Flags().BoolVar(&wait, "wait", false, "With --advance, wait for the job to reach a lifecycle status, event, or next-step state.")
+	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&waitEvents, "wait-event", nil, "With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.")
+	cmd.Flags().StringSliceVar(&waitNextState, "wait-next-state", nil, "With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.")
+	cmd.Flags().StringVar(&waitStep, "wait-step", "", "With --wait, pipeline step id that must be the current next step.")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 0, "Maximum time to wait with --wait (0 = no timeout).")
+	cmd.Flags().DurationVar(&waitInterval, "wait-interval", 500*time.Millisecond, "Polling interval with --wait.")
+	cmd.Flags().BoolVar(&failOnFailed, "fail-on-failed", false, "With --wait, exit 1 if the job resolves to failed.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the updated job or advance result as JSON.")
+	cmd.Flags().StringVar(&format, "format", "", "Render the updated job or advance result with a Go template, e.g. '{{.ID}} {{.Status}}' or '{{.Job.ID}} {{.Step.ID}}'.")
+	return cmd
+}
+
+func newJobBounceCmd() *cobra.Command {
+	var (
+		repo          string
+		stepID        string
+		findings      string
+		findingsFile  string
+		advance       bool
+		workspace     string
+		runtimeKind   string
+		runtimeBin    string
+		dryRun        bool
+		commands      bool
+		wait          bool
+		waitStatuses  []string
+		waitEvents    []string
+		waitNextState []string
+		waitStep      string
+		waitTimeout   time.Duration
+		waitInterval  time.Duration
+		failOnFailed  bool
+		jsonOut       bool
+		format        string
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "bounce <job-id>",
+		Short: "Re-queue a pipeline step with review findings.",
+		Long: "Re-queue a pipeline step with review findings appended to the job kickoff. " +
+			"By default this selects the common review-bounce target: the single completed step with an owning instance. Pass --step to target a specific step.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --format cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && !dryRun {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --commands requires --dry-run.")
+				return exitErr(2)
+			}
+			if commands && jsonOut {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --commands cannot be combined with --json.")
+				return exitErr(2)
+			}
+			if commands && format != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --commands cannot be combined with --format.")
+				return exitErr(2)
+			}
+			if waitInterval < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --wait-interval must be >= 0.")
+				return exitErr(2)
+			}
+			if waitTimeout < 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --wait-timeout must be >= 0.")
+				return exitErr(2)
+			}
+			if dryRun && wait {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --wait cannot be combined with --dry-run.")
+				return exitErr(2)
+			}
+			if wait && !advance {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --wait requires --advance.")
+				return exitErr(2)
+			}
+			if !wait && (cmd.Flags().Changed("wait-status") || cmd.Flags().Changed("wait-event") || cmd.Flags().Changed("wait-next-state") || cmd.Flags().Changed("wait-step") || cmd.Flags().Changed("wait-timeout") || cmd.Flags().Changed("wait-interval") || failOnFailed) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: wait-related flags require --wait.")
+				return exitErr(2)
+			}
+			var jobTmpl, advanceTmpl *template.Template
+			var err error
+			if advance {
+				advanceTmpl, err = parseJobAdvanceFormat(format)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job bounce: %v\n", err)
+					return exitErr(2)
+				}
+			} else {
+				jobTmpl, err = parseJobFormat(format)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job bounce: %v\n", err)
+					return exitErr(2)
+				}
+			}
+			waitFilters := jobWaitFilters{}
+			if wait {
+				waitFilters, err = parseJobCommandWaitFilters(cmd, waitStatuses, waitEvents, waitNextState, waitStep)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job bounce: %v\n", err)
+					return exitErr(2)
+				}
+			}
+			findingsText, err := requiredJobBounceFindings(findings, findingsFile, cmd.Flags().Changed("findings"), cmd.Flags().Changed("findings-file"))
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job bounce: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
+			if err != nil {
+				return err
+			}
+			selectedStep, err := selectJobBounceStep(j, stepID)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job bounce: %v\n", err)
+				return exitErr(2)
+			}
+			bounceNumber := nextJobBounceNumber(j.Kickoff)
+			if err := applyJobBounce(j, selectedStep, findingsText, bounceNumber); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job bounce: %v\n", err)
+				return exitErr(2)
+			}
+			commandOptions := jobBounceApplyCommandOptions{
+				JobID:            j.ID,
+				Repo:             repo,
+				RepoSet:          cmd.Flags().Changed("repo"),
+				Step:             selectedStep,
+				StepSet:          strings.TrimSpace(stepID) != "",
+				Findings:         findings,
+				FindingsSet:      cmd.Flags().Changed("findings"),
+				FindingsFile:     findingsFile,
+				FindingsFileSet:  cmd.Flags().Changed("findings-file"),
+				ResolvedFindings: findingsText,
+				Advance:          advance,
+				Workspace:        workspace,
+				WorkspaceSet:     cmd.Flags().Changed("workspace"),
+				RuntimeKind:      runtimeKind,
+				RuntimeKindSet:   cmd.Flags().Changed("runtime"),
+				RuntimeBin:       runtimeBin,
+				RuntimeBinSet:    cmd.Flags().Changed("runtime-bin"),
+			}
+			if dryRun {
+				if advance {
+					preview, err := previewJobAdvanceDispatch(teamDir, j, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin})
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job bounce: %v\n", err)
+						return exitErr(1)
+					}
+					if commands {
+						return renderJobBounceApplyCommand(cmd.OutOrStdout(), preview.Step != nil, commandOptions)
+					}
+					return renderJobAdvancePreview(cmd.OutOrStdout(), preview, jsonOut, advanceTmpl)
+				}
+				if commands {
+					return renderJobBounceApplyCommand(cmd.OutOrStdout(), true, commandOptions)
+				}
+				return renderJobBouncePreview(cmd.OutOrStdout(), j, selectedStep, bounceNumber, jsonOut, jobTmpl)
+			}
+			data := map[string]string{
+				"step":     selectedStep,
+				"bounce":   fmt.Sprint(bounceNumber),
+				"findings": findingsText,
+			}
+			if err := writeJobWithAudit(teamDir, j, "bounced", "cli", j.LastStatus, data); err != nil {
+				return err
+			}
+			if advance {
+				res, err := advanceJob(cmd, teamDir, j, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin})
+				if err != nil {
+					return err
+				}
+				if wait && res.Job != nil {
+					waited, err := waitForJobCommand(cmd, teamDir, res.Job.ID, waitFilters.statuses, waitFilters.events, waitFilters.nextStates, waitFilters.nextStateSet, waitFilters.step, waitTimeout, waitInterval, "agent-team job bounce")
+					if err != nil {
+						if err == context.Canceled {
+							return nil
+						}
+						return err
+					}
+					refreshJobAdvanceResultAfterWait(res, waited)
+				}
+				if jsonOut {
+					if err := json.NewEncoder(cmd.OutOrStdout()).Encode(res); err != nil {
+						return err
+					}
+					if failOnFailed && res.Job != nil && res.Job.Status == job.StatusFailed {
+						return exitErr(1)
+					}
+					return nil
+				}
+				if advanceTmpl != nil {
+					if err := renderJobAdvanceResultFormat(cmd.OutOrStdout(), res, advanceTmpl); err != nil {
+						return err
+					}
+					if failOnFailed && res.Job != nil && res.Job.Status == job.StatusFailed {
+						return exitErr(1)
+					}
+					return nil
+				}
+				if err := renderJobAdvanceResult(cmd.OutOrStdout(), res); err != nil {
+					return err
+				}
+				if failOnFailed && res.Job != nil && res.Job.Status == job.StatusFailed {
+					return exitErr(1)
+				}
+				return nil
+			}
+			return renderJobResult(cmd.OutOrStdout(), j, jsonOut, jobTmpl)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
+	cmd.Flags().StringVar(&stepID, "step", "", "Pipeline step to re-queue. Defaults to the single completed step with an owning instance.")
+	cmd.Flags().StringVar(&findings, "findings", "", "Review findings to append to the job kickoff.")
+	cmd.Flags().StringVar(&findingsFile, "findings-file", "", "Read review findings from a file, or '-' for stdin.")
+	cmd.Flags().BoolVar(&advance, "advance", false, "After recording the bounce, dispatch the re-queued step.")
+	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for --advance: auto, worktree, or repo.")
+	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile for --advance dispatch (claude or codex). Overrides env and repo config.")
+	cmd.Flags().StringVar(&runtimeBin, "runtime-bin", "", "Runtime binary for --advance dispatch. Overrides env and repo config.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the bounce and optional advance dispatch without writing job or daemon state.")
+	cmd.Flags().BoolVar(&commands, "commands", false, "With --dry-run, print the matching job bounce apply command when the preview has actionable work.")
 	cmd.Flags().BoolVar(&wait, "wait", false, "With --advance, wait for the job to reach a lifecycle status, event, or next-step state.")
 	cmd.Flags().StringSliceVar(&waitStatuses, "wait-status", nil, "With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.")
 	cmd.Flags().StringSliceVar(&waitEvents, "wait-event", nil, "With --wait, last event to wait for, e.g. advance_dispatched, advance_queued, closed, or pipeline_done. Can repeat or comma-separate.")
@@ -14130,6 +14369,175 @@ func optionalSendMessageBody(flagValue, fileValue string, positional []string) (
 	return sendMessageBody(flagValue, fileValue, positional)
 }
 
+func resolveJobKickoffUpdate(ticket, flagValue, fileValue string, flagSet, fileSet bool) (string, error) {
+	sources := 0
+	if flagSet {
+		sources++
+	}
+	if fileSet {
+		sources++
+	}
+	if sources == 0 {
+		return "", nil
+	}
+	if sources > 1 {
+		return "", fmt.Errorf("provide kickoff text using only one of --kickoff or --kickoff-file")
+	}
+	var text string
+	if fileSet {
+		body, err := readMessageFile(fileValue, "--kickoff-file")
+		if err != nil {
+			return "", err
+		}
+		text = string(body)
+	} else {
+		text = flagValue
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", fmt.Errorf("kickoff text is empty")
+	}
+	if strings.Contains(strings.ToLower(text), strings.ToLower(strings.TrimSpace(ticket))) {
+		return text, nil
+	}
+	return strings.TrimSpace(ticket) + ": " + text, nil
+}
+
+func requiredJobBounceFindings(flagValue, fileValue string, flagSet, fileSet bool) (string, error) {
+	sources := 0
+	if flagSet {
+		sources++
+	}
+	if fileSet {
+		sources++
+	}
+	if sources == 0 {
+		return "", fmt.Errorf("pass --findings or --findings-file")
+	}
+	if sources > 1 {
+		return "", fmt.Errorf("provide findings using only one of --findings or --findings-file")
+	}
+	var text string
+	if fileSet {
+		body, err := readMessageFile(fileValue, "--findings-file")
+		if err != nil {
+			return "", err
+		}
+		text = string(body)
+	} else {
+		text = flagValue
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", fmt.Errorf("findings are required")
+	}
+	return text, nil
+}
+
+func selectJobBounceStep(j *job.Job, requested string) (string, error) {
+	if j == nil || len(j.Steps) == 0 {
+		return "", fmt.Errorf("job has no pipeline steps")
+	}
+	requested = strings.TrimSpace(requested)
+	if requested != "" {
+		if jobStepIndex(j, requested) == -1 {
+			return "", fmt.Errorf("step %q not found", requested)
+		}
+		return requested, nil
+	}
+	var candidates []string
+	for i := range j.Steps {
+		step := &j.Steps[i]
+		if step.Status == job.StatusDone && !step.Skipped && strings.TrimSpace(step.Instance) != "" {
+			candidates = append(candidates, step.ID)
+		}
+	}
+	switch len(candidates) {
+	case 1:
+		return candidates[0], nil
+	case 0:
+		return "", fmt.Errorf("could not infer bounce step; pass --step")
+	default:
+		return "", fmt.Errorf("multiple completed owned steps match bounce target (%s); pass --step", strings.Join(candidates, ","))
+	}
+}
+
+func nextJobBounceNumber(kickoff string) int {
+	return strings.Count(kickoff, "## Review findings (bounce ") + 1
+}
+
+func appendJobBounceFindings(kickoff, findings string, bounceNumber int) string {
+	section := fmt.Sprintf("## Review findings (bounce %d)\n\n%s", bounceNumber, strings.TrimSpace(findings))
+	kickoff = strings.TrimSpace(kickoff)
+	if kickoff == "" {
+		return section
+	}
+	return kickoff + "\n\n" + section
+}
+
+func applyJobBounce(j *job.Job, stepID, findings string, bounceNumber int) error {
+	idx := jobStepIndex(j, stepID)
+	if idx == -1 {
+		return fmt.Errorf("step %q not found", stepID)
+	}
+	now := time.Now().UTC()
+	j.Kickoff = appendJobBounceFindings(j.Kickoff, findings, bounceNumber)
+	resetJobStepForBounce(&j.Steps[idx], job.StatusQueued)
+	for i := range j.Steps {
+		if i == idx {
+			continue
+		}
+		if !jobStepTransitivelyDependsOn(j, j.Steps[i].ID, stepID) {
+			continue
+		}
+		resetJobStepForBounce(&j.Steps[i], job.StatusBlocked)
+	}
+	j.Status = job.StatusQueued
+	j.LastEvent = "bounced"
+	j.LastStatus = fmt.Sprintf("bounced %s with review findings (bounce %d)", stepID, bounceNumber)
+	j.UpdatedAt = now
+	return nil
+}
+
+func resetJobStepForBounce(step *job.Step, status job.Status) {
+	if step == nil {
+		return
+	}
+	step.Status = status
+	step.Instance = ""
+	step.StartedAt = time.Time{}
+	step.FinishedAt = time.Time{}
+	step.Skipped = false
+	step.SkipReason = ""
+}
+
+func jobStepTransitivelyDependsOn(j *job.Job, stepID, dependency string) bool {
+	stepID = strings.TrimSpace(stepID)
+	dependency = strings.TrimSpace(dependency)
+	if stepID == "" || dependency == "" || stepID == dependency {
+		return false
+	}
+	downstream := map[string]bool{}
+	changed := true
+	for changed {
+		changed = false
+		for i := range j.Steps {
+			step := &j.Steps[i]
+			if downstream[step.ID] {
+				continue
+			}
+			for _, after := range step.After {
+				if after == dependency || downstream[after] {
+					downstream[step.ID] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	return downstream[stepID]
+}
+
 func stepPRGatePending(j *job.Job, step *job.Step) bool {
 	return job.StepPRGatePending(j, step)
 }
@@ -15538,33 +15946,58 @@ type jobStepApplyCommandOptions struct {
 }
 
 type jobUpdateApplyCommandOptions struct {
-	JobID          string
-	Repo           string
-	RepoSet        bool
-	Status         job.Status
-	StatusSet      bool
-	Target         string
-	TargetSet      bool
-	TicketURL      string
-	TicketURLSet   bool
-	Instance       string
-	InstanceSet    bool
-	Branch         string
-	BranchSet      bool
-	Worktree       string
-	WorktreeSet    bool
-	PR             string
-	PRSet          bool
-	Message        string
-	MessageSet     bool
-	Clear          []string
-	Advance        bool
-	Workspace      string
-	WorkspaceSet   bool
-	RuntimeKind    string
-	RuntimeKindSet bool
-	RuntimeBin     string
-	RuntimeBinSet  bool
+	JobID           string
+	Repo            string
+	RepoSet         bool
+	Status          job.Status
+	StatusSet       bool
+	Target          string
+	TargetSet       bool
+	TicketURL       string
+	TicketURLSet    bool
+	Instance        string
+	InstanceSet     bool
+	Branch          string
+	BranchSet       bool
+	Worktree        string
+	WorktreeSet     bool
+	PR              string
+	PRSet           bool
+	Kickoff         string
+	KickoffSet      bool
+	KickoffFile     string
+	KickoffFileSet  bool
+	ResolvedKickoff string
+	Message         string
+	MessageSet      bool
+	Clear           []string
+	Advance         bool
+	Workspace       string
+	WorkspaceSet    bool
+	RuntimeKind     string
+	RuntimeKindSet  bool
+	RuntimeBin      string
+	RuntimeBinSet   bool
+}
+
+type jobBounceApplyCommandOptions struct {
+	JobID            string
+	Repo             string
+	RepoSet          bool
+	Step             string
+	StepSet          bool
+	Findings         string
+	FindingsSet      bool
+	FindingsFile     string
+	FindingsFileSet  bool
+	ResolvedFindings string
+	Advance          bool
+	Workspace        string
+	WorkspaceSet     bool
+	RuntimeKind      string
+	RuntimeKindSet   bool
+	RuntimeBin       string
+	RuntimeBinSet    bool
 }
 
 type jobRmApplyCommandOptions struct {
@@ -15678,11 +16111,64 @@ func jobUpdateApplyCommandArgs(opts jobUpdateApplyCommandOptions) []string {
 	if opts.PRSet {
 		args = append(args, "--pr", opts.PR)
 	}
+	kickoffSet := opts.KickoffSet && strings.TrimSpace(opts.Kickoff) != ""
+	kickoffFileSet := opts.KickoffFileSet && strings.TrimSpace(opts.KickoffFile) != "" && strings.TrimSpace(opts.KickoffFile) != "-"
+	if kickoffSet {
+		args = append(args, "--kickoff", opts.Kickoff)
+	}
+	if kickoffFileSet {
+		args = append(args, "--kickoff-file", opts.KickoffFile)
+	}
+	if !kickoffSet && !kickoffFileSet && opts.KickoffFileSet {
+		args = append(args, "--kickoff", opts.ResolvedKickoff)
+	}
 	if opts.MessageSet {
 		args = append(args, "--message", opts.Message)
 	}
 	if len(opts.Clear) > 0 {
 		args = append(args, "--clear", strings.Join(opts.Clear, ","))
+	}
+	if opts.Advance {
+		args = append(args, "--advance")
+	}
+	if opts.WorkspaceSet && strings.TrimSpace(opts.Workspace) != "" {
+		args = append(args, "--workspace", opts.Workspace)
+	}
+	if opts.RuntimeKindSet && strings.TrimSpace(opts.RuntimeKind) != "" {
+		args = append(args, "--runtime", opts.RuntimeKind)
+	}
+	if opts.RuntimeBinSet && strings.TrimSpace(opts.RuntimeBin) != "" {
+		args = append(args, "--runtime-bin", opts.RuntimeBin)
+	}
+	return args
+}
+
+func renderJobBounceApplyCommand(w io.Writer, hasAction bool, opts jobBounceApplyCommandOptions) error {
+	if !hasAction {
+		return nil
+	}
+	_, err := fmt.Fprintln(w, strings.Join(shellQuoteArgs(jobBounceApplyCommandArgs(opts)), " "))
+	return err
+}
+
+func jobBounceApplyCommandArgs(opts jobBounceApplyCommandOptions) []string {
+	args := []string{"agent-team", "job", "bounce", opts.JobID}
+	if opts.RepoSet && strings.TrimSpace(opts.Repo) != "" {
+		args = append(args, "--repo", opts.Repo)
+	}
+	if opts.StepSet && strings.TrimSpace(opts.Step) != "" {
+		args = append(args, "--step", opts.Step)
+	}
+	findingsSet := opts.FindingsSet && strings.TrimSpace(opts.Findings) != ""
+	findingsFileSet := opts.FindingsFileSet && strings.TrimSpace(opts.FindingsFile) != "" && strings.TrimSpace(opts.FindingsFile) != "-"
+	if findingsSet {
+		args = append(args, "--findings", opts.Findings)
+	}
+	if findingsFileSet {
+		args = append(args, "--findings-file", opts.FindingsFile)
+	}
+	if !findingsSet && !findingsFileSet && opts.FindingsFileSet {
+		args = append(args, "--findings", opts.ResolvedFindings)
 	}
 	if opts.Advance {
 		args = append(args, "--advance")
@@ -16264,6 +16750,13 @@ type jobUpdatePreview struct {
 	DryRun  bool              `json:"dry_run"`
 }
 
+type jobBouncePreview struct {
+	Job    *job.Job  `json:"job"`
+	Step   *job.Step `json:"step,omitempty"`
+	Bounce int       `json:"bounce"`
+	DryRun bool      `json:"dry_run"`
+}
+
 func renderJobUpdatePreview(w io.Writer, j *job.Job, changed map[string]string, jsonOut bool, tmpl *template.Template) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(jobUpdatePreview{Job: j, Changed: changed, DryRun: true})
@@ -16275,6 +16768,19 @@ func renderJobUpdatePreview(w io.Writer, j *job.Job, changed map[string]string, 
 	if len(changed) > 0 {
 		fmt.Fprintf(w, "Changed: %s\n", jobUpdateFieldList(changed))
 	}
+	renderJobDetail(w, j)
+	return nil
+}
+
+func renderJobBouncePreview(w io.Writer, j *job.Job, stepID string, bounceNumber int, jsonOut bool, tmpl *template.Template) error {
+	if jsonOut {
+		return json.NewEncoder(w).Encode(jobBouncePreview{Job: j, Step: jobStepForTemplate(j, stepID), Bounce: bounceNumber, DryRun: true})
+	}
+	if tmpl != nil {
+		return renderJobTemplate(w, j, tmpl)
+	}
+	fmt.Fprintln(w, "Dry run: true")
+	fmt.Fprintf(w, "Bounced: %s (%d)\n", stepID, bounceNumber)
 	renderJobDetail(w, j)
 	return nil
 }
