@@ -236,13 +236,10 @@ func ValidateAgainstManifest(resolved Tree, m *Manifest) error {
 	if m == nil {
 		return nil
 	}
-	var missing []string
+	missing := MissingRequiredKeys(resolved, m)
 	for _, p := range m.Parameters {
 		v, ok := resolved.GetDotted(p.Key)
 		if !ok || isEmpty(v) {
-			if p.Required {
-				missing = append(missing, p.Key)
-			}
 			continue
 		}
 		if p.Pattern != "" && p.Type == TypeString {
@@ -260,6 +257,41 @@ func ValidateAgainstManifest(resolved Tree, m *Manifest) error {
 		return &MissingRequiredError{Keys: missing}
 	}
 	return nil
+}
+
+// MissingRequiredKeys returns required parameter keys with no non-empty value
+// in the resolved tree. Conditional required parameters are active only when
+// their required_when_key has the declared required_when_value.
+func MissingRequiredKeys(resolved Tree, m *Manifest) []string {
+	if m == nil {
+		return nil
+	}
+	var missing []string
+	for _, p := range m.Parameters {
+		if !parameterRequired(p, resolved) {
+			continue
+		}
+		v, ok := resolved.GetDotted(p.Key)
+		if !ok || isEmpty(v) {
+			missing = append(missing, p.Key)
+		}
+	}
+	return missing
+}
+
+func parameterRequired(p Parameter, resolved Tree) bool {
+	if p.Required {
+		return true
+	}
+	if p.RequiredWhenKey == "" {
+		return false
+	}
+	v, ok := resolved.GetDotted(p.RequiredWhenKey)
+	if !ok {
+		return false
+	}
+	s, ok := v.(string)
+	return ok && s == p.RequiredWhenValue
 }
 
 // MissingRequiredError lists the required parameters that have no value.

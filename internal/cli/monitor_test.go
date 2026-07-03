@@ -1402,8 +1402,14 @@ func TestMonitorPlanJSONFiltersByAction(t *testing.T) {
 	if body.Plan.Summary.Total != 2 || body.Plan.Summary.OnDemand != 2 {
 		t.Fatalf("plan summary = %+v, want two on-demand rows", body.Plan.Summary)
 	}
-	if len(body.Plan.Instances) != 2 || body.Plan.Instances[0].Action != "on-demand" || body.Plan.Instances[1].Action != "on-demand" {
-		t.Fatalf("plan rows = %+v, want reviewer+worker on-demand only", body.Plan.Instances)
+	byName := map[string]planRow{}
+	for _, row := range body.Plan.Instances {
+		byName[row.Instance] = row
+	}
+	for _, name := range []string{"reviewer", "worker"} {
+		if row := byName[name]; row.Action != "on-demand" {
+			t.Fatalf("plan rows = %+v, want %s on-demand", body.Plan.Instances, name)
+		}
 	}
 }
 

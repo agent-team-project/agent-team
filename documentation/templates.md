@@ -55,15 +55,26 @@ version     = "1.0.0"
 description = "Manager + worker + ticket-manager team for Linear-tracked engineering work."
 
 [[parameter]]
+key         = "team.pm_tool"
+type        = "string"
+default     = "none"
+pattern     = "^(none|linear)$"
+description = "Which PM tool the team talks to."
+
+[[parameter]]
 key         = "linear.team_id"
 type        = "string"
-required    = true
+default     = ""
+required_when_key = "team.pm_tool"
+required_when_value = "linear"
 description = "Linear team UUID. Find at linear.app/<workspace>/team/<TEAM>/all → URL contains the UUID."
 
 [[parameter]]
 key         = "linear.ticket_prefix"
 type        = "string"
-required    = true
+default     = ""
+required_when_key = "team.pm_tool"
+required_when_value = "linear"
 pattern     = "^[A-Z]{2,5}$"
 description = "Linear ticket prefix, e.g. SQU."
 
@@ -84,6 +95,7 @@ description = "Labels to apply to all created tickets."
 - `key` — dotted path the value occupies in the resolved config tree. Mirrors `config.toml` structure.
 - `type` — one of `string`, `int`, `bool`, `list<string>`. Future: `enum`, nested objects.
 - `required` — boolean; default `false`.
+- `required_when_key` / `required_when_value` — optional conditional requirement, active when the resolved config key equals the declared value.
 - `default` — required if `required = false`. Value of declared type.
 - `pattern` — optional regex validation for string types.
 - `description` — shown to the user during interactive prompting.

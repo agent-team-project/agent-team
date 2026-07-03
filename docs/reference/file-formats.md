@@ -7,9 +7,12 @@
 Resolved template parameters.
 
 ```toml
+[team]
+pm_tool = "none"
+
 [linear]
-team_id = "00000000-0000-0000-0000-000000000000"
-ticket_prefix = "SQU"
+team_id = ""
+ticket_prefix = ""
 
 [health]
 status_stale_after = "10m"
@@ -21,6 +24,9 @@ idle_renotify = "0"
 ```
 
 Read by skills and the CLI.
+
+`[team].pm_tool` defaults to `"none"` in the bundled template. When it is
+`"linear"`, `[linear].team_id` and `[linear].ticket_prefix` must be non-empty.
 
 `[health]` is optional. `status_stale_after` controls when non-idle/non-done
 instance `status.toml` files are marked stale in `ps`, `health`, `monitor`, and
@@ -50,11 +56,25 @@ version = "0.1.0"
 description = "..."
 
 [[parameter]]
+key = "team.pm_tool"
+type = "string"
+default = "none"
+pattern = "^(none|linear)$"
+description = "Which PM tool the team talks to."
+
+[[parameter]]
 key = "linear.team_id"
 type = "string"
-required = true
+default = ""
+required_when_key = "team.pm_tool"
+required_when_value = "linear"
 description = "Linear team UUID."
 ```
+
+Parameter `type` supports `string`, `int`, `bool`, and `list<string>`.
+Use `required = true` for unconditional values. Use `required_when_key` and
+`required_when_value` together when a value is required only under a selected
+config mode.
 
 ## `agent.md`
 

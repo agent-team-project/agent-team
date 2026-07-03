@@ -598,12 +598,14 @@ type templateShowResult struct {
 }
 
 type templateParameterInfo struct {
-	Key         string `json:"key"`
-	Type        string `json:"type"`
-	Required    bool   `json:"required"`
-	Default     any    `json:"default"`
-	Pattern     string `json:"pattern,omitempty"`
-	Description string `json:"description,omitempty"`
+	Key               string `json:"key"`
+	Type              string `json:"type"`
+	Required          bool   `json:"required"`
+	RequiredWhenKey   string `json:"required_when_key,omitempty"`
+	RequiredWhenValue string `json:"required_when_value,omitempty"`
+	Default           any    `json:"default"`
+	Pattern           string `json:"pattern,omitempty"`
+	Description       string `json:"description,omitempty"`
 }
 
 func templateShowResultFromResolved(rt *template.ResolvedTemplate) (templateShowResult, error) {
@@ -631,12 +633,14 @@ func templateShowResultFromResolved(rt *template.ResolvedTemplate) (templateShow
 	result.Description = m.Template.Description
 	for _, p := range m.Parameters {
 		result.Parameters = append(result.Parameters, templateParameterInfo{
-			Key:         p.Key,
-			Type:        string(p.Type),
-			Required:    p.Required,
-			Default:     p.Default,
-			Pattern:     p.Pattern,
-			Description: p.Description,
+			Key:               p.Key,
+			Type:              string(p.Type),
+			Required:          p.Required,
+			RequiredWhenKey:   p.RequiredWhenKey,
+			RequiredWhenValue: p.RequiredWhenValue,
+			Default:           p.Default,
+			Pattern:           p.Pattern,
+			Description:       p.Description,
 		})
 	}
 	return result, nil
@@ -676,6 +680,8 @@ func renderTemplateShowText(out io.Writer, result templateShowResult) error {
 			req := "optional"
 			if p.Required {
 				req = "required"
+			} else if p.RequiredWhenKey != "" {
+				req = fmt.Sprintf("required when %s=%s", p.RequiredWhenKey, p.RequiredWhenValue)
 			}
 			pat := ""
 			if p.Pattern != "" {

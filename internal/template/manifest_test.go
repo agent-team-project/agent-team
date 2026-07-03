@@ -77,6 +77,73 @@ func TestValidate_RequiredWithDefaultRejected(t *testing.T) {
 	}
 }
 
+func TestValidate_ConditionalRequiredFields(t *testing.T) {
+	valid := &Manifest{
+		Template: Header{Name: "x", Version: "0.0.1"},
+		Parameters: []Parameter{
+			{
+				Key:               "linear.team_id",
+				Type:              TypeString,
+				Default:           "",
+				RequiredWhenKey:   "team.pm_tool",
+				RequiredWhenValue: "linear",
+			},
+		},
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("conditional required with default should validate: %v", err)
+	}
+
+	badPair := &Manifest{
+		Template: Header{Name: "x", Version: "0.0.1"},
+		Parameters: []Parameter{
+			{Key: "linear.team_id", Type: TypeString, RequiredWhenKey: "team.pm_tool"},
+		},
+	}
+	if err := badPair.Validate(); err == nil || !strings.Contains(err.Error(), "must be set together") {
+		t.Fatalf("expected required_when pair error, got %v", err)
+	}
+
+	badRequired := &Manifest{
+		Template: Header{Name: "x", Version: "0.0.1"},
+		Parameters: []Parameter{
+			{Key: "linear.team_id", Type: TypeString, Required: true, RequiredWhenKey: "team.pm_tool", RequiredWhenValue: "linear"},
+		},
+	}
+	if err := badRequired.Validate(); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected required/conditional error, got %v", err)
+	}
+}
+
+func TestBundledManifestLinearIsConditional(t *testing.T) {
+	m, err := LoadManifest(filepath.Join("..", "..", "template"))
+	if err != nil {
+		t.Fatalf("load bundled manifest: %v", err)
+	}
+	pm := m.FindParameter("team.pm_tool")
+	if pm == nil {
+		t.Fatal("bundled manifest missing team.pm_tool")
+	}
+	if pm.Default != "none" || pm.Pattern != "^(none|linear)$" {
+		t.Fatalf("team.pm_tool defaults = default:%v pattern:%q", pm.Default, pm.Pattern)
+	}
+	for _, key := range []string{"linear.team_id", "linear.ticket_prefix"} {
+		p := m.FindParameter(key)
+		if p == nil {
+			t.Fatalf("bundled manifest missing %s", key)
+		}
+		if p.Required {
+			t.Fatalf("%s should not be unconditionally required", key)
+		}
+		if p.RequiredWhenKey != "team.pm_tool" || p.RequiredWhenValue != "linear" {
+			t.Fatalf("%s conditional = %s=%s", key, p.RequiredWhenKey, p.RequiredWhenValue)
+		}
+		if p.Default != "" {
+			t.Fatalf("%s default = %#v, want empty string", key, p.Default)
+		}
+	}
+}
+
 func TestValidate_DuplicateKey(t *testing.T) {
 	m := &Manifest{
 		Template: Header{Name: "x", Version: "0.0.1"},

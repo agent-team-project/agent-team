@@ -18,6 +18,9 @@ template/
 │   ├── ticket-manager/
 │   │   ├── agent.md
 │   │   └── config.toml
+│   ├── reviewer/
+│   │   ├── agent.md
+│   │   └── config.toml
 │   └── worker/
 │       ├── agent.md
 │       └── config.toml
@@ -42,16 +45,19 @@ version = "0.1.0"
 description = "Manager, ticket manager, and worker agents for software delivery."
 
 [[parameter]]
-key = "linear.team_id"
+key = "team.pm_tool"
 type = "string"
-required = true
-description = "Linear team UUID."
+default = "none"
+pattern = "^(none|linear)$"
+description = "Which PM tool the team talks to."
 
 [[parameter]]
-key = "linear.ticket_prefix"
+key = "linear.team_id"
 type = "string"
-required = true
-description = "Ticket prefix such as SQU."
+default = ""
+required_when_key = "team.pm_tool"
+required_when_value = "linear"
+description = "Linear team UUID."
 ```
 
 Supported parameter types are intentionally small:
@@ -62,6 +68,10 @@ Supported parameter types are intentionally small:
 - `list<string>`
 
 The renderer writes resolved values to `.agent_team/config.toml`.
+
+Use `required = true` for values every repo must provide. Use
+`required_when_key` plus `required_when_value` for conditional requirements,
+such as Linear fields that are required only when `team.pm_tool = "linear"`.
 
 ## Rendering
 
@@ -74,7 +84,7 @@ This opt-in rule avoids accidental rendering of prompts, shell scripts, or Markd
 ## Init Flow
 
 ```sh
-agent-team init [<ref>] --set linear.team_id=... --set linear.ticket_prefix=SQU
+agent-team init [<ref>]
 ```
 
 `init` performs:
@@ -88,6 +98,9 @@ agent-team init [<ref>] --set linear.team_id=... --set linear.ticket_prefix=SQU
 7. Write `.agent_team/.template.lock`.
 
 `--no-input` makes missing required parameters fail fast, which is useful in CI.
+The bundled template has no unconditional required parameters, so zero-flag
+init succeeds with `[team].pm_tool = "none"`. To enable Linear, pass
+`--set team.pm_tool=linear --set linear.team_id=... --set linear.ticket_prefix=SQU`.
 
 ## Template Refs
 
@@ -121,6 +134,7 @@ When authoring a template:
 ```sh
 go build -o bin/agent-team ./cmd/agent-team
 bin/agent-team template smoke ./template \
+  --set team.pm_tool=linear \
   --set linear.team_id=00000000-0000-0000-0000-000000000000 \
   --set linear.ticket_prefix=SMK
 ```

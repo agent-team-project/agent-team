@@ -1,17 +1,27 @@
 ---
 name: linear
-description: Access Linear via the GraphQL API — fetch issues, comment, update state, search, create. Use when any agent needs to read or write Linear tickets.
+description: Access Linear via the GraphQL API when the repo is configured for Linear — fetch issues, comment, update state, search, create. Use when any agent needs to read or write Linear tickets.
 ---
 
 # Linear GraphQL access
 
-Call Linear's public GraphQL API through the helper bundled with this skill at `${AGENT_TEAM_ROOT}/skills/linear/scripts/linear-graphql.sh`. All team/project/label IDs that vary per consumer live in `$PWD/.agent_team/config.toml` — the skill reads them at call time via inline Python. No IDs are hardcoded in this skill.
+Call Linear's public GraphQL API through the helper bundled with this skill at `${AGENT_TEAM_ROOT}/skills/linear/scripts/linear-graphql.sh`. All team/project/label IDs that vary per consumer live in `$PWD/.agent_team/config.toml` — the helper checks that Linear is enabled before it sends any request. No IDs are hardcoded in this skill.
 
 ## Configuration
 
-Required keys in `$PWD/.agent_team/config.toml`:
+Linear is optional. Ticketless repos use:
 
 ```toml
+[team]
+pm_tool = "none"
+```
+
+For Linear-backed repos, required keys in `$PWD/.agent_team/config.toml` are:
+
+```toml
+[team]
+pm_tool = "linear"
+
 [linear]
 team_id       = "..."          # Linear team UUID
 ticket_prefix = "..."          # e.g. "BENCH", "SQU"
@@ -31,25 +41,18 @@ TEAM_ID=$(python3 -c 'import tomllib; print(tomllib.load(open(".agent_team/confi
 TICKET_PREFIX=$(python3 -c 'import tomllib; print(tomllib.load(open(".agent_team/config.toml","rb"))["linear"]["ticket_prefix"])')
 ```
 
-If `.agent_team/config.toml` is missing, fail early with a clear message rather than hardcoding fallbacks — consumers must configure the team before this skill will work. The Python one-liner raises `FileNotFoundError` on the `open` call, which produces a clear stderr message.
+If `.agent_team/config.toml` is missing or `[team].pm_tool` is not `"linear"`, stop and report the helper's message. Do not hardcode fallbacks or continue with partial Linear behavior. For ticketless work, point the user at:
+
+```sh
+agent-team job create "<kickoff>" --dispatch --workspace worktree
+```
 
 ## Preflight: confirm Linear is the configured PM tool
 
-Before any Linear call, run this check. It enforces that `[team] pm_tool = "linear"` is set in `.agent_team/config.toml` — so a consumer who wired up the wrong PM tool (or forgot to) gets a loud failure here instead of silently corrupting tickets in whichever system this skill assumes. Fail and stop if the check errors — do not proceed to any other bash in this skill.
+The helper enforces that `[team] pm_tool = "linear"` is set and that `[linear].team_id` and `[linear].ticket_prefix` are non-empty. A ticketless repo gets an actionable error instead of a Python traceback. Fail and stop if the helper reports an unconfigured repo — do not proceed to any other bash in this skill.
 
 ```bash
-python3 - <<'PY'
-import sys, tomllib
-try:
-    cfg = tomllib.load(open(".agent_team/config.toml", "rb"))
-except FileNotFoundError:
-    sys.exit("preflight: .agent_team/config.toml not found in $PWD — this skill requires a configured team.")
-pm = cfg.get("team", {}).get("pm_tool")
-if pm is None:
-    sys.exit('preflight: [team].pm_tool is not set in .agent_team/config.toml. The linear skill requires pm_tool = "linear".')
-if pm != "linear":
-    sys.exit(f'preflight: [team].pm_tool = "{pm}" but the linear skill only supports "linear". Do not invoke this skill from a repo configured for another PM tool.')
-PY
+"${AGENT_TEAM_ROOT}/skills/linear/scripts/linear-graphql.sh" 'query { viewer { id } }' | jq .
 ```
 
 ## The helper
@@ -206,8 +209,8 @@ query($teamId: ID!) {
 
 ## Failure modes
 
-- **`preflight: ...` error on `[team].pm_tool`** — the consumer repo either has no `pm_tool` set or has it set to something other than `"linear"`. Fix `.agent_team/config.toml`; the linear skill will refuse to run until it reads `[team] pm_tool = "linear"`. Do not comment out the preflight.
-- **`.agent_team/config.toml` not found** (or `KeyError` for `linear.team_id`) — the consumer repo is not configured for agent-team. Create the file with at least `[linear].team_id` and `[linear].ticket_prefix`.
+- **`Linear not configured for this repo`** — `[team].pm_tool` is absent, `"none"`, or another value. For ticketless work, use `agent-team job create "<kickoff>" --dispatch --workspace worktree`. To enable Linear, set `[team].pm_tool = "linear"` plus `[linear].team_id` and `[linear].ticket_prefix`.
+- **`Linear is enabled but missing config`** — `[team].pm_tool = "linear"` but one or both required `[linear]` fields are empty. Fill them in or re-run init with `--set team.pm_tool=linear --set linear.team_id=<uuid> --set linear.ticket_prefix=<PREFIX>`.
 - **`linear-graphql.sh: no Linear API key found`** — the helper couldn't locate a key. Ensure `LINEAR_API_KEY` or `LINEAR_USER_API_KEY` is exported, or present in `$PWD/.env`.
 - **`AuthenticationError` from Linear** — key is present but rejected. Regenerate it.
 - **`Entity not found` on a mutation** — you passed the identifier (e.g. `BENCH-166`) where a UUID was required. Resolve the UUID first via `issue(id: "<identifier>") { id }`.

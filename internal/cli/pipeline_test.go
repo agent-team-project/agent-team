@@ -11359,6 +11359,9 @@ func TestPipelineRunCreatesDurableJob(t *testing.T) {
 	if created.Steps[1].ID != "review" || created.Steps[1].Status != job.StatusBlocked {
 		t.Fatalf("second step = %+v", created.Steps[1])
 	}
+	if created.Steps[2].ID != "approve" || created.Steps[2].Status != job.StatusBlocked || created.Steps[2].Gate != "manual" {
+		t.Fatalf("third step = %+v", created.Steps[2])
+	}
 	events, err := job.ListEvents(teamDir, "squ-304")
 	if err != nil {
 		t.Fatalf("list pipeline run events: %v", err)
@@ -11405,7 +11408,7 @@ func TestPipelineRunDryRunDoesNotWrite(t *testing.T) {
 	if !preview.DryRun || preview.Job == nil || preview.Job.ID != "squ-306" || preview.Job.Pipeline != "ticket_to_pr" || len(preview.Job.Steps) != 3 {
 		t.Fatalf("preview = %+v", preview)
 	}
-	if preview.Job.Steps[0].ID != "implement" || preview.Job.Steps[0].Status != job.StatusQueued || preview.Job.Steps[1].Status != job.StatusBlocked {
+	if preview.Job.Steps[0].ID != "implement" || preview.Job.Steps[0].Status != job.StatusQueued || preview.Job.Steps[1].Status != job.StatusBlocked || preview.Job.Steps[2].Status != job.StatusBlocked {
 		t.Fatalf("preview steps = %+v", preview.Job.Steps)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".agent_team", "jobs", "squ-306.toml")); !os.IsNotExist(err) {

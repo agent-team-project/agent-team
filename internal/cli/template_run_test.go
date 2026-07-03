@@ -356,9 +356,36 @@ func TestTemplateRun_SetFlowsToConfig(t *testing.T) {
 	}
 }
 
-// TestTemplateRun_NoInputFailsListingMissing verifies --no-input + missing
-// required params fails clearly with exit 2 and a list of missing keys.
-func TestTemplateRun_NoInputFailsListingMissing(t *testing.T) {
+func TestTemplateRun_NoInputTicketlessSucceeds(t *testing.T) {
+	target := t.TempDir()
+	_, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{
+		"template", "run", "bundled", "manager",
+		"--target", target,
+		"--no-input",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("template run ticketless: %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
+	}
+	repoCfg, err := os.ReadFile(filepath.Join(target, ".agent_team", "config.toml"))
+	if err != nil {
+		t.Fatalf("read repo config: %v", err)
+	}
+	if !strings.Contains(string(repoCfg), `pm_tool = "none"`) {
+		t.Fatalf("ticketless template run config = %s", repoCfg)
+	}
+}
+
+// TestTemplateRun_LinearNoInputFailsListingMissing verifies --no-input +
+// explicit Linear mode with missing params fails clearly with exit 2 and a list
+// of missing keys.
+func TestTemplateRun_LinearNoInputFailsListingMissing(t *testing.T) {
 	target := t.TempDir()
 	cmd := NewRootCmd()
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
@@ -367,6 +394,7 @@ func TestTemplateRun_NoInputFailsListingMissing(t *testing.T) {
 	cmd.SetArgs([]string{
 		"template", "run", "bundled", "manager",
 		"--target", target,
+		"--set", "team.pm_tool=linear",
 		"--no-input",
 	})
 	err := cmd.Execute()

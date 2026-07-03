@@ -14,8 +14,8 @@ import (
 )
 
 // initArgsWithRequired is the canonical "init the bundled template into tmp,
-// non-interactively" arg list. Most tests in this file use this — the prompt
-// path has its own dedicated tests.
+// configured for Linear" arg list. Most tests in this file use this; zero-flag
+// ticketless init has its own dedicated tests.
 func initArgsWithRequired(target string) []string {
 	return []string{
 		"init", "--target", target,
@@ -71,6 +71,9 @@ func TestInit_DefaultTemplate(t *testing.T) {
 	if !strings.Contains(body, `ticket_prefix = "TST"`) {
 		t.Errorf("config.toml missing ticket_prefix: %s", body)
 	}
+	if !strings.Contains(body, `pm_tool = "linear"`) {
+		t.Errorf("config.toml should auto-enable Linear when linear.* is set: %s", body)
+	}
 	lock, err := os.ReadFile(filepath.Join(tmp, ".agent_team", ".template.lock"))
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +105,36 @@ func TestInit_DefaultTemplate(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout missing %q\nfull:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestInit_DefaultTemplateNoFlagsTicketless(t *testing.T) {
+	tmp := t.TempDir()
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"init", "--target", tmp, "--no-input"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("zero-flag init should succeed: %v\nstderr: %s", err, errOut.String())
+	}
+	cfg, err := os.ReadFile(filepath.Join(tmp, ".agent_team", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(cfg)
+	for _, want := range []string{
+		`pm_tool = "none"`,
+		`team_id = ""`,
+		`ticket_prefix = ""`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("ticketless config missing %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(out.String(), "Done. Next steps:") {
+		t.Fatalf("zero-flag init stdout missing next steps:\n%s", out.String())
 	}
 }
 
@@ -378,16 +411,16 @@ func TestInit_LoaderReadsBundledTemplate(t *testing.T) {
 	}
 }
 
-func TestInit_NoInputFailsListingMissing(t *testing.T) {
+func TestInit_LinearNoInputFailsListingMissing(t *testing.T) {
 	tmp := t.TempDir()
 	cmd := NewRootCmd()
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"init", "--target", tmp, "--no-input"})
+	cmd.SetArgs([]string{"init", "--target", tmp, "--set", "team.pm_tool=linear", "--no-input"})
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error: required params missing under --no-input")
+		t.Fatal("expected error: Linear params missing under --no-input")
 	}
 	var ec ExitCode
 	if !errors.As(err, &ec) || int(ec) != 2 {
@@ -431,9 +464,9 @@ func TestInit_PromptFlow(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	// Two required params; supply each on its own input line.
+	// Linear mode has two conditionally required params; supply each on its own input line.
 	cmd.SetIn(strings.NewReader("uuid-from-prompt\nABC\n"))
-	cmd.SetArgs([]string{"init", "--target", tmp})
+	cmd.SetArgs([]string{"init", "--target", tmp, "--set", "team.pm_tool=linear"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("init: %v\nstderr: %s", err, errOut.String())
 	}
@@ -537,12 +570,12 @@ func TestInitOutputFlagValidation(t *testing.T) {
 		},
 		{
 			name: "machine output no prompt",
-			args: []string{"init", "--json", "--target", t.TempDir()},
+			args: []string{"init", "--json", "--target", t.TempDir(), "--set", "team.pm_tool=linear"},
 			want: "machine-readable output requested but required parameters are missing",
 		},
 		{
 			name: "dry-run no prompt",
-			args: []string{"init", "--dry-run", "--target", t.TempDir()},
+			args: []string{"init", "--dry-run", "--target", t.TempDir(), "--set", "team.pm_tool=linear"},
 			want: "--dry-run requested but required parameters are missing",
 		},
 	}

@@ -74,19 +74,20 @@ python3 scripts/ci/smoke_init.py bin/agent-team
 For a local consumer repo:
 
 ```sh
-agent-team init \
-  --set linear.team_id=00000000-0000-0000-0000-000000000000 \
-  --set linear.ticket_prefix=SQU
-
+agent-team init
 agent-team daemon start
-agent-team sync --wait
-agent-team overview
-agent-team job create SQU-42 --target worker --kickoff "Implement the ticket" --dispatch
-agent-team job show squ-42 --events all
+agent-team job create "fix the flaky login test" --dispatch --workspace worktree
+agent-team job show <job-id> --events all
+agent-team logs --job <job-id> --follow
 ```
+
+Add Linear later by setting `[team].pm_tool = "linear"` plus `[linear].team_id`
+and `[linear].ticket_prefix`, or pass those values during init. See the
+[Quickstart](./quickstart.md) for both paths.
 
 ## Where To Go Next
 
+- Read [Quickstart](./quickstart.md) for the first ticketless run.
 - Read [Concepts](./concepts.md) for vocabulary.
 - Read [Architecture](./architecture.md) for the end-to-end control flow.
 - Read [Jobs](../workflows/jobs.md) if you are extending the work-unit layer.

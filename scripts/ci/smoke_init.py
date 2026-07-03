@@ -68,7 +68,44 @@ def main(argv: list[str]) -> int:
 
     problems: list[str] = []
     with tempfile.TemporaryDirectory() as tmp:
-        target = Path(tmp)
+        ticketless_target = Path(tmp) / "ticketless"
+        ticketless_target.mkdir()
+
+        # --- init with zero --set flags, the ticketless quickstart path ---
+        run([str(binary), "init", "--target", str(ticketless_target)])
+        for rel in EXPECTED_AFTER_INIT:
+            if not (ticketless_target / rel).exists():
+                problems.append(f"missing after ticketless init: {rel}")
+        ticketless_cfg_text = (ticketless_target / ".agent_team" / "config.toml").read_text()
+        if 'pm_tool = "none"' not in ticketless_cfg_text:
+            problems.append(f"ticketless init did not default pm_tool to none: {ticketless_cfg_text}")
+        if 'team_id = ""' not in ticketless_cfg_text or 'ticket_prefix = ""' not in ticketless_cfg_text:
+            problems.append(f"ticketless init missing empty Linear placeholders: {ticketless_cfg_text}")
+        try:
+            tomllib.loads(ticketless_cfg_text)
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"ticketless config.toml not valid TOML: {e}")
+
+        ticketless_linear = ticketless_target / ".agent_team" / "skills" / "linear" / "scripts" / "linear-graphql.sh"
+        r = subprocess.run(
+            [str(ticketless_linear), "query { viewer { id } }"],
+            cwd=ticketless_target,
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode == 0 or "Linear not configured" not in r.stderr:
+            problems.append(f"ticketless Linear helper did not fail clearly: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
+
+        r = subprocess.run(
+            [str(binary), "doctor", "--strict-daemon", "--target", str(ticketless_target)],
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode != 0:
+            problems.append(f"doctor --strict-daemon failed on ticketless tree: rc={r.returncode}\nstdout: {r.stdout}\nstderr: {r.stderr}")
+
+        target = Path(tmp) / "linear"
+        target.mkdir()
 
         # --- init with --set, the templates-as-images path ---
         run([
@@ -164,14 +201,14 @@ def main(argv: list[str]) -> int:
         if cfg_path.read_text() != "# user-edited\n":
             problems.append("re-init overwrote a user-edited config.toml (must be untouched)")
 
-        # --- --no-input fails clearly when required params missing ---
+        # --- --no-input fails clearly when Linear mode is selected but required params are missing ---
         with tempfile.TemporaryDirectory() as tmp2:
             r = subprocess.run(
-                [str(binary), "init", "--target", tmp2, "--no-input"],
+                [str(binary), "init", "--target", tmp2, "--set", "team.pm_tool=linear", "--no-input"],
                 capture_output=True, text=True,
             )
             if r.returncode == 0:
-                problems.append("--no-input init succeeded but should have failed")
+                problems.append("--no-input Linear init succeeded but should have failed")
             elif "missing" not in r.stderr.lower():
                 problems.append(f"--no-input error message missing 'missing': {r.stderr}")
 
@@ -411,12 +448,12 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
         plan_before_summary = plan_before_start.get("summary") or {}
         if r.returncode != 0:
             problems.append(f"plan --json before start failed: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
-        elif plan_before_summary.get("start") != 2 or plan_before_summary.get("on_demand") != 1:
+        elif plan_before_summary.get("start") != 2 or plan_before_summary.get("on_demand") != 2:
             problems.append(f"plan --json before start returned unexpected summary: {plan_before_start}")
         elif any((plan_before_rows.get(name) or {}).get("action") != "start" for name in ("manager", "ticket-manager")):
             problems.append(f"plan --json before start missing start actions: {plan_before_start}")
-        elif (plan_before_rows.get("worker") or {}).get("action") != "on-demand":
-            problems.append(f"plan --json before start missing worker on-demand row: {plan_before_start}")
+        elif any((plan_before_rows.get(name) or {}).get("action") != "on-demand" for name in ("reviewer", "worker")):
+            problems.append(f"plan --json before start missing on-demand rows: {plan_before_start}")
 
         r = subprocess.run(
             [str(binary), "plan", "--format", "{{.Instance}}:{{.Action}}", "--agent", "manager", "--status", "unknown", "--target", str(socket_dir)],
@@ -454,7 +491,7 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
             capture_output=True, text=True,
         )
         formatted_action_plan_rows = [line.strip() for line in r.stdout.splitlines() if line.strip()]
-        if r.returncode != 0 or formatted_action_plan_rows != ["worker:on-demand"]:
+        if r.returncode != 0 or set(formatted_action_plan_rows) != {"reviewer:on-demand", "worker:on-demand"}:
             problems.append(f"plan --action on_demand before start failed: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
 
         r = subprocess.run(
@@ -466,6 +503,7 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
             problems.append(f"sync --dry-run --format before start failed: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
         elif not {
             "manager:start:unknown",
+            "reviewer:on-demand:unknown",
             "ticket-manager:start:unknown",
             "worker:on-demand:unknown",
         }.issubset(formatted_sync_dry_run_rows):
@@ -650,10 +688,12 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
         plan_after_summary = plan_after_start.get("summary") or {}
         if r.returncode != 0:
             problems.append(f"plan --json after start failed: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
-        elif plan_after_summary.get("keep") != 2 or plan_after_summary.get("on_demand") != 1:
+        elif plan_after_summary.get("keep") != 2 or plan_after_summary.get("on_demand") != 2:
             problems.append(f"plan --json after start returned unexpected summary: {plan_after_start}")
         elif any((plan_after_rows.get(name) or {}).get("action") != "keep" for name in ("manager", "ticket-manager")):
             problems.append(f"plan --json after start missing keep actions: {plan_after_start}")
+        elif any((plan_after_rows.get(name) or {}).get("action") != "on-demand" for name in ("reviewer", "worker")):
+            problems.append(f"plan --json after start missing on-demand actions: {plan_after_start}")
 
         daemon_log = team_dir / "daemon" / "agent-teamd.log"
         with daemon_log.open("a", encoding="utf-8") as f:
@@ -1418,12 +1458,12 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
         monitor_plan_summary = monitor_plan.get("summary") or {}
         if r.returncode != 0:
             problems.append(f"monitor --plan --json failed: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
-        elif monitor_plan_summary.get("keep") != 2 or monitor_plan_summary.get("on_demand") != 1:
+        elif monitor_plan_summary.get("keep") != 2 or monitor_plan_summary.get("on_demand") != 2:
             problems.append(f"monitor --plan --json returned unexpected plan summary: {monitor_plan_body}")
         elif any((monitor_plan_rows.get(name) or {}).get("action") != "keep" for name in ("manager", "ticket-manager")):
             problems.append(f"monitor --plan --json missing keep actions: {monitor_plan_body}")
-        elif (monitor_plan_rows.get("worker") or {}).get("action") != "on-demand":
-            problems.append(f"monitor --plan --json missing worker on-demand action: {monitor_plan_body}")
+        elif any((monitor_plan_rows.get(name) or {}).get("action") != "on-demand" for name in ("reviewer", "worker")):
+            problems.append(f"monitor --plan --json missing on-demand actions: {monitor_plan_body}")
 
         r = subprocess.run(
             [str(binary), "monitor", "--plan", "--action", "on_demand", "--json", "--target", str(socket_dir)],
@@ -1438,9 +1478,9 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
         monitor_action_rows = monitor_action_plan.get("instances") or []
         if r.returncode != 0:
             problems.append(f"monitor --plan --action on_demand --json failed: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
-        elif [row.get("instance") for row in monitor_action_rows] != ["worker"]:
+        elif {row.get("instance") for row in monitor_action_rows} != {"reviewer", "worker"}:
             problems.append(f"monitor --plan --action on_demand returned unexpected rows: {monitor_action_body}")
-        elif monitor_action_rows[0].get("action") != "on-demand":
+        elif any(row.get("action") != "on-demand" for row in monitor_action_rows):
             problems.append(f"monitor --plan --action on_demand returned unexpected action: {monitor_action_body}")
 
         r = subprocess.run(
