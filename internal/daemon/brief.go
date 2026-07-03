@@ -84,11 +84,14 @@ type BriefJob struct {
 }
 
 type BriefJobStep struct {
-	ID       string `json:"id"`
-	Target   string `json:"target,omitempty"`
-	Instance string `json:"instance,omitempty"`
-	Status   string `json:"status"`
-	Gate     string `json:"gate,omitempty"`
+	ID               string `json:"id"`
+	Target           string `json:"target,omitempty"`
+	Instance         string `json:"instance,omitempty"`
+	Status           string `json:"status"`
+	Gate             string `json:"gate,omitempty"`
+	ApprovalRequired bool   `json:"approval_required,omitempty"`
+	ApprovalID       string `json:"approval_id,omitempty"`
+	ApprovalStatus   string `json:"approval_status,omitempty"`
 }
 
 type BriefPipeline struct {
@@ -436,11 +439,14 @@ func briefJobRows(jobs []*jobstore.Job) []BriefJob {
 		}
 		for _, step := range j.Steps {
 			row.Steps = append(row.Steps, BriefJobStep{
-				ID:       step.ID,
-				Target:   step.Target,
-				Instance: step.Instance,
-				Status:   string(step.Status),
-				Gate:     step.Gate,
+				ID:               step.ID,
+				Target:           step.Target,
+				Instance:         step.Instance,
+				Status:           string(step.Status),
+				Gate:             step.Gate,
+				ApprovalRequired: step.ApprovalRequired,
+				ApprovalID:       step.ApprovalID,
+				ApprovalStatus:   string(step.ApprovalStatus),
 			})
 		}
 		rows = append(rows, row)

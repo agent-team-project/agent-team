@@ -29,6 +29,7 @@ Subcommands:
 
 - `agent-team adopt` - Adopt a live external runtime process.
 - `agent-team agent` - List and inspect runnable agent definitions.
+- `agent-team approval` - Manage durable job approval requests.
 - `agent-team attach` - Open an interactive runtime session against a daemon-managed persistent instance.
 - `agent-team channel` - Manage daemon-managed pub/sub channels.
 - `agent-team channels` - List all pub/sub channels (alias for `channel ls`).
@@ -194,6 +195,128 @@ Flags:
       --format string   Render the agent with a Go template, e.g. '{{.Name}} {{.Summary}}'.
       --json            Emit the agent as JSON.
       --repo string     Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team approval`
+
+Manage durable job approval requests.
+
+Manage durable approval requests under `.agent_team/jobs/&lt;job-id&gt;/approvals/`.
+
+```text
+agent-team approval
+```
+
+Aliases: `approvals`
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+Subcommands:
+
+- `agent-team approval approve` - Approve one approval request.
+- `agent-team approval ls` - List approval requests for a job.
+- `agent-team approval reject` - Reject one approval request.
+- `agent-team approval request` - Create a pending approval request for a job.
+- `agent-team approval show` - Show one approval request.
+
+## `agent-team approval approve`
+
+Approve one approval request.
+
+```text
+agent-team approval approve <approval-id> [notes...] [flags]
+```
+
+Flags:
+
+```text
+      --actor string        Actor recorded on the decision; defaults to AGENT_TEAM_INSTANCE or cli.
+      --job string          Job id that owns the approval request.
+      --json                Emit the approval as JSON.
+      --notes string        Decision notes recorded on the approval.
+      --notes-file string   Read decision notes from a file, or '-' for stdin.
+      --repo string         Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team approval ls`
+
+List approval requests for a job.
+
+```text
+agent-team approval ls [flags]
+```
+
+Aliases: `list`
+
+Flags:
+
+```text
+      --job string      Job id whose approval requests should be listed.
+      --json            Emit approvals as JSON.
+      --repo string     Repo root containing .agent_team. (default "<repo>")
+      --status string   Filter by approval status: pending, approved, or rejected.
+```
+
+## `agent-team approval reject`
+
+Reject one approval request.
+
+```text
+agent-team approval reject <approval-id> [notes...] [flags]
+```
+
+Flags:
+
+```text
+      --actor string        Actor recorded on the decision; defaults to AGENT_TEAM_INSTANCE or cli.
+      --job string          Job id that owns the approval request.
+      --json                Emit the approval as JSON.
+      --notes string        Decision notes recorded on the approval.
+      --notes-file string   Read decision notes from a file, or '-' for stdin.
+      --repo string         Repo root containing .agent_team. (default "<repo>")
+```
+
+## `agent-team approval request`
+
+Create a pending approval request for a job.
+
+```text
+agent-team approval request [flags]
+```
+
+Flags:
+
+```text
+      --actor string                 Actor recorded on the approval request; defaults to AGENT_TEAM_INSTANCE or cli.
+      --body-file string             Read approval request body from a file, or '-' for stdin.
+      --id string                    Approval id; defaults to a timestamped title slug.
+      --job string                   Job id to attach the approval request to.
+      --json                         Emit the approval as JSON.
+      --notify string                Optional instance to notify when this approval is requested.
+      --repo string                  Repo root containing .agent_team. (default "<repo>")
+      --requesting-instance string   Instance to notify when the approval is decided; defaults to AGENT_TEAM_INSTANCE.
+      --step string                  Approval-required manual gate step to link to this approval.
+      --title string                 Approval request title.
+```
+
+## `agent-team approval show`
+
+Show one approval request.
+
+```text
+agent-team approval show <approval-id> [flags]
+```
+
+Flags:
+
+```text
+      --job string    Job id that owns the approval request.
+      --json          Emit the approval as JSON.
+      --repo string   Repo root containing .agent_team. (default "<repo>")
 ```
 
 ## `agent-team attach`

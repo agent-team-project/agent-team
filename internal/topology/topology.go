@@ -146,20 +146,21 @@ type PipelineMerge struct {
 
 // PipelineStep is one target dispatch in a pipeline.
 type PipelineStep struct {
-	ID           string
-	Label        string
-	Description  string
-	Instructions string
-	Target       string
-	Locks        []string
-	Workspace    string
-	Runtime      string
-	RuntimeBin   string
-	After        []string
-	Gate         string
-	Optional     bool
-	Timeout      time.Duration
-	MaxAttempts  int
+	ID               string
+	Label            string
+	Description      string
+	Instructions     string
+	Target           string
+	Locks            []string
+	Workspace        string
+	Runtime          string
+	RuntimeBin       string
+	After            []string
+	Gate             string
+	ApprovalRequired bool
+	Optional         bool
+	Timeout          time.Duration
+	MaxAttempts      int
 }
 
 // Schedule is a periodic source of `schedule` events.
@@ -958,6 +959,13 @@ func parsePipelineSteps(name string, raw []map[string]any) ([]*PipelineStep, err
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
 		}
+		approvalRequired, err := parseStepApprovalRequired(body["approval_required"])
+		if err != nil {
+			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
+		}
+		if approvalRequired && gate != "manual" {
+			return nil, fmt.Errorf("pipeline %q step[%d]: approval_required is only valid with gate manual", name, i)
+		}
 		optional, err := parseStepOptional(body["optional"])
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
@@ -974,7 +982,7 @@ func parsePipelineSteps(name string, raw []map[string]any) ([]*PipelineStep, err
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
 		}
-		steps = append(steps, &PipelineStep{ID: id, Label: label, Description: description, Instructions: instructions, Target: target, Locks: locks, Workspace: workspace, Runtime: runtime, RuntimeBin: runtimeBin, After: after, Gate: gate, Optional: optional, Timeout: timeout, MaxAttempts: maxAttempts})
+		steps = append(steps, &PipelineStep{ID: id, Label: label, Description: description, Instructions: instructions, Target: target, Locks: locks, Workspace: workspace, Runtime: runtime, RuntimeBin: runtimeBin, After: after, Gate: gate, ApprovalRequired: approvalRequired, Optional: optional, Timeout: timeout, MaxAttempts: maxAttempts})
 	}
 	for _, step := range steps {
 		for _, dep := range step.After {
@@ -1143,6 +1151,17 @@ func parseStepOptional(raw any) (bool, error) {
 	value, ok := raw.(bool)
 	if !ok {
 		return false, fmt.Errorf("optional must be a boolean")
+	}
+	return value, nil
+}
+
+func parseStepApprovalRequired(raw any) (bool, error) {
+	if raw == nil {
+		return false, nil
+	}
+	value, ok := raw.(bool)
+	if !ok {
+		return false, fmt.Errorf("approval_required must be a boolean")
 	}
 	return value, nil
 }

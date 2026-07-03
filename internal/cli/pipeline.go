@@ -6027,19 +6027,20 @@ type pipelineMergeInfo struct {
 }
 
 type pipelineStepInfo struct {
-	ID           string   `json:"id"`
-	Label        string   `json:"label,omitempty"`
-	Description  string   `json:"description,omitempty"`
-	Instructions string   `json:"instructions,omitempty"`
-	Target       string   `json:"target"`
-	Workspace    string   `json:"workspace,omitempty"`
-	Runtime      string   `json:"runtime,omitempty"`
-	RuntimeBin   string   `json:"runtime_bin,omitempty"`
-	After        []string `json:"after,omitempty"`
-	Gate         string   `json:"gate,omitempty"`
-	Optional     bool     `json:"optional,omitempty"`
-	Timeout      string   `json:"timeout,omitempty"`
-	MaxAttempts  int      `json:"max_attempts,omitempty"`
+	ID               string   `json:"id"`
+	Label            string   `json:"label,omitempty"`
+	Description      string   `json:"description,omitempty"`
+	Instructions     string   `json:"instructions,omitempty"`
+	Target           string   `json:"target"`
+	Workspace        string   `json:"workspace,omitempty"`
+	Runtime          string   `json:"runtime,omitempty"`
+	RuntimeBin       string   `json:"runtime_bin,omitempty"`
+	After            []string `json:"after,omitempty"`
+	Gate             string   `json:"gate,omitempty"`
+	ApprovalRequired bool     `json:"approval_required,omitempty"`
+	Optional         bool     `json:"optional,omitempty"`
+	Timeout          string   `json:"timeout,omitempty"`
+	MaxAttempts      int      `json:"max_attempts,omitempty"`
 }
 
 type pipelineGraph struct {
@@ -6056,31 +6057,34 @@ type pipelineGraph struct {
 }
 
 type pipelineGraphNode struct {
-	ID           string     `json:"id"`
-	Label        string     `json:"label,omitempty"`
-	Description  string     `json:"description,omitempty"`
-	Instructions string     `json:"instructions,omitempty"`
-	Target       string     `json:"target,omitempty"`
-	Workspace    string     `json:"workspace,omitempty"`
-	Runtime      string     `json:"runtime,omitempty"`
-	RuntimeBin   string     `json:"runtime_bin,omitempty"`
-	After        []string   `json:"after,omitempty"`
-	Gate         string     `json:"gate,omitempty"`
-	Optional     bool       `json:"optional,omitempty"`
-	Timeout      string     `json:"timeout,omitempty"`
-	MaxAttempts  int        `json:"max_attempts,omitempty"`
-	StepStatus   job.Status `json:"step_status,omitempty"`
-	State        string     `json:"state,omitempty"`
-	Ready        bool       `json:"ready,omitempty"`
-	Instance     string     `json:"instance,omitempty"`
-	Attempts     int        `json:"attempts,omitempty"`
-	WaitingFor   []string   `json:"waiting_for,omitempty"`
-	Actions      []string   `json:"actions,omitempty"`
-	Skipped      bool       `json:"skipped,omitempty"`
-	SkipReason   string     `json:"skip_reason,omitempty"`
-	Message      string     `json:"message,omitempty"`
-	Routes       []string   `json:"routes,omitempty"`
-	Missing      bool       `json:"missing,omitempty"`
+	ID               string             `json:"id"`
+	Label            string             `json:"label,omitempty"`
+	Description      string             `json:"description,omitempty"`
+	Instructions     string             `json:"instructions,omitempty"`
+	Target           string             `json:"target,omitempty"`
+	Workspace        string             `json:"workspace,omitempty"`
+	Runtime          string             `json:"runtime,omitempty"`
+	RuntimeBin       string             `json:"runtime_bin,omitempty"`
+	After            []string           `json:"after,omitempty"`
+	Gate             string             `json:"gate,omitempty"`
+	ApprovalRequired bool               `json:"approval_required,omitempty"`
+	ApprovalID       string             `json:"approval_id,omitempty"`
+	ApprovalStatus   job.ApprovalStatus `json:"approval_status,omitempty"`
+	Optional         bool               `json:"optional,omitempty"`
+	Timeout          string             `json:"timeout,omitempty"`
+	MaxAttempts      int                `json:"max_attempts,omitempty"`
+	StepStatus       job.Status         `json:"step_status,omitempty"`
+	State            string             `json:"state,omitempty"`
+	Ready            bool               `json:"ready,omitempty"`
+	Instance         string             `json:"instance,omitempty"`
+	Attempts         int                `json:"attempts,omitempty"`
+	WaitingFor       []string           `json:"waiting_for,omitempty"`
+	Actions          []string           `json:"actions,omitempty"`
+	Skipped          bool               `json:"skipped,omitempty"`
+	SkipReason       string             `json:"skip_reason,omitempty"`
+	Message          string             `json:"message,omitempty"`
+	Routes           []string           `json:"routes,omitempty"`
+	Missing          bool               `json:"missing,omitempty"`
 }
 
 type pipelineGraphEdge struct {
@@ -6478,19 +6482,20 @@ func pipelineGraphFromTopology(top *topology.Topology, pipeline *topology.Pipeli
 			continue
 		}
 		node := pipelineGraphNode{
-			ID:           id,
-			Label:        strings.TrimSpace(step.Label),
-			Description:  strings.TrimSpace(step.Description),
-			Instructions: strings.TrimSpace(step.Instructions),
-			Target:       strings.TrimSpace(step.Target),
-			Workspace:    strings.TrimSpace(step.Workspace),
-			Runtime:      strings.TrimSpace(step.Runtime),
-			RuntimeBin:   strings.TrimSpace(step.RuntimeBin),
-			After:        trimStringSlice(step.After),
-			Gate:         strings.TrimSpace(step.Gate),
-			Optional:     step.Optional,
-			Timeout:      formatPipelineStepTimeout(step.Timeout),
-			MaxAttempts:  step.MaxAttempts,
+			ID:               id,
+			Label:            strings.TrimSpace(step.Label),
+			Description:      strings.TrimSpace(step.Description),
+			Instructions:     strings.TrimSpace(step.Instructions),
+			Target:           strings.TrimSpace(step.Target),
+			Workspace:        strings.TrimSpace(step.Workspace),
+			Runtime:          strings.TrimSpace(step.Runtime),
+			RuntimeBin:       strings.TrimSpace(step.RuntimeBin),
+			After:            trimStringSlice(step.After),
+			Gate:             strings.TrimSpace(step.Gate),
+			ApprovalRequired: step.ApprovalRequired,
+			Optional:         step.Optional,
+			Timeout:          formatPipelineStepTimeout(step.Timeout),
+			MaxAttempts:      step.MaxAttempts,
 		}
 		if includeRoutes && node.Target != "" {
 			node.Routes = pipelineDispatchRoutes(top, node.Target)
@@ -6935,19 +6940,20 @@ func pipelineInfoFromTopology(p *topology.Pipeline) pipelineInfo {
 	steps := make([]pipelineStepInfo, 0, len(p.Steps))
 	for _, step := range p.Steps {
 		steps = append(steps, pipelineStepInfo{
-			ID:           step.ID,
-			Label:        step.Label,
-			Description:  step.Description,
-			Instructions: step.Instructions,
-			Target:       step.Target,
-			Workspace:    step.Workspace,
-			Runtime:      step.Runtime,
-			RuntimeBin:   step.RuntimeBin,
-			After:        append([]string(nil), step.After...),
-			Gate:         step.Gate,
-			Optional:     step.Optional,
-			Timeout:      formatPipelineStepTimeout(step.Timeout),
-			MaxAttempts:  step.MaxAttempts,
+			ID:               step.ID,
+			Label:            step.Label,
+			Description:      step.Description,
+			Instructions:     step.Instructions,
+			Target:           step.Target,
+			Workspace:        step.Workspace,
+			Runtime:          step.Runtime,
+			RuntimeBin:       step.RuntimeBin,
+			After:            append([]string(nil), step.After...),
+			Gate:             step.Gate,
+			ApprovalRequired: step.ApprovalRequired,
+			Optional:         step.Optional,
+			Timeout:          formatPipelineStepTimeout(step.Timeout),
+			MaxAttempts:      step.MaxAttempts,
 		})
 	}
 	return pipelineInfo{
@@ -10904,6 +10910,10 @@ func renderPipelineDetail(w io.Writer, info pipelineInfo, jsonOut bool, tmpl *te
 		if step.Gate != "" {
 			gate = " gate=" + step.Gate
 		}
+		approvalRequired := ""
+		if step.ApprovalRequired {
+			approvalRequired = " approval_required=true"
+		}
 		optional := ""
 		if step.Optional {
 			optional = " optional=true"
@@ -10936,7 +10946,7 @@ func renderPipelineDetail(w io.Writer, info pipelineInfo, jsonOut bool, tmpl *te
 		if formatted := formatStepRuntime(step.Runtime, step.RuntimeBin); formatted != "" {
 			runtime = " runtime=" + formatted
 		}
-		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s%s%s%s\n", step.ID, step.Target, after, workspace, runtime, label, description, instructions, gate, optional, timeout, maxAttempts)
+		fmt.Fprintf(w, "  %s target=%s after=%s%s%s%s%s%s%s%s%s%s%s\n", step.ID, step.Target, after, workspace, runtime, label, description, instructions, gate, approvalRequired, optional, timeout, maxAttempts)
 	}
 	return nil
 }

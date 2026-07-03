@@ -135,6 +135,42 @@ brief = true
 	}
 }
 
+func TestParse_PipelineStepApprovalRequired(t *testing.T) {
+	top, err := Parse([]byte(`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+gate = "manual"
+approval_required = true
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	step := top.Pipelines["ticket_to_pr"].Steps[0]
+	if !step.ApprovalRequired {
+		t.Fatalf("ApprovalRequired = false, want true")
+	}
+}
+
+func TestParse_PipelineStepApprovalRequiredRequiresManualGate(t *testing.T) {
+	_, err := Parse([]byte(`
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "manager"
+gate = "pr"
+approval_required = true
+`))
+	if err == nil || !strings.Contains(err.Error(), "approval_required is only valid with gate manual") {
+		t.Fatalf("Parse err = %v, want approval_required manual gate error", err)
+	}
+}
+
 func TestParse_RestartPolicy(t *testing.T) {
 	top, err := Parse([]byte(`
 [instances.manager]

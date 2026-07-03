@@ -210,6 +210,7 @@ Pipelines live under `[pipelines.<name>]`. A pipeline trigger creates or updates
 | `steps[].runtime_bin` | no | runtime default | Runtime binary or wrapper default for this stage. Operator `--runtime-bin` flags override it. |
 | `steps[].after` | no | empty | Step dependency or list of dependencies. All referenced steps must be done before this step is ready. |
 | `steps[].gate` | no | empty | Set to `"manual"` to require operator approval before the step can dispatch, even after dependencies are done. Approve with `agent-team job step <job-id> <step-id> --status queued`. |
+| `steps[].approval_required` | no | `false` | Only valid with `gate = "manual"`. When true, the step must be linked to a first-class job approval request and that approval must be approved before the step can advance. Existing manual gates keep the old `job approve` behavior unless they opt in. |
 | `steps[].optional` | no | `false` | If `true`, a failed step does not block downstream dependencies. |
 | `steps[].timeout` | no | empty | Duration string used by stale-step timeout commands before falling back to repo stale-job thresholds. |
 | `steps[].max_attempts` | no | unlimited | Positive integer cap for dispatch attempts. Retry commands skip failed steps once the stored attempt count reaches this value. |

@@ -995,6 +995,9 @@ func marshalPipelineSteps(steps []*topology.PipelineStep) []map[string]any {
 		if step.Gate != "" {
 			row["gate"] = step.Gate
 		}
+		if step.ApprovalRequired {
+			row["approval_required"] = true
+		}
 		if step.Optional {
 			row["optional"] = true
 		}

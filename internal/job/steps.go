@@ -22,6 +22,15 @@ func StepManualGatePending(step *Step) bool {
 	return step != nil && step.Status == StatusBlocked && step.Gate == StepGateManual
 }
 
+// StepApprovalGatePending reports whether a manual gate opted into first-class
+// approvals but does not yet have an approved linked approval.
+func StepApprovalGatePending(step *Step) bool {
+	return step != nil &&
+		step.Gate == StepGateManual &&
+		step.ApprovalRequired &&
+		step.ApprovalStatus != ApprovalStatusApproved
+}
+
 // StepPRGatePending reports whether a step is gated on PR metadata the job does
 // not yet carry (released when j.PR is populated).
 func StepPRGatePending(j *Job, step *Step) bool {
@@ -30,7 +39,7 @@ func StepPRGatePending(j *Job, step *Step) bool {
 
 // StepGatePending reports whether any gate is currently holding the step back.
 func StepGatePending(j *Job, step *Step) bool {
-	return StepManualGatePending(step) || StepPRGatePending(j, step)
+	return StepManualGatePending(step) || StepApprovalGatePending(step) || StepPRGatePending(j, step)
 }
 
 // NextReadyStep returns the next pipeline step that can run: its `after`
