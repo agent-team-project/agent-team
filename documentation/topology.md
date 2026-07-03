@@ -310,6 +310,32 @@ Schedules live under `[schedules.<name>]`. They publish a `schedule` event with 
 | `run_on_start` | no | `false` | If true, publish once when the daemon scheduler starts, then follow `every`. |
 | `payload.<key>` | no | — | Extra payload keys used by trigger matches or downstream agents. |
 
+Example usage digest schedule:
+
+```toml
+[schedules.usage-digest]
+every = "168h" # weekly
+
+[schedules.usage-digest.payload]
+kind = "usage_digest"
+since = "7d"
+channel = "#ops"
+
+[instances.usage-reporter]
+agent = "manager"
+ephemeral = true
+
+[[instances.usage-reporter.triggers]]
+event = "schedule"
+match.name = "usage-digest"
+match.kind = "usage_digest"
+```
+
+The reporting agent can run `agent-team usage --since 7d --by job` plus any
+agent/runtime rollups it needs, then post a compact summary to the configured
+channel or ticket comment. This is a scheduled reporting hook, not a nested
+sub-team.
+
 ### Team field reference
 
 Teams live under `[teams.<name>]`. They group declared instances, pipelines, and schedules into an operator-facing ownership unit for commands such as `agent-team team status <name>` and `agent-team team tick <name>`.

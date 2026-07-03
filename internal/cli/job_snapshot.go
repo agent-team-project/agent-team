@@ -680,6 +680,7 @@ func renderJobSnapshotSummary(w io.Writer, snapshot *jobSnapshotResult) {
 			emptyDash(snapshot.Runtime.Runtime),
 			snapshot.Runtime.PID)
 	}
+	renderJobUsageSummary(w, "usage", j.Usage)
 	if snapshot.State != nil {
 		fmt.Fprintf(w, "state: exists=%s path=%s\n", yesNo(snapshot.State.Exists), snapshot.State.Path)
 	}

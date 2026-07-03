@@ -3,12 +3,14 @@ package jobwrite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/jamesaud/agent-team/internal/linearwriteback"
+	"github.com/jamesaud/agent-team/internal/usage"
 )
 
 type Options struct {
@@ -58,6 +60,39 @@ func ReconcilePR(teamDir string, input job.ReconcileInput, now time.Time) (*job.
 	return result, nil
 }
 
+func RecordUsage(teamDir, rawID string, record usage.Record, opts Options) (*job.Job, bool, error) {
+	j, err := job.Read(teamDir, rawID)
+	if err != nil {
+		return nil, false, err
+	}
+	merged, changed := usage.MergeRecord(j.Usage, record)
+	if !changed {
+		return j, false, nil
+	}
+	j.Usage = merged
+	now := record.CapturedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	j.UpdatedAt = now.UTC()
+	if opts.EventType == "" {
+		opts.EventType = "usage_captured"
+	}
+	if opts.Actor == "" {
+		opts.Actor = "daemon"
+	}
+	if opts.Message == "" {
+		opts.Message = usageCaptureMessage(record)
+	}
+	if opts.Data == nil {
+		opts.Data = usageCaptureData(record)
+	}
+	if err := WriteWithAudit(teamDir, j, opts); err != nil {
+		return nil, false, err
+	}
+	return j, true, nil
+}
+
 func shouldWriteFailureAttention(teamDir string, j *job.Job) bool {
 	if j == nil || j.Status != job.StatusFailed || j.LinearAttentionWritten {
 		return false
@@ -70,6 +105,42 @@ func shouldWriteFailureAttention(teamDir string, j *job.Job) bool {
 		return false
 	}
 	return true
+}
+
+func usageCaptureMessage(record usage.Record) string {
+	instance := strings.TrimSpace(record.Instance)
+	if instance == "" {
+		instance = "instance"
+	}
+	return fmt.Sprintf("captured usage for %s", instance)
+}
+
+func usageCaptureData(record usage.Record) map[string]string {
+	data := map[string]string{
+		"tokens_available": fmt.Sprint(record.TokensAvailable),
+	}
+	if record.Instance != "" {
+		data["instance"] = record.Instance
+	}
+	if record.Agent != "" {
+		data["agent"] = record.Agent
+	}
+	if record.Runtime != "" {
+		data["runtime"] = record.Runtime
+	}
+	if record.Turns > 0 {
+		data["turns"] = fmt.Sprint(record.Turns)
+	}
+	if record.DurationMS > 0 {
+		data["duration_ms"] = fmt.Sprint(record.DurationMS)
+	}
+	if record.TokensAvailable {
+		data["input_tokens"] = fmt.Sprint(record.InputTokens)
+		data["cached_input_tokens"] = fmt.Sprint(record.CachedInputTokens)
+		data["output_tokens"] = fmt.Sprint(record.OutputTokens)
+		data["reasoning_output_tokens"] = fmt.Sprint(record.ReasoningOutputTokens)
+	}
+	return data
 }
 
 func attentionMessage(j *job.Job, message string) string {

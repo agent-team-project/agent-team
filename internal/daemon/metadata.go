@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/jamesaud/agent-team/internal/usage"
 )
 
 // Status is an instance's lifecycle state, surfaced via GET /v1/instances.
@@ -25,26 +27,27 @@ const (
 // `.agent_team/daemon/<instance>/meta.json`. It is the source of truth on
 // daemon restart — the in-memory map is rebuilt from these files.
 type Metadata struct {
-	Instance        string    `json:"instance"`
-	Agent           string    `json:"agent"`
-	Job             string    `json:"job,omitempty"`
-	Ticket          string    `json:"ticket,omitempty"`
-	Branch          string    `json:"branch,omitempty"`
-	PR              string    `json:"pr,omitempty"`
-	Runtime         string    `json:"runtime,omitempty"`
-	RuntimeBinary   string    `json:"runtime_binary,omitempty"`
-	Workspace       string    `json:"workspace"`
-	PID             int       `json:"pid"`
-	SessionID       string    `json:"session_id,omitempty"`
-	StartedAt       time.Time `json:"started_at"`
-	RuntimeBudget   string    `json:"runtime_budget,omitempty"`
-	RuntimeDeadline time.Time `json:"runtime_deadline,omitempty"`
-	StoppedAt       time.Time `json:"stopped_at,omitempty"`
-	ExitedAt        time.Time `json:"exited_at,omitempty"`
-	Status          Status    `json:"status"`
-	LogPath         string    `json:"log_path,omitempty"`
-	ExitCode        *int      `json:"exit_code,omitempty"`
-	Adopted         bool      `json:"adopted,omitempty"`
+	Instance        string        `json:"instance"`
+	Agent           string        `json:"agent"`
+	Job             string        `json:"job,omitempty"`
+	Ticket          string        `json:"ticket,omitempty"`
+	Branch          string        `json:"branch,omitempty"`
+	PR              string        `json:"pr,omitempty"`
+	Runtime         string        `json:"runtime,omitempty"`
+	RuntimeBinary   string        `json:"runtime_binary,omitempty"`
+	Workspace       string        `json:"workspace"`
+	PID             int           `json:"pid"`
+	SessionID       string        `json:"session_id,omitempty"`
+	StartedAt       time.Time     `json:"started_at"`
+	RuntimeBudget   string        `json:"runtime_budget,omitempty"`
+	RuntimeDeadline time.Time     `json:"runtime_deadline,omitempty"`
+	StoppedAt       time.Time     `json:"stopped_at,omitempty"`
+	ExitedAt        time.Time     `json:"exited_at,omitempty"`
+	Status          Status        `json:"status"`
+	LogPath         string        `json:"log_path,omitempty"`
+	ExitCode        *int          `json:"exit_code,omitempty"`
+	Usage           *usage.Record `json:"usage,omitempty"`
+	Adopted         bool          `json:"adopted,omitempty"`
 	// RestartBackoffUntil suppresses policy-driven relaunch attempts until the
 	// timestamp, preventing tight crash loops across daemon restarts.
 	RestartBackoffUntil time.Time `json:"restart_backoff_until,omitempty"`
