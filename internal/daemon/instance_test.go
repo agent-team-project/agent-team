@@ -587,6 +587,60 @@ description = "Recoverable Codex manager."
 	waitForStatusNot(t, m, "mgr", StatusRunning)
 }
 
+func TestInstance_StartCodexEmptyBriefUsesDefaultResumePrompt(t *testing.T) {
+	teamDir := fixtureTeamDir(t)
+	writeFixtureAgent(t, teamDir, "manager")
+	root := DaemonRoot(teamDir)
+	// No instances.toml declaration: ad-hoc instances generate no brief, and
+	// `codex exec resume <id> -` must still receive a non-empty stdin prompt
+	// (codex exits 1 on empty stdin — found in live validation).
+	codexHome := t.TempDir()
+	sessionID := "019b20fb-3b9d-7bb0-b034-d757cdbf2fda"
+	writeCodexRollout(t, codexHome, sessionID)
+	workspace := t.TempDir()
+	now := time.Now().UTC()
+	if err := WriteMetadata(root, &Metadata{
+		Instance:      "adhoc",
+		Agent:         "manager",
+		Runtime:       string(runtimebin.KindCodex),
+		RuntimeBinary: "codex",
+		Workspace:     workspace,
+		PID:           123,
+		SessionID:     sessionID,
+		StartedAt:     now,
+		StoppedAt:     now,
+		Status:        StatusStopped,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteInstanceLaunchEnv(root, "adhoc", &LaunchEnv{
+		Bin:        "codex",
+		Args:       []string{"codex", "exec", "-"},
+		Dir:        workspace,
+		Env:        []string{"CODEX_HOME=" + codexHome},
+		RecordedAt: now,
+		Version:    1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+
+	resumed, err := m.Start("adhoc")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if resumed.Status != StatusRunning {
+		t.Fatalf("resumed metadata = %+v", resumed)
+	}
+	if stdin := strings.TrimSpace(fake.lastStdin()); stdin == "" {
+		t.Fatalf("codex resume stdin must not be empty when the brief is empty")
+	}
+
+	_, _ = m.Stop("adhoc")
+	waitForStatusNot(t, m, "adhoc", StatusRunning)
+}
+
 func TestInstance_StartCodexPreflightFallbackLaunchesFresh(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindCodex))
 	teamDir := fixtureTeamDir(t)

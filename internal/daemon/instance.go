@@ -896,7 +896,13 @@ func (m *InstanceManager) start(instance string, expected *Metadata) (*Metadata,
 			return nil, fmt.Errorf("start: brief mailbox: %w", err)
 		}
 	} else if baseRuntime == runtimebin.KindCodex {
+		// `codex exec resume <id> -` requires a non-empty stdin prompt; an
+		// empty brief (ad-hoc instance, no daemon-owned state yet) must not
+		// fail the resume.
 		stdin = brief
+		if strings.TrimSpace(stdin) == "" {
+			stdin = "Resumed by agent-teamd. Run `inbox check` for pending messages, then continue your work."
+		}
 	}
 
 	logPath := base.LogPath
