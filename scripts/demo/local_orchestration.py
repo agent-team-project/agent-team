@@ -566,9 +566,33 @@ def verify_job_merge_dry_run(binary: Path, repo: Path) -> None:
 
 
 def verify_instance_brief(binary: Path, repo: Path, job_id: str) -> None:
+    # Give the manager real ownership first, then assert inside the Owned Jobs
+    # section itself — a job id appearing elsewhere (e.g. Unread Mailbox) must
+    # not satisfy this check.
+    run(binary, "job", "update", job_id, "--instance", "manager", "--repo", repo, "--json", parse_json=True)
     brief = run(binary, "instance", "brief", "manager", "--target", repo)
-    require_substrings(brief, "# Instance brief: manager", "Owned Jobs", job_id)
+    require_substrings(brief, "# Instance brief: manager")
+    owned = brief_section(brief, "Owned Jobs")
+    if job_id not in owned or "(none)" in owned:
+        raise DemoError(f"manager brief Owned Jobs section does not list {job_id}: {owned!r}")
     print(f"instance brief verified: manager owns {job_id}")
+
+
+def brief_section(brief: str, heading: str) -> str:
+    lines = brief.splitlines()
+    out: list[str] = []
+    inside = False
+    for line in lines:
+        if line.startswith("## "):
+            if inside:
+                break
+            inside = line[3:].strip() == heading
+            continue
+        if inside:
+            out.append(line)
+    if not out and not inside:
+        raise DemoError(f"brief has no {heading!r} section: {brief!r}")
+    return "\n".join(out)
 
 
 def verify_lock_queue(binary: Path, repo: Path) -> None:
