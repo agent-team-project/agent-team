@@ -13847,6 +13847,124 @@ func TestJobStepMetadataAppearsInDiagnostics(t *testing.T) {
 	}
 }
 
+func TestJobExplainRuntimeEnrichmentIsScopedToExplainedJob(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	root := daemon.DaemonRoot(teamDir)
+	now := time.Now().UTC()
+	sharedInstance := "worker-shared"
+
+	writeJob := func(id string) {
+		t.Helper()
+		j := &job.Job{
+			ID:        id,
+			Ticket:    strings.ToUpper(id),
+			Target:    "manager",
+			Kickoff:   "Implement " + id + ".",
+			Pipeline:  "ticket_triage",
+			Status:    job.StatusRunning,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Steps: []job.Step{
+				{ID: "implement", Label: "Implement", Target: "worker", Status: job.StatusRunning, Instance: sharedInstance},
+			},
+		}
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("write job %s: %v", id, err)
+		}
+	}
+	writeJob("squ-301")
+	writeJob("squ-302")
+
+	lastActivity := now.Add(-2 * time.Minute).Truncate(time.Second)
+	logPath := filepath.Join(root, sharedInstance, "child.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatalf("mkdir log dir: %v", err)
+	}
+	if err := os.WriteFile(logPath, []byte("newer job is active\n"), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	if err := os.Chtimes(logPath, lastActivity, lastActivity); err != nil {
+		t.Fatalf("chtimes log: %v", err)
+	}
+	if err := daemon.WriteMetadata(root, &daemon.Metadata{
+		Instance:       sharedInstance,
+		Agent:          "worker",
+		Job:            "squ-302",
+		Ticket:         "SQU-302",
+		Status:         daemon.StatusRunning,
+		StartedAt:      now.Add(-5 * time.Minute),
+		LogPath:        logPath,
+		ResumeCount:    4,
+		FreshFallback:  true,
+		FreshFallbacks: 1,
+	}); err != nil {
+		t.Fatalf("write daemon metadata: %v", err)
+	}
+	timelineBase := now.Truncate(time.Minute)
+	for _, ev := range []*daemon.LifecycleEvent{
+		{TS: timelineBase.Add(-12 * time.Minute), Action: "dispatch", Instance: sharedInstance, Agent: "worker", Job: "squ-301", Message: "older job dispatched"},
+		{TS: timelineBase.Add(-11 * time.Minute), Action: "start", Instance: sharedInstance, Agent: "worker", Job: "squ-301", Message: "older job resumed"},
+		{TS: timelineBase.Add(-5 * time.Minute), Action: "dispatch", Instance: sharedInstance, Agent: "worker", Job: "squ-302", Message: "newer job dispatched"},
+		{TS: timelineBase.Add(-3 * time.Minute), Action: "start", Instance: sharedInstance, Agent: "worker", Job: "squ-302", Message: "newer job resumed"},
+		{TS: timelineBase.Add(-3*time.Minute + 20*time.Second), Action: "start", Instance: sharedInstance, Agent: "worker", Job: "squ-302", Message: "newer job resumed"},
+		{TS: timelineBase.Add(-2 * time.Minute), Action: "extended", Instance: sharedInstance, Agent: "worker", Job: "squ-302", Message: "runtime budget extended by 30m0s by cli"},
+	} {
+		if err := daemon.AppendLifecycleEvent(root, ev); err != nil {
+			t.Fatalf("append lifecycle event: %v", err)
+		}
+	}
+
+	explainJob := func(id string) jobExplainResult {
+		t.Helper()
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs([]string{"job", "explain", id, "--repo", tmp, "--json"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("job explain %s: %v\nstderr=%s", id, err, stderr.String())
+		}
+		var explained jobExplainResult
+		if err := json.Unmarshal(out.Bytes(), &explained); err != nil {
+			t.Fatalf("decode job explain %s: %v\nbody=%s", id, err, out.String())
+		}
+		return explained
+	}
+
+	older := explainJob("squ-301")
+	if len(older.Steps) != 1 {
+		t.Fatalf("older explain steps = %+v", older.Steps)
+	}
+	olderStep := older.Steps[0]
+	if olderStep.ResumeCount != 0 || olderStep.FreshFallback || olderStep.FreshFallbacks != 0 || olderStep.LastActivityAt != "" || olderStep.Activity != "" {
+		t.Fatalf("older job inherited newer runtime metadata: %+v", olderStep)
+	}
+	if len(olderStep.Incarnations) != 2 ||
+		!jobExplainEventsContain(olderStep.Incarnations, "dispatched", 1) ||
+		!jobExplainEventsContain(olderStep.Incarnations, "resumed", 1) {
+		t.Fatalf("older job incarnations = %+v", olderStep.Incarnations)
+	}
+
+	newer := explainJob("squ-302")
+	if len(newer.Steps) != 1 {
+		t.Fatalf("newer explain steps = %+v", newer.Steps)
+	}
+	newerStep := newer.Steps[0]
+	if newerStep.ResumeCount != 4 || !newerStep.FreshFallback || newerStep.FreshFallbacks != 1 ||
+		newerStep.LastActivityAt != lastActivity.Format(time.RFC3339) ||
+		!strings.HasPrefix(newerStep.Activity, "quiet ") {
+		t.Fatalf("newer job runtime metadata = %+v", newerStep)
+	}
+	if len(newerStep.Incarnations) != 3 ||
+		!jobExplainEventsContain(newerStep.Incarnations, "dispatched", 1) ||
+		!jobExplainEventsContain(newerStep.Incarnations, "resumed", 2) ||
+		!jobExplainEventsContain(newerStep.Incarnations, "watchdog extended +30m", 1) {
+		t.Fatalf("newer job incarnations = %+v", newerStep.Incarnations)
+	}
+}
+
 func jobExplainEventsContain(events []jobExplainEvent, summary string, count int) bool {
 	for _, ev := range events {
 		if ev.Summary == summary && ev.Count == count {

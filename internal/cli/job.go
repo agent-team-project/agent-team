@@ -14243,15 +14243,19 @@ func enrichJobExplainRuntime(teamDir string, res *jobExplainResult, now time.Tim
 	if res == nil {
 		return
 	}
+	jobID := job.NormalizeID(res.JobID)
+	if jobID == "" {
+		return
+	}
 	metas, _ := daemon.ListMetadata(daemon.DaemonRoot(teamDir))
 	metaByInstance := make(map[string]*daemon.Metadata, len(metas))
 	for _, meta := range metas {
-		if meta != nil && strings.TrimSpace(meta.Instance) != "" {
+		if meta != nil && strings.TrimSpace(meta.Instance) != "" && job.NormalizeID(meta.Job) == jobID {
 			metaByInstance[meta.Instance] = meta
 		}
 	}
 	events, _ := daemon.ListLifecycleEvents(daemon.DaemonRoot(teamDir))
-	timelineByInstance := jobExplainTimelinesByInstance(events)
+	timelineByInstance := jobExplainTimelinesByInstance(events, jobID)
 	for i := range res.Steps {
 		instance := strings.TrimSpace(res.Steps[i].Instance)
 		if instance == "" {
@@ -14262,21 +14266,21 @@ func enrichJobExplainRuntime(teamDir string, res *jobExplainResult, now time.Tim
 			res.Steps[i].ResumeCount = meta.ResumeCount
 			res.Steps[i].FreshFallback = meta.FreshFallback
 			res.Steps[i].FreshFallbacks = meta.FreshFallbacks
+			activity := runtimeActivityForInstance(teamDir, instance, meta, now)
+			res.Steps[i].LastActivityAt = formatOptionalRFC3339(activity.LastActivityAt)
+			res.Steps[i].Activity = activity.Activity
 		}
-		activity := runtimeActivityForInstance(teamDir, instance, meta, now)
-		res.Steps[i].LastActivityAt = formatOptionalRFC3339(activity.LastActivityAt)
-		res.Steps[i].Activity = activity.Activity
 		res.Steps[i].Incarnations = timelineByInstance[instance]
 	}
 }
 
-func jobExplainTimelinesByInstance(events []*daemon.LifecycleEvent) map[string][]jobExplainEvent {
+func jobExplainTimelinesByInstance(events []*daemon.LifecycleEvent, jobID string) map[string][]jobExplainEvent {
 	if len(events) == 0 {
 		return nil
 	}
 	copied := make([]*daemon.LifecycleEvent, 0, len(events))
 	for _, ev := range events {
-		if ev != nil && strings.TrimSpace(ev.Instance) != "" {
+		if ev != nil && strings.TrimSpace(ev.Instance) != "" && job.NormalizeID(ev.Job) == jobID {
 			copied = append(copied, ev)
 		}
 	}
