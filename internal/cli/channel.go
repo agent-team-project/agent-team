@@ -215,7 +215,7 @@ func newChannelRmCmd() *cobra.Command {
 					return err
 				}
 				if !ok {
-					fmt.Fprintln(cmd.OutOrStdout(), "(aborted)")
+					fmt.Fprintln(cmd.OutOrStdout(), "(aborted — confirmation defaults to no; pass --force to skip it in non-interactive runs)")
 					return nil
 				}
 			}

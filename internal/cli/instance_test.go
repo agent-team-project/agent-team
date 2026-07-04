@@ -3508,7 +3508,7 @@ func TestInstanceRm_AbortedWithoutConfirm(t *testing.T) {
 	if _, err := os.Stat(stateDir); err != nil {
 		t.Errorf("state dir should still exist, got err=%v", err)
 	}
-	if !strings.Contains(out.String(), "(aborted)") {
+	if !strings.Contains(out.String(), "(aborted — confirmation defaults to no; pass --force to skip it in non-interactive runs)") {
 		t.Errorf("missing (aborted): %s", out.String())
 	}
 }

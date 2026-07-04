@@ -1017,7 +1017,7 @@ func runInstanceRmWithOptions(cmd *cobra.Command, target string, names []string,
 			}
 			if !ok {
 				if !opts.Quiet {
-					fmt.Fprintln(cmd.OutOrStdout(), "(aborted)")
+					fmt.Fprintln(cmd.OutOrStdout(), "(aborted — confirmation defaults to no; pass --force to skip it in non-interactive runs)")
 				}
 				continue
 			}
