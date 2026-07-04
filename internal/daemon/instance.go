@@ -1130,7 +1130,7 @@ func (m *InstanceManager) start(instance string, expected *Metadata, opts StartO
 		m.mu.Unlock()
 		return nil, fmt.Errorf("start: %q has no session_id; cannot resume", instance)
 	}
-	env, err := m.startEnv(instance)
+	env, otelCodexArgs, err := m.startEnvWithOTelArgs(instance)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("start: launch env: %w", err)
@@ -1173,6 +1173,11 @@ func (m *InstanceManager) start(instance string, expected *Metadata, opts StartO
 		bin = runtimebin.DefaultBinaryForKind(baseRuntime)
 	}
 	args := managedResumeArgs(baseRuntime, bin, base.SessionID)
+	if baseRuntime == runtimebin.KindCodex && len(otelCodexArgs) > 0 {
+		// Codex exporter selection/config live in argv, not env — a resumed
+		// child needs the CURRENT config's -c otel.* args like a dispatch does.
+		args = append(append([]string(nil), args[:2]...), append(append([]string(nil), otelCodexArgs...), args[2:]...)...)
+	}
 	proc, err := m.spawner(args, env, base.Workspace, logPath, logPath, stdin)
 	if err != nil {
 		m.mu.Unlock()
@@ -1508,14 +1513,20 @@ func (m *InstanceManager) launchPrepared(in DispatchInput, expected *Metadata) (
 }
 
 func (m *InstanceManager) startEnv(instance string) ([]string, error) {
+	env, _, err := m.startEnvWithOTelArgs(instance)
+	return env, err
+}
+
+func (m *InstanceManager) startEnvWithOTelArgs(instance string) ([]string, []string, error) {
 	env, ok, err := m.instanceLaunchEnv(instance)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if ok {
-		return m.applyCurrentOTelConfig(instance, env), nil
+		out, codexArgs := m.applyCurrentOTelConfigWithArgs(instance, env)
+		return out, codexArgs, nil
 	}
-	return os.Environ(), nil
+	return os.Environ(), nil, nil
 }
 
 // applyCurrentOTelConfig reconciles a persisted launch env with the repo's
@@ -1524,22 +1535,30 @@ func (m *InstanceManager) startEnv(instance string) ([]string, error) {
 // changed — the current config alone decides what the resumed child sees. No
 // [otel] table keeps legacy passthrough, mirroring dispatch semantics.
 func (m *InstanceManager) applyCurrentOTelConfig(instance string, env []string) []string {
+	out, _ := m.applyCurrentOTelConfigWithArgs(instance, env)
+	return out
+}
+
+// applyCurrentOTelConfigWithArgs additionally returns the Codex `-c otel.*`
+// args the current config requires, so managed Codex resume can attach the
+// exporter configuration that lives in argv rather than env.
+func (m *InstanceManager) applyCurrentOTelConfigWithArgs(instance string, env []string) ([]string, []string) {
 	teamDir := filepath.Dir(m.daemonRoot)
 	tree, err := teamtemplate.LoadTOMLFile(filepath.Join(teamDir, "config.toml"))
 	if err != nil {
-		return env
+		return env, nil
 	}
 	cfg, err := runtimeotel.FromTree(tree)
 	if err != nil || !cfg.Configured() {
-		return env
+		return env, nil
 	}
 	env = runtimeotel.StripOwnedEnv(env)
 	if !cfg.Enabled {
-		return env
+		return env, nil
 	}
 	meta, err := ReadMetadata(m.daemonRoot, instance)
 	if err != nil {
-		return env
+		return env, nil
 	}
 	launch, err := runtimeotel.BuildLaunch(cfg, metadataRuntimeKind(meta), runtimeotel.Context{
 		Agent:    meta.Agent,
@@ -1551,9 +1570,9 @@ func (m *InstanceManager) applyCurrentOTelConfig(instance string, env []string) 
 		Build:    buildinfo.Current(""),
 	})
 	if err != nil {
-		return env
+		return env, nil
 	}
-	return append(env, launch.Env...)
+	return append(env, launch.Env...), launch.CodexArgs
 }
 
 func (m *InstanceManager) launchPreparedEnv(instance string, overlay []string, complete, stripOTel bool) ([]string, error) {
@@ -1568,7 +1587,11 @@ func (m *InstanceManager) launchPreparedEnv(instance string, overlay []string, c
 		if stripOTel {
 			env = runtimeotel.StripOwnedEnv(env)
 		}
-		return env, nil
+		// The snapshot is the base, never the whole story: the caller's
+		// overlay carries the freshly generated dispatch context (current
+		// AGENT_TEAM_*, TRACEPARENT, exporter env). Appending after the
+		// snapshot lets current values win on duplicate keys.
+		return append(env, overlay...), nil
 	}
 	env = os.Environ()
 	if stripOTel {
