@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.3.0 — 2026-07-04
+
+The board-as-control-plane release. Driven almost entirely by day-1 field feedback from the v0.2.0 deployment and live dogfooding of the shipped defaults.
+
+### The board is the control plane
+
+- **Column-transition dispatch** — Linear-mode pipelines trigger on `ticket.status_changed` matched to `[linear].agent_column` ("Ready for Agent"): dragging the card is the dispatch gesture. Loop-safe by default (the Linear viewer id is resolved and cached; self-authored transitions are ignored fail-closed) and idempotent on re-entry (`redispatch_on_reentry` opt-in). (SQU-67, #72)
+- **Board write-back** — pipeline events move the card: dispatch → in-progress, bounce → back with findings comment, no-retry terminal failure → attention state/comment/label. All failed-status transitions route through one idempotent choke point covering every dispatch, kill, reject, cancel, and reconcile path. (SQU-68, #73)
+
+### Messaging: spawn, turn boundary, interrupt
+
+- Unread mailbox rides in daemon-composed dispatch kickoffs — spawn-time mail blindness is impossible. (SQU-64, #69)
+- **Turn-boundary soft push**: launcher-generated runtime hooks (Claude `--settings`, Codex `-c hooks.*`) inject unread mail as model-visible context at `UserPromptSubmit`/`PreToolUse`; opt-out via `[runtime.hooks]`. Functionally verified on codex-cli 0.142. (SQU-66, #70)
+- **`send --interrupt`**: durable delivery + graceful stop + same-session managed resume with the message as the resume prompt — live-validated mid-`sleep 300`. (SQU-65, #71)
+- **`job bounce`**: re-queue a reviewed step with findings appended to the kickoff atomically (`--advance` dispatches); `job update --kickoff` for direct edits; attention escalation warns and flags triage after repeated bounces (`[health].bounce_attention_after`). (SQU-62 #67, SQU-77)
+
+### Observability
+
+- **Usage accounting** — per-run token usage captured at reap (before logs can be destroyed), persisted to jobs and archives; `agent-team usage [--since] [--by job|instance|agent|runtime]`; weekly digest schedule example. (SQU-73, #79)
+- **OTel** — probe-verified runtime capability memo; opt-in `[otel]` config propagates runtime-native exporter configuration (Claude OTLP env, Codex `-c otel.*`) with TRACEPARENT correlation and agent-team resource attributes; header secrets via env indirection, never argv; disabled config strips inherited telemetry on every env path. Orchestration spans (jobs as traces) land in this release via a stdlib OTLP/HTTP exporter — no new dependencies. (SQU-74, #78/#82/#83)
+- `signatures test <pipeline> --against <log>` dry-runs infra signatures with matched excerpts; triage shows the matched signature so over-broad regexes are visible. (SQU-70, #75)
+
+### Operator verbs & pipeline policy
+
+- `land = squash|merge|rebase` per pipeline with `job merge --land` override — fork-sync workflows land merge commits through the gated pipeline. (SQU-71, #74)
+- `retry_on_crash` — one automatic retry for opted-in review-type steps on crash-without-verdict; implementation steps stay `max_attempts = 1`. (SQU-72, #76)
+- `job extend` / `extend` push a running watchdog deadline (`/v1/extend`), with budget/elapsed/remaining in `ps` (frozen correctly at exit — SQU-75). (SQU-69 #80, SQU-61 #68)
+- Step watchdogs arm on **all** dispatch paths, including operator advances. (SQU-61, #68)
+
+### Fixes
+
+- **Cross-instance lock waiters stall** — freeing a lock now kicks the shared queue drain; previously waiters queued under other instances stalled until a manual `queue drain`. Same-hour fix for a live field report. (SQU-76)
+- Bundled-template test expectations updated for the reviewer + 3-step pipeline. (SQU-57)
+
+### Template & onboarding
+
+- **Ticketless quickstart**: `init` with zero flags produces a working team (`pm_tool = "none"` default); Linear params required only when Linear is selected; quickstart docs. (SQU-58, #66)
+- Evidence-based agent-prompt authoring pass: inbox-first startup, bounce awareness, gate reporting, staleness refresh, trailer ownership; stale model pins removed. (SQU-63)
+- Narrative guides for messaging, board control, and observability. (SQU-78, #81)
+- Feedback-channel contract for operating teams (`documentation/feedback-channel.md`).
+
 ## v0.2.0 — 2026-07-03
 
 First tagged release. Everything below landed on top of the untagged v0.1.x dev line, most of it driven by the first production field report (SQU-42: ~100 daemon jobs, 35+ merged PRs over a week on a Rust monorepo).
