@@ -36,3 +36,13 @@ idle_renotify = "0"
 [runtime]
 kind = "codex"
 binary = "codex"
+
+# Feedback routing for the triage-feedback schedule (see that skill).
+# This repo IS the framework repo, so local and upstream are the same board.
+[feedback]
+upstream = "agent-team"
+
+[feedback.routes.agent-team]
+kind     = "linear"
+team_key = "SQU"
+label    = "feedback"

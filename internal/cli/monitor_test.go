@@ -993,7 +993,7 @@ func TestMonitorSummaryPlanJSONIncludesPlanSummary(t *testing.T) {
 	if body.Plan == nil {
 		t.Fatalf("plan summary missing: %+v", body)
 	}
-	if body.Plan.Summary.Total != 1 || body.Plan.Summary.Actions["start"] != 1 || !body.Plan.Summary.DryRun {
+	if body.Plan.Summary.Total != 2 || body.Plan.Summary.Actions["start"] != 1 || body.Plan.Summary.Actions["on-demand"] != 1 || !body.Plan.Summary.DryRun {
 		t.Fatalf("plan summary = %+v, want one dry-run manager start", body.Plan.Summary)
 	}
 }
@@ -1371,11 +1371,15 @@ func TestMonitorPlanJSONUsesFilters(t *testing.T) {
 	if body.Plan == nil {
 		t.Fatalf("monitor --plan should include plan: %+v", body)
 	}
-	if body.Plan.Summary.Total != 1 || body.Plan.Summary.Start != 1 {
-		t.Fatalf("plan summary = %+v, want one manager start", body.Plan.Summary)
+	if body.Plan.Summary.Total != 2 || body.Plan.Summary.Start != 1 || body.Plan.Summary.OnDemand != 1 {
+		t.Fatalf("plan summary = %+v, want manager start + feedback-triage on-demand", body.Plan.Summary)
 	}
-	if len(body.Plan.Instances) != 1 || body.Plan.Instances[0].Instance != "manager" {
-		t.Fatalf("plan rows = %+v, want only manager", body.Plan.Instances)
+	names := map[string]bool{}
+	for _, row := range body.Plan.Instances {
+		names[row.Instance] = true
+	}
+	if len(body.Plan.Instances) != 2 || !names["manager"] || !names["feedback-triage"] {
+		t.Fatalf("plan rows = %+v, want manager and feedback-triage", body.Plan.Instances)
 	}
 }
 
@@ -1399,8 +1403,8 @@ func TestMonitorPlanJSONFiltersByAction(t *testing.T) {
 	if body.Plan == nil {
 		t.Fatalf("monitor --plan should include plan: %+v", body)
 	}
-	if body.Plan.Summary.Total != 2 || body.Plan.Summary.OnDemand != 2 {
-		t.Fatalf("plan summary = %+v, want two on-demand rows", body.Plan.Summary)
+	if body.Plan.Summary.Total != 3 || body.Plan.Summary.OnDemand != 3 {
+		t.Fatalf("plan summary = %+v, want three on-demand rows", body.Plan.Summary)
 	}
 	byName := map[string]planRow{}
 	for _, row := range body.Plan.Instances {
