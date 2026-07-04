@@ -495,7 +495,10 @@ func TestRun_CodexOTelInjectionFromConfig(t *testing.T) {
 	}
 	for _, want := range []string{
 		"otel.exporter={ otlp-http = { endpoint = \"http://collector:4318\", protocol = \"binary\", headers = { \"authorization\" = \"${AGENTTEAM_OTEL_HEADER_0}\" } } }",
-		"otel.trace_exporter={ otlp-http = { endpoint = \"http://collector:4318\", protocol = \"binary\", headers = { \"authorization\" = \"${AGENTTEAM_OTEL_HEADER_0}\" } } }",
+		"otel.trace_exporter=\"otlp-http\"",
+		"otel.trace_exporter.\"otlp-http\".endpoint=\"http://collector:4318\"",
+		"otel.trace_exporter.\"otlp-http\".protocol=\"binary\"",
+		"otel.trace_exporter.\"otlp-http\".headers={ \"authorization\" = \"${AGENTTEAM_OTEL_HEADER_0}\" }",
 		"otel.log_user_prompt=false",
 		"otel.span_attributes={",
 		"\"service.name\" = \"agent-team/manager\"",

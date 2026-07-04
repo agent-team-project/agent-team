@@ -153,7 +153,10 @@ func TestBuildLaunchCodexArgs(t *testing.T) {
 	}
 	for _, want := range []string{
 		"otel.exporter={ otlp-http = { endpoint = \"http://collector:4318\", protocol = \"binary\", headers = { \"x-otlp-api-key\" = \"${AGENTTEAM_OTEL_HEADER_0}\" } } }",
-		"otel.trace_exporter={ otlp-http = { endpoint = \"http://collector:4318\", protocol = \"binary\", headers = { \"x-otlp-api-key\" = \"${AGENTTEAM_OTEL_HEADER_0}\" } } }",
+		"otel.trace_exporter=\"otlp-http\"",
+		"otel.trace_exporter.\"otlp-http\".endpoint=\"http://collector:4318\"",
+		"otel.trace_exporter.\"otlp-http\".protocol=\"binary\"",
+		"otel.trace_exporter.\"otlp-http\".headers={ \"x-otlp-api-key\" = \"${AGENTTEAM_OTEL_HEADER_0}\" }",
 		"otel.log_user_prompt=false",
 		"otel.span_attributes={",
 		"\"service.name\" = \"agent-team/worker\"",
@@ -242,36 +245,62 @@ func envValueForTest(env []string, key string) string {
 
 func assertCodexOTelArgsDecode(t *testing.T, args []string, endpoint string) {
 	t.Helper()
-	var lines []string
+	values := map[string]any{}
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "-c" && strings.HasPrefix(args[i+1], "otel.") {
-			lines = append(lines, args[i+1])
+			key, rawValue, ok := strings.Cut(args[i+1], "=")
+			if !ok {
+				t.Fatalf("codex otel arg missing value: %q", args[i+1])
+			}
+			var decoded map[string]any
+			if _, err := toml.Decode("value = "+rawValue, &decoded); err != nil {
+				t.Fatalf("codex otel arg %q did not decode as TOML value: %v", args[i+1], err)
+			}
+			values[key] = decoded["value"]
 		}
 	}
-	var cfg struct {
-		Otel struct {
-			Exporter      map[string]codexExporterForTest `toml:"exporter"`
-			TraceExporter map[string]codexExporterForTest `toml:"trace_exporter"`
-		} `toml:"otel"`
+	exporter, ok := values["otel.exporter"].(map[string]any)
+	if !ok {
+		t.Fatalf("otel.exporter decoded as %T, want inline exporter table", values["otel.exporter"])
 	}
-	if _, err := toml.Decode(strings.Join(lines, "\n"), &cfg); err != nil {
-		t.Fatalf("codex otel args did not decode as TOML: %v\n%s", err, strings.Join(lines, "\n"))
+	logExporter := codexExporterTableForTest(t, exporter, "otlp-http")
+	if got, _ := logExporter["endpoint"].(string); got != endpoint {
+		t.Fatalf("otel.exporter endpoint = %q, want %q", got, endpoint)
 	}
-	for name, exporter := range map[string]codexExporterForTest{
-		"otel.exporter":       cfg.Otel.Exporter["otlp-http"],
-		"otel.trace_exporter": cfg.Otel.TraceExporter["otlp-http"],
-	} {
-		if exporter.Endpoint != endpoint || exporter.Protocol != codexOTLPProtocol {
-			t.Fatalf("%s decoded exporter = %+v, want endpoint %q protocol %q", name, exporter, endpoint, codexOTLPProtocol)
-		}
-		if exporter.Headers["x-otlp-api-key"] != "${AGENTTEAM_OTEL_HEADER_0}" {
-			t.Fatalf("%s decoded headers = %+v, want env reference", name, exporter.Headers)
-		}
+	if got, _ := logExporter["protocol"].(string); got != codexOTLPProtocol {
+		t.Fatalf("otel.exporter protocol = %q, want %q", got, codexOTLPProtocol)
+	}
+	logHeaders := codexExporterTableForTest(t, logExporter, "headers")
+	if got, _ := logHeaders["x-otlp-api-key"].(string); got != "${AGENTTEAM_OTEL_HEADER_0}" {
+		t.Fatalf("otel.exporter headers = %+v, want env reference", logHeaders)
+	}
+
+	if got, _ := values["otel.trace_exporter"].(string); got != "otlp-http" {
+		t.Fatalf("otel.trace_exporter = %#v, want selector string %q", values["otel.trace_exporter"], "otlp-http")
+	}
+	if _, ok := values["otel.trace_exporter"].(map[string]any); ok {
+		t.Fatalf("otel.trace_exporter decoded as inline table, want selector string")
+	}
+	if got, _ := values[`otel.trace_exporter."otlp-http".endpoint`].(string); got != endpoint {
+		t.Fatalf("otel.trace_exporter otlp-http endpoint = %q, want %q", got, endpoint)
+	}
+	if got, _ := values[`otel.trace_exporter."otlp-http".protocol`].(string); got != codexOTLPProtocol {
+		t.Fatalf("otel.trace_exporter otlp-http protocol = %q, want %q", got, codexOTLPProtocol)
+	}
+	traceHeaders, ok := values[`otel.trace_exporter."otlp-http".headers`].(map[string]any)
+	if !ok {
+		t.Fatalf("otel.trace_exporter otlp-http headers decoded as %T, want table", values[`otel.trace_exporter."otlp-http".headers`])
+	}
+	if got, _ := traceHeaders["x-otlp-api-key"].(string); got != "${AGENTTEAM_OTEL_HEADER_0}" {
+		t.Fatalf("otel.trace_exporter headers = %+v, want env reference", traceHeaders)
 	}
 }
 
-type codexExporterForTest struct {
-	Endpoint string            `toml:"endpoint"`
-	Protocol string            `toml:"protocol"`
-	Headers  map[string]string `toml:"headers"`
+func codexExporterTableForTest(t *testing.T, values map[string]any, key string) map[string]any {
+	t.Helper()
+	table, ok := values[key].(map[string]any)
+	if !ok {
+		t.Fatalf("%s decoded as %T, want table", key, values[key])
+	}
+	return table
 }

@@ -814,7 +814,10 @@ func TestEvent_EphemeralCodexDispatchInjectsOTel(t *testing.T) {
 	}
 	for _, want := range []string{
 		"otel.exporter={ otlp-http = { endpoint = \"http://collector:4318\", protocol = \"binary\", headers = { \"authorization\" = \"${AGENTTEAM_OTEL_HEADER_0}\" } } }",
-		"otel.trace_exporter={ otlp-http = { endpoint = \"http://collector:4318\", protocol = \"binary\", headers = { \"authorization\" = \"${AGENTTEAM_OTEL_HEADER_0}\" } } }",
+		"otel.trace_exporter=\"otlp-http\"",
+		"otel.trace_exporter.\"otlp-http\".endpoint=\"http://collector:4318\"",
+		"otel.trace_exporter.\"otlp-http\".protocol=\"binary\"",
+		"otel.trace_exporter.\"otlp-http\".headers={ \"authorization\" = \"${AGENTTEAM_OTEL_HEADER_0}\" }",
 		"otel.log_user_prompt=false",
 		"otel.span_attributes={",
 		"\"service.name\" = \"agent-team/worker\"",
@@ -827,6 +830,14 @@ func TestEvent_EphemeralCodexDispatchInjectsOTel(t *testing.T) {
 }
 
 func TestEvent_EphemeralDispatchOTelDisabledNoOp(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_ENABLE_TELEMETRY", "1")
+	t.Setenv("CLAUDE_CODE_ENHANCED_TELEMETRY_BETA", "1")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://stale")
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "stale=true")
+	t.Setenv("TRACEPARENT", "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")
+	t.Setenv("TRACESTATE", "stale")
+	t.Setenv("AGENTTEAM_OTEL_HEADER_0", "stale-secret")
+
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)
 	writeFixtureOTelConfig(t, teamDir, false)
@@ -851,7 +862,15 @@ func TestEvent_EphemeralDispatchOTelDisabledNoOp(t *testing.T) {
 		_ = m.WaitForReaper("worker-otel-disabled", 5*time.Second)
 	})
 	env := fake.lastEnv()
-	for _, forbidden := range []string{"OTEL_EXPORTER_OTLP_ENDPOINT=", "CLAUDE_CODE_ENABLE_TELEMETRY=1", "TRACEPARENT=00-"} {
+	for _, forbidden := range []string{
+		"CLAUDE_CODE_ENABLE_TELEMETRY=",
+		"CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=",
+		"OTEL_EXPORTER_OTLP_ENDPOINT=",
+		"OTEL_RESOURCE_ATTRIBUTES=",
+		"TRACEPARENT=",
+		"TRACESTATE=",
+		"AGENTTEAM_OTEL_HEADER_",
+	} {
 		if containsEnvPrefix(env, forbidden) {
 			t.Fatalf("disabled otel env included %q: %#v", forbidden, env)
 		}

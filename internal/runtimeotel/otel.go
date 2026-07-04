@@ -340,14 +340,17 @@ func joinKeyValues(values map[string]string) string {
 
 func codexConfigArgs(cfg Config, attrs, headerRefs map[string]string, traceparent string) []string {
 	logExporter := codexExporterTable(cfg, headerRefs)
-	traceExporter := codexTraceExporterTable(cfg, headerRefs)
 	args := []string{
 		"-c", "otel.exporter=" + logExporter,
-		"-c", "otel.trace_exporter=" + traceExporter,
-		"-c", "otel.log_user_prompt=false",
-		"-c", "otel.span_attributes=" + tomlInlineStringMap(attrs),
-		"-c", "shell_environment_policy.set.TRACEPARENT=" + strconv.Quote(traceparent),
 	}
+	for _, arg := range codexTraceExporterArgs(cfg, headerRefs) {
+		args = append(args, "-c", arg)
+	}
+	args = append(args,
+		"-c", "otel.log_user_prompt=false",
+		"-c", "otel.span_attributes="+tomlInlineStringMap(attrs),
+		"-c", "shell_environment_policy.set.TRACEPARENT="+strconv.Quote(traceparent),
+	)
 	return args
 }
 
@@ -355,8 +358,17 @@ func codexExporterTable(cfg Config, headers map[string]string) string {
 	return codexOTLPHTTPExporterTable(strings.TrimSpace(cfg.Endpoint), headers)
 }
 
-func codexTraceExporterTable(cfg Config, headers map[string]string) string {
-	return codexOTLPHTTPExporterTable(strings.TrimSpace(cfg.Endpoint), headers)
+func codexTraceExporterArgs(cfg Config, headers map[string]string) []string {
+	prefix := `otel.trace_exporter."otlp-http".`
+	args := []string{
+		"otel.trace_exporter=" + strconv.Quote("otlp-http"),
+		prefix + "endpoint=" + strconv.Quote(strings.TrimSpace(cfg.Endpoint)),
+		prefix + "protocol=" + strconv.Quote(codexOTLPProtocol),
+	}
+	if len(headers) > 0 {
+		args = append(args, prefix+"headers="+tomlInlineStringMap(headers))
+	}
+	return args
 }
 
 func codexOTLPHTTPExporterTable(endpoint string, headers map[string]string) string {

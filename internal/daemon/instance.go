@@ -291,7 +291,10 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 		return nil, fmt.Errorf("dispatch: %w", err)
 	}
 
-	env := append(os.Environ(), in.Env...)
+	env, err := m.launchPreparedEnv(in.Name, in.Env, in.EnvComplete, in.StripOTelEnv)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch: launch env: %w", err)
+	}
 	stdin := dispatchStdin(rt, in)
 	proc, err := m.spawner(args, env, in.Workspace, logPath, logPath, stdin)
 	if err != nil {
