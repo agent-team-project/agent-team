@@ -18,9 +18,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/buildinfo"
 	"github.com/jamesaud/agent-team/internal/loader"
 	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/jamesaud/agent-team/internal/runtimeotel"
+	teamtemplate "github.com/jamesaud/agent-team/internal/template"
 	"github.com/jamesaud/agent-team/internal/topology"
 )
 
@@ -1511,9 +1513,47 @@ func (m *InstanceManager) startEnv(instance string) ([]string, error) {
 		return nil, err
 	}
 	if ok {
-		return env, nil
+		return m.applyCurrentOTelConfig(instance, env), nil
 	}
 	return os.Environ(), nil
+}
+
+// applyCurrentOTelConfig reconciles a persisted launch env with the repo's
+// CURRENT [otel] config before a managed resume. A snapshot from an earlier
+// enabled launch must not replay telemetry vars after [otel] is disabled or
+// changed — the current config alone decides what the resumed child sees. No
+// [otel] table keeps legacy passthrough, mirroring dispatch semantics.
+func (m *InstanceManager) applyCurrentOTelConfig(instance string, env []string) []string {
+	teamDir := filepath.Dir(m.daemonRoot)
+	tree, err := teamtemplate.LoadTOMLFile(filepath.Join(teamDir, "config.toml"))
+	if err != nil {
+		return env
+	}
+	cfg, err := runtimeotel.FromTree(tree)
+	if err != nil || !cfg.Configured() {
+		return env
+	}
+	env = runtimeotel.StripOwnedEnv(env)
+	if !cfg.Enabled {
+		return env
+	}
+	meta, err := ReadMetadata(m.daemonRoot, instance)
+	if err != nil {
+		return env
+	}
+	launch, err := runtimeotel.BuildLaunch(cfg, metadataRuntimeKind(meta), runtimeotel.Context{
+		Agent:    meta.Agent,
+		Instance: meta.Instance,
+		JobID:    meta.Job,
+		Ticket:   meta.Ticket,
+		Branch:   meta.Branch,
+		Runtime:  meta.Runtime,
+		Build:    buildinfo.Current(""),
+	})
+	if err != nil {
+		return env
+	}
+	return append(env, launch.Env...)
 }
 
 func (m *InstanceManager) launchPreparedEnv(instance string, overlay []string, complete, stripOTel bool) ([]string, error) {

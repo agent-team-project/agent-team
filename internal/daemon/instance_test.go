@@ -609,6 +609,76 @@ func TestInstance_DispatchCodexPromptUsesStdin(t *testing.T) {
 	waitForStatusNot(t, m, "worker-runtime", StatusRunning)
 }
 
+func TestInstance_StartResumeStripsStaleOTelAfterDisable(t *testing.T) {
+	// SQU-74 round-4 finding: a launch-env snapshot captured while [otel] was
+	// enabled must not replay telemetry vars into a managed resume after the
+	// repo disables [otel].
+	teamDir := fixtureTeamDir(t)
+	writeFixtureAgent(t, teamDir, "manager")
+	writeFixtureOTelConfig(t, teamDir, false)
+	root := DaemonRoot(teamDir)
+	codexHome := t.TempDir()
+	sessionID := "019b20fb-3b9d-7bb0-b034-d757cdbf2fdb"
+	writeCodexRollout(t, codexHome, sessionID)
+	workspace := t.TempDir()
+	now := time.Now().UTC()
+	if err := WriteMetadata(root, &Metadata{
+		Instance:      "otel-mgr",
+		Agent:         "manager",
+		Runtime:       string(runtimebin.KindCodex),
+		RuntimeBinary: "codex",
+		Workspace:     workspace,
+		PID:           123,
+		SessionID:     sessionID,
+		StartedAt:     now,
+		StoppedAt:     now,
+		Status:        StatusStopped,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Snapshot from an earlier enabled launch, carrying telemetry vars.
+	if err := WriteInstanceLaunchEnv(root, "otel-mgr", &LaunchEnv{
+		Bin:  "codex",
+		Args: []string{"codex", "exec", "-"},
+		Dir:  workspace,
+		Env: []string{
+			"CODEX_HOME=" + codexHome,
+			"CLAUDE_CODE_ENABLE_TELEMETRY=1",
+			"OTEL_EXPORTER_OTLP_ENDPOINT=http://stale",
+			"OTEL_RESOURCE_ATTRIBUTES=stale=true",
+			"TRACEPARENT=00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+			"MARKER=dispatch",
+		},
+		RecordedAt: now,
+		Version:    1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+
+	if _, err := m.Start("otel-mgr"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	env := fake.lastEnv()
+	for _, forbidden := range []string{
+		"CLAUDE_CODE_ENABLE_TELEMETRY=",
+		"OTEL_EXPORTER_OTLP_ENDPOINT=",
+		"OTEL_RESOURCE_ATTRIBUTES=",
+		"TRACEPARENT=",
+	} {
+		if containsEnvPrefix(env, forbidden) {
+			t.Fatalf("managed resume with disabled otel leaked %q: %#v", forbidden, env)
+		}
+	}
+	if got := lastEnvValue(env, "MARKER"); got != "dispatch" {
+		t.Fatalf("resume env MARKER = %q, want dispatch (non-otel snapshot vars preserved)", got)
+	}
+
+	_, _ = m.Stop("otel-mgr")
+	waitForStatusNot(t, m, "otel-mgr", StatusRunning)
+}
+
 func TestInstance_StartCodexResumesWithBriefOnStdin(t *testing.T) {
 	teamDir := fixtureTeamDir(t)
 	writeFixtureAgent(t, teamDir, "manager")
