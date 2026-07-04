@@ -24,7 +24,7 @@ func TestHealthPolicyDefaultsAndConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load defaults: %v", err)
 	}
-	if defaults.StatusStaleAfter != defaultStatusStaleAfter || defaults.JobStaleAfter != defaultJobTriageStaleAfter || defaults.TerminalRetention != 0 {
+	if defaults.StatusStaleAfter != defaultStatusStaleAfter || defaults.JobStaleAfter != defaultJobTriageStaleAfter || defaults.TerminalRetention != 0 || defaults.BounceAttentionAfter != defaultBounceAttentionAfter {
 		t.Fatalf("defaults = %+v", defaults)
 	}
 
@@ -32,6 +32,7 @@ func TestHealthPolicyDefaultsAndConfig(t *testing.T) {
 status_stale_after = "45m"
 job_stale_after = "72h"
 terminal_retention = "14d"
+bounce_attention_after = 3
 `), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -39,7 +40,7 @@ terminal_retention = "14d"
 	if err != nil {
 		t.Fatalf("load configured policy: %v", err)
 	}
-	if got.StatusStaleAfter != 45*time.Minute || got.JobStaleAfter != 72*time.Hour || got.TerminalRetention != 14*24*time.Hour {
+	if got.StatusStaleAfter != 45*time.Minute || got.JobStaleAfter != 72*time.Hour || got.TerminalRetention != 14*24*time.Hour || got.BounceAttentionAfter != 3 {
 		t.Fatalf("policy = %+v", got)
 	}
 }

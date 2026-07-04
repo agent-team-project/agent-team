@@ -20,13 +20,20 @@ type healthPolicy struct {
 	StatusStaleAfter  time.Duration
 	JobStaleAfter     time.Duration
 	TerminalRetention time.Duration
+	// BounceAttentionAfter flags a job for manager attention once it has
+	// accumulated this many review bounces. Repeated bounces on one job are
+	// usually a design smell, not an implementation gap (0 disables).
+	BounceAttentionAfter int
 }
+
+const defaultBounceAttentionAfter = 2
 
 func defaultHealthPolicy() healthPolicy {
 	return healthPolicy{
-		StatusStaleAfter:  defaultStatusStaleAfter,
-		JobStaleAfter:     defaultJobTriageStaleAfter,
-		TerminalRetention: 0,
+		StatusStaleAfter:     defaultStatusStaleAfter,
+		JobStaleAfter:        defaultJobTriageStaleAfter,
+		TerminalRetention:    0,
+		BounceAttentionAfter: defaultBounceAttentionAfter,
 	}
 }
 
@@ -57,7 +64,31 @@ func loadHealthPolicy(teamDir string) (healthPolicy, error) {
 		}
 		policy.TerminalRetention = d
 	}
+	if v, ok := cfg.GetDotted("health.bounce_attention_after"); ok {
+		n, err := parseHealthPolicyCount("health.bounce_attention_after", v)
+		if err != nil {
+			return policy, err
+		}
+		policy.BounceAttentionAfter = n
+	}
 	return policy, nil
+}
+
+func parseHealthPolicyCount(key string, value any) (int, error) {
+	switch n := value.(type) {
+	case int64:
+		if n < 0 {
+			return 0, fmt.Errorf("%s must be >= 0", key)
+		}
+		return int(n), nil
+	case int:
+		if n < 0 {
+			return 0, fmt.Errorf("%s must be >= 0", key)
+		}
+		return n, nil
+	default:
+		return 0, fmt.Errorf("%s must be an integer", key)
+	}
 }
 
 func configuredJobTriageStaleAfter(teamDir string) (time.Duration, error) {

@@ -5341,6 +5341,13 @@ func newJobBounceCmd() *cobra.Command {
 			if err := writeJobWithAudit(teamDir, j, "bounced", "cli", j.LastStatus, data); err != nil {
 				return err
 			}
+			if policy, perr := loadHealthPolicy(teamDir); perr == nil && policy.BounceAttentionAfter > 0 && bounceNumber >= policy.BounceAttentionAfter {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job bounce: warning: bounce %d of job %s (attention threshold %d) — repeated bounces on one job usually mean the approach is wrong, not the implementation; consider a design-level instruction in the findings or taking the fix directly.\n", bounceNumber, j.ID, policy.BounceAttentionAfter)
+				_ = job.AppendSnapshotEvent(teamDir, j, "bounce_attention", "cli", fmt.Sprintf("bounce %d reached attention threshold %d", bounceNumber, policy.BounceAttentionAfter), map[string]string{
+					"bounce":    fmt.Sprint(bounceNumber),
+					"threshold": fmt.Sprint(policy.BounceAttentionAfter),
+				})
+			}
 			writeLinearBounceBack(teamDir, j, selectedStep, findingsText)
 			if advance {
 				res, err := advanceJob(cmd, teamDir, j, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin})
@@ -9948,6 +9955,7 @@ type jobTriageItem struct {
 	OutboxQuarantineRestorablePaths []string        `json:"outbox_quarantine_restorable_paths,omitempty"`
 	GateFailures                    []jobGateResult `json:"gate_failures,omitempty"`
 	GateInfra                       int             `json:"gate_infra,omitempty"`
+	Bounces                         int             `json:"bounces,omitempty"`
 	GateContent                     int             `json:"gate_content,omitempty"`
 }
 
@@ -10418,6 +10426,10 @@ func collectJobTriage(teamDir string, now time.Time, staleAfter time.Duration) (
 		now = time.Now().UTC()
 	}
 	now = now.UTC()
+	bounceAttentionAfter := defaultBounceAttentionAfter
+	if policy, err := loadHealthPolicy(teamDir); err == nil {
+		bounceAttentionAfter = policy.BounceAttentionAfter
+	}
 	jobs, err := job.List(teamDir)
 	if err != nil {
 		return jobTriageSnapshot{}, err
@@ -10443,7 +10455,7 @@ func collectJobTriage(teamDir string, now time.Time, staleAfter time.Duration) (
 	}
 	attention := make([]jobTriageItem, 0, len(jobs))
 	for _, j := range jobs {
-		if item, ok := triageJob(j, inspectNextJobStep(j), queueByJob[j.ID], outboxQuarantineByJob[j.ID], gateFailuresByJob[j.ID], now, staleAfter); ok {
+		if item, ok := triageJob(j, inspectNextJobStep(j), queueByJob[j.ID], outboxQuarantineByJob[j.ID], gateFailuresByJob[j.ID], now, staleAfter, bounceAttentionAfter); ok {
 			attention = append(attention, item)
 		}
 	}
@@ -10602,7 +10614,7 @@ func addOutboxQuarantineItemToTriageStats(stats *jobTriageOutboxQuarantineStats,
 	}
 }
 
-func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, outboxQuarantineStats jobTriageOutboxQuarantineStats, gateFailures []jobGateResult, now time.Time, staleAfter time.Duration) (jobTriageItem, bool) {
+func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, outboxQuarantineStats jobTriageOutboxQuarantineStats, gateFailures []jobGateResult, now time.Time, staleAfter time.Duration, bounceAttentionAfter int) (jobTriageItem, bool) {
 	gateInfra, gateContent := jobGateClassCounts(gateFailures)
 	item := jobTriageItem{
 		JobID:                           j.ID,
@@ -10676,6 +10688,12 @@ func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, o
 	}
 	if outboxQuarantineStats.Quarantined > 0 {
 		addTriageReason("outbox_quarantined", "warning")
+	}
+	if bounceAttentionAfter > 0 {
+		if bounces := jobBounceCount(j.Kickoff); bounces >= bounceAttentionAfter {
+			item.Bounces = bounces
+			addTriageReason("repeated_bounces", "warning")
+		}
 	}
 	if gateInfra > 0 {
 		addTriageReason("gate_infra_failed", "warning")
@@ -14601,7 +14619,13 @@ func selectJobBounceStep(j *job.Job, requested string) (string, error) {
 }
 
 func nextJobBounceNumber(kickoff string) int {
-	return strings.Count(kickoff, "## Review findings (bounce ") + 1
+	return jobBounceCount(kickoff) + 1
+}
+
+// jobBounceCount derives how many review bounces a job has absorbed from the
+// findings headings job bounce appends — durable in the kickoff, no extra IO.
+func jobBounceCount(kickoff string) int {
+	return strings.Count(kickoff, "## Review findings (bounce ")
 }
 
 func appendJobBounceFindings(kickoff, findings string, bounceNumber int) string {
@@ -17496,7 +17520,7 @@ func jobDetailActions(j *job.Job, teamDir string, queueItems []*daemon.QueueItem
 	}
 	sort.Strings(outboxQuarantineStats.QuarantinePaths)
 	sort.Strings(outboxQuarantineStats.QuarantineRestorablePaths)
-	if triage, ok := triageJob(j, inspectNextJobStep(j), stats, outboxQuarantineStats, nil, now, 0); ok {
+	if triage, ok := triageJob(j, inspectNextJobStep(j), stats, outboxQuarantineStats, nil, now, 0, 0); ok {
 		for _, action := range triage.Actions {
 			add(action)
 		}

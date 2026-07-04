@@ -8165,6 +8165,74 @@ func TestJobBounceRequeuesCompletedStepAndAudits(t *testing.T) {
 	}
 }
 
+func TestJobBounceAttentionAfterThreshold(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:     "squ-163",
+		Ticket: "SQU-163",
+		Target: "worker",
+		// One prior bounce already recorded in the kickoff: this bounce is
+		// number 2, matching the default attention threshold.
+		Kickoff:   "SQU-163: implement the ticket\n\n## Review findings (bounce 1)\n\nprior findings",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusBlocked,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusDone, Instance: "worker-squ-163-implement", StartedAt: now.Add(-20 * time.Minute), FinishedAt: now.Add(-10 * time.Minute)},
+			{ID: "review", Target: "reviewer", Status: job.StatusDone, Instance: "reviewer-squ-163-review", After: []string{"implement"}, StartedAt: now.Add(-9 * time.Minute), FinishedAt: now.Add(-1 * time.Minute)},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "bounce", "squ-163", "--step", "implement", "--findings", "second round findings", "--repo", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job bounce: %v\nstderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "attention threshold") {
+		t.Fatalf("expected attention warning on stderr, got: %s", stderr.String())
+	}
+	events, err := job.ListEvents(teamDir, "squ-163")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	found := false
+	for _, ev := range events {
+		if ev.Type == "bounce_attention" && ev.Data["bounce"] == "2" && ev.Data["threshold"] == "2" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("missing bounce_attention event: %+v", events)
+	}
+
+	// Triage surfaces the repeated-bounce reason.
+	snapshot, err := collectJobTriage(teamDir, now, 0)
+	if err != nil {
+		t.Fatalf("collectJobTriage: %v", err)
+	}
+	var item *jobTriageItem
+	for i := range snapshot.Attention {
+		if snapshot.Attention[i].JobID == "squ-163" {
+			item = &snapshot.Attention[i]
+			break
+		}
+	}
+	if item == nil || !stringSliceContains(item.Reasons, "repeated_bounces") || item.Bounces != 2 {
+		t.Fatalf("triage item = %+v, want repeated_bounces with Bounces=2", item)
+	}
+}
+
 func TestJobBounceAdvanceDispatchesRequeuedStep(t *testing.T) {
 	target, mgr, cleanup := setupDispatchCommandRepo(t)
 	defer cleanup()
