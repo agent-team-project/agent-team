@@ -2020,6 +2020,43 @@ match.target = "reviewer"
 	_ = m.WaitForReaper("reviewer-squ-201", 5*time.Second)
 }
 
+func TestEvent_ScheduleDispatchGeneratesUniqueChildName(t *testing.T) {
+	// A schedule's payload "name" identifies the SCHEDULE (trigger match.name),
+	// not a requested instance name — ephemeral dispatch must generate one.
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	top := mustParseCustomTopo(t, `
+[instances.feedback-triage]
+agent = "worker"
+ephemeral = true
+
+[[instances.feedback-triage.triggers]]
+event = "schedule"
+match.name = "feedback-triage"
+`)
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+
+	result, err := resolver.EventWithResult("schedule", map[string]any{
+		"source": "schedule",
+		"name":   "feedback-triage",
+		"kind":   "feedback_triage",
+	})
+	if err != nil {
+		t.Fatalf("EventWithResult: %v", err)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Action != "dispatched" {
+		t.Fatalf("outcomes = %+v, want dispatched", result.Outcomes)
+	}
+	child := result.Outcomes[0].InstanceID
+	if !strings.HasPrefix(child, "feedback-triage-") {
+		t.Fatalf("child name = %q, want generated unique name with declared prefix", child)
+	}
+	_, _ = m.Stop(child)
+	_ = m.WaitForReaper(child, 5*time.Second)
+}
+
 func TestEvent_LockRecoveryDropsDeadLedgerRows(t *testing.T) {
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)

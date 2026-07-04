@@ -931,6 +931,11 @@ func (r *EventResolver) actuateEphemeral(inst *topology.Instance, eventType stri
 
 func childNameForEvent(declared string, payload map[string]any) (string, bool, error) {
 	requested := payloadString(payload, "name")
+	// Schedule events carry the SCHEDULE's identity in "name" (that is what
+	// trigger match.name matches on) — it is never an instance-name request.
+	if payloadString(payload, "source") == "schedule" {
+		requested = ""
+	}
 	if requested == "" {
 		requested = payloadString(payload, "instance")
 	}
