@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,6 +62,84 @@ func findJobEvent(events []job.Event, eventType string) (job.Event, bool) {
 		}
 	}
 	return job.Event{}, false
+}
+
+func decodeJobShowJSONStep(t *testing.T, raw []byte, wrapped bool) map[string]json.RawMessage {
+	t.Helper()
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode job show json: %v\nbody=%s", err, string(raw))
+	}
+	if wrapped {
+		rawJob, ok := body["job"]
+		if !ok {
+			t.Fatalf("job show events json missing job: %s", string(raw))
+		}
+		if err := json.Unmarshal(rawJob, &body); err != nil {
+			t.Fatalf("decode wrapped job show json: %v\njob=%s", err, string(rawJob))
+		}
+	}
+	rawSteps, ok := body["Steps"]
+	if !ok {
+		t.Fatalf("job show json missing Steps: %s", string(raw))
+	}
+	var steps []map[string]json.RawMessage
+	if err := json.Unmarshal(rawSteps, &steps); err != nil {
+		t.Fatalf("decode job show steps: %v\nsteps=%s", err, string(rawSteps))
+	}
+	if len(steps) != 1 {
+		t.Fatalf("steps len = %d, want 1: %+v", len(steps), steps)
+	}
+	return steps[0]
+}
+
+func assertJobShowJSONStepCompatibilityKeys(t *testing.T, step map[string]json.RawMessage) {
+	t.Helper()
+	stepType := reflect.TypeOf(job.Step{})
+	for i := 0; i < stepType.NumField(); i++ {
+		field := stepType.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		lowerKey := strings.TrimSpace(strings.Split(field.Tag.Get("toml"), ",")[0])
+		if lowerKey == "" || lowerKey == "-" {
+			t.Fatalf("job.Step field %s has no stable TOML key for job show JSON", field.Name)
+		}
+		if _, ok := step[lowerKey]; !ok {
+			t.Fatalf("job show step json missing lowercase key %q for field %s: keys=%v", lowerKey, field.Name, sortedJSONKeys(step))
+		}
+		if _, ok := step[field.Name]; !ok {
+			t.Fatalf("job show step json missing deprecated compatibility key %q: keys=%v", field.Name, sortedJSONKeys(step))
+		}
+	}
+	for _, pair := range [][2]string{
+		{"id", "ID"},
+		{"runtime_bin", "RuntimeBin"},
+		{"approval_required", "ApprovalRequired"},
+		{"max_attempts", "MaxAttempts"},
+		{"retry_on_crash", "RetryOnCrash"},
+		{"queue_reason", "QueueReason"},
+	} {
+		if !bytes.Equal(step[pair[0]], step[pair[1]]) {
+			t.Fatalf("job show step json key %q = %s, %q = %s", pair[0], step[pair[0]], pair[1], step[pair[1]])
+		}
+	}
+	if _, ok := step["runtimeBin"]; ok {
+		t.Fatalf("job show step json unexpectedly emitted lowerCamel key runtimeBin: keys=%v", sortedJSONKeys(step))
+	}
+	var id string
+	if err := json.Unmarshal(step["id"], &id); err != nil || id != "implement" {
+		t.Fatalf("step id = %q, err=%v", id, err)
+	}
+}
+
+func sortedJSONKeys(raw map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func TestJobDoctorValidAndFormat(t *testing.T) {
@@ -693,6 +772,76 @@ func TestJobCreateListShowClose(t *testing.T) {
 	if summary.JobID != "squ-42" || summary.Total != 1 || summary.Types["closed"] != 1 || summary.Statuses["done"] != 1 || summary.Actors["cli"] != 1 {
 		t.Fatalf("job events summary json = %+v", summary)
 	}
+}
+
+func TestJobShowJSONStepKeysUseLowercaseCompatibilityShape(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	now := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
+	j := &job.Job{
+		ID:        "squ-87",
+		Ticket:    "SQU-87",
+		Target:    "manager",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{{
+			ID:               "implement",
+			Label:            "Implement",
+			Description:      "Normalize JSON",
+			Instructions:     "Keep compatibility aliases",
+			Target:           "worker",
+			Workspace:        "worktree",
+			Runtime:          "codex",
+			RuntimeBin:       "codex",
+			Status:           job.StatusRunning,
+			Instance:         "worker-squ-87-implement",
+			After:            []string{"triage"},
+			Gate:             job.StepGateManual,
+			ApprovalRequired: true,
+			ApprovalID:       "approval-1",
+			ApprovalStatus:   job.ApprovalStatusPending,
+			Optional:         true,
+			Timeout:          "45m",
+			Attempts:         1,
+			MaxAttempts:      3,
+			RetryOnCrash:     true,
+			SkipReason:       "reviewed elsewhere",
+			QueueReason:      "lock_held",
+			QueuedAt:         now.Add(time.Minute),
+			RunningAt:        now.Add(2 * time.Minute),
+			StartedAt:        now.Add(3 * time.Minute),
+			FinishedAt:       now.Add(4 * time.Minute),
+		}},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	if err := job.AppendEvent(teamDir, &job.Event{TS: now, JobID: j.ID, Type: "created", Status: job.StatusRunning, Actor: "test"}); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+
+	show := NewRootCmd()
+	showOut, showErr := &bytes.Buffer{}, &bytes.Buffer{}
+	show.SetOut(showOut)
+	show.SetErr(showErr)
+	show.SetArgs([]string{"job", "show", "SQU-87", "--repo", tmp, "--json"})
+	if err := show.Execute(); err != nil {
+		t.Fatalf("job show --json: %v\nstderr=%s", err, showErr.String())
+	}
+	assertJobShowJSONStepCompatibilityKeys(t, decodeJobShowJSONStep(t, showOut.Bytes(), false))
+
+	showEvents := NewRootCmd()
+	showEventsOut, showEventsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	showEvents.SetOut(showEventsOut)
+	showEvents.SetErr(showEventsErr)
+	showEvents.SetArgs([]string{"job", "show", "SQU-87", "--repo", tmp, "--events", "all", "--json"})
+	if err := showEvents.Execute(); err != nil {
+		t.Fatalf("job show --events --json: %v\nstderr=%s", err, showEventsErr.String())
+	}
+	assertJobShowJSONStepCompatibilityKeys(t, decodeJobShowJSONStep(t, showEventsOut.Bytes(), true))
 }
 
 func TestJobShowFallsBackToArchive(t *testing.T) {
