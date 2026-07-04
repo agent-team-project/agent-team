@@ -416,7 +416,7 @@ restart = "always"
 	}
 	fake := newFakeSpawner(30 * time.Second)
 	m := NewInstanceManager(DaemonRoot(teamDir), fake.spawn)
-	meta, launched, err := launchDeclaredFresh(teamDir, m, topo.Find("manager"), nil)
+	meta, launched, err := launchDeclaredFresh(teamDir, m, topo, topo.Find("manager"), nil)
 	if err != nil {
 		t.Fatalf("launch declared fresh: %v", err)
 	}
@@ -482,7 +482,7 @@ restart = "always"
 	}
 	fake := newFakeSpawner(30 * time.Second)
 	m := NewInstanceManager(root, fake.spawn)
-	meta, launched, err := launchDeclaredFresh(teamDir, m, topo.Find("manager"), nil)
+	meta, launched, err := launchDeclaredFresh(teamDir, m, topo, topo.Find("manager"), nil)
 	if err != nil {
 		t.Fatalf("launch declared fresh: %v", err)
 	}

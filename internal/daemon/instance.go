@@ -1325,7 +1325,7 @@ func (m *InstanceManager) resumeFallbackFresh(instance string, base *Metadata, c
 	if base != nil {
 		m.recordEvent("resume_fallback", base, fmt.Sprintf("managed resume preflight failed; launching fresh: %v", cause))
 	}
-	meta, _, err := launchDeclaredFreshWithPrompt(teamDir, m, inst, base, extraPrompt)
+	meta, _, err := launchDeclaredFreshWithPrompt(teamDir, m, topo, inst, base, extraPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("start: resume fallback: %w", err)
 	}
