@@ -17248,7 +17248,7 @@ func (step jobShowJSONStep) MarshalJSON() ([]byte, error) {
 func jobShowJSONStepFields(step job.Step) (map[string]json.RawMessage, error) {
 	value := reflect.ValueOf(step)
 	typ := value.Type()
-	fields := make(map[string]json.RawMessage, typ.NumField()*2)
+	fields := make(map[string]json.RawMessage, typ.NumField()+len(jobShowJSONStepLegacyKeys))
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
 		if field.PkgPath != "" {
@@ -17258,10 +17258,42 @@ func jobShowJSONStepFields(step job.Step) (map[string]json.RawMessage, error) {
 		if err != nil {
 			return nil, err
 		}
-		fields[field.Name] = raw
 		fields[jobShowJSONStepFieldKey(field)] = raw
+		if _, ok := jobShowJSONStepLegacyKeys[field.Name]; ok {
+			fields[field.Name] = raw
+		}
 	}
 	return fields, nil
+}
+
+var jobShowJSONStepLegacyKeys = map[string]struct{}{
+	"ID":               {},
+	"Label":            {},
+	"Description":      {},
+	"Instructions":     {},
+	"Target":           {},
+	"Workspace":        {},
+	"Runtime":          {},
+	"RuntimeBin":       {},
+	"Status":           {},
+	"Instance":         {},
+	"After":            {},
+	"Gate":             {},
+	"ApprovalRequired": {},
+	"ApprovalID":       {},
+	"ApprovalStatus":   {},
+	"Optional":         {},
+	"Timeout":          {},
+	"Attempts":         {},
+	"MaxAttempts":      {},
+	"RetryOnCrash":     {},
+	"Skipped":          {},
+	"SkipReason":       {},
+	"QueueReason":      {},
+	"QueuedAt":         {},
+	"RunningAt":        {},
+	"StartedAt":        {},
+	"FinishedAt":       {},
 }
 
 func jobShowJSONStepFieldKey(field reflect.StructField) string {

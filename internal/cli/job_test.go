@@ -93,8 +93,46 @@ func decodeJobShowJSONStep(t *testing.T, raw []byte, wrapped bool) map[string]js
 	return steps[0]
 }
 
+var expectedJobShowJSONStepLegacyKeys = map[string]string{
+	"ID":               "id",
+	"Label":            "label",
+	"Description":      "description",
+	"Instructions":     "instructions",
+	"Target":           "target",
+	"Workspace":        "workspace",
+	"Runtime":          "runtime",
+	"RuntimeBin":       "runtime_bin",
+	"Status":           "status",
+	"Instance":         "instance",
+	"After":            "after",
+	"Gate":             "gate",
+	"ApprovalRequired": "approval_required",
+	"ApprovalID":       "approval_id",
+	"ApprovalStatus":   "approval_status",
+	"Optional":         "optional",
+	"Timeout":          "timeout",
+	"Attempts":         "attempts",
+	"MaxAttempts":      "max_attempts",
+	"RetryOnCrash":     "retry_on_crash",
+	"Skipped":          "skipped",
+	"SkipReason":       "skip_reason",
+	"QueueReason":      "queue_reason",
+	"QueuedAt":         "queued_at",
+	"RunningAt":        "running_at",
+	"StartedAt":        "started_at",
+	"FinishedAt":       "finished_at",
+}
+
 func assertJobShowJSONStepCompatibilityKeys(t *testing.T, step map[string]json.RawMessage) {
 	t.Helper()
+	if len(jobShowJSONStepLegacyKeys) != len(expectedJobShowJSONStepLegacyKeys) {
+		t.Fatalf("job show step legacy allowlist len = %d, want %d", len(jobShowJSONStepLegacyKeys), len(expectedJobShowJSONStepLegacyKeys))
+	}
+	for legacyKey := range jobShowJSONStepLegacyKeys {
+		if _, ok := expectedJobShowJSONStepLegacyKeys[legacyKey]; !ok {
+			t.Fatalf("job show step legacy allowlist includes unapproved key %q", legacyKey)
+		}
+	}
 	stepType := reflect.TypeOf(job.Step{})
 	for i := 0; i < stepType.NumField(); i++ {
 		field := stepType.Field(i)
@@ -108,20 +146,25 @@ func assertJobShowJSONStepCompatibilityKeys(t *testing.T, step map[string]json.R
 		if _, ok := step[lowerKey]; !ok {
 			t.Fatalf("job show step json missing lowercase key %q for field %s: keys=%v", lowerKey, field.Name, sortedJSONKeys(step))
 		}
-		if _, ok := step[field.Name]; !ok {
-			t.Fatalf("job show step json missing deprecated compatibility key %q: keys=%v", field.Name, sortedJSONKeys(step))
+		if expectedLowerKey, ok := expectedJobShowJSONStepLegacyKeys[field.Name]; ok && lowerKey != expectedLowerKey {
+			t.Fatalf("job show step legacy key %q points to lowercase key %q, want %q", field.Name, lowerKey, expectedLowerKey)
 		}
 	}
-	for _, pair := range [][2]string{
-		{"id", "ID"},
-		{"runtime_bin", "RuntimeBin"},
-		{"approval_required", "ApprovalRequired"},
-		{"max_attempts", "MaxAttempts"},
-		{"retry_on_crash", "RetryOnCrash"},
-		{"queue_reason", "QueueReason"},
-	} {
-		if !bytes.Equal(step[pair[0]], step[pair[1]]) {
-			t.Fatalf("job show step json key %q = %s, %q = %s", pair[0], step[pair[0]], pair[1], step[pair[1]])
+	for key := range step {
+		if key != "" && isUpperASCII(rune(key[0])) {
+			if _, ok := expectedJobShowJSONStepLegacyKeys[key]; !ok {
+				t.Fatalf("job show step json emitted unapproved capitalized key %q: keys=%v", key, sortedJSONKeys(step))
+			}
+		}
+	}
+	for legacyKey, lowerKey := range expectedJobShowJSONStepLegacyKeys {
+		legacyRaw, ok := step[legacyKey]
+		if !ok {
+			t.Fatalf("job show step json missing deprecated compatibility key %q: keys=%v", legacyKey, sortedJSONKeys(step))
+		}
+		lowerRaw := step[lowerKey]
+		if !bytes.Equal(lowerRaw, legacyRaw) {
+			t.Fatalf("job show step json key %q = %s, %q = %s", lowerKey, lowerRaw, legacyKey, legacyRaw)
 		}
 	}
 	if _, ok := step["runtimeBin"]; ok {
