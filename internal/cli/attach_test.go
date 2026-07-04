@@ -548,7 +548,7 @@ func TestAttach_DryRunRequiresDirectAttachMode(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected commands without dry-run to fail")
 	}
-	if !strings.Contains(commandsErr.String(), "--commands requires --dry-run") {
+	if !strings.Contains(commandsErr.String(), wantCommandsModeRequiresDryRun()) {
 		t.Fatalf("stderr = %q", commandsErr.String())
 	}
 }

@@ -490,12 +490,12 @@ func TestRuntimeProbeFormatValidation(t *testing.T) {
 		{
 			name: "commands with json",
 			args: []string{"runtime", "probe", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands with format",
 			args: []string{"runtime", "probe", "--commands", "--format", "{{.OK}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

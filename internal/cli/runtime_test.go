@@ -489,32 +489,32 @@ func TestRuntimeSetUnsetCommandsRejectInvalidFlagCombos(t *testing.T) {
 		{
 			name: "set requires dry run",
 			args: []string{"runtime", "set", "codex", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "set rejects json",
 			args: []string{"runtime", "set", "codex", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "set rejects format",
 			args: []string{"runtime", "set", "codex", "--dry-run", "--commands", "--format", "{{.Changed}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "unset requires dry run",
 			args: []string{"runtime", "unset", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "unset rejects json",
 			args: []string{"runtime", "unset", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "unset rejects format",
 			args: []string{"runtime", "unset", "--dry-run", "--commands", "--format", "{{.Changed}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	}
 	for _, tt := range tests {
@@ -652,8 +652,8 @@ func TestRuntimeLsCommandsRejectsStructuredModes(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "json", args: []string{"runtime", "ls", "--commands", "--json"}, want: "--commands cannot be combined with --json"},
-		{name: "format", args: []string{"runtime", "ls", "--commands", "--format", "{{.Runtime}}"}, want: "--commands cannot be combined with --format"},
+		{name: "json", args: []string{"runtime", "ls", "--commands", "--json"}, want: wantCommandsModeConflict("--json")},
+		{name: "format", args: []string{"runtime", "ls", "--commands", "--format", "{{.Runtime}}"}, want: wantCommandsModeConflict("--format")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1999,12 +1999,12 @@ func TestRuntimeResumePlanRejectsCommandsWithStructuredRenderers(t *testing.T) {
 		{
 			name: "json",
 			args: []string{"runtime", "resume-plan", "--target", t.TempDir(), "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"runtime", "resume-plan", "--target", t.TempDir(), "--commands", "--format", "{{.RecommendedCommand}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "summary",

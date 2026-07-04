@@ -546,12 +546,12 @@ func TestDaemonAdoptRejectsCommandsWithJSONOrFormat(t *testing.T) {
 		{
 			name: "json",
 			args: []string{"daemon", "adopt", "external-worker", "--target", t.TempDir(), "--agent", "worker", "--pid", strconv.Itoa(os.Getpid()), "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"daemon", "adopt", "external-worker", "--target", t.TempDir(), "--agent", "worker", "--pid", strconv.Itoa(os.Getpid()), "--dry-run", "--commands", "--format", "{{.Action}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

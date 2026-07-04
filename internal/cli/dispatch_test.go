@@ -242,9 +242,9 @@ func TestDispatchCommandCommandsValidation(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"dispatch", "worker", "SQU-246", "--commands"}, "dispatch: --commands requires --dry-run"},
-		{[]string{"dispatch", "worker", "SQU-246", "--dry-run", "--commands", "--json"}, "dispatch: --commands cannot be combined with --json"},
-		{[]string{"dispatch", "worker", "SQU-246", "--dry-run", "--commands", "--format", "{{.Target}}"}, "dispatch: --commands cannot be combined with --format"},
+		{[]string{"dispatch", "worker", "SQU-246", "--commands"}, wantCommandCommandsModeRequiresDryRun("dispatch")},
+		{[]string{"dispatch", "worker", "SQU-246", "--dry-run", "--commands", "--json"}, wantCommandCommandsModeConflict("dispatch", "--json")},
+		{[]string{"dispatch", "worker", "SQU-246", "--dry-run", "--commands", "--format", "{{.Target}}"}, wantCommandCommandsModeConflict("dispatch", "--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

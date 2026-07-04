@@ -653,9 +653,9 @@ func TestPlanFormatRejectsJSONAndInvalidTemplate(t *testing.T) {
 		{[]string{"plan", "--format", "{{.Instance}}", "--json"}, "--format cannot be combined"},
 		{[]string{"plan", "--format", "{{.Instance}}", "--summary"}, "--format cannot be combined"},
 		{[]string{"plan", "--format", "{{"}, "invalid --format template"},
-		{[]string{"plan", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"plan", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
-		{[]string{"plan", "--commands", "--format", "{{.Instance}}"}, "--commands cannot be combined with --format"},
+		{[]string{"plan", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"plan", "--commands", "--summary"}, wantCommandsModeConflict("--summary")},
+		{[]string{"plan", "--commands", "--format", "{{.Instance}}"}, wantCommandsModeConflict("--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

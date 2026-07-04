@@ -428,17 +428,17 @@ func TestChannelMachineOutputValidation(t *testing.T) {
 		{
 			name: "rm rejects commands without dry run",
 			args: []string{"channel", "rm", "#ops", "--target", tmp, "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "rm rejects commands json",
 			args: []string{"channel", "rm", "#ops", "--target", tmp, "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "rm rejects commands format",
 			args: []string{"channel", "rm", "#ops", "--target", tmp, "--dry-run", "--commands", "--format", "{{.Name}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "rm rejects json format",

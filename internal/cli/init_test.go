@@ -649,17 +649,17 @@ func TestInitOutputFlagValidation(t *testing.T) {
 		{
 			name: "commands without dry-run",
 			args: []string{"init", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "commands json",
 			args: []string{"init", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands format",
 			args: []string{"init", "--dry-run", "--commands", "--format", "{{.TeamDir}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "machine output no prompt",

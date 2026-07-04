@@ -553,12 +553,12 @@ schedules = ["nightly"]
 		{
 			name: "commands json",
 			args: []string{"topology", "graph", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands format",
 			args: []string{"topology", "graph", "--commands", "--format", "text"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		t.Run("topology-graph-validation-"+tc.name, func(t *testing.T) {
@@ -1097,9 +1097,9 @@ func TestEventPublishFormatRejectsConflictingModes(t *testing.T) {
 		want string
 	}{
 		{[]string{"event", "publish", "user_invocation", "--format", "{{len .Matched}}", "--json"}, "--format cannot be combined"},
-		{[]string{"event", "publish", "user_invocation", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"event", "publish", "user_invocation", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"event", "publish", "user_invocation", "--dry-run", "--commands", "--format", "{{.Type}}"}, "--commands cannot be combined with --format"},
+		{[]string{"event", "publish", "user_invocation", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"event", "publish", "user_invocation", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"event", "publish", "user_invocation", "--dry-run", "--commands", "--format", "{{.Type}}"}, wantCommandsModeConflict("--format")},
 		{[]string{"event", "publish", "user_invocation", "--format", "{{"}, "invalid --format template"},
 		{[]string{"event", "publish", "user_invocation", "--payload", `{}`, "--payload-file", "-"}, "choose one of --payload or --payload-file"},
 	}

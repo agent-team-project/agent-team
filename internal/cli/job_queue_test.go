@@ -1413,22 +1413,22 @@ func TestJobQueueRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "commands with json",
 			args: []string{"job", "queue", "SQU-120", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands with format",
 			args: []string{"job", "queue", "SQU-120", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "commands with summary",
 			args: []string{"job", "queue", "SQU-120", "--commands", "--summary"},
-			want: "--commands cannot be combined with --summary",
+			want: wantCommandsModeConflict("--summary"),
 		},
 		{
 			name: "commands with watch",
 			args: []string{"job", "queue", "SQU-120", "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 		{
 			name: "invalid format",
@@ -1438,22 +1438,22 @@ func TestJobQueueRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "show commands with json",
 			args: []string{"job", "queue", "show", "SQU-120", "q-job-dead", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "show commands with format",
 			args: []string{"job", "queue", "show", "SQU-120", "q-job-dead", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "quarantine show commands with json",
 			args: []string{"job", "queue", "quarantine", "show", "SQU-120", "quarantine/pending/q.json", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "quarantine show commands with format",
 			args: []string{"job", "queue", "quarantine", "show", "SQU-120", "quarantine/pending/q.json", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "invalid state",
@@ -1496,17 +1496,17 @@ func TestJobQueuePruneRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "commands without dry run",
 			args: []string{"job", "queue", "prune", "SQU-122", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "commands with json",
 			args: []string{"job", "queue", "prune", "SQU-122", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands with format",
 			args: []string{"job", "queue", "prune", "SQU-122", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "invalid format",
@@ -1564,17 +1564,17 @@ func TestJobQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "retry commands without dry run",
 			args: []string{"job", "queue", "retry", "SQU-121", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "retry commands with json",
 			args: []string{"job", "queue", "retry", "SQU-121", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "retry commands with format",
 			args: []string{"job", "queue", "retry", "SQU-121", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "retry invalid format",
@@ -1604,17 +1604,17 @@ func TestJobQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "drop commands without dry run",
 			args: []string{"job", "queue", "drop", "SQU-121", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "drop commands with json",
 			args: []string{"job", "queue", "drop", "SQU-121", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "drop commands with format",
 			args: []string{"job", "queue", "drop", "SQU-121", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "drop invalid format",
@@ -1639,32 +1639,32 @@ func TestJobQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "quarantine restore commands without dry run",
 			args: []string{"job", "queue", "quarantine", "restore", "SQU-121", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "quarantine restore commands with json",
 			args: []string{"job", "queue", "quarantine", "restore", "SQU-121", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "quarantine restore commands with format",
 			args: []string{"job", "queue", "quarantine", "restore", "SQU-121", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "quarantine drop commands without dry run",
 			args: []string{"job", "queue", "quarantine", "drop", "SQU-121", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "quarantine drop commands with json",
 			args: []string{"job", "queue", "quarantine", "drop", "SQU-121", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "quarantine drop commands with format",
 			args: []string{"job", "queue", "quarantine", "drop", "SQU-121", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

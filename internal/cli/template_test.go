@@ -296,27 +296,27 @@ func TestTemplateOutputFlagValidation(t *testing.T) {
 		{
 			name: "smoke commands json",
 			args: []string{"template", "smoke", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "smoke commands format",
 			args: []string{"template", "smoke", "--commands", "--format", "{{.OK}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "pull commands without dry-run",
 			args: []string{"template", "pull", "sample", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "pull commands json",
 			args: []string{"template", "pull", "sample", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "pull commands format",
 			args: []string{"template", "pull", "sample", "--dry-run", "--commands", "--format", "{{.Ref}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "pull format json",
@@ -326,17 +326,17 @@ func TestTemplateOutputFlagValidation(t *testing.T) {
 		{
 			name: "rm commands without dry-run",
 			args: []string{"template", "rm", "sample", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "rm commands json",
 			args: []string{"template", "rm", "sample", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "rm commands format",
 			args: []string{"template", "rm", "sample", "--dry-run", "--commands", "--format", "{{.Ref}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "rm format json",

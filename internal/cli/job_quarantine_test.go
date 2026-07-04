@@ -278,57 +278,57 @@ func TestJobQuarantineRejectsCommandsFormatCombinations(t *testing.T) {
 		{
 			name: "list commands with json",
 			args: []string{"job", "quarantine", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "list commands with format",
 			args: []string{"job", "quarantine", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "list commands with summary",
 			args: []string{"job", "quarantine", "--commands", "--summary"},
-			want: "--commands cannot be combined with --summary",
+			want: wantCommandsModeConflict("--summary"),
 		},
 		{
 			name: "commands with json",
 			args: []string{"job", "quarantine", "show", "quarantine/20260627T120000.000000000Z/broken.toml", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands with format",
 			args: []string{"job", "quarantine", "show", "quarantine/20260627T120000.000000000Z/broken.toml", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "restore commands without dry run",
 			args: []string{"job", "quarantine", "restore", "quarantine/20260627T120000.000000000Z/squ-402.toml", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "restore commands with json",
 			args: []string{"job", "quarantine", "restore", "quarantine/20260627T120000.000000000Z/squ-402.toml", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "restore commands with format",
 			args: []string{"job", "quarantine", "restore", "quarantine/20260627T120000.000000000Z/squ-402.toml", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "drop commands without dry run",
 			args: []string{"job", "quarantine", "drop", "quarantine/20260627T120000.000000000Z/broken.toml", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "drop commands with json",
 			args: []string{"job", "quarantine", "drop", "quarantine/20260627T120000.000000000Z/broken.toml", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "drop commands with format",
 			args: []string{"job", "quarantine", "drop", "quarantine/20260627T120000.000000000Z/broken.toml", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	}
 	for _, tc := range cases {

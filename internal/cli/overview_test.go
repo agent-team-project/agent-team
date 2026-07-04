@@ -2045,17 +2045,17 @@ func TestOverviewFormatValidation(t *testing.T) {
 		{
 			name: "overview-commands-json-conflict",
 			args: []string{"overview", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "overview-commands-format-conflict",
 			args: []string{"overview", "--commands", "--format", "{{.State}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "overview-commands-watch-conflict",
 			args: []string{"overview", "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 		{
 			name: "overview-invalid-limit",
@@ -2080,17 +2080,17 @@ func TestOverviewFormatValidation(t *testing.T) {
 		{
 			name: "team-overview-commands-json-conflict",
 			args: []string{"team", "overview", "delivery", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "team-overview-commands-format-conflict",
 			args: []string{"team", "overview", "delivery", "--commands", "--format", "{{.State}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "team-overview-commands-watch-conflict",
 			args: []string{"team", "overview", "delivery", "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 		{
 			name: "team-overview-invalid-limit",

@@ -1099,8 +1099,8 @@ func TestDoctorFormatValidation(t *testing.T) {
 		want string
 	}{
 		{[]string{"doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
-		{[]string{"doctor", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
+		{[]string{"doctor", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"doctor", "--commands", "--format", "{{.OK}}"}, wantCommandsModeConflict("--format")},
 		{[]string{"doctor", "--format", "{{"}, "invalid --format template"},
 	}
 	for _, tc := range cases {

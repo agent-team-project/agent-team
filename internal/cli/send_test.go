@@ -1180,9 +1180,9 @@ func TestSendCommandsValidation(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"send", "manager", "hello", "--commands"}, "send: --commands requires --dry-run"},
-		{[]string{"send", "manager", "hello", "--dry-run", "--commands", "--json"}, "send: --commands cannot be combined with --json"},
-		{[]string{"send", "manager", "hello", "--dry-run", "--commands", "--format", "{{.To}}"}, "send: --commands cannot be combined with --format"},
+		{[]string{"send", "manager", "hello", "--commands"}, wantCommandCommandsModeRequiresDryRun("send")},
+		{[]string{"send", "manager", "hello", "--dry-run", "--commands", "--json"}, wantCommandCommandsModeConflict("send", "--json")},
+		{[]string{"send", "manager", "hello", "--dry-run", "--commands", "--format", "{{.To}}"}, wantCommandCommandsModeConflict("send", "--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

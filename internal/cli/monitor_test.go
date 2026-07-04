@@ -500,10 +500,10 @@ func TestMonitorCommandsRejectsIncompatibleOutputModes(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "json", args: []string{"monitor", "--target", tmp, "--commands", "--json"}, want: "--commands cannot be combined with --json"},
-		{name: "watch", args: []string{"monitor", "--target", tmp, "--commands", "--watch"}, want: "--commands cannot be combined with --watch"},
+		{name: "json", args: []string{"monitor", "--target", tmp, "--commands", "--json"}, want: wantCommandsModeConflict("--json")},
+		{name: "watch", args: []string{"monitor", "--target", tmp, "--commands", "--watch"}, want: wantCommandsModeConflict("--watch")},
 		{name: "team resources", args: []string{"team", "monitor", "delivery", "--repo", tmp, "--resources"}, want: "--resources requires --summary"},
-		{name: "team watch", args: []string{"team", "watch", "delivery", "--repo", tmp, "--commands"}, want: "--commands cannot be combined with --watch"},
+		{name: "team watch", args: []string{"team", "watch", "delivery", "--repo", tmp, "--commands"}, want: wantCommandsModeConflict("--watch")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := NewRootCmd()

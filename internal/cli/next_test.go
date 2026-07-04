@@ -565,17 +565,17 @@ func TestNextCommandFormatValidation(t *testing.T) {
 		{
 			name: "next-commands-json-conflict",
 			args: []string{"next", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "next-commands-format-conflict",
 			args: []string{"next", "--commands", "--format", "{{.State}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "next-commands-watch-conflict",
 			args: []string{"next", "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 		{
 			name: "next-invalid-template",
@@ -590,17 +590,17 @@ func TestNextCommandFormatValidation(t *testing.T) {
 		{
 			name: "team-next-commands-json-conflict",
 			args: []string{"team", "next", "delivery", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "team-next-commands-format-conflict",
 			args: []string{"team", "next", "delivery", "--commands", "--format", "{{.State}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "team-next-commands-watch-conflict",
 			args: []string{"team", "next", "delivery", "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 		{
 			name: "team-next-invalid-template",

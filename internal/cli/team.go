@@ -160,13 +160,15 @@ func newTeamGraphCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team graph: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team graph: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && cmd.Flags().Changed("format") {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team graph: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team graph",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", cmd.Flags().Changed("format")),
+				},
+			}); err != nil {
+				return err
 			}
 			format, err := parsePipelineGraphFormat(graphFormat)
 			if err != nil {
@@ -220,13 +222,15 @@ func newTeamDoctorCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team doctor: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team doctor: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team doctor: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team doctor",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team doctor: --all cannot be combined with a team argument.")
@@ -895,9 +899,14 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --format cannot be combined with --json.\n", cfg.ErrorName)
 				return exitErr(2)
 			}
-			if commandsOnly && jsonOut {
-				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --json.\n", cfg.ErrorName)
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  cfg.ErrorName,
+				Commands: commandsOnly,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+				},
+			}); err != nil {
+				return err
 			}
 			if summary && format != "" {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --summary cannot be combined with --format.\n", cfg.ErrorName)
@@ -907,9 +916,14 @@ func newTeamRuntimeResumePlanCommand(cfg teamRuntimeResumePlanCommandConfig) *co
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --summary cannot be combined with --commands.\n", cfg.ErrorName)
 				return exitErr(2)
 			}
-			if commandsOnly && format != "" {
-				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --format.\n", cfg.ErrorName)
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  cfg.ErrorName,
+				Commands: commandsOnly,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if fallbacks && !commandsOnly {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: --fallbacks requires --commands.\n", cfg.ErrorName)
@@ -1817,25 +1831,29 @@ func newTeamJobsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --commands cannot be combined with --json.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team jobs",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --format cannot be combined with --summary.")
 				return exitErr(2)
 			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && summary {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --commands cannot be combined with --summary.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team jobs",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--summary", summary),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if summary && cmd.Flags().Changed("limit") {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team jobs: --limit cannot be combined with --summary.")
@@ -2292,17 +2310,16 @@ func newTeamReadyCmd() *cobra.Command {
 		Short: "List ready pipeline jobs owned by one team.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ready: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ready: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ready: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team ready",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team ready: --format cannot be combined with --json.")
@@ -2385,17 +2402,16 @@ func newTeamTriageCmd() *cobra.Command {
 			"persisted daemon queue items, status-file update previews, and ready pipeline steps.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team triage",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team triage: --interval must be >= 0.")
@@ -2481,17 +2497,17 @@ func newTeamCleanupCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cleanup: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cleanup: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cleanup: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cleanup: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team cleanup",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobCleanupFormat(format)
 			if err != nil {
@@ -2582,17 +2598,17 @@ func newTeamHoldCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team hold: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team hold: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team hold: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team hold: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team hold",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team hold: --limit must be >= 0.")
@@ -2696,17 +2712,17 @@ func newTeamReleaseCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team release: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team release: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team release: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team release: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team release",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team release: --limit must be >= 0.")
@@ -2798,17 +2814,17 @@ func newTeamAdvanceCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team advance: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team advance: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team advance: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team advance: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team advance",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team advance: --limit must be >= 0.")
@@ -2957,17 +2973,17 @@ func newTeamApproveCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team approve: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team approve: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team approve: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team approve: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team approve",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team approve: --limit must be >= 0.")
@@ -3121,17 +3137,17 @@ func newTeamRejectCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team reject: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team reject: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team reject: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team reject: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team reject",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team reject: --limit must be >= 0.")
@@ -3217,17 +3233,17 @@ func newTeamUnblockCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team unblock: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team unblock: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team unblock: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team unblock: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team unblock",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team unblock: --limit must be >= 0.")
@@ -3328,17 +3344,17 @@ func newTeamSkipCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team skip: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team skip: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team skip: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team skip: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team skip",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if strings.TrimSpace(step) == "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team skip: --step is required.")
@@ -3425,17 +3441,17 @@ func newTeamCancelCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cancel: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cancel: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cancel: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cancel: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team cancel",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team cancel: --limit must be >= 0.")
@@ -3532,17 +3548,17 @@ func newTeamRetryCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team retry: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team retry: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team retry: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team retry: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team retry",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team retry: --limit must be >= 0.")
@@ -3697,17 +3713,17 @@ func newTeamTimeoutCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeout: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeout: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeout: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeout: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team timeout",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team timeout: --limit must be >= 0.")
@@ -3803,21 +3819,17 @@ func newTeamQueueCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue: --format cannot be combined with --summary.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && summary {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue: --commands cannot be combined with --summary.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team queue",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--summary", summary),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if summary && (cmd.Flags().Changed("sort") || cmd.Flags().Changed("limit")) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue: --sort and --limit cannot be combined with --summary.")
@@ -3907,13 +3919,15 @@ func newTeamQueueShowCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue show: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue show: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue show: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team queue show",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseQueueFormat(format)
 			if err != nil {
@@ -3975,17 +3989,16 @@ func newTeamQueueQuarantineCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine: --format cannot be combined with --summary.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && summary {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine: --commands cannot be combined with --summary.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team queue quarantine",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--summary", summary),
+				},
+			}); err != nil {
+				return err
 			}
 			if summary && (cmd.Flags().Changed("sort") || limit > 0) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine: --sort and --limit cannot be combined with --summary.")
@@ -4056,13 +4069,15 @@ func newTeamQueueQuarantineShowCmd() *cobra.Command {
 		Short: "Show one team-owned quarantined queue file.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine show: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine show: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team queue quarantine show",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team team queue quarantine show", format, jsonOut)
 			if err != nil {
@@ -4118,17 +4133,17 @@ func newTeamQueueQuarantineRestoreCmd() *cobra.Command {
 		Long:  "Restore one team-owned quarantined queue file by path, or restore a filtered team-owned batch of restorable files with --all.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine restore: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team queue quarantine restore",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team team queue quarantine restore", format, jsonOut)
 			if err != nil {
@@ -4253,17 +4268,17 @@ func newTeamQueueQuarantineDropCmd() *cobra.Command {
 		Long:  "Drop one team-owned quarantined queue file by path, or drop a filtered team-owned batch with --all.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team queue quarantine drop",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if olderThan < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue quarantine drop: --older-than must be >= 0.")
@@ -4400,17 +4415,17 @@ func newTeamQueueRetryCmd() *cobra.Command {
 		Long:  "Retry one team-owned queue item by id, or retry a filtered team-owned batch with --all. Batch retries default to dead-letter items.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue retry: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue retry: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue retry: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team queue retry",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue retry: --format cannot be combined with --json.")
@@ -4586,17 +4601,17 @@ func newTeamQueueDropCmd() *cobra.Command {
 		Long:  "Drop one team-owned queue item by id, or drop a filtered team-owned batch with --all. Batch drops default to dead-letter items.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue drop: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue drop: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue drop: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team queue drop",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue drop: --format cannot be combined with --json.")
@@ -4759,17 +4774,17 @@ func newTeamQueuePruneCmd() *cobra.Command {
 		Long:  "Prune team-owned queue items. By default this removes dead-letter items owned by the selected team.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue prune: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue prune: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue prune: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team queue prune",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team queue prune: --format cannot be combined with --json.")
@@ -5188,17 +5203,17 @@ func newTeamSendCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team send: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team send: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team send: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team send: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team send",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if last < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team send: --last must be >= 0.")
@@ -5628,25 +5643,19 @@ func newTeamPruneCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --format cannot be combined with --quiet, --json, or --summary.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && summary {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --commands cannot be combined with --summary.")
-				return exitErr(2)
-			}
-			if commands && quiet {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --commands cannot be combined with --quiet.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team prune: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team prune",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--summary", summary),
+					commandsModeConflicts("--quiet", quiet),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			olderThanSet := cmd.Flags().Changed("older-than")
 			if olderThanSet && olderThan < 0 {
@@ -5934,9 +5943,16 @@ func newTeamSnapshotCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team snapshot: choose one of --json or --output.")
 				return exitErr(2)
 			}
-			if commandsOnly && (jsonOut || output != "" || format != "") {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team snapshot: --commands cannot be combined with --json, --output, or --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team snapshot",
+				Commands: commandsOnly,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--output", output != ""),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && (jsonOut || output != "") {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team snapshot: --format cannot be combined with --json or --output.")
@@ -6030,17 +6046,16 @@ func newTeamPipelinesCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team pipelines: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team pipelines: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team pipelines: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team pipelines: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team pipelines",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team pipelines: --interval must be >= 0.")
@@ -6114,17 +6129,16 @@ func newTeamExplainCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team explain: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team explain: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team explain: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team explain: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team explain",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team explain: --limit must be >= 0.")
@@ -6198,13 +6212,15 @@ func newTeamSchedulesCmd() *cobra.Command {
 		Short: "List schedules owned by one team.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team schedules: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team schedules: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team schedules",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team schedules: --format cannot be combined with --json.")
@@ -6288,21 +6304,18 @@ func newTeamTickCmd() *cobra.Command {
 		Long:  "Run or preview one team's due schedules, drainable queue items, and ready pipeline steps.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team tick",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team tick: --format cannot be combined with --json.")
@@ -6716,17 +6729,17 @@ func newTeamRepairCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --wait cannot be combined with --dry-run.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team repair",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if untilIdle && skipTick {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team repair: --until-idle cannot be combined with --skip-tick.")
@@ -7328,25 +7341,19 @@ func newTeamSyncCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: --dry-run cannot be combined with --wait.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && summary {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: --commands cannot be combined with --summary.")
-				return exitErr(2)
-			}
-			if commands && quiet {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: --commands cannot be combined with --quiet.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team team sync",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--summary", summary),
+					commandsModeConflicts("--quiet", quiet),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if quiet && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team sync: choose one of --quiet or --json.")
@@ -7433,17 +7440,16 @@ func newTeamPlanCmd() *cobra.Command {
 		Short: "Preview desired lifecycle state for one team.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team plan: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && summary {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team plan: --commands cannot be combined with --summary.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team plan: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team plan",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--summary", summary),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && (jsonOut || summary) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team plan: --format cannot be combined with --json or --summary.")
@@ -7538,17 +7544,16 @@ func newTeamHealthCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team health: choose one of --quiet or --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team health: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team health: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && quiet {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team health: --commands cannot be combined with --quiet.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team health",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--quiet", quiet),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && (quiet || jsonOut) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team health: --format cannot be combined with --quiet or --json.")
@@ -7624,17 +7629,16 @@ func newTeamStatusCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team status: --interval must be >= 0.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team status: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team status: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team status: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team status",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && (watch || jsonOut) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team status: --format cannot be combined with --watch or --json.")
@@ -7773,17 +7777,16 @@ func newTeamMonitorCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --action requires --plan.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team team monitor",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && (jsonOut || summary) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team team monitor: --format cannot be combined with --json or --summary.")
@@ -8832,23 +8835,20 @@ func validateTeamUpOptions(cmd *cobra.Command, prefix string, opts teamLifecycle
 	if opts.DryRun && opts.Wait {
 		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--dry-run cannot be combined with --wait")
 	}
-	if opts.Commands && !opts.DryRun {
-		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands requires --dry-run")
-	}
-	if opts.Commands && opts.JSON {
-		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --json")
-	}
-	if opts.Commands && opts.Summary {
-		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --summary")
-	}
-	if opts.Commands && opts.Quiet {
-		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --quiet")
-	}
-	if opts.Commands && opts.Format != "" {
-		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --format")
-	}
-	if opts.Commands && opts.Attach {
-		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --attach")
+	if err := validateCommandsMode(cmd, commandsModeValidation{
+		Command:       prefix,
+		Commands:      opts.Commands,
+		RequireDryRun: true,
+		DryRun:        opts.DryRun,
+		Conflicts: []commandsModeConflict{
+			commandsModeConflicts("--json", opts.JSON),
+			commandsModeConflicts("--summary", opts.Summary),
+			commandsModeConflicts("--quiet", opts.Quiet),
+			commandsModeConflicts("--format", opts.Format != ""),
+			commandsModeConflicts("--attach", opts.Attach),
+		},
+	}); err != nil {
+		return 0, nil, err
 	}
 	if opts.Attach && opts.JSON {
 		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--attach cannot be combined with --json")
@@ -8898,20 +8898,19 @@ func validateTeamDownOptions(cmd *cobra.Command, prefix string, opts teamLifecyc
 	if opts.DryRun && opts.Wait {
 		return nil, teamLifecycleUsageError(cmd, prefix, "--dry-run cannot be combined with --wait")
 	}
-	if opts.Commands && !opts.DryRun {
-		return nil, teamLifecycleUsageError(cmd, prefix, "--commands requires --dry-run")
-	}
-	if opts.Commands && opts.JSON {
-		return nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --json")
-	}
-	if opts.Commands && opts.Summary {
-		return nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --summary")
-	}
-	if opts.Commands && opts.Quiet {
-		return nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --quiet")
-	}
-	if opts.Commands && opts.Format != "" {
-		return nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --format")
+	if err := validateCommandsMode(cmd, commandsModeValidation{
+		Command:       prefix,
+		Commands:      opts.Commands,
+		RequireDryRun: true,
+		DryRun:        opts.DryRun,
+		Conflicts: []commandsModeConflict{
+			commandsModeConflicts("--json", opts.JSON),
+			commandsModeConflicts("--summary", opts.Summary),
+			commandsModeConflicts("--quiet", opts.Quiet),
+			commandsModeConflicts("--format", opts.Format != ""),
+		},
+	}); err != nil {
+		return nil, err
 	}
 	if opts.Quiet && opts.JSON {
 		return nil, teamLifecycleUsageError(cmd, prefix, "choose one of --quiet or --json")
@@ -8942,23 +8941,20 @@ func validateTeamRestartOptions(cmd *cobra.Command, prefix string, opts teamLife
 	if opts.DryRun && opts.Wait {
 		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--dry-run cannot be combined with --wait")
 	}
-	if opts.Commands && !opts.DryRun {
-		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands requires --dry-run")
-	}
-	if opts.Commands && opts.JSON {
-		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --json")
-	}
-	if opts.Commands && opts.Summary {
-		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --summary")
-	}
-	if opts.Commands && opts.Quiet {
-		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --quiet")
-	}
-	if opts.Commands && opts.Format != "" {
-		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --format")
-	}
-	if opts.Commands && opts.Attach {
-		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--commands cannot be combined with --attach")
+	if err := validateCommandsMode(cmd, commandsModeValidation{
+		Command:       prefix,
+		Commands:      opts.Commands,
+		RequireDryRun: true,
+		DryRun:        opts.DryRun,
+		Conflicts: []commandsModeConflict{
+			commandsModeConflicts("--json", opts.JSON),
+			commandsModeConflicts("--summary", opts.Summary),
+			commandsModeConflicts("--quiet", opts.Quiet),
+			commandsModeConflicts("--format", opts.Format != ""),
+			commandsModeConflicts("--attach", opts.Attach),
+		},
+	}); err != nil {
+		return 0, nil, err
 	}
 	if opts.Attach && opts.JSON {
 		return 0, nil, teamLifecycleUsageError(cmd, prefix, "--attach cannot be combined with --json")

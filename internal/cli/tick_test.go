@@ -436,10 +436,10 @@ func TestTickWaitValidation(t *testing.T) {
 		{name: "wait step without wait", args: []string{"tick", "--wait-step", "implement"}, want: "wait-related flags require --wait"},
 		{name: "invalid wait next-state", args: []string{"tick", "--wait", "--wait-next-state", "missing"}, want: "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all"},
 		{name: "negative wait timeout", args: []string{"tick", "--wait", "--wait-timeout", "-1s"}, want: "--wait-timeout must be >= 0"},
-		{name: "commands requires dry run", args: []string{"tick", "--commands"}, want: "--commands requires --dry-run"},
-		{name: "commands rejects json", args: []string{"tick", "--dry-run", "--commands", "--json"}, want: "--commands cannot be combined with --json"},
-		{name: "commands rejects format", args: []string{"tick", "--dry-run", "--commands", "--format", "{{.DryRun}}"}, want: "--commands cannot be combined with --format"},
-		{name: "commands rejects watch", args: []string{"tick", "--dry-run", "--commands", "--watch"}, want: "--commands cannot be combined with --watch"},
+		{name: "commands requires dry run", args: []string{"tick", "--commands"}, want: wantCommandsModeRequiresDryRun()},
+		{name: "commands rejects json", args: []string{"tick", "--dry-run", "--commands", "--json"}, want: wantCommandsModeConflict("--json")},
+		{name: "commands rejects format", args: []string{"tick", "--dry-run", "--commands", "--format", "{{.DryRun}}"}, want: wantCommandsModeConflict("--format")},
+		{name: "commands rejects watch", args: []string{"tick", "--dry-run", "--commands", "--watch"}, want: wantCommandsModeConflict("--watch")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

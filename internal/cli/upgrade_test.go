@@ -319,11 +319,11 @@ func TestUpgradeOutputValidation(t *testing.T) {
 		},
 		{
 			args: []string{"upgrade", "--apply", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			args: []string{"upgrade", "--apply", "--dry-run", "--commands", "--format", "{{.Differs}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	}
 	for _, tc := range cases {
