@@ -14667,6 +14667,9 @@ func resetJobStepForBounce(step *job.Step, status job.Status) {
 	}
 	step.Status = status
 	step.Instance = ""
+	step.QueueReason = ""
+	step.QueuedAt = time.Time{}
+	step.RunningAt = time.Time{}
 	step.StartedAt = time.Time{}
 	step.FinishedAt = time.Time{}
 	step.Skipped = false
