@@ -345,12 +345,12 @@ since = "2026-06-18T12:00:00Z"
 		{
 			name: "commands json",
 			args: []string{"team", "graph", "delivery", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands format",
 			args: []string{"team", "graph", "delivery", "--commands", "--format", "text"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		t.Run("team-graph-validation-"+tc.name, func(t *testing.T) {
@@ -531,17 +531,17 @@ since = "2026-06-18T12:00:00Z"
 		{
 			name: "json",
 			args: []string{"team", "ready", "delivery", "--repo", root, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"team", "ready", "delivery", "--repo", root, "--commands", "--format", "{{.JobID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "watch",
 			args: []string{"team", "ready", "delivery", "--repo", root, "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 	} {
 		t.Run("ready-commands-conflict-"+tc.name, func(t *testing.T) {
@@ -822,17 +822,17 @@ since = "2026-06-18T12:00:00Z"
 		{
 			name: "json",
 			args: []string{"team", "pipelines", "delivery", "--repo", root, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"team", "pipelines", "delivery", "--repo", root, "--commands", "--format", "{{.Pipeline}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "watch",
 			args: []string{"team", "pipelines", "delivery", "--repo", root, "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 	} {
 		cmd := NewRootCmd()
@@ -968,17 +968,17 @@ since = "2026-06-18T12:00:00Z"
 		{
 			name: "json",
 			args: []string{"team", "explain", "delivery", "--repo", root, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"team", "explain", "delivery", "--repo", root, "--commands", "--format", "{{.Pipeline}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "watch",
 			args: []string{"team", "explain", "delivery", "--repo", root, "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 	} {
 		cmd := NewRootCmd()
@@ -1144,12 +1144,12 @@ since = "2026-06-18T12:00:00Z"
 		{
 			name: "json",
 			args: []string{"team", "schedules", "delivery", "--repo", root, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"team", "schedules", "delivery", "--repo", root, "--commands", "--format", "{{.Name}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "due-next",
@@ -2556,7 +2556,7 @@ instances = ["platform-worker"]
 	if err := commandsJSON.Execute(); err == nil {
 		t.Fatalf("team jobs commands json succeeded unexpectedly")
 	}
-	if !strings.Contains(commandsJSONErr.String(), "--commands cannot be combined with --json") {
+	if !strings.Contains(commandsJSONErr.String(), wantCommandsModeConflict("--json")) {
 		t.Fatalf("commands json stderr = %q", commandsJSONErr.String())
 	}
 }
@@ -3811,17 +3811,17 @@ func TestTeamTimeoutCommandsValidation(t *testing.T) {
 		{
 			name: "without dry-run",
 			args: []string{"team", "timeout", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "json",
 			args: []string{"team", "timeout", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"team", "timeout", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		cmd := NewRootCmd()
@@ -4365,9 +4365,9 @@ func TestTeamApproveValidation(t *testing.T) {
 		{[]string{"team", "approve", "delivery", "--wait-next-state", "running"}, "wait-related flags require --wait"},
 		{[]string{"team", "approve", "delivery", "--wait-step", "review"}, "wait-related flags require --wait"},
 		{[]string{"team", "approve", "delivery", "--wait", "--wait-next-state", "missing"}, "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all"},
-		{[]string{"team", "approve", "delivery", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"team", "approve", "delivery", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"team", "approve", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"team", "approve", "delivery", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"team", "approve", "delivery", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"team", "approve", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"}, wantCommandsModeConflict("--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
@@ -4992,62 +4992,62 @@ func TestTeamBatchMutationCommandsValidation(t *testing.T) {
 		{
 			name: "reject without dry-run",
 			args: []string{"team", "reject", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "reject with json",
 			args: []string{"team", "reject", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "reject with format",
 			args: []string{"team", "reject", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "skip without dry-run",
 			args: []string{"team", "skip", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "skip with json",
 			args: []string{"team", "skip", "delivery", "--step", "review", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "skip with format",
 			args: []string{"team", "skip", "delivery", "--step", "review", "--dry-run", "--commands", "--format", "{{.JobID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "cancel without dry-run",
 			args: []string{"team", "cancel", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "cancel with json",
 			args: []string{"team", "cancel", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "cancel with format",
 			args: []string{"team", "cancel", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "unblock without dry-run",
 			args: []string{"team", "unblock", "delivery", "--commands", "ready"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "unblock with json",
 			args: []string{"team", "unblock", "delivery", "--dry-run", "--commands", "--json", "ready"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "unblock with format",
 			args: []string{"team", "unblock", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}", "ready"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		cmd := NewRootCmd()
@@ -5238,9 +5238,9 @@ func TestTeamRetryValidation(t *testing.T) {
 		{[]string{"team", "retry", "delivery", "--wait-timeout", "-1s", "--wait"}, "--wait-timeout must be >= 0"},
 		{[]string{"team", "retry", "delivery", "--wait", "--wait-next-state", "missing"}, "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all"},
 		{[]string{"team", "retry", "delivery", "--format", "{{.JobID}}", "--json"}, "--format cannot be combined with --json"},
-		{[]string{"team", "retry", "delivery", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"team", "retry", "delivery", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"team", "retry", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"team", "retry", "delivery", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"team", "retry", "delivery", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"team", "retry", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"}, wantCommandsModeConflict("--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
@@ -5264,9 +5264,9 @@ func TestTeamAdvanceWaitValidation(t *testing.T) {
 		want string
 	}{
 		{[]string{"team", "advance", "delivery", "--wait", "--dry-run"}, "--wait cannot be combined with --dry-run"},
-		{[]string{"team", "advance", "delivery", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"team", "advance", "delivery", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"team", "advance", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"team", "advance", "delivery", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"team", "advance", "delivery", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"team", "advance", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"}, wantCommandsModeConflict("--format")},
 		{[]string{"team", "advance", "delivery", "--wait-status", "running"}, "wait-related flags require --wait"},
 		{[]string{"team", "advance", "delivery", "--wait-next-state", "running"}, "wait-related flags require --wait"},
 		{[]string{"team", "advance", "delivery", "--wait-step", "review"}, "wait-related flags require --wait"},
@@ -5443,17 +5443,17 @@ func TestTeamCleanupRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "commands without dry run",
 			args: []string{"team", "cleanup", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "commands with json",
 			args: []string{"team", "cleanup", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands with format",
 			args: []string{"team", "cleanup", "delivery", "--dry-run", "--commands", "--format", "{{.Team}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "invalid format",
@@ -5798,8 +5798,8 @@ pipelines = ["platform"]
 		want string
 	}{
 		{[]string{"team", "doctor", "delivery", "--format", "{{.OK}}", "--json", "--repo", root}, "--format cannot be combined"},
-		{[]string{"team", "doctor", "delivery", "--commands", "--json", "--repo", root}, "--commands cannot be combined with --json"},
-		{[]string{"team", "doctor", "delivery", "--commands", "--format", "{{.OK}}", "--repo", root}, "--commands cannot be combined with --format"},
+		{[]string{"team", "doctor", "delivery", "--commands", "--json", "--repo", root}, wantCommandsModeConflict("--json")},
+		{[]string{"team", "doctor", "delivery", "--commands", "--format", "{{.OK}}", "--repo", root}, wantCommandsModeConflict("--format")},
 		{[]string{"team", "doctor", "delivery", "--format", "{{", "--repo", root}, "invalid --format template"},
 	}
 	for _, tc := range cases {
@@ -6310,15 +6310,15 @@ func TestTeamRunRejectsInvalidWaitFlags(t *testing.T) {
 		},
 		{
 			args: []string{"team", "run", "delivery", "SQU-819", "--repo", root, "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			args: []string{"team", "run", "delivery", "SQU-820", "--repo", root, "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			args: []string{"team", "run", "delivery", "SQU-821", "--repo", root, "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	}
 	for _, tc := range cases {
@@ -6749,32 +6749,32 @@ func TestTeamLifecycleCommandsRejectsInvalidRenderModes(t *testing.T) {
 		{
 			name: "requires dry run",
 			args: []string{"team", "up", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "json",
 			args: []string{"team", "up", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "summary",
 			args: []string{"team", "down", "delivery", "--dry-run", "--commands", "--summary"},
-			want: "--commands cannot be combined with --summary",
+			want: wantCommandsModeConflict("--summary"),
 		},
 		{
 			name: "quiet",
 			args: []string{"team", "down", "delivery", "--dry-run", "--commands", "--quiet"},
-			want: "--commands cannot be combined with --quiet",
+			want: wantCommandsModeConflict("--quiet"),
 		},
 		{
 			name: "format",
 			args: []string{"team", "restart", "delivery", "--dry-run", "--commands", "--format", "{{.Instance}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "attach",
 			args: []string{"team", "restart", "delivery", "--dry-run", "--commands", "--attach"},
-			want: "--commands cannot be combined with --attach",
+			want: wantCommandsModeConflict("--attach"),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -6969,11 +6969,11 @@ func TestTeamWaitCommandsRejectsConflictingModes(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"team", "wait", "delivery", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"team", "wait", "delivery", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"team", "wait", "delivery", "--dry-run", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
-		{[]string{"team", "wait", "delivery", "--dry-run", "--commands", "--quiet"}, "--commands cannot be combined with --quiet"},
-		{[]string{"team", "wait", "delivery", "--dry-run", "--commands", "--format", "{{.Instance}}"}, "--commands cannot be combined with --format"},
+		{[]string{"team", "wait", "delivery", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"team", "wait", "delivery", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"team", "wait", "delivery", "--dry-run", "--commands", "--summary"}, wantCommandsModeConflict("--summary")},
+		{[]string{"team", "wait", "delivery", "--dry-run", "--commands", "--quiet"}, wantCommandsModeConflict("--quiet")},
+		{[]string{"team", "wait", "delivery", "--dry-run", "--commands", "--format", "{{.Instance}}"}, wantCommandsModeConflict("--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
@@ -7196,27 +7196,27 @@ func TestTeamPruneCommandsRejectsInvalidRenderModes(t *testing.T) {
 		{
 			name: "requires dry run",
 			args: []string{"team", "prune", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "json",
 			args: []string{"team", "prune", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "summary",
 			args: []string{"team", "prune", "delivery", "--dry-run", "--commands", "--summary"},
-			want: "--commands cannot be combined with --summary",
+			want: wantCommandsModeConflict("--summary"),
 		},
 		{
 			name: "quiet",
 			args: []string{"team", "prune", "delivery", "--dry-run", "--commands", "--quiet"},
-			want: "--commands cannot be combined with --quiet",
+			want: wantCommandsModeConflict("--quiet"),
 		},
 		{
 			name: "format",
 			args: []string{"team", "prune", "delivery", "--dry-run", "--commands", "--format", "{{.Instance}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -9907,22 +9907,22 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "list commands with json",
 			args: []string{"team", "queue", "delivery", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "list commands with format",
 			args: []string{"team", "queue", "delivery", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "list commands with summary",
 			args: []string{"team", "queue", "delivery", "--commands", "--summary"},
-			want: "--commands cannot be combined with --summary",
+			want: wantCommandsModeConflict("--summary"),
 		},
 		{
 			name: "list commands with watch",
 			args: []string{"team", "queue", "delivery", "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 		{
 			name: "retry format with json",
@@ -9932,17 +9932,17 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "retry commands without dry run",
 			args: []string{"team", "queue", "retry", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "retry commands with json",
 			args: []string{"team", "queue", "retry", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "retry commands with format",
 			args: []string{"team", "queue", "retry", "delivery", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "retry invalid format",
@@ -9957,17 +9957,17 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "drop commands without dry run",
 			args: []string{"team", "queue", "drop", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "drop commands with json",
 			args: []string{"team", "queue", "drop", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "drop commands with format",
 			args: []string{"team", "queue", "drop", "delivery", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "drop invalid format",
@@ -9977,27 +9977,27 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "prune commands without dry run",
 			args: []string{"team", "queue", "prune", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "prune commands with json",
 			args: []string{"team", "queue", "prune", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "prune commands with format",
 			args: []string{"team", "queue", "prune", "delivery", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "show commands with json",
 			args: []string{"team", "queue", "show", "delivery", "q-team-claude", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "show commands with format",
 			args: []string{"team", "queue", "show", "delivery", "q-team-claude", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "quarantine format with json",
@@ -10017,12 +10017,12 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "quarantine show commands with json",
 			args: []string{"team", "queue", "quarantine", "show", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "quarantine show commands with format",
 			args: []string{"team", "queue", "quarantine", "show", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "quarantine restore invalid format",
@@ -10032,17 +10032,17 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "quarantine restore commands without dry run",
 			args: []string{"team", "queue", "quarantine", "restore", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "quarantine restore commands with json",
 			args: []string{"team", "queue", "quarantine", "restore", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "quarantine restore commands with format",
 			args: []string{"team", "queue", "quarantine", "restore", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "quarantine drop format with json",
@@ -10052,17 +10052,17 @@ func TestTeamQueueRetryDropRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "quarantine drop commands without dry run",
 			args: []string{"team", "queue", "quarantine", "drop", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "quarantine drop commands with json",
 			args: []string{"team", "queue", "quarantine", "drop", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "quarantine drop commands with format",
 			args: []string{"team", "queue", "quarantine", "drop", "delivery", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "prune format with json",
@@ -11576,22 +11576,22 @@ func TestTeamTickRejectsInvalidLoopFlags(t *testing.T) {
 		{
 			name: "commands requires dry run",
 			args: []string{"team", "tick", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "commands rejects json",
 			args: []string{"team", "tick", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands rejects format",
 			args: []string{"team", "tick", "delivery", "--dry-run", "--commands", "--format", "{{.Team.Name}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "commands rejects watch",
 			args: []string{"team", "tick", "delivery", "--dry-run", "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 	}
 	for _, tc := range cases {
@@ -12222,17 +12222,17 @@ func TestTeamRepairRejectsInvalidFormatFlags(t *testing.T) {
 		{
 			name: "commands without dry run",
 			args: []string{"team", "repair", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "commands with json",
 			args: []string{"team", "repair", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands with format",
 			args: []string{"team", "repair", "delivery", "--dry-run", "--commands", "--format", "{{.Team.Name}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "invalid format",
@@ -12547,17 +12547,17 @@ func TestTeamPlanScopesRowsAndStopExtras(t *testing.T) {
 		{
 			name: "json",
 			args: []string{"team", "plan", "delivery", "--repo", root, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "summary",
 			args: []string{"team", "plan", "delivery", "--repo", root, "--commands", "--summary"},
-			want: "--commands cannot be combined with --summary",
+			want: wantCommandsModeConflict("--summary"),
 		},
 		{
 			name: "format",
 			args: []string{"team", "plan", "delivery", "--repo", root, "--commands", "--format", "{{.Instance}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		invalid := NewRootCmd()
@@ -12700,27 +12700,27 @@ func TestTeamSyncCommandsRejectsInvalidRenderModes(t *testing.T) {
 		{
 			name: "no-dry-run",
 			args: []string{"team", "sync", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "json",
 			args: []string{"team", "sync", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "summary",
 			args: []string{"team", "sync", "delivery", "--dry-run", "--commands", "--summary"},
-			want: "--commands cannot be combined with --summary",
+			want: wantCommandsModeConflict("--summary"),
 		},
 		{
 			name: "quiet",
 			args: []string{"team", "sync", "delivery", "--dry-run", "--commands", "--quiet"},
-			want: "--commands cannot be combined with --quiet",
+			want: wantCommandsModeConflict("--quiet"),
 		},
 		{
 			name: "format",
 			args: []string{"team", "sync", "delivery", "--dry-run", "--commands", "--format", "{{.Instance}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		cmd := NewRootCmd()
@@ -13343,9 +13343,9 @@ func TestTeamHealthOutputValidation(t *testing.T) {
 		want string
 	}{
 		{[]string{"team", "health", "delivery", "--quiet", "--json"}, "choose one of --quiet or --json"},
-		{[]string{"team", "health", "delivery", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"team", "health", "delivery", "--commands", "--format", "{{.Team.Name}}"}, "--commands cannot be combined with --format"},
-		{[]string{"team", "health", "delivery", "--commands", "--quiet"}, "--commands cannot be combined with --quiet"},
+		{[]string{"team", "health", "delivery", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"team", "health", "delivery", "--commands", "--format", "{{.Team.Name}}"}, wantCommandsModeConflict("--format")},
+		{[]string{"team", "health", "delivery", "--commands", "--quiet"}, wantCommandsModeConflict("--quiet")},
 		{[]string{"team", "health", "delivery", "--format", "{{.Team.Name}}", "--json"}, "--format cannot be combined"},
 		{[]string{"team", "health", "delivery", "--format", "{{.Team.Name}}", "--quiet"}, "--format cannot be combined"},
 		{[]string{"team", "health", "delivery", "--format", "{{"}, "invalid --format template"},
@@ -13401,17 +13401,17 @@ func TestTeamTriageRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "commands with json",
 			args: []string{"team", "triage", "delivery", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands with format",
 			args: []string{"team", "triage", "delivery", "--commands", "--format", "{{.Summary.Total}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "commands with watch",
 			args: []string{"team", "triage", "delivery", "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 		{
 			name: "format with watch",
@@ -13469,17 +13469,17 @@ func TestTeamStatusRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "commands with json",
 			args: []string{"team", "status", "delivery", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands with format",
 			args: []string{"team", "status", "delivery", "--commands", "--format", "{{.Team.Name}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "commands with watch",
 			args: []string{"team", "status", "delivery", "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

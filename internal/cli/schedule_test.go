@@ -409,22 +409,22 @@ func TestScheduleDueNextCommandsRejectStructuredOutput(t *testing.T) {
 		{
 			name: "due-json",
 			args: []string{"schedule", "due", "--repo", tmp, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "due-format",
 			args: []string{"schedule", "due", "--repo", tmp, "--commands", "--format", "{{.Name}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "next-json",
 			args: []string{"schedule", "next", "--repo", tmp, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "next-format",
 			args: []string{"schedule", "next", "--repo", tmp, "--commands", "--format", "{{.Name}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	}
 	for _, tc := range cases {
@@ -758,17 +758,17 @@ func TestScheduleWaitFlagValidation(t *testing.T) {
 		{
 			name: "run commands without dry-run",
 			args: []string{"schedule", "run", "nightly", "--repo", tmp, "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "run commands with json",
 			args: []string{"schedule", "run", "nightly", "--repo", tmp, "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "run commands with format",
 			args: []string{"schedule", "run", "nightly", "--repo", tmp, "--dry-run", "--commands", "--format", "{{.DryRun}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "fire wait with dry-run",
@@ -788,17 +788,17 @@ func TestScheduleWaitFlagValidation(t *testing.T) {
 		{
 			name: "fire commands without dry-run",
 			args: []string{"schedule", "fire", "--repo", tmp, "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "fire commands with json",
 			args: []string{"schedule", "fire", "--repo", tmp, "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "fire commands with format",
 			args: []string{"schedule", "fire", "--repo", tmp, "--dry-run", "--commands", "--format", "{{.WouldFire}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	}
 	for _, tc := range cases {

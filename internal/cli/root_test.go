@@ -371,12 +371,12 @@ func TestRootGraphShortcutRejectsConflictingFlags(t *testing.T) {
 		{
 			name: "commands and json",
 			args: []string{"graph", "--repo", root, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands and format",
 			args: []string{"graph", "--repo", root, "--commands", "--format", "dot"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

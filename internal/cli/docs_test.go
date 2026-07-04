@@ -239,7 +239,7 @@ func TestDocsSiteRejectsCommandsAndJSON(t *testing.T) {
 	if !errors.As(err, &code) || int(code) != 2 {
 		t.Fatalf("error = %v, want exit 2", err)
 	}
-	if !strings.Contains(stderr.String(), "--commands cannot be combined with --json") {
+	if !strings.Contains(stderr.String(), wantCommandsModeConflict("--json")) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	if out.Len() != 0 {

@@ -722,10 +722,10 @@ func TestPipelineGraphValidation(t *testing.T) {
 	}{
 		{[]string{"pipeline", "graph", "ticket_to_pr", "--format", "svg"}, "--format must be text, mermaid, or dot"},
 		{[]string{"pipeline", "graph", "ticket_to_pr", "--format", "text", "--json"}, "--format cannot be combined with --json"},
-		{[]string{"pipeline", "graph", "ticket_to_pr", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"pipeline", "graph", "ticket_to_pr", "--commands", "--format", "text"}, "--commands cannot be combined with --format"},
-		{[]string{"job", "graph", "squ-1", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"job", "graph", "squ-1", "--commands", "--format", "text"}, "--commands cannot be combined with --format"},
+		{[]string{"pipeline", "graph", "ticket_to_pr", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"pipeline", "graph", "ticket_to_pr", "--commands", "--format", "text"}, wantCommandsModeConflict("--format")},
+		{[]string{"job", "graph", "squ-1", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"job", "graph", "squ-1", "--commands", "--format", "text"}, wantCommandsModeConflict("--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
@@ -1206,8 +1206,8 @@ func TestPipelineDoctorRejectsInvalidArguments(t *testing.T) {
 		want string
 	}{
 		{[]string{"pipeline", "doctor", "--format", "{{.OK}}", "--json", "--repo", root}, "--format cannot be combined"},
-		{[]string{"pipeline", "doctor", "--commands", "--json", "--repo", root}, "--commands cannot be combined with --json"},
-		{[]string{"pipeline", "doctor", "--commands", "--format", "{{.OK}}", "--repo", root}, "--commands cannot be combined with --format"},
+		{[]string{"pipeline", "doctor", "--commands", "--json", "--repo", root}, wantCommandsModeConflict("--json")},
+		{[]string{"pipeline", "doctor", "--commands", "--format", "{{.OK}}", "--repo", root}, wantCommandsModeConflict("--format")},
 		{[]string{"pipeline", "doctor", "--format", "{{", "--repo", root}, "invalid --format template"},
 	}
 	for _, tc := range cases {
@@ -1524,7 +1524,7 @@ func TestPipelineJobsListsMatchingJobs(t *testing.T) {
 	if err := commandsJSON.Execute(); err == nil {
 		t.Fatalf("pipeline jobs commands json succeeded unexpectedly")
 	}
-	if !strings.Contains(commandsJSONErr.String(), "--commands cannot be combined with --json") {
+	if !strings.Contains(commandsJSONErr.String(), wantCommandsModeConflict("--json")) {
 		t.Fatalf("commands json stderr = %q", commandsJSONErr.String())
 	}
 
@@ -2207,17 +2207,17 @@ target = "manager"
 		{
 			name: "json",
 			args: []string{"pipeline", "explain", "ticket_to_pr", "--repo", root, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"pipeline", "explain", "ticket_to_pr", "--repo", root, "--commands", "--format", "{{.Pipeline}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "watch",
 			args: []string{"pipeline", "explain", "ticket_to_pr", "--repo", root, "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 	} {
 		cmd := NewRootCmd()
@@ -2241,17 +2241,17 @@ target = "manager"
 		{
 			name: "json",
 			args: []string{"pipeline", "status", "--repo", root, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"pipeline", "status", "--repo", root, "--commands", "--format", "{{.Pipeline}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "watch",
 			args: []string{"pipeline", "status", "--repo", root, "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 	} {
 		cmd := NewRootCmd()
@@ -2542,17 +2542,17 @@ func TestPipelineTimeoutCommandsValidation(t *testing.T) {
 		{
 			name: "without dry-run",
 			args: []string{"pipeline", "timeout", "ticket_to_pr", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "json",
 			args: []string{"pipeline", "timeout", "ticket_to_pr", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"pipeline", "timeout", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		cmd := NewRootCmd()
@@ -2938,32 +2938,32 @@ func TestPipelineAndTeamHoldReleaseCommandsValidation(t *testing.T) {
 		{
 			name: "pipeline hold without dry-run",
 			args: []string{"pipeline", "hold", "ticket_to_pr", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "pipeline hold json",
 			args: []string{"pipeline", "hold", "ticket_to_pr", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "pipeline release format",
 			args: []string{"pipeline", "release", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "team hold without dry-run",
 			args: []string{"team", "hold", "delivery", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "team release json",
 			args: []string{"team", "release", "delivery", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "team release format",
 			args: []string{"team", "release", "delivery", "--dry-run", "--commands", "--format", "{{.JobID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		cmd := NewRootCmd()
@@ -3767,17 +3767,17 @@ pipelines = ["ticket_to_pr"]
 		{
 			name: "json",
 			args: []string{"pipeline", "next", "ticket_to_pr", "--repo", root, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"pipeline", "next", "ticket_to_pr", "--repo", root, "--commands", "--format", "{{.Action}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "watch",
 			args: []string{"pipeline", "next", "ticket_to_pr", "--repo", root, "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 	} {
 		t.Run("commands-conflict-"+tc.name, func(t *testing.T) {
@@ -4701,17 +4701,17 @@ target = "worker"
 		{
 			name: "json",
 			args: []string{"pipeline", "triage", "ticket_to_pr", "--repo", root, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"pipeline", "triage", "ticket_to_pr", "--repo", root, "--commands", "--format", "{{.Summary.Total}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "watch",
 			args: []string{"pipeline", "triage", "ticket_to_pr", "--repo", root, "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 	} {
 		t.Run("triage-commands-conflict-"+tc.name, func(t *testing.T) {
@@ -5048,17 +5048,17 @@ func TestPipelineReadyListsMatchingReadyJobs(t *testing.T) {
 		{
 			name: "json",
 			args: []string{"pipeline", "ready", "ticket_to_pr", "--repo", root, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "format",
 			args: []string{"pipeline", "ready", "ticket_to_pr", "--repo", root, "--commands", "--format", "{{.JobID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "watch",
 			args: []string{"pipeline", "ready", "ticket_to_pr", "--repo", root, "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 	} {
 		t.Run("ready-commands-conflict-"+tc.name, func(t *testing.T) {
@@ -5437,9 +5437,9 @@ func TestPipelineApproveValidation(t *testing.T) {
 		{[]string{"pipeline", "approve", "ticket_to_pr", "--wait-next-state", "running"}, "wait-related flags require --wait"},
 		{[]string{"pipeline", "approve", "ticket_to_pr", "--wait-step", "review"}, "wait-related flags require --wait"},
 		{[]string{"pipeline", "approve", "ticket_to_pr", "--wait", "--wait-next-state", "missing"}, "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all"},
-		{[]string{"pipeline", "approve", "ticket_to_pr", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"pipeline", "approve", "ticket_to_pr", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"pipeline", "approve", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"pipeline", "approve", "ticket_to_pr", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"pipeline", "approve", "ticket_to_pr", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"pipeline", "approve", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"}, wantCommandsModeConflict("--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
@@ -6278,62 +6278,62 @@ func TestPipelineBatchMutationCommandsValidation(t *testing.T) {
 		{
 			name: "reject without dry-run",
 			args: []string{"pipeline", "reject", "ticket_to_pr", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "reject with json",
 			args: []string{"pipeline", "reject", "ticket_to_pr", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "reject with format",
 			args: []string{"pipeline", "reject", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "skip without dry-run",
 			args: []string{"pipeline", "skip", "ticket_to_pr", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "skip with json",
 			args: []string{"pipeline", "skip", "ticket_to_pr", "--step", "review", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "skip with format",
 			args: []string{"pipeline", "skip", "ticket_to_pr", "--step", "review", "--dry-run", "--commands", "--format", "{{.JobID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "cancel without dry-run",
 			args: []string{"pipeline", "cancel", "ticket_to_pr", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "cancel with json",
 			args: []string{"pipeline", "cancel", "ticket_to_pr", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "cancel with format",
 			args: []string{"pipeline", "cancel", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "unblock without dry-run",
 			args: []string{"pipeline", "unblock", "ticket_to_pr", "--commands", "ready"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "unblock with json",
 			args: []string{"pipeline", "unblock", "ticket_to_pr", "--dry-run", "--commands", "--json", "ready"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "unblock with format",
 			args: []string{"pipeline", "unblock", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}", "ready"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		cmd := NewRootCmd()
@@ -7908,12 +7908,12 @@ func TestScopedSendCommandValidation(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"pipeline", "send", "ticket_to_pr", "--commands"}, "pipeline send: --commands requires --dry-run"},
-		{[]string{"pipeline", "send", "ticket_to_pr", "--dry-run", "--commands", "--json"}, "pipeline send: --commands cannot be combined with --json"},
-		{[]string{"pipeline", "send", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.To}}"}, "pipeline send: --commands cannot be combined with --format"},
-		{[]string{"team", "send", "delivery", "--commands"}, "team send: --commands requires --dry-run"},
-		{[]string{"team", "send", "delivery", "--dry-run", "--commands", "--json"}, "team send: --commands cannot be combined with --json"},
-		{[]string{"team", "send", "delivery", "--dry-run", "--commands", "--format", "{{.To}}"}, "team send: --commands cannot be combined with --format"},
+		{[]string{"pipeline", "send", "ticket_to_pr", "--commands"}, wantCommandCommandsModeRequiresDryRun("pipeline send")},
+		{[]string{"pipeline", "send", "ticket_to_pr", "--dry-run", "--commands", "--json"}, wantCommandCommandsModeConflict("pipeline send", "--json")},
+		{[]string{"pipeline", "send", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.To}}"}, wantCommandCommandsModeConflict("pipeline send", "--format")},
+		{[]string{"team", "send", "delivery", "--commands"}, wantCommandCommandsModeRequiresDryRun("team send")},
+		{[]string{"team", "send", "delivery", "--dry-run", "--commands", "--json"}, wantCommandCommandsModeConflict("team send", "--json")},
+		{[]string{"team", "send", "delivery", "--dry-run", "--commands", "--format", "{{.To}}"}, wantCommandCommandsModeConflict("team send", "--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
@@ -8471,17 +8471,17 @@ func TestPipelineCleanupRejectsFormatCombinations(t *testing.T) {
 		{
 			name: "commands without dry run",
 			args: []string{"pipeline", "cleanup", "ticket_to_pr", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "commands with json",
 			args: []string{"pipeline", "cleanup", "ticket_to_pr", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands with format",
 			args: []string{"pipeline", "cleanup", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.Pipeline}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "invalid format",
@@ -9253,7 +9253,7 @@ target = "worker"
 	if err := showCommandsJSON.Execute(); err == nil {
 		t.Fatalf("pipeline queue show --commands --json succeeded: stdout=%s", showCommandsJSONOut.String())
 	}
-	if !strings.Contains(showCommandsJSONErr.String(), "--commands cannot be combined with --json") {
+	if !strings.Contains(showCommandsJSONErr.String(), wantCommandsModeConflict("--json")) {
 		t.Fatalf("pipeline queue show --commands --json stderr = %q", showCommandsJSONErr.String())
 	}
 
@@ -9622,97 +9622,97 @@ func TestPipelineQueueControlRejectsCommandsCombinations(t *testing.T) {
 		{
 			name: "list commands with json",
 			args: []string{"pipeline", "queue", "ticket_to_pr", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "list commands with format",
 			args: []string{"pipeline", "queue", "ticket_to_pr", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "list commands with summary",
 			args: []string{"pipeline", "queue", "ticket_to_pr", "--commands", "--summary"},
-			want: "--commands cannot be combined with --summary",
+			want: wantCommandsModeConflict("--summary"),
 		},
 		{
 			name: "list commands with watch",
 			args: []string{"pipeline", "queue", "ticket_to_pr", "--commands", "--watch"},
-			want: "--commands cannot be combined with --watch",
+			want: wantCommandsModeConflict("--watch"),
 		},
 		{
 			name: "retry commands without dry run",
 			args: []string{"pipeline", "queue", "retry", "ticket_to_pr", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "retry commands with json",
 			args: []string{"pipeline", "queue", "retry", "ticket_to_pr", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "retry commands with format",
 			args: []string{"pipeline", "queue", "retry", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "drop commands without dry run",
 			args: []string{"pipeline", "queue", "drop", "ticket_to_pr", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "drop commands with json",
 			args: []string{"pipeline", "queue", "drop", "ticket_to_pr", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "drop commands with format",
 			args: []string{"pipeline", "queue", "drop", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "prune commands without dry run",
 			args: []string{"pipeline", "queue", "prune", "ticket_to_pr", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "prune commands with json",
 			args: []string{"pipeline", "queue", "prune", "ticket_to_pr", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "prune commands with format",
 			args: []string{"pipeline", "queue", "prune", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "quarantine restore commands without dry run",
 			args: []string{"pipeline", "queue", "quarantine", "restore", "ticket_to_pr", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "quarantine restore commands with json",
 			args: []string{"pipeline", "queue", "quarantine", "restore", "ticket_to_pr", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "quarantine restore commands with format",
 			args: []string{"pipeline", "queue", "quarantine", "restore", "ticket_to_pr", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "quarantine drop commands without dry run",
 			args: []string{"pipeline", "queue", "quarantine", "drop", "ticket_to_pr", "quarantine/20260619T000000.000000000Z/dead/q.json", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "quarantine drop commands with json",
 			args: []string{"pipeline", "queue", "quarantine", "drop", "ticket_to_pr", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "quarantine drop commands with format",
 			args: []string{"pipeline", "queue", "quarantine", "drop", "ticket_to_pr", "quarantine/20260619T000000.000000000Z/dead/q.json", "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -10405,17 +10405,17 @@ func TestPipelineTickRejectsInvalidFlags(t *testing.T) {
 		{
 			name: "commands requires dry run",
 			args: []string{"pipeline", "tick", "ticket_to_pr", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "commands rejects json",
 			args: []string{"pipeline", "tick", "ticket_to_pr", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands rejects format",
 			args: []string{"pipeline", "tick", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.Pipeline}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	}
 	for _, tc := range cases {
@@ -11731,15 +11731,15 @@ func TestPipelineRunRejectsInvalidWaitFlags(t *testing.T) {
 		},
 		{
 			args: []string{"pipeline", "run", "ticket_to_pr", "SQU-319", "--repo", root, "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			args: []string{"pipeline", "run", "ticket_to_pr", "SQU-320", "--repo", root, "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			args: []string{"pipeline", "run", "ticket_to_pr", "SQU-321", "--repo", root, "--dry-run", "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	}
 	for _, tc := range cases {
@@ -12303,9 +12303,9 @@ func TestPipelineAdvanceWaitValidation(t *testing.T) {
 		want string
 	}{
 		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait", "--dry-run"}, "--wait cannot be combined with --dry-run"},
-		{[]string{"pipeline", "advance", "ticket_to_pr", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"pipeline", "advance", "ticket_to_pr", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"pipeline", "advance", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"pipeline", "advance", "ticket_to_pr", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"pipeline", "advance", "ticket_to_pr", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"pipeline", "advance", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.JobID}}"}, wantCommandsModeConflict("--format")},
 		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait-status", "running"}, "wait-related flags require --wait"},
 		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait-next-state", "running"}, "wait-related flags require --wait"},
 		{[]string{"pipeline", "advance", "ticket_to_pr", "--wait-step", "review"}, "wait-related flags require --wait"},
@@ -12928,9 +12928,9 @@ func TestPipelineRetryValidation(t *testing.T) {
 		{[]string{"pipeline", "retry", "ticket_triage", "--wait-timeout", "-1s", "--wait"}, "--wait-timeout must be >= 0"},
 		{[]string{"pipeline", "retry", "ticket_triage", "--wait", "--wait-next-state", "missing"}, "--wait-next-state must be ready, queued, running, blocked, failed, held, done, none, or all"},
 		{[]string{"pipeline", "retry", "ticket_triage", "--format", "{{.JobID}}", "--json"}, "--format cannot be combined with --json"},
-		{[]string{"pipeline", "retry", "ticket_triage", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"pipeline", "retry", "ticket_triage", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"pipeline", "retry", "ticket_triage", "--dry-run", "--commands", "--format", "{{.JobID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"pipeline", "retry", "ticket_triage", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"pipeline", "retry", "ticket_triage", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"pipeline", "retry", "ticket_triage", "--dry-run", "--commands", "--format", "{{.JobID}}"}, wantCommandsModeConflict("--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
@@ -12975,9 +12975,9 @@ func TestPipelineRepairValidation(t *testing.T) {
 		{[]string{"pipeline", "repair", "ticket_to_pr", "--retry-step", "review"}, "--retry-step requires --retry-pipelines"},
 		{[]string{"pipeline", "repair", "ticket_to_pr", "--retry-force"}, "--retry-force requires --retry-pipelines"},
 		{[]string{"pipeline", "repair", "ticket_to_pr", "--format", "{{.Pipeline}}", "--json"}, "--format cannot be combined with --json"},
-		{[]string{"pipeline", "repair", "ticket_to_pr", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"pipeline", "repair", "ticket_to_pr", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"pipeline", "repair", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.Pipeline}}"}, "--commands cannot be combined with --format"},
+		{[]string{"pipeline", "repair", "ticket_to_pr", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"pipeline", "repair", "ticket_to_pr", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"pipeline", "repair", "ticket_to_pr", "--dry-run", "--commands", "--format", "{{.Pipeline}}"}, wantCommandsModeConflict("--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

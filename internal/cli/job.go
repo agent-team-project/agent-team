@@ -256,17 +256,17 @@ func newJobCreateCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job create",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if waitInterval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --wait-interval must be >= 0.")
@@ -663,25 +663,29 @@ func newJobLsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --commands cannot be combined with --json.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team job ls",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --format cannot be combined with --summary.")
 				return exitErr(2)
 			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && summary {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --commands cannot be combined with --summary.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team job ls",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--summary", summary),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if summary && cmd.Flags().Changed("limit") {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ls: --limit cannot be combined with --summary.")
@@ -789,17 +793,16 @@ func newJobShowCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job show: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job show: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job show: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && includeEvents {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job show: --commands cannot be combined with --events.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team job show",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--events", includeEvents),
+				},
+			}); err != nil {
+				return err
 			}
 			if cmd.Flags().Changed("events-sort") && !includeEvents {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job show: --events-sort requires --events.")
@@ -1071,17 +1074,17 @@ func newJobDispatchCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job dispatch: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job dispatch: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job dispatch: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job dispatch: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job dispatch",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if waitInterval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job dispatch: --wait-interval must be >= 0.")
@@ -1238,17 +1241,17 @@ func newJobSendCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job send: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job send: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job send: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job send: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job send",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobFormat(format)
 			if err != nil {
@@ -1370,17 +1373,17 @@ func newJobNoteCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job note: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job note: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job note: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job note: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job note",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobFormat(format)
 			if err != nil {
@@ -1460,17 +1463,17 @@ func newJobBlockCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job block: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job block: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job block: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job block: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job block",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobFormat(format)
 			if err != nil {
@@ -1562,17 +1565,17 @@ func newJobUnblockCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job unblock: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job unblock: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job unblock: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job unblock: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job unblock",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			next, err := parseJobUnblockStatus(status)
 			if err != nil {
@@ -2682,9 +2685,13 @@ func newJobAttachCmd() *cobra.Command {
 			"options such as --tail, --no-follow, --since, or --grep follows the daemon-captured log stream instead.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job attach: --commands requires --dry-run.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job attach",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+			}); err != nil {
+				return err
 			}
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
 			if err != nil {
@@ -2979,17 +2986,17 @@ func newJobCloseCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job close: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job close: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job close: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job close: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job close",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if status != string(job.StatusDone) && status != string(job.StatusFailed) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job close: --status must be done or failed.")
@@ -3098,17 +3105,17 @@ func newJobCancelCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cancel: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cancel: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cancel: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cancel: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job cancel",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if stopInstance && killInstance {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cancel: choose one of --stop or --kill.")
@@ -3469,17 +3476,17 @@ func newJobTimeoutCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job timeout: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job timeout",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parsePipelineTimeoutFormat(format)
 			if err != nil {
@@ -3813,17 +3820,17 @@ func newJobUpdateCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job update: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job update: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job update: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job update: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job update",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if waitInterval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job update: --wait-interval must be >= 0.")
@@ -4118,17 +4125,17 @@ func newJobBounceCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job bounce",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if waitInterval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job bounce: --wait-interval must be >= 0.")
@@ -4339,17 +4346,17 @@ func newJobHoldCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job hold",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job hold: --limit must be >= 0.")
@@ -4611,17 +4618,17 @@ func newJobReleaseCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job release",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if limit < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job release: --limit must be >= 0.")
@@ -4930,17 +4937,17 @@ func newJobReopenCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reopen: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reopen: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reopen: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reopen: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job reopen",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if waitInterval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reopen: --wait-interval must be >= 0.")
@@ -5236,17 +5243,17 @@ func newJobCleanupCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job cleanup",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if !merged && !dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job cleanup: pass --merged after confirming the job's PR has merged.")
@@ -5842,17 +5849,17 @@ func newJobRmCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job rm: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job rm: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job rm: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job rm: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job rm",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobRemoveFormat(format)
 			if err != nil {
@@ -5920,17 +5927,17 @@ func newJobPruneCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job prune: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job prune: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job prune: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job prune: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job prune",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobRemoveFormat(format)
 			if err != nil {
@@ -6000,13 +6007,15 @@ func newJobNextCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job next: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job next: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job next: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team job next",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			var (
 				stateFilter map[string]bool
@@ -6073,17 +6082,16 @@ func newJobExplainCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job explain: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job explain: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job explain: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job explain: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team job explain",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job explain: --interval must be >= 0.")
@@ -6152,13 +6160,15 @@ func newJobGraphCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job graph: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job graph: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && cmd.Flags().Changed("format") {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job graph: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team job graph",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", cmd.Flags().Changed("format")),
+				},
+			}); err != nil {
+				return err
 			}
 			format, err := parsePipelineGraphFormat(graphFormat)
 			if err != nil {
@@ -6221,17 +6231,16 @@ func newJobReadyCmd() *cobra.Command {
 		Short: "List pipeline jobs with ready or selected next-step states.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ready: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ready: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ready: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team job ready",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job ready: --format cannot be combined with --json.")
@@ -6317,17 +6326,16 @@ func newJobTriageCmd() *cobra.Command {
 			"status-file update previews, and ready pipeline steps.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job triage: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job triage: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job triage: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team job triage",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if interval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job triage: --interval must be >= 0.")
@@ -6430,17 +6438,17 @@ func newJobStepCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job step: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job step: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job step: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job step: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job step",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobStepFormat(format)
 			if err != nil {
@@ -6667,17 +6675,17 @@ func newJobApproveCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job approve: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job approve: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job approve: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job approve: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job approve",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobStepFormat(format)
 			if err != nil {
@@ -6869,17 +6877,17 @@ func newJobRejectCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reject: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reject: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reject: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reject: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job reject",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobStepFormat(format)
 			if err != nil {
@@ -6978,17 +6986,17 @@ func newJobAdvanceCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job advance: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job advance: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job advance: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job advance: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job advance",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if waitInterval < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job advance: --wait-interval must be >= 0.")
@@ -7136,17 +7144,17 @@ func newJobReconcileEventsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile events: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile events: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile events: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile events: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job reconcile events",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobEventReconcileFormat(format)
 			if err != nil {
@@ -7214,17 +7222,17 @@ func newJobReconcileStatusCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile status: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile status: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile status: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile status: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job reconcile status",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobStatusReconcileFormat(format)
 			if err != nil {
@@ -7293,17 +7301,17 @@ func newJobReconcileQueueCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile queue: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile queue: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile queue: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile queue: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job reconcile queue",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobQueueReconcileFormat(format)
 			if err != nil {
@@ -7393,17 +7401,17 @@ func newJobReconcileGitHubCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile github: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile github: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile github: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile github: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team job reconcile github",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if verifyPR && !cleanupMerged {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job reconcile github: --verify-pr requires --cleanup-merged.")
@@ -11026,21 +11034,18 @@ func validateJobLifecycleRenderOptions(cmd *cobra.Command, label string, dryRun,
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --dry-run cannot be combined with --wait.\n", label)
 		return exitErr(2)
 	}
-	if commands && !dryRun {
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands requires --dry-run.\n", label)
-		return exitErr(2)
-	}
-	if commands && jsonOut {
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --json.\n", label)
-		return exitErr(2)
-	}
-	if commands && quiet {
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --quiet.\n", label)
-		return exitErr(2)
-	}
-	if commands && format != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --format.\n", label)
-		return exitErr(2)
+	if err := validateCommandsMode(cmd, commandsModeValidation{
+		Command:       label,
+		Commands:      commands,
+		RequireDryRun: true,
+		DryRun:        dryRun,
+		Conflicts: []commandsModeConflict{
+			commandsModeConflicts("--json", jsonOut),
+			commandsModeConflicts("--quiet", quiet),
+			commandsModeConflicts("--format", format != nil),
+		},
+	}); err != nil {
+		return err
 	}
 	return nil
 }

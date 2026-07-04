@@ -170,13 +170,15 @@ func newPipelineGraphCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline graph: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline graph: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && cmd.Flags().Changed("format") {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline graph: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline graph",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", cmd.Flags().Changed("format")),
+				},
+			}); err != nil {
+				return err
 			}
 			format, err := parsePipelineGraphFormat(graphFormat)
 			if err != nil {
@@ -230,13 +232,15 @@ func newPipelineDoctorCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline doctor: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline doctor: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline doctor: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline doctor",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline doctor: --all cannot be combined with a pipeline argument.")
@@ -339,25 +343,29 @@ func newPipelineJobsCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --commands cannot be combined with --json.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline jobs",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && summary {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --format cannot be combined with --summary.")
 				return exitErr(2)
 			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && summary {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --commands cannot be combined with --summary.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline jobs",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--summary", summary),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if summary && cmd.Flags().Changed("limit") {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline jobs: --limit cannot be combined with --summary.")
@@ -747,17 +755,16 @@ func newPipelineStatusCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline status: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline status: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline status: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline status: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline status",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline status: --all cannot be combined with a pipeline argument.")
@@ -845,17 +852,16 @@ func newPipelineTriageCmd() *cobra.Command {
 			"With no pipeline, all pipeline-owned jobs are considered.",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline triage: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline triage: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline triage: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline triage",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline triage: --all cannot be combined with a pipeline argument.")
@@ -961,17 +967,16 @@ func newPipelineExplainCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline explain: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline explain: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline explain: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline explain: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline explain",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline explain: --all cannot be combined with a pipeline argument.")
@@ -1072,17 +1077,16 @@ func newPipelineNextCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline next: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline next: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline next: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline next: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline next",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline next: --all cannot be combined with a pipeline argument.")
@@ -1363,21 +1367,17 @@ func newPipelineQueueCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --format cannot be combined with --summary.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && summary {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --commands cannot be combined with --summary.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline queue",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--summary", summary),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if summary && (cmd.Flags().Changed("sort") || cmd.Flags().Changed("limit")) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue: --sort and --limit cannot be combined with --summary.")
@@ -1476,13 +1476,15 @@ func newPipelineQueueShowCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue show: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue show: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue show: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline queue show",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseQueueFormat(format)
 			if err != nil {
@@ -1554,17 +1556,16 @@ func newPipelineQueueQuarantineCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: --format cannot be combined with --summary.")
 				return exitErr(2)
 			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && summary {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: --commands cannot be combined with --summary.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline queue quarantine",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--summary", summary),
+				},
+			}); err != nil {
+				return err
 			}
 			if summary && (cmd.Flags().Changed("sort") || limit > 0) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine: --sort and --limit cannot be combined with --summary.")
@@ -1649,13 +1650,15 @@ func newPipelineQueueQuarantineShowCmd() *cobra.Command {
 		Short: "Show one pipeline-owned quarantined queue file.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine show: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine show: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline queue quarantine show",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team pipeline queue quarantine show", format, jsonOut)
 			if err != nil {
@@ -1711,17 +1714,17 @@ func newPipelineQueueQuarantineRestoreCmd() *cobra.Command {
 		Long:  "Restore one pipeline-owned quarantined queue file by path, or restore a filtered pipeline-owned batch of restorable files with --all.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine restore: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine restore: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine restore: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline queue quarantine restore",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			formatTemplate, err := parseQueueQuarantineCommandFormat(cmd, "agent-team pipeline queue quarantine restore", format, jsonOut)
 			if err != nil {
@@ -1846,17 +1849,17 @@ func newPipelineQueueQuarantineDropCmd() *cobra.Command {
 		Long:  "Drop one pipeline-owned quarantined queue file by path, or drop a filtered pipeline-owned batch with --all.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine drop: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine drop: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine drop: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline queue quarantine drop",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if olderThan < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue quarantine drop: --older-than must be >= 0.")
@@ -1993,17 +1996,17 @@ func newPipelineQueueRetryCmd() *cobra.Command {
 		Long:  "Retry one pipeline-owned queue item by id, or retry a filtered pipeline-owned batch with --all. Batch retries default to dead-letter items.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue retry: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue retry: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue retry: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline queue retry",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue retry: --format cannot be combined with --json.")
@@ -2132,17 +2135,17 @@ func newPipelineQueueDropCmd() *cobra.Command {
 		Long:  "Drop one pipeline-owned queue item by id, or drop a filtered pipeline-owned batch with --all. Batch drops default to dead-letter items.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue drop: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue drop: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue drop: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline queue drop",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue drop: --format cannot be combined with --json.")
@@ -2270,17 +2273,17 @@ func newPipelineQueuePruneCmd() *cobra.Command {
 		Long:  "Prune pipeline-owned queue items. By default this removes dead-letter items owned by the selected pipeline.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue prune: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue prune: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue prune: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline queue prune",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline queue prune: --format cannot be combined with --json.")
@@ -2372,17 +2375,16 @@ func newPipelineReadyCmd() *cobra.Command {
 		Short: "List ready pipeline jobs.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: --commands cannot be combined with --format.")
-				return exitErr(2)
-			}
-			if commands && watch {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: --commands cannot be combined with --watch.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline ready",
+				Commands: commands,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+					commandsModeConflicts("--watch", watch),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline ready: --format cannot be combined with --json.")
@@ -2534,17 +2536,17 @@ func newPipelineAdvanceCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline advance",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline advance: --all cannot be combined with a pipeline argument.")
@@ -2706,17 +2708,17 @@ func newPipelineApproveCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline approve: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline approve: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline approve: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline approve: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline approve",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline approve: --all cannot be combined with a pipeline argument.")
@@ -2884,17 +2886,17 @@ func newPipelineRejectCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline reject: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline reject: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline reject: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline reject: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline reject",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline reject: --all cannot be combined with a pipeline argument.")
@@ -2998,17 +3000,17 @@ func newPipelineUnblockCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline unblock",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if len(args) == 0 && !all {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline unblock: pass a pipeline name or --all.")
@@ -3125,17 +3127,17 @@ func newPipelineSkipCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline skip: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline skip: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline skip: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline skip: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline skip",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline skip: --all cannot be combined with a pipeline argument.")
@@ -3240,17 +3242,17 @@ func newPipelineCancelCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline cancel: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline cancel: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline cancel: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline cancel: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline cancel",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline cancel: --all cannot be combined with a pipeline argument.")
@@ -3361,9 +3363,14 @@ func newPipelineResumePlanCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commandsOnly && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --commands cannot be combined with --json.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline resume-plan",
+				Commands: commandsOnly,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+				},
+			}); err != nil {
+				return err
 			}
 			if summary && format != "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --summary cannot be combined with --format.")
@@ -3373,9 +3380,14 @@ func newPipelineResumePlanCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --summary cannot be combined with --commands.")
 				return exitErr(2)
 			}
-			if commandsOnly && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:  "agent-team pipeline resume-plan",
+				Commands: commandsOnly,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if fallbacks && !commandsOnly {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline resume-plan: --fallbacks requires --commands.")
@@ -3631,17 +3643,17 @@ func newPipelineCleanupCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline cleanup: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline cleanup: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline cleanup: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline cleanup: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline cleanup",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			tmpl, err := parseJobCleanupFormat(format)
 			if err != nil {
@@ -3733,17 +3745,17 @@ func newPipelineSendCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline send: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline send: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline send: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline send: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline send",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if last < 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline send: --last must be >= 0.")
@@ -4547,17 +4559,17 @@ func newPipelineRetryCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline retry",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline retry: --all cannot be combined with a pipeline argument.")
@@ -4724,17 +4736,17 @@ func newPipelineTimeoutCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline timeout",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if all && len(args) > 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline timeout: --all cannot be combined with a pipeline argument.")
@@ -4878,17 +4890,17 @@ func newPipelineRepairCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --preview-routes requires --dry-run.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline repair",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if wait && dryRun {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline repair: --wait cannot be combined with --dry-run.")
@@ -5120,17 +5132,17 @@ func newPipelineTickCmd() *cobra.Command {
 		Long:  "Run or preview one pipeline's drainable queue items and ready steps.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline tick: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline tick: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline tick: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline tick",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if format != "" && jsonOut {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline tick: --format cannot be combined with --json.")
@@ -5426,17 +5438,17 @@ func newPipelineHoldCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline hold: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline hold: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline hold: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline hold: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline hold",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if !all && len(args) == 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline hold: pass a pipeline name or --all.")
@@ -5559,17 +5571,17 @@ func newPipelineReleaseCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline release: --format cannot be combined with --json.")
 				return exitErr(2)
 			}
-			if commands && !dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline release: --commands requires --dry-run.")
-				return exitErr(2)
-			}
-			if commands && jsonOut {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline release: --commands cannot be combined with --json.")
-				return exitErr(2)
-			}
-			if commands && format != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline release: --commands cannot be combined with --format.")
-				return exitErr(2)
+			if err := validateCommandsMode(cmd, commandsModeValidation{
+				Command:       "agent-team pipeline release",
+				Commands:      commands,
+				RequireDryRun: true,
+				DryRun:        dryRun,
+				Conflicts: []commandsModeConflict{
+					commandsModeConflicts("--json", jsonOut),
+					commandsModeConflicts("--format", format != ""),
+				},
+			}); err != nil {
+				return err
 			}
 			if !all && len(args) == 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team pipeline release: pass a pipeline name or --all.")
@@ -5857,17 +5869,17 @@ func runPipelineJobCreate(cmd *cobra.Command, teamDir, pipelineName, ticket stri
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --format cannot be combined with --json.\n", prefix)
 		return exitErr(2)
 	}
-	if opts.Commands && !opts.DryRun {
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands requires --dry-run.\n", prefix)
-		return exitErr(2)
-	}
-	if opts.Commands && opts.JSON {
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --json.\n", prefix)
-		return exitErr(2)
-	}
-	if opts.Commands && opts.Format != "" {
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --commands cannot be combined with --format.\n", prefix)
-		return exitErr(2)
+	if err := validateCommandsMode(cmd, commandsModeValidation{
+		Command:       prefix,
+		Commands:      opts.Commands,
+		RequireDryRun: true,
+		DryRun:        opts.DryRun,
+		Conflicts: []commandsModeConflict{
+			commandsModeConflicts("--json", opts.JSON),
+			commandsModeConflicts("--format", opts.Format != ""),
+		},
+	}); err != nil {
+		return err
 	}
 	if opts.WaitInterval < 0 {
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --wait-interval must be >= 0.\n", prefix)

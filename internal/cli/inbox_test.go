@@ -153,12 +153,12 @@ func TestInboxLsCommandsValidation(t *testing.T) {
 		{
 			name: "rejects json",
 			args: []string{"inbox", "ls", "--target", tmp, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "rejects format",
 			args: []string{"inbox", "ls", "--target", tmp, "--commands", "--format", "{{.Instance}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "rejects negative limit",
@@ -342,17 +342,17 @@ func TestInboxAckCommandsValidation(t *testing.T) {
 		{
 			name: "requires dry run",
 			args: []string{"inbox", "ack", "worker", "msg-1", "--target", tmp, "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "rejects json",
 			args: []string{"inbox", "ack", "worker", "msg-1", "--target", tmp, "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "rejects format",
 			args: []string{"inbox", "ack", "worker", "msg-1", "--target", tmp, "--dry-run", "--commands", "--format", "{{.Acked}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	}
 	for _, tt := range tests {
@@ -385,12 +385,12 @@ func TestInboxShowCommandsValidation(t *testing.T) {
 		{
 			name: "rejects json",
 			args: []string{"inbox", "show", "worker", "--target", tmp, "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "rejects format",
 			args: []string{"inbox", "show", "worker", "--target", tmp, "--commands", "--format", "{{.ID}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 	}
 	for _, tt := range tests {
@@ -671,17 +671,17 @@ func TestInboxPruneValidation(t *testing.T) {
 		{
 			name: "commands require dry run",
 			args: []string{"inbox", "prune", "worker", "--target", tmp, "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "commands reject json",
 			args: []string{"inbox", "prune", "worker", "--target", tmp, "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands reject format",
 			args: []string{"inbox", "prune", "worker", "--target", tmp, "--dry-run", "--commands", "--format", "{{.Instance}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "rejects negative older-than",

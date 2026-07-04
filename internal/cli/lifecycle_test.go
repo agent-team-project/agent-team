@@ -906,32 +906,32 @@ func TestLifecycleCommandsRejectsInvalidRenderModes(t *testing.T) {
 		{
 			name: "start no dry-run",
 			args: []string{"start", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "start json",
 			args: []string{"start", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "stop summary",
 			args: []string{"stop", "--dry-run", "--commands", "--summary"},
-			want: "--commands cannot be combined with --summary",
+			want: wantCommandsModeConflict("--summary"),
 		},
 		{
 			name: "kill quiet",
 			args: []string{"kill", "--dry-run", "--commands", "--quiet"},
-			want: "--commands cannot be combined with --quiet",
+			want: wantCommandsModeConflict("--quiet"),
 		},
 		{
 			name: "restart format",
 			args: []string{"restart", "--dry-run", "--commands", "--format", "{{.Instance}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "restart attach",
 			args: []string{"restart", "manager", "--dry-run", "--commands", "--attach"},
-			want: "--commands cannot be combined with --attach",
+			want: wantCommandsModeConflict("--attach"),
 		},
 	}
 	for _, tc := range cases {
@@ -5592,11 +5592,11 @@ func TestWaitFormatRejectsConflictingModes(t *testing.T) {
 		{[]string{"wait", "manager", "--format", "{{.Instance}}", "--quiet"}, "--format cannot be combined"},
 		{[]string{"wait", "manager", "--format", "{{.Instance}}", "--summary"}, "--format cannot be combined"},
 		{[]string{"wait", "manager", "--format", "{{"}, "invalid --format template"},
-		{[]string{"wait", "manager", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"wait", "manager", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"wait", "manager", "--dry-run", "--commands", "--summary"}, "--commands cannot be combined with --summary"},
-		{[]string{"wait", "manager", "--dry-run", "--commands", "--quiet"}, "--commands cannot be combined with --quiet"},
-		{[]string{"wait", "manager", "--dry-run", "--commands", "--format", "{{.Instance}}"}, "--commands cannot be combined with --format"},
+		{[]string{"wait", "manager", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"wait", "manager", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"wait", "manager", "--dry-run", "--commands", "--summary"}, wantCommandsModeConflict("--summary")},
+		{[]string{"wait", "manager", "--dry-run", "--commands", "--quiet"}, wantCommandsModeConflict("--quiet")},
+		{[]string{"wait", "manager", "--dry-run", "--commands", "--format", "{{.Instance}}"}, wantCommandsModeConflict("--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()

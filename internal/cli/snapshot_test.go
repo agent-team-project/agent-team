@@ -610,7 +610,7 @@ func TestSnapshotCommands(t *testing.T) {
 		{
 			name: "team format conflict",
 			args: []string{"team", "snapshot", "delivery", "--repo", target, "--commands", "--format", "{{.Team.Name}}"},
-			want: "agent-team team snapshot: --commands cannot be combined with --json, --output, or --format.",
+			want: wantCommandCommandsModeConflict("agent-team team snapshot", "--format") + ".",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

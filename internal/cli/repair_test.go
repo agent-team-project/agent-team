@@ -1985,17 +1985,17 @@ func TestRepairRejectsInvalidFlagCombinations(t *testing.T) {
 		{
 			name: "commands without dry run",
 			args: []string{"repair", "--commands"},
-			want: "--commands requires --dry-run",
+			want: wantCommandsModeRequiresDryRun(),
 		},
 		{
 			name: "commands with json",
 			args: []string{"repair", "--dry-run", "--commands", "--json"},
-			want: "--commands cannot be combined with --json",
+			want: wantCommandsModeConflict("--json"),
 		},
 		{
 			name: "commands with format",
 			args: []string{"repair", "--dry-run", "--commands", "--format", "{{.DryRun}}"},
-			want: "--commands cannot be combined with --format",
+			want: wantCommandsModeConflict("--format"),
 		},
 		{
 			name: "invalid format",

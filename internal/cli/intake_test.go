@@ -743,8 +743,8 @@ func TestIntakeServeRequiresSecrets(t *testing.T) {
 		{[]string{"intake", "serve", "--require-linear-secret"}, "--require-linear-secret set but Linear webhook secret is empty"},
 		{[]string{"intake", "serve", "--require-github-secret"}, "--require-github-secret set but GitHub webhook secret is empty"},
 		{[]string{"intake", "serve", "--max-body-bytes", "0"}, "--max-body-bytes must be > 0"},
-		{[]string{"intake", "serve", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"intake", "serve", "--dry-run", "--commands", "--preview-triggers"}, "--commands cannot be combined with --preview-triggers"},
+		{[]string{"intake", "serve", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"intake", "serve", "--dry-run", "--commands", "--preview-triggers"}, wantCommandsModeConflict("--preview-triggers")},
 	} {
 		cmd := NewRootCmd()
 		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -1774,18 +1774,18 @@ func TestIntakeActionCommandsValidation(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"intake", "deliveries", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"intake", "deliveries", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
-		{[]string{"intake", "summary", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"intake", "summary", "--commands", "--format", "{{.Deliveries}}"}, "--commands cannot be combined with --format"},
-		{[]string{"intake", "duplicates", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"intake", "duplicates", "--commands", "--format", "{{.Provider}}"}, "--commands cannot be combined with --format"},
-		{[]string{"intake", "replay", "delivery-1", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"intake", "replay", "delivery-1", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"intake", "replay", "delivery-1", "--dry-run", "--commands", "--format", "{{.Event.Type}}"}, "--commands cannot be combined with --format"},
-		{[]string{"intake", "prune", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"intake", "prune", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"intake", "prune", "--dry-run", "--commands", "--format", "{{.ID}}"}, "--commands cannot be combined with --format"},
+		{[]string{"intake", "deliveries", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"intake", "deliveries", "--commands", "--format", "{{.ID}}"}, wantCommandsModeConflict("--format")},
+		{[]string{"intake", "summary", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"intake", "summary", "--commands", "--format", "{{.Deliveries}}"}, wantCommandsModeConflict("--format")},
+		{[]string{"intake", "duplicates", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"intake", "duplicates", "--commands", "--format", "{{.Provider}}"}, wantCommandsModeConflict("--format")},
+		{[]string{"intake", "replay", "delivery-1", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"intake", "replay", "delivery-1", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"intake", "replay", "delivery-1", "--dry-run", "--commands", "--format", "{{.Event.Type}}"}, wantCommandsModeConflict("--format")},
+		{[]string{"intake", "prune", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"intake", "prune", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"intake", "prune", "--dry-run", "--commands", "--format", "{{.ID}}"}, wantCommandsModeConflict("--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
@@ -1923,8 +1923,8 @@ func TestIntakeDoctorFormatValidation(t *testing.T) {
 		want string
 	}{
 		{[]string{"intake", "doctor", "--format", "{{.OK}}", "--json"}, "--format cannot be combined"},
-		{[]string{"intake", "doctor", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"intake", "doctor", "--commands", "--format", "{{.OK}}"}, "--commands cannot be combined with --format"},
+		{[]string{"intake", "doctor", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"intake", "doctor", "--commands", "--format", "{{.OK}}"}, wantCommandsModeConflict("--format")},
 		{[]string{"intake", "doctor", "--format", "{{"}, "invalid --format template"},
 	}
 	for _, tc := range cases {
@@ -2841,15 +2841,15 @@ func TestIntakeDryRunCommandsValidation(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"intake", "linear", "--payload", payload, "--commands"}, "--commands requires --dry-run"},
-		{[]string{"intake", "linear", "--payload", payload, "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"intake", "linear", "--payload", payload, "--dry-run", "--commands", "--format", "{{.Event.Type}}"}, "--commands cannot be combined with --format"},
-		{[]string{"intake", "github", "--payload", `{"action":"opened","pull_request":{"number":1}}`, "--commands"}, "--commands requires --dry-run"},
-		{[]string{"intake", "github", "--payload", `{"action":"opened","pull_request":{"number":1}}`, "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"intake", "github", "--payload", `{"action":"opened","pull_request":{"number":1}}`, "--dry-run", "--commands", "--format", "{{.Event.Type}}"}, "--commands cannot be combined with --format"},
-		{[]string{"intake", "schedule", "nightly", "--commands"}, "--commands requires --dry-run"},
-		{[]string{"intake", "schedule", "nightly", "--dry-run", "--commands", "--json"}, "--commands cannot be combined with --json"},
-		{[]string{"intake", "schedule", "nightly", "--dry-run", "--commands", "--format", "{{.Event.Type}}"}, "--commands cannot be combined with --format"},
+		{[]string{"intake", "linear", "--payload", payload, "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"intake", "linear", "--payload", payload, "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"intake", "linear", "--payload", payload, "--dry-run", "--commands", "--format", "{{.Event.Type}}"}, wantCommandsModeConflict("--format")},
+		{[]string{"intake", "github", "--payload", `{"action":"opened","pull_request":{"number":1}}`, "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"intake", "github", "--payload", `{"action":"opened","pull_request":{"number":1}}`, "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"intake", "github", "--payload", `{"action":"opened","pull_request":{"number":1}}`, "--dry-run", "--commands", "--format", "{{.Event.Type}}"}, wantCommandsModeConflict("--format")},
+		{[]string{"intake", "schedule", "nightly", "--commands"}, wantCommandsModeRequiresDryRun()},
+		{[]string{"intake", "schedule", "nightly", "--dry-run", "--commands", "--json"}, wantCommandsModeConflict("--json")},
+		{[]string{"intake", "schedule", "nightly", "--dry-run", "--commands", "--format", "{{.Event.Type}}"}, wantCommandsModeConflict("--format")},
 	}
 	for _, tc := range cases {
 		cmd := NewRootCmd()
