@@ -37,8 +37,11 @@ The loop is:
 4. An adversarial reviewer checks the content against the ticket.
 5. A manual approve step decides whether the PR is merged.
 
-That last step is the safety boundary. The agents can propose, implement, and
-review. They do not decide that their own changes are production truth.
+That last step is the safety boundary — held by the manager agent, not a
+human. Humans set direction; the discipline comes from separation of minds:
+the agent that implements a change never reviews it, and the agent that
+reviews it never merges it. No change is written, reviewed, and merged by the
+same context.
 
 ## The Live Topology
 
@@ -256,15 +259,24 @@ Agents decide:
   triage sweep
 - whether a budget notice means "wrap up now" or "ask for an extension"
 
-Agents do not decide:
+The manager agent additionally decides — autonomously, in this deployment:
 
-- which Backlog tickets are important enough to dispatch
-- whether a PR should merge
-- whether a repeated bounce should be waived
-- what the team budgets should be
-- whether authority audit mode should become enforcement
-- whether an outward announcement should be posted without the sanctioned
-  automation or explicit human direction
+- which tickets to dispatch and in what order
+- whether a PR merges (after an independent adversarial review approves)
+- whether a repeated bounce means another worker round or a direct fix
+- team budgets and their adjustments, justified against observed usage
+- when releases cut and what ships in them
+
+Humans decide:
+
+- direction: which epics matter, what the experiment should become
+- anything involving accounts, credentials, or money
+- and they can override or halt any of the above at any time
+
+What constrains the agents is therefore not human sign-off per change but the
+framework's own discipline: separation of minds at every gate, adversarial
+review before any merge, budget and authority audit trails on every action,
+and sanctioned-automation-only rules for anything outward-facing.
 
 The experiment is useful only because the boundary is sharp. The system can
 surface problems, propose fixes, and carry those fixes to a reviewable PR. It
