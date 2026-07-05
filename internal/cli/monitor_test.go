@@ -780,6 +780,7 @@ instances = ["other"]
 func TestMonitorSummaryJSONUsesHealthSnapshot(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -973,6 +974,7 @@ func TestMonitorStrictTopologyUsesHealthOption(t *testing.T) {
 func TestMonitorSummaryPlanJSONIncludesPlanSummary(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -1368,6 +1370,7 @@ func TestMonitorRejectsInvalidLatestLastOptions(t *testing.T) {
 func TestMonitorPlanJSONUsesFilters(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -1400,6 +1403,7 @@ func TestMonitorPlanJSONUsesFilters(t *testing.T) {
 func TestMonitorPlanJSONFiltersByAction(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -1417,8 +1421,8 @@ func TestMonitorPlanJSONFiltersByAction(t *testing.T) {
 	if body.Plan == nil {
 		t.Fatalf("monitor --plan should include plan: %+v", body)
 	}
-	if body.Plan.Summary.Total != 7 || body.Plan.Summary.OnDemand != 7 {
-		t.Fatalf("plan summary = %+v, want seven on-demand rows", body.Plan.Summary)
+	if body.Plan.Summary.Total != 4 || body.Plan.Summary.OnDemand != 4 {
+		t.Fatalf("plan summary = %+v, want fixture on-demand rows", body.Plan.Summary)
 	}
 	byName := map[string]planRow{}
 	for _, row := range body.Plan.Instances {
@@ -1559,6 +1563,7 @@ func TestMonitorRejectsUnknownAction(t *testing.T) {
 func TestMonitorFormatRendersSnapshot(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -1815,6 +1820,7 @@ func TestCollectMonitorSnapshotSortsStatsRows(t *testing.T) {
 func TestMonitorInstanceFilterJSONScopesPlanAndHealth(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}

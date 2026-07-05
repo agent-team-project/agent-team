@@ -56,6 +56,33 @@ FORBIDDEN_ARTIFACT_SUFFIXES = {
     ".pyo",
 }
 
+PLAN_SHAPE_TOPOLOGY_FIXTURE = """
+# Fixture owned by smoke lifecycle shape assertions. Keep exact row/count
+# checks coupled to this local topology, not to the bundled template's
+# evolving default instances.
+[instances.manager]
+agent = "manager"
+
+[instances.ticket-manager]
+agent = "ticket-manager"
+
+[instances.feedback-triage]
+agent = "manager"
+ephemeral = true
+
+[instances.harness-reviewer]
+agent = "manager"
+ephemeral = true
+
+[instances.reviewer]
+agent = "reviewer"
+ephemeral = true
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+"""
+
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
@@ -148,6 +175,7 @@ def main(argv: list[str]) -> int:
             tomllib.loads(instances_text)
         except Exception as e:  # noqa: BLE001
             problems.append(f"instances.toml not valid TOML: {e}")
+        check_bundled_topology_canary(binary, target, problems)
 
         # Template provenance must be present and parseable for future upgrade.
         lock_path = target / ".agent_team" / ".template.lock"
@@ -286,6 +314,38 @@ def main(argv: list[str]) -> int:
     return 0
 
 
+def check_bundled_topology_canary(binary: Path, target: Path, problems: list[str]) -> None:
+    """Single smoke canary for the bundled template's current topology shape."""
+    r = subprocess.run(
+        [str(binary), "plan", "--summary", "--json", "--target", str(target)],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        body = json.loads(r.stdout)
+    except Exception as e:  # noqa: BLE001
+        problems.append(f"bundled topology canary returned invalid JSON: {e}\nstdout={r.stdout}\nstderr={r.stderr}")
+        return
+    summary = body.get("summary") or {}
+    # This is the one smoke assertion for the bundled template's current
+    # topology. Lifecycle row/count checks below overwrite instances.toml with
+    # PLAN_SHAPE_TOPOLOGY_FIXTURE so adding a bundled instance only updates
+    # this canary.
+    if (
+        r.returncode != 0
+        or summary.get("total") != 9
+        or summary.get("actions", {}).get("start") != 2
+        or summary.get("actions", {}).get("on-demand") != 7
+        or not summary.get("dry_run")
+        or summary.get("statuses", {}).get("unknown") != 9
+    ):
+        problems.append(f"bundled topology canary returned unexpected summary: rc={r.returncode}\nbody={body}\nstdout={r.stdout}\nstderr={r.stderr}")
+
+
+def write_plan_shape_topology_fixture(team_dir: Path) -> None:
+    (team_dir / "instances.toml").write_text(PLAN_SHAPE_TOPOLOGY_FIXTURE, encoding="utf-8")
+
+
 def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
     """Smoke the daemon-backed lifecycle flow.
 
@@ -318,6 +378,7 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
             "--set", "linear.ticket_prefix=SMK",
         ])
         team_dir = socket_dir / ".agent_team"
+        write_plan_shape_topology_fixture(team_dir)
         sock = team_dir / "daemon.sock"
         pid = team_dir / "daemon.pid"
 
@@ -463,7 +524,7 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
         plan_before_summary = plan_before_start.get("summary") or {}
         if r.returncode != 0:
             problems.append(f"plan --json before start failed: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
-        elif plan_before_summary.get("start") != 2 or plan_before_summary.get("on_demand") != 7:
+        elif plan_before_summary.get("start") != 2 or plan_before_summary.get("on_demand") != 4:
             problems.append(f"plan --json before start returned unexpected summary: {plan_before_start}")
         elif any((plan_before_rows.get(name) or {}).get("action") != "start" for name in ("manager", "ticket-manager")):
             problems.append(f"plan --json before start missing start actions: {plan_before_start}")
@@ -506,7 +567,7 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
             capture_output=True, text=True,
         )
         formatted_action_plan_rows = [line.strip() for line in r.stdout.splitlines() if line.strip()]
-        if r.returncode != 0 or set(formatted_action_plan_rows) != {"debt-auditor:on-demand", "feedback-triage:on-demand", "harness-reviewer:on-demand", "platform-reviewer:on-demand", "platform-worker:on-demand", "reviewer:on-demand", "worker:on-demand"}:
+        if r.returncode != 0 or set(formatted_action_plan_rows) != {"feedback-triage:on-demand", "harness-reviewer:on-demand", "reviewer:on-demand", "worker:on-demand"}:
             problems.append(f"plan --action on_demand before start failed: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
 
         r = subprocess.run(
@@ -703,7 +764,7 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
         plan_after_summary = plan_after_start.get("summary") or {}
         if r.returncode != 0:
             problems.append(f"plan --json after start failed: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
-        elif plan_after_summary.get("keep") != 2 or plan_after_summary.get("on_demand") != 7:
+        elif plan_after_summary.get("keep") != 2 or plan_after_summary.get("on_demand") != 4:
             problems.append(f"plan --json after start returned unexpected summary: {plan_after_start}")
         elif any((plan_after_rows.get(name) or {}).get("action") != "keep" for name in ("manager", "ticket-manager")):
             problems.append(f"plan --json after start missing keep actions: {plan_after_start}")
@@ -1473,7 +1534,7 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
         monitor_plan_summary = monitor_plan.get("summary") or {}
         if r.returncode != 0:
             problems.append(f"monitor --plan --json failed: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
-        elif monitor_plan_summary.get("keep") != 2 or monitor_plan_summary.get("on_demand") != 7:
+        elif monitor_plan_summary.get("keep") != 2 or monitor_plan_summary.get("on_demand") != 4:
             problems.append(f"monitor --plan --json returned unexpected plan summary: {monitor_plan_body}")
         elif any((monitor_plan_rows.get(name) or {}).get("action") != "keep" for name in ("manager", "ticket-manager")):
             problems.append(f"monitor --plan --json missing keep actions: {monitor_plan_body}")
@@ -1493,7 +1554,7 @@ def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:
         monitor_action_rows = monitor_action_plan.get("instances") or []
         if r.returncode != 0:
             problems.append(f"monitor --plan --action on_demand --json failed: rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}")
-        elif {row.get("instance") for row in monitor_action_rows} != {"debt-auditor", "feedback-triage", "harness-reviewer", "platform-reviewer", "platform-worker", "reviewer", "worker"}:
+        elif {row.get("instance") for row in monitor_action_rows} != {"feedback-triage", "harness-reviewer", "reviewer", "worker"}:
             problems.append(f"monitor --plan --action on_demand returned unexpected rows: {monitor_action_body}")
         elif any(row.get("action") != "on-demand" for row in monitor_action_rows):
             problems.append(f"monitor --plan --action on_demand returned unexpected action: {monitor_action_body}")

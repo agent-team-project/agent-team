@@ -11,6 +11,41 @@ import (
 	"github.com/jamesaud/agent-team/internal/daemon"
 )
 
+const planShapeTopologyFixture = `
+# Fixture owned by plan/sync/monitor/lifecycle/watch shape tests.
+# Keep exact row/count assertions coupled to this local topology, not to the
+# bundled template's evolving default instances.
+[instances.manager]
+agent = "manager"
+
+[instances.ticket-manager]
+agent = "ticket-manager"
+
+[instances.feedback-triage]
+agent = "manager"
+ephemeral = true
+
+[instances.harness-reviewer]
+agent = "manager"
+ephemeral = true
+
+[instances.reviewer]
+agent = "reviewer"
+ephemeral = true
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+`
+
+func writePlanShapeTopologyFixture(t *testing.T, root string) {
+	t.Helper()
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(planShapeTopologyFixture), 0o644); err != nil {
+		t.Fatalf("write plan-shape instances.toml fixture: %v", err)
+	}
+}
+
 // fakeSpawnerForTest returns a daemon.Spawner that runs `sleep <hold>` so
 // the daemon's reaper has a real child to Wait() on. Mirrors the helper in
 // internal/daemon's tests but lives in the cli package so the cli tests can
