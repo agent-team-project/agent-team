@@ -319,10 +319,31 @@ description  = "Documentation writer on the claude runtime (subscription Opus-cl
 event        = "agent.dispatch"
 match.target = "docs-writer"
 
+[[instances.docs-writer.triggers]]
+event      = "schedule"
+match.name = "docs-freshness"
+match.kind = "docs_freshness"
+
+
+
+# The docs team's freshness loop: weekly, the docs-writer audits docs against
+# the shipped binary + latest release and files a stale-docs ticket (or is
+# dispatched to fix directly). See the docs-freshness skill.
+[schedules.docs-freshness]
+every = "168h"
+
+[schedules.docs-freshness.payload]
+kind = "docs_freshness"
+
 [teams.pr]
 description = "Public relations: community digests, announcements, discussions, outward feedback intake."
-instances   = ["comms", "docs-writer"]
+instances   = ["comms"]
 schedules   = ["discord-digest"]
+
+[teams.docs]
+description = "Documentation: README/guide/narrative authoring on the claude runtime, plus a weekly freshness audit against the shipped binary and latest release."
+instances   = ["docs-writer"]
+schedules   = ["docs-freshness"]
 
 [teams.quality]
 description = "Proactive architecture, tech-debt, and harness auditing."
