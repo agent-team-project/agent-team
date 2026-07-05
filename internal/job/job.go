@@ -76,6 +76,8 @@ type Job struct {
 	Usage                  *usage.JobUsage `toml:"usage,omitempty"`
 	TokenBudget            int64           `toml:"token_budget,omitempty"`
 	TimeBudget             string          `toml:"time_budget,omitempty"`
+	HardBudget             bool            `toml:"hard,omitempty"`
+	HardMultiplier         float64         `toml:"hard_multiplier,omitempty"`
 	ReminderLevels         []int           `toml:"reminder_levels,omitempty"`
 	TokenBudgetNotices     []int           `toml:"token_budget_notices,omitempty"`
 	TimeBudgetNotices      []int           `toml:"time_budget_notices,omitempty"`
@@ -131,6 +133,8 @@ type Step struct {
 	FinishedAt         time.Time      `toml:"finished_at,omitempty"`
 	TokenBudget        int64          `toml:"token_budget,omitempty"`
 	TimeBudget         string         `toml:"time_budget,omitempty"`
+	HardBudget         bool           `toml:"hard,omitempty"`
+	HardMultiplier     float64        `toml:"hard_multiplier,omitempty"`
 	ReminderLevels     []int          `toml:"reminder_levels,omitempty"`
 	TokenBudgetNotices []int          `toml:"token_budget_notices,omitempty"`
 	TimeBudgetNotices  []int          `toml:"time_budget_notices,omitempty"`
@@ -329,7 +333,7 @@ func Validate(j *Job) error {
 	if err := usage.ValidateJobUsage(j.Usage); err != nil {
 		return err
 	}
-	if err := validateBudgetFields("job", j.TokenBudget, j.TimeBudget, j.ReminderLevels, j.TokenBudgetNotices, j.TimeBudgetNotices); err != nil {
+	if err := validateBudgetFields("job", j.TokenBudget, j.TimeBudget, j.HardMultiplier, j.ReminderLevels, j.TokenBudgetNotices, j.TimeBudgetNotices); err != nil {
 		return err
 	}
 	if j.CreatedAt.IsZero() {
@@ -402,14 +406,14 @@ func Validate(j *Job) error {
 		if step.Skipped && step.Status != StatusDone {
 			return fmt.Errorf("steps[%d]: skipped steps must have status %q", i, StatusDone)
 		}
-		if err := validateBudgetFields(fmt.Sprintf("steps[%d]", i), step.TokenBudget, step.TimeBudget, step.ReminderLevels, step.TokenBudgetNotices, step.TimeBudgetNotices); err != nil {
+		if err := validateBudgetFields(fmt.Sprintf("steps[%d]", i), step.TokenBudget, step.TimeBudget, step.HardMultiplier, step.ReminderLevels, step.TokenBudgetNotices, step.TimeBudgetNotices); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateBudgetFields(prefix string, tokenBudget int64, timeBudget string, reminderLevels, tokenBudgetNotices, timeBudgetNotices []int) error {
+func validateBudgetFields(prefix string, tokenBudget int64, timeBudget string, hardMultiplier float64, reminderLevels, tokenBudgetNotices, timeBudgetNotices []int) error {
 	if tokenBudget < 0 {
 		return fmt.Errorf("%s: token_budget must be >= 0", prefix)
 	}
@@ -421,6 +425,9 @@ func validateBudgetFields(prefix string, tokenBudget int64, timeBudget string, r
 		if duration <= 0 {
 			return fmt.Errorf("%s: time_budget must be greater than zero", prefix)
 		}
+	}
+	if err := allowance.ValidateHardMultiplier(hardMultiplier, prefix+": hard_multiplier"); err != nil {
+		return err
 	}
 	if len(reminderLevels) > 0 {
 		if _, err := allowance.NormalizeReminderLevels(reminderLevels); err != nil {

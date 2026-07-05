@@ -80,6 +80,71 @@ func ParseTokenValue(raw any, field string) (int64, error) {
 	}
 }
 
+// ParseHardMultiplierValue parses an optional hard cutoff multiplier. Zero
+// means unset. Set values must be >= 1 so the hard line never sits below the
+// declared soft allowance.
+func ParseHardMultiplierValue(raw any, field string) (float64, error) {
+	if raw == nil {
+		return 0, nil
+	}
+	var value float64
+	switch v := raw.(type) {
+	case int:
+		value = float64(v)
+	case int64:
+		value = float64(v)
+	case float64:
+		value = v
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return 0, fmt.Errorf("%s must be a number: %w", field, err)
+		}
+		value = parsed
+	default:
+		return 0, fmt.Errorf("%s must be a number", field)
+	}
+	if err := ValidateHardMultiplier(value, field); err != nil {
+		return 0, err
+	}
+	return value, nil
+}
+
+// ValidateHardMultiplier validates a decoded hard cutoff multiplier. Zero means
+// unset; non-zero values opt into hard enforcement.
+func ValidateHardMultiplier(value float64, field string) error {
+	if value == 0 {
+		return nil
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return fmt.Errorf("%s must be finite", field)
+	}
+	if value < 1 {
+		return fmt.Errorf("%s must be >= 1", field)
+	}
+	return nil
+}
+
+// HardLimit returns the concrete hard line for a soft allowance. hard=true
+// means the allowance itself is the hard line; a multiplier uses allowance*N.
+// A non-positive return means hard enforcement is disabled for this allowance.
+func HardLimit(budget int64, hard bool, multiplier float64) int64 {
+	if budget <= 0 {
+		return 0
+	}
+	if multiplier > 0 {
+		limit := math.Ceil(float64(budget) * multiplier)
+		if limit > math.MaxInt64 {
+			return math.MaxInt64
+		}
+		return int64(limit)
+	}
+	if hard {
+		return budget
+	}
+	return 0
+}
+
 // NormalizeReminderLevels validates percentage thresholds and returns them
 // sorted and de-duplicated. Nil/empty means the default reminder levels.
 func NormalizeReminderLevels(levels []int) ([]int, error) {

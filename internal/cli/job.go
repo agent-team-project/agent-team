@@ -225,34 +225,36 @@ func newJobTimelineCmd() *cobra.Command {
 
 func newJobCreateCmd() *cobra.Command {
 	var (
-		repo           string
-		targetAgent    string
-		pipeline       string
-		profile        string
-		id             string
-		ticketURL      string
-		kickoff        string
-		kickoffFile    string
-		budgetTokens   string
-		budgetTime     time.Duration
-		reminderLevels []string
-		instance       string
-		dispatchNow    bool
-		workspace      string
-		runtimeKind    string
-		runtimeBin     string
-		dryRun         bool
-		commands       bool
-		wait           bool
-		waitStatuses   []string
-		waitEvents     []string
-		waitNextState  []string
-		waitStep       string
-		waitTimeout    time.Duration
-		waitInterval   time.Duration
-		failOnFailed   bool
-		jsonOut        bool
-		format         string
+		repo                 string
+		targetAgent          string
+		pipeline             string
+		profile              string
+		id                   string
+		ticketURL            string
+		kickoff              string
+		kickoffFile          string
+		budgetTokens         string
+		budgetTime           time.Duration
+		budgetHard           bool
+		budgetHardMultiplier float64
+		reminderLevels       []string
+		instance             string
+		dispatchNow          bool
+		workspace            string
+		runtimeKind          string
+		runtimeBin           string
+		dryRun               bool
+		commands             bool
+		wait                 bool
+		waitStatuses         []string
+		waitEvents           []string
+		waitNextState        []string
+		waitStep             string
+		waitTimeout          time.Duration
+		waitInterval         time.Duration
+		failOnFailed         bool
+		jsonOut              bool
+		format               string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -356,6 +358,20 @@ func newJobCreateCmd() *cobra.Command {
 			if budgetTime > 0 {
 				j.TimeBudget = budgetTime.String()
 			}
+			if budgetHard {
+				j.HardBudget = true
+			}
+			if cmd.Flags().Changed("budget-hard-multiplier") {
+				if budgetHardMultiplier <= 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "agent-team job create: --budget-hard-multiplier must be >= 1.")
+					return exitErr(2)
+				}
+				if err := allowance.ValidateHardMultiplier(budgetHardMultiplier, "--budget-hard-multiplier"); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
+					return exitErr(2)
+				}
+				j.HardMultiplier = budgetHardMultiplier
+			}
 			if cmd.Flags().Changed("reminder-levels") {
 				levels, err := parseReminderLevelsFlag(reminderLevels)
 				if err != nil {
@@ -394,40 +410,44 @@ func newJobCreateCmd() *cobra.Command {
 			}
 			if dryRun {
 				commandOptions := jobCreateApplyCommandOptions{
-					Ticket:            ticket,
-					Repo:              repo,
-					RepoSet:           cmd.Flags().Changed("repo"),
-					Target:            targetAgent,
-					TargetSet:         cmd.Flags().Changed("target"),
-					Pipeline:          pipeline,
-					PipelineSet:       cmd.Flags().Changed("pipeline"),
-					Profile:           profile,
-					ProfileSet:        cmd.Flags().Changed("profile"),
-					ID:                id,
-					IDSet:             cmd.Flags().Changed("id"),
-					TicketURL:         ticketURL,
-					TicketURLSet:      cmd.Flags().Changed("ticket-url"),
-					BudgetTokens:      budgetTokens,
-					BudgetTokensSet:   cmd.Flags().Changed("budget-tokens"),
-					BudgetTime:        budgetTime,
-					BudgetTimeSet:     cmd.Flags().Changed("budget-time"),
-					ReminderLevels:    append([]string(nil), reminderLevels...),
-					ReminderLevelsSet: cmd.Flags().Changed("reminder-levels"),
-					Instance:          instance,
-					InstanceSet:       cmd.Flags().Changed("instance"),
-					Dispatch:          dispatchNow,
-					Workspace:         workspace,
-					WorkspaceSet:      cmd.Flags().Changed("workspace"),
-					RuntimeKind:       runtimeKind,
-					RuntimeKindSet:    cmd.Flags().Changed("runtime"),
-					RuntimeBin:        runtimeBin,
-					RuntimeBinSet:     cmd.Flags().Changed("runtime-bin"),
-					Kickoff:           kickoff,
-					KickoffSet:        cmd.Flags().Changed("kickoff"),
-					KickoffFile:       kickoffFile,
-					KickoffFileSet:    cmd.Flags().Changed("kickoff-file"),
-					ResolvedKickoff:   kickoffText,
-					PositionalWords:   args[1:],
+					Ticket:                  ticket,
+					Repo:                    repo,
+					RepoSet:                 cmd.Flags().Changed("repo"),
+					Target:                  targetAgent,
+					TargetSet:               cmd.Flags().Changed("target"),
+					Pipeline:                pipeline,
+					PipelineSet:             cmd.Flags().Changed("pipeline"),
+					Profile:                 profile,
+					ProfileSet:              cmd.Flags().Changed("profile"),
+					ID:                      id,
+					IDSet:                   cmd.Flags().Changed("id"),
+					TicketURL:               ticketURL,
+					TicketURLSet:            cmd.Flags().Changed("ticket-url"),
+					BudgetTokens:            budgetTokens,
+					BudgetTokensSet:         cmd.Flags().Changed("budget-tokens"),
+					BudgetTime:              budgetTime,
+					BudgetTimeSet:           cmd.Flags().Changed("budget-time"),
+					BudgetHard:              budgetHard,
+					BudgetHardSet:           cmd.Flags().Changed("budget-hard"),
+					BudgetHardMultiplier:    budgetHardMultiplier,
+					BudgetHardMultiplierSet: cmd.Flags().Changed("budget-hard-multiplier"),
+					ReminderLevels:          append([]string(nil), reminderLevels...),
+					ReminderLevelsSet:       cmd.Flags().Changed("reminder-levels"),
+					Instance:                instance,
+					InstanceSet:             cmd.Flags().Changed("instance"),
+					Dispatch:                dispatchNow,
+					Workspace:               workspace,
+					WorkspaceSet:            cmd.Flags().Changed("workspace"),
+					RuntimeKind:             runtimeKind,
+					RuntimeKindSet:          cmd.Flags().Changed("runtime"),
+					RuntimeBin:              runtimeBin,
+					RuntimeBinSet:           cmd.Flags().Changed("runtime-bin"),
+					Kickoff:                 kickoff,
+					KickoffSet:              cmd.Flags().Changed("kickoff"),
+					KickoffFile:             kickoffFile,
+					KickoffFileSet:          cmd.Flags().Changed("kickoff-file"),
+					ResolvedKickoff:         kickoffText,
+					PositionalWords:         args[1:],
 				}
 				if dispatchNow {
 					if len(j.Steps) > 0 {
@@ -596,6 +616,8 @@ func newJobCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&kickoffFile, "kickoff-file", "", "Read kickoff text from a file, or '-' for stdin.")
 	cmd.Flags().StringVar(&budgetTokens, "budget-tokens", "", "Soft token allowance for this job, for example 40M.")
 	cmd.Flags().DurationVar(&budgetTime, "budget-time", 0, "Soft wall-clock allowance for this job, for example 45m. Does not arm a cutoff.")
+	cmd.Flags().BoolVar(&budgetHard, "budget-hard", false, "Enforce a hard cutoff at the declared allowance.")
+	cmd.Flags().Float64Var(&budgetHardMultiplier, "budget-hard-multiplier", 0, "Enforce a hard cutoff at allowance multiplied by this value, for example 1.5.")
 	cmd.Flags().StringSliceVar(&reminderLevels, "reminder-levels", nil, "Budget notice percentages for this job, for example 50,80,100.")
 	cmd.Flags().StringVar(&instance, "instance", "", "Instance name that owns the job (default set during dispatch).")
 	cmd.Flags().BoolVar(&dispatchNow, "dispatch", false, "Dispatch the created job immediately using the running daemon.")
@@ -679,6 +701,8 @@ func jobStepsFromPipeline(p *topology.Pipeline) []job.Step {
 			Timeout:          formatPipelineStepTimeout(step.Timeout),
 			TokenBudget:      step.TokenBudget,
 			TimeBudget:       formatPipelineStepTimeout(step.TimeBudget),
+			HardBudget:       step.HardBudget,
+			HardMultiplier:   step.HardMultiplier,
 			ReminderLevels:   append([]int(nil), step.ReminderLevels...),
 			MaxAttempts:      step.MaxAttempts,
 			RetryOnCrash:     step.RetryOnCrash,
@@ -733,6 +757,12 @@ func applyJobBudgetToPayload(j *job.Job, payload map[string]any) {
 	if len(j.ReminderLevels) > 0 {
 		payload["reminder_levels"] = append([]int(nil), j.ReminderLevels...)
 	}
+	if j.HardBudget {
+		payload["budget_hard"] = true
+	}
+	if j.HardMultiplier > 0 {
+		payload["budget_hard_multiplier"] = j.HardMultiplier
+	}
 }
 
 func applyJobStepBudgetToPayload(j *job.Job, step *job.Step, payload map[string]any) {
@@ -741,10 +771,14 @@ func applyJobStepBudgetToPayload(j *job.Job, step *job.Step, payload map[string]
 	}
 	tokenBudget := int64(0)
 	timeBudget := ""
+	hardBudget := false
+	hardMultiplier := float64(0)
 	var reminderLevels []int
 	if j != nil {
 		tokenBudget = j.TokenBudget
 		timeBudget = strings.TrimSpace(j.TimeBudget)
+		hardBudget = j.HardBudget
+		hardMultiplier = j.HardMultiplier
 		reminderLevels = append([]int(nil), j.ReminderLevels...)
 	}
 	if step != nil {
@@ -753,6 +787,12 @@ func applyJobStepBudgetToPayload(j *job.Job, step *job.Step, payload map[string]
 		}
 		if strings.TrimSpace(step.TimeBudget) != "" {
 			timeBudget = strings.TrimSpace(step.TimeBudget)
+		}
+		if step.HardBudget {
+			hardBudget = true
+		}
+		if step.HardMultiplier > 0 {
+			hardMultiplier = step.HardMultiplier
 		}
 		if len(step.ReminderLevels) > 0 {
 			reminderLevels = append([]int(nil), step.ReminderLevels...)
@@ -763,6 +803,12 @@ func applyJobStepBudgetToPayload(j *job.Job, step *job.Step, payload map[string]
 	}
 	if timeBudget != "" {
 		payload["budget_time"] = timeBudget
+	}
+	if hardBudget {
+		payload["budget_hard"] = true
+	}
+	if hardMultiplier > 0 {
+		payload["budget_hard_multiplier"] = hardMultiplier
 	}
 	if len(reminderLevels) > 0 {
 		payload["reminder_levels"] = reminderLevels
@@ -12527,7 +12573,7 @@ func daemonMetadataJobOutcome(meta *daemon.Metadata) (job.Status, string, string
 		status = job.StatusFailed
 		eventType = "instance_crashed"
 		message = "instance crashed"
-		if meta.ExitCode != nil {
+		if meta.ExitCode != nil && *meta.ExitCode != 0 {
 			message = fmt.Sprintf("instance exited with code %d", *meta.ExitCode)
 		}
 	}
@@ -15323,40 +15369,44 @@ type jobRetryApplyCommandOptions struct {
 }
 
 type jobCreateApplyCommandOptions struct {
-	Ticket            string
-	Repo              string
-	RepoSet           bool
-	Target            string
-	TargetSet         bool
-	Pipeline          string
-	PipelineSet       bool
-	Profile           string
-	ProfileSet        bool
-	ID                string
-	IDSet             bool
-	TicketURL         string
-	TicketURLSet      bool
-	BudgetTokens      string
-	BudgetTokensSet   bool
-	BudgetTime        time.Duration
-	BudgetTimeSet     bool
-	ReminderLevels    []string
-	ReminderLevelsSet bool
-	Instance          string
-	InstanceSet       bool
-	Dispatch          bool
-	Workspace         string
-	WorkspaceSet      bool
-	RuntimeKind       string
-	RuntimeKindSet    bool
-	RuntimeBin        string
-	RuntimeBinSet     bool
-	Kickoff           string
-	KickoffSet        bool
-	KickoffFile       string
-	KickoffFileSet    bool
-	ResolvedKickoff   string
-	PositionalWords   []string
+	Ticket                  string
+	Repo                    string
+	RepoSet                 bool
+	Target                  string
+	TargetSet               bool
+	Pipeline                string
+	PipelineSet             bool
+	Profile                 string
+	ProfileSet              bool
+	ID                      string
+	IDSet                   bool
+	TicketURL               string
+	TicketURLSet            bool
+	BudgetTokens            string
+	BudgetTokensSet         bool
+	BudgetTime              time.Duration
+	BudgetTimeSet           bool
+	BudgetHard              bool
+	BudgetHardSet           bool
+	BudgetHardMultiplier    float64
+	BudgetHardMultiplierSet bool
+	ReminderLevels          []string
+	ReminderLevelsSet       bool
+	Instance                string
+	InstanceSet             bool
+	Dispatch                bool
+	Workspace               string
+	WorkspaceSet            bool
+	RuntimeKind             string
+	RuntimeKindSet          bool
+	RuntimeBin              string
+	RuntimeBinSet           bool
+	Kickoff                 string
+	KickoffSet              bool
+	KickoffFile             string
+	KickoffFileSet          bool
+	ResolvedKickoff         string
+	PositionalWords         []string
 }
 
 type jobReconcileApplyCommandOptions struct {
@@ -15529,6 +15579,12 @@ func jobCreateApplyCommandArgs(opts jobCreateApplyCommandOptions) []string {
 	}
 	if opts.BudgetTimeSet && opts.BudgetTime > 0 {
 		args = append(args, "--budget-time", opts.BudgetTime.String())
+	}
+	if opts.BudgetHardSet && opts.BudgetHard {
+		args = append(args, "--budget-hard")
+	}
+	if opts.BudgetHardMultiplierSet && opts.BudgetHardMultiplier > 0 {
+		args = append(args, "--budget-hard-multiplier", strconv.FormatFloat(opts.BudgetHardMultiplier, 'f', -1, 64))
 	}
 	if opts.ReminderLevelsSet && len(opts.ReminderLevels) > 0 {
 		args = append(args, "--reminder-levels", strings.Join(opts.ReminderLevels, ","))

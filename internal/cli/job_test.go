@@ -588,6 +588,8 @@ func TestJobCreateListShowClose(t *testing.T) {
 		"--kickoff", "implement the status monitor",
 		"--budget-tokens", "1.5M",
 		"--budget-time", "45m",
+		"--budget-hard",
+		"--budget-hard-multiplier", "1.5",
 		"--reminder-levels", "40,80,100",
 		"--repo", tmp,
 		"--json",
@@ -607,6 +609,9 @@ func TestJobCreateListShowClose(t *testing.T) {
 	}
 	if created.TokenBudget != 1500000 || created.TimeBudget != "45m0s" {
 		t.Fatalf("created budgets = token %d time %q", created.TokenBudget, created.TimeBudget)
+	}
+	if !created.HardBudget || created.HardMultiplier != 1.5 {
+		t.Fatalf("created hard budget fields = hard %v multiplier %v", created.HardBudget, created.HardMultiplier)
 	}
 	if !reflect.DeepEqual(created.ReminderLevels, []int{40, 80, 100}) {
 		t.Fatalf("created reminder levels = %v", created.ReminderLevels)
@@ -2123,6 +2128,8 @@ func TestJobCreateDryRunDoesNotWrite(t *testing.T) {
 		"--ticket-url", "https://linear.app/squirtlesquad/issue/SQU-47/review-runner",
 		"--budget-tokens", "2M",
 		"--budget-time", "30m",
+		"--budget-hard",
+		"--budget-hard-multiplier", "1.5",
 		"--reminder-levels", "25,50,100",
 		"--dry-run",
 		"--commands",
@@ -2138,6 +2145,8 @@ func TestJobCreateDryRunDoesNotWrite(t *testing.T) {
 		"--ticket-url", "https://linear.app/squirtlesquad/issue/SQU-47/review-runner",
 		"--budget-tokens", "2M",
 		"--budget-time", "30m0s",
+		"--budget-hard",
+		"--budget-hard-multiplier", "1.5",
 		"--reminder-levels", "25,50,100",
 		"review", "the", "runner",
 	}), " ") + "\n"

@@ -10,11 +10,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"text/template"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/allowance"
 	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/jamesaud/agent-team/internal/loader"
@@ -5663,27 +5665,31 @@ func newPipelineReleaseCmd() *cobra.Command {
 
 func newPipelineRunCmd() *cobra.Command {
 	var (
-		repo          string
-		id            string
-		ticketURL     string
-		kickoff       string
-		kickoffFile   string
-		dispatchNow   bool
-		workspace     string
-		runtimeKind   string
-		runtimeBin    string
-		dryRun        bool
-		commands      bool
-		wait          bool
-		waitStatuses  []string
-		waitEvents    []string
-		waitNextState []string
-		waitStep      string
-		waitTimeout   time.Duration
-		waitInterval  time.Duration
-		failOnFailed  bool
-		jsonOut       bool
-		format        string
+		repo                 string
+		id                   string
+		ticketURL            string
+		kickoff              string
+		kickoffFile          string
+		budgetTokens         string
+		budgetTime           time.Duration
+		budgetHard           bool
+		budgetHardMultiplier float64
+		dispatchNow          bool
+		workspace            string
+		runtimeKind          string
+		runtimeBin           string
+		dryRun               bool
+		commands             bool
+		wait                 bool
+		waitStatuses         []string
+		waitEvents           []string
+		waitNextState        []string
+		waitStep             string
+		waitTimeout          time.Duration
+		waitInterval         time.Duration
+		failOnFailed         bool
+		jsonOut              bool
+		format               string
 	)
 	cwd, _ := os.Getwd()
 	cmd := &cobra.Command{
@@ -5696,34 +5702,47 @@ func newPipelineRunCmd() *cobra.Command {
 				return err
 			}
 			return runPipelineJobCreate(cmd, teamDir, args[0], args[1], args[2:], pipelineRunOptions{
-				ID:          id,
-				TicketURL:   ticketURL,
-				Kickoff:     kickoff,
-				KickoffFile: kickoffFile,
-				DispatchNow: dispatchNow,
-				Workspace:   workspace,
-				Runtime:     runtimeSelection{Kind: runtimeKind, Binary: runtimeBin},
-				DryRun:      dryRun,
-				Commands:    commands,
+				ID:                      id,
+				TicketURL:               ticketURL,
+				Kickoff:                 kickoff,
+				KickoffFile:             kickoffFile,
+				BudgetTokens:            budgetTokens,
+				BudgetTime:              budgetTime,
+				BudgetHard:              budgetHard,
+				BudgetHardMultiplier:    budgetHardMultiplier,
+				BudgetHardMultiplierSet: cmd.Flags().Changed("budget-hard-multiplier"),
+				DispatchNow:             dispatchNow,
+				Workspace:               workspace,
+				Runtime:                 runtimeSelection{Kind: runtimeKind, Binary: runtimeBin},
+				DryRun:                  dryRun,
+				Commands:                commands,
 				ApplyCommand: pipelineRunApplyCommandOptions{
-					BaseArgs:       []string{"agent-team", "pipeline", "run", args[0], args[1]},
-					Repo:           repo,
-					RepoSet:        cmd.Flags().Changed("repo"),
-					ID:             id,
-					IDSet:          cmd.Flags().Changed("id"),
-					TicketURL:      ticketURL,
-					TicketURLSet:   cmd.Flags().Changed("ticket-url"),
-					Dispatch:       dispatchNow,
-					Workspace:      workspace,
-					WorkspaceSet:   cmd.Flags().Changed("workspace"),
-					RuntimeKind:    runtimeKind,
-					RuntimeKindSet: cmd.Flags().Changed("runtime"),
-					RuntimeBin:     runtimeBin,
-					RuntimeBinSet:  cmd.Flags().Changed("runtime-bin"),
-					Kickoff:        kickoff,
-					KickoffSet:     cmd.Flags().Changed("kickoff"),
-					KickoffFile:    kickoffFile,
-					KickoffFileSet: cmd.Flags().Changed("kickoff-file"),
+					BaseArgs:                []string{"agent-team", "pipeline", "run", args[0], args[1]},
+					Repo:                    repo,
+					RepoSet:                 cmd.Flags().Changed("repo"),
+					ID:                      id,
+					IDSet:                   cmd.Flags().Changed("id"),
+					TicketURL:               ticketURL,
+					TicketURLSet:            cmd.Flags().Changed("ticket-url"),
+					Dispatch:                dispatchNow,
+					Workspace:               workspace,
+					WorkspaceSet:            cmd.Flags().Changed("workspace"),
+					RuntimeKind:             runtimeKind,
+					RuntimeKindSet:          cmd.Flags().Changed("runtime"),
+					RuntimeBin:              runtimeBin,
+					RuntimeBinSet:           cmd.Flags().Changed("runtime-bin"),
+					Kickoff:                 kickoff,
+					KickoffSet:              cmd.Flags().Changed("kickoff"),
+					KickoffFile:             kickoffFile,
+					KickoffFileSet:          cmd.Flags().Changed("kickoff-file"),
+					BudgetTokens:            budgetTokens,
+					BudgetTokensSet:         cmd.Flags().Changed("budget-tokens"),
+					BudgetTime:              budgetTime,
+					BudgetTimeSet:           cmd.Flags().Changed("budget-time"),
+					BudgetHard:              budgetHard,
+					BudgetHardSet:           cmd.Flags().Changed("budget-hard"),
+					BudgetHardMultiplier:    budgetHardMultiplier,
+					BudgetHardMultiplierSet: cmd.Flags().Changed("budget-hard-multiplier"),
 				},
 				Wait:           wait,
 				WaitStatuses:   waitStatuses,
@@ -5744,6 +5763,10 @@ func newPipelineRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&ticketURL, "ticket-url", "", "Canonical ticket URL to store on the job.")
 	cmd.Flags().StringVar(&kickoff, "kickoff", "", "Kickoff text for the first pipeline step.")
 	cmd.Flags().StringVar(&kickoffFile, "kickoff-file", "", "Read kickoff text from a file, or '-' for stdin.")
+	cmd.Flags().StringVar(&budgetTokens, "budget-tokens", "", "Soft token allowance for this pipeline job, for example 40M.")
+	cmd.Flags().DurationVar(&budgetTime, "budget-time", 0, "Soft wall-clock allowance for this pipeline job, for example 45m. Does not arm a cutoff unless hard is enabled.")
+	cmd.Flags().BoolVar(&budgetHard, "budget-hard", false, "Enforce a hard cutoff at the declared allowance.")
+	cmd.Flags().Float64Var(&budgetHardMultiplier, "budget-hard-multiplier", 0, "Enforce a hard cutoff at allowance multiplied by this value, for example 1.5.")
 	cmd.Flags().BoolVar(&dispatchNow, "dispatch", false, "Dispatch the first ready pipeline step immediately using the running daemon.")
 	cmd.Flags().StringVar(&workspace, "workspace", "auto", "Workspace mode for --dispatch: auto, worktree, or repo.")
 	cmd.Flags().StringVar(&runtimeKind, "runtime", "", "Runtime profile for --dispatch (claude or codex). Overrides env and repo config.")
@@ -5764,52 +5787,65 @@ func newPipelineRunCmd() *cobra.Command {
 }
 
 type pipelineRunOptions struct {
-	ID             string
-	TicketURL      string
-	Kickoff        string
-	KickoffFile    string
-	DispatchNow    bool
-	Workspace      string
-	Runtime        runtimeSelection
-	DryRun         bool
-	Commands       bool
-	ApplyCommand   pipelineRunApplyCommandOptions
-	Wait           bool
-	WaitStatuses   []string
-	WaitEvents     []string
-	WaitNextStates []string
-	WaitStep       string
-	WaitTimeout    time.Duration
-	WaitInterval   time.Duration
-	FailOnFailed   bool
-	JSON           bool
-	Format         string
-	ErrPrefix      string
+	ID                      string
+	TicketURL               string
+	Kickoff                 string
+	KickoffFile             string
+	BudgetTokens            string
+	BudgetTime              time.Duration
+	BudgetHard              bool
+	BudgetHardMultiplier    float64
+	BudgetHardMultiplierSet bool
+	DispatchNow             bool
+	Workspace               string
+	Runtime                 runtimeSelection
+	DryRun                  bool
+	Commands                bool
+	ApplyCommand            pipelineRunApplyCommandOptions
+	Wait                    bool
+	WaitStatuses            []string
+	WaitEvents              []string
+	WaitNextStates          []string
+	WaitStep                string
+	WaitTimeout             time.Duration
+	WaitInterval            time.Duration
+	FailOnFailed            bool
+	JSON                    bool
+	Format                  string
+	ErrPrefix               string
 }
 
 type pipelineRunApplyCommandOptions struct {
-	BaseArgs        []string
-	Repo            string
-	RepoSet         bool
-	Pipeline        string
-	PipelineSet     bool
-	ID              string
-	IDSet           bool
-	TicketURL       string
-	TicketURLSet    bool
-	Dispatch        bool
-	Workspace       string
-	WorkspaceSet    bool
-	RuntimeKind     string
-	RuntimeKindSet  bool
-	RuntimeBin      string
-	RuntimeBinSet   bool
-	Kickoff         string
-	KickoffSet      bool
-	KickoffFile     string
-	KickoffFileSet  bool
-	ResolvedKickoff string
-	PositionalWords []string
+	BaseArgs                []string
+	Repo                    string
+	RepoSet                 bool
+	Pipeline                string
+	PipelineSet             bool
+	ID                      string
+	IDSet                   bool
+	TicketURL               string
+	TicketURLSet            bool
+	Dispatch                bool
+	Workspace               string
+	WorkspaceSet            bool
+	RuntimeKind             string
+	RuntimeKindSet          bool
+	RuntimeBin              string
+	RuntimeBinSet           bool
+	Kickoff                 string
+	KickoffSet              bool
+	KickoffFile             string
+	KickoffFileSet          bool
+	BudgetTokens            string
+	BudgetTokensSet         bool
+	BudgetTime              time.Duration
+	BudgetTimeSet           bool
+	BudgetHard              bool
+	BudgetHardSet           bool
+	BudgetHardMultiplier    float64
+	BudgetHardMultiplierSet bool
+	ResolvedKickoff         string
+	PositionalWords         []string
 }
 
 func renderPipelineRunApplyCommand(w io.Writer, hasAction bool, opts pipelineRunApplyCommandOptions) error {
@@ -5853,6 +5889,18 @@ func pipelineRunApplyCommandArgs(opts pipelineRunApplyCommandOptions) []string {
 	}
 	if kickoffFileSet {
 		args = append(args, "--kickoff-file", opts.KickoffFile)
+	}
+	if opts.BudgetTokensSet && strings.TrimSpace(opts.BudgetTokens) != "" {
+		args = append(args, "--budget-tokens", opts.BudgetTokens)
+	}
+	if opts.BudgetTimeSet && opts.BudgetTime > 0 {
+		args = append(args, "--budget-time", opts.BudgetTime.String())
+	}
+	if opts.BudgetHardSet && opts.BudgetHard {
+		args = append(args, "--budget-hard")
+	}
+	if opts.BudgetHardMultiplierSet && opts.BudgetHardMultiplier > 0 {
+		args = append(args, "--budget-hard-multiplier", strconv.FormatFloat(opts.BudgetHardMultiplier, 'f', -1, 64))
 	}
 	if opts.KickoffFileSet && strings.TrimSpace(opts.KickoffFile) == "-" && strings.TrimSpace(opts.ResolvedKickoff) != "" {
 		args = append(args, "--kickoff", opts.ResolvedKickoff)
@@ -5927,6 +5975,35 @@ func runPipelineJobCreate(cmd *cobra.Command, teamDir, pipelineName, ticket stri
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", prefix, err)
 		return exitErr(2)
+	}
+	if strings.TrimSpace(opts.BudgetTokens) != "" {
+		tokens, err := allowance.ParseTokens(opts.BudgetTokens)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s: --budget-tokens: %v\n", prefix, err)
+			return exitErr(2)
+		}
+		j.TokenBudget = tokens
+	}
+	if opts.BudgetTime < 0 {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: --budget-time must be >= 0.\n", prefix)
+		return exitErr(2)
+	}
+	if opts.BudgetTime > 0 {
+		j.TimeBudget = opts.BudgetTime.String()
+	}
+	if opts.BudgetHard {
+		j.HardBudget = true
+	}
+	if opts.BudgetHardMultiplierSet {
+		if opts.BudgetHardMultiplier <= 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s: --budget-hard-multiplier must be >= 1.\n", prefix)
+			return exitErr(2)
+		}
+		if err := allowance.ValidateHardMultiplier(opts.BudgetHardMultiplier, "--budget-hard-multiplier"); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", prefix, err)
+			return exitErr(2)
+		}
+		j.HardMultiplier = opts.BudgetHardMultiplier
 	}
 	if strings.TrimSpace(opts.ID) != "" {
 		normalized := job.NormalizeID(opts.ID)

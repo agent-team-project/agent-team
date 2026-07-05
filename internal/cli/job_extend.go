@@ -148,6 +148,7 @@ func applyJobExtendUpdate(j *job.Job, selection jobInstanceSelection, by time.Du
 	if j == nil {
 		return
 	}
+	extendJobTimeBudget(j, selection, by)
 	instance := strings.TrimSpace(selection.Instance)
 	j.LastEvent = "extended"
 	if instance != "" {
@@ -156,6 +157,33 @@ func applyJobExtendUpdate(j *job.Job, selection jobInstanceSelection, by time.Du
 		j.LastStatus = fmt.Sprintf("extended by %s", by)
 	}
 	j.UpdatedAt = now
+}
+
+func extendJobTimeBudget(j *job.Job, selection jobInstanceSelection, by time.Duration) {
+	if j == nil || by <= 0 {
+		return
+	}
+	if stepID := strings.TrimSpace(selection.StepID); stepID != "" {
+		if idx := jobStepIndex(j, stepID); idx >= 0 {
+			if extended, ok := extendDurationString(j.Steps[idx].TimeBudget, by); ok {
+				j.Steps[idx].TimeBudget = extended
+				j.Steps[idx].TimeBudgetNotices = nil
+			}
+			return
+		}
+	}
+	if extended, ok := extendDurationString(j.TimeBudget, by); ok {
+		j.TimeBudget = extended
+		j.TimeBudgetNotices = nil
+	}
+}
+
+func extendDurationString(raw string, by time.Duration) (string, bool) {
+	current, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || current <= 0 {
+		return "", false
+	}
+	return (current + by).String(), true
 }
 
 func applyJobTokenExtendUpdate(j *job.Job, selection jobInstanceSelection, tokens int64, now time.Time) int64 {

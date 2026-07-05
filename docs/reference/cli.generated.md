@@ -2617,34 +2617,36 @@ agent-team job create <ticket> [kickoff...] [flags]
 Flags:
 
 ```text
-      --budget-time duration      Soft wall-clock allowance for this job, for example 45m. Does not arm a cutoff.
-      --budget-tokens string      Soft token allowance for this job, for example 40M.
-      --commands                  With --dry-run, print the matching job create apply command.
-      --dispatch                  Dispatch the created job immediately using the running daemon.
-      --dry-run                   Preview the job that would be created without writing it.
-      --fail-on-failed            With --wait, exit 1 if the job resolves to failed.
-      --format string             Render the job with a Go template, e.g. '{{.ID}} {{.Status}}'.
-      --id string                 Override the normalized job id (default: ticket slug).
-      --instance string           Instance name that owns the job (default set during dispatch).
-      --json                      Emit the job as JSON.
-      --kickoff string            Kickoff text for the target agent.
-      --kickoff-file string       Read kickoff text from a file, or '-' for stdin.
-      --pipeline string           Create this job from a declared pipeline in instances.toml.
-      --profile string            Job dispatch profile: default or probe.
-      --reminder-levels strings   Budget notice percentages for this job, for example 50,80,100.
-      --repo string               Repo root containing .agent_team. (default "<repo>")
-      --runtime string            Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
-      --runtime-bin string        Runtime binary for --dispatch. Overrides env and repo config.
-      --target string             Target agent that should own this job. (default "worker")
-      --ticket-url string         Canonical ticket URL to store on the job.
-      --wait                      After creating or dispatching, wait for the job to reach a lifecycle status, event, or next-step state.
-      --wait-event strings        With --wait, last event to wait for, e.g. dispatched, closed, or pipeline_done. Can repeat or comma-separate.
-      --wait-interval duration    Polling interval with --wait. (default 500ms)
-      --wait-next-state strings   With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
-      --wait-status strings       With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
-      --wait-step string          With --wait, pipeline step id that must be the current next step.
-      --wait-timeout duration     Maximum time to wait with --wait (0 = no timeout).
-      --workspace string          Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
+      --budget-hard                    Enforce a hard cutoff at the declared allowance.
+      --budget-hard-multiplier float   Enforce a hard cutoff at allowance multiplied by this value, for example 1.5.
+      --budget-time duration           Soft wall-clock allowance for this job, for example 45m. Does not arm a cutoff.
+      --budget-tokens string           Soft token allowance for this job, for example 40M.
+      --commands                       With --dry-run, print the matching job create apply command.
+      --dispatch                       Dispatch the created job immediately using the running daemon.
+      --dry-run                        Preview the job that would be created without writing it.
+      --fail-on-failed                 With --wait, exit 1 if the job resolves to failed.
+      --format string                  Render the job with a Go template, e.g. '{{.ID}} {{.Status}}'.
+      --id string                      Override the normalized job id (default: ticket slug).
+      --instance string                Instance name that owns the job (default set during dispatch).
+      --json                           Emit the job as JSON.
+      --kickoff string                 Kickoff text for the target agent.
+      --kickoff-file string            Read kickoff text from a file, or '-' for stdin.
+      --pipeline string                Create this job from a declared pipeline in instances.toml.
+      --profile string                 Job dispatch profile: default or probe.
+      --reminder-levels strings        Budget notice percentages for this job, for example 50,80,100.
+      --repo string                    Repo root containing .agent_team. (default "<repo>")
+      --runtime string                 Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
+      --runtime-bin string             Runtime binary for --dispatch. Overrides env and repo config.
+      --target string                  Target agent that should own this job. (default "worker")
+      --ticket-url string              Canonical ticket URL to store on the job.
+      --wait                           After creating or dispatching, wait for the job to reach a lifecycle status, event, or next-step state.
+      --wait-event strings             With --wait, last event to wait for, e.g. dispatched, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration         Polling interval with --wait. (default 500ms)
+      --wait-next-state strings        With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --wait-status strings            With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-step string               With --wait, pipeline step id that must be the current next step.
+      --wait-timeout duration          Maximum time to wait with --wait (0 = no timeout).
+      --workspace string               Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team job dispatch`
@@ -6256,27 +6258,31 @@ agent-team pipeline run <pipeline> <ticket> [kickoff...] [flags]
 Flags:
 
 ```text
-      --commands                  With --dry-run, print the matching pipeline run apply command. agent-team follow-ups preserve the selected repo scope.
-      --dispatch                  Dispatch the first ready pipeline step immediately using the running daemon.
-      --dry-run                   Preview the pipeline job that would be created without writing it.
-      --fail-on-failed            With --wait, exit 1 if the job resolves to failed.
-      --format string             Render the created or advanced job with a Go template, e.g. '{{.ID}} {{.Status}}'.
-      --id string                 Override the normalized job id (default: ticket slug).
-      --json                      Emit the created job or advance result as JSON.
-      --kickoff string            Kickoff text for the first pipeline step.
-      --kickoff-file string       Read kickoff text from a file, or '-' for stdin.
-      --repo string               Repo root containing .agent_team. (default "<repo>")
-      --runtime string            Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
-      --runtime-bin string        Runtime binary for --dispatch. Overrides env and repo config.
-      --ticket-url string         Canonical ticket URL to store on the job.
-      --wait                      After creating or dispatching, wait for the job to reach a lifecycle status, event, or next-step state.
-      --wait-event strings        With --wait, last event to wait for, e.g. advance_dispatched, closed, or pipeline_done. Can repeat or comma-separate.
-      --wait-interval duration    Polling interval with --wait. (default 500ms)
-      --wait-next-state strings   With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
-      --wait-status strings       With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
-      --wait-step string          With --wait, pipeline step id that must be the current next step.
-      --wait-timeout duration     Maximum time to wait with --wait (0 = no timeout).
-      --workspace string          Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
+      --budget-hard                    Enforce a hard cutoff at the declared allowance.
+      --budget-hard-multiplier float   Enforce a hard cutoff at allowance multiplied by this value, for example 1.5.
+      --budget-time duration           Soft wall-clock allowance for this pipeline job, for example 45m. Does not arm a cutoff unless hard is enabled.
+      --budget-tokens string           Soft token allowance for this pipeline job, for example 40M.
+      --commands                       With --dry-run, print the matching pipeline run apply command. agent-team follow-ups preserve the selected repo scope.
+      --dispatch                       Dispatch the first ready pipeline step immediately using the running daemon.
+      --dry-run                        Preview the pipeline job that would be created without writing it.
+      --fail-on-failed                 With --wait, exit 1 if the job resolves to failed.
+      --format string                  Render the created or advanced job with a Go template, e.g. '{{.ID}} {{.Status}}'.
+      --id string                      Override the normalized job id (default: ticket slug).
+      --json                           Emit the created job or advance result as JSON.
+      --kickoff string                 Kickoff text for the first pipeline step.
+      --kickoff-file string            Read kickoff text from a file, or '-' for stdin.
+      --repo string                    Repo root containing .agent_team. (default "<repo>")
+      --runtime string                 Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
+      --runtime-bin string             Runtime binary for --dispatch. Overrides env and repo config.
+      --ticket-url string              Canonical ticket URL to store on the job.
+      --wait                           After creating or dispatching, wait for the job to reach a lifecycle status, event, or next-step state.
+      --wait-event strings             With --wait, last event to wait for, e.g. advance_dispatched, closed, or pipeline_done. Can repeat or comma-separate.
+      --wait-interval duration         Polling interval with --wait. (default 500ms)
+      --wait-next-state strings        With --wait, next-step state to wait for: ready, queued, running, blocked, failed, held, done, none, or all. Can repeat or comma-separate.
+      --wait-status strings            With --wait, status to wait for: queued, running, blocked, done, failed, or terminal. Can repeat or comma-separate.
+      --wait-step string               With --wait, pipeline step id that must be the current next step.
+      --wait-timeout duration          Maximum time to wait with --wait (0 = no timeout).
+      --workspace string               Workspace mode for --dispatch: auto, worktree, or repo. (default "auto")
 ```
 
 ## `agent-team pipeline runtime`

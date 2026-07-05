@@ -666,6 +666,8 @@ func pipelineJobSteps(pipeline *topology.Pipeline) []jobstore.Step {
 			Timeout:          pipelineStepTimeoutString(step.Timeout),
 			TokenBudget:      step.TokenBudget,
 			TimeBudget:       pipelineStepTimeoutString(step.TimeBudget),
+			HardBudget:       step.HardBudget,
+			HardMultiplier:   step.HardMultiplier,
 			ReminderLevels:   append([]int(nil), step.ReminderLevels...),
 			MaxAttempts:      step.MaxAttempts,
 			RetryOnCrash:     step.RetryOnCrash,
@@ -748,6 +750,12 @@ func applyPipelineStepBudgetToPayload(step *topology.PipelineStep, payload map[s
 	if len(step.ReminderLevels) > 0 && payload["reminder_levels"] == nil {
 		payload["reminder_levels"] = append([]int(nil), step.ReminderLevels...)
 	}
+	if step.HardBudget && !payloadBudgetHard(payload) {
+		payload["budget_hard"] = true
+	}
+	if step.HardMultiplier > 0 && payloadBudgetHardMultiplier(payload) == 0 {
+		payload["budget_hard_multiplier"] = step.HardMultiplier
+	}
 }
 
 func applyInstanceBudgetDefaultsToPayload(inst *topology.Instance, payload map[string]any) {
@@ -759,6 +767,12 @@ func applyInstanceBudgetDefaultsToPayload(inst *topology.Instance, payload map[s
 	}
 	if inst.TimeBudget > 0 && strings.TrimSpace(payloadString(payload, "budget_time")) == "" {
 		payload["budget_time"] = inst.TimeBudget.String()
+	}
+	if inst.HardBudget && !payloadBudgetHard(payload) {
+		payload["budget_hard"] = true
+	}
+	if inst.HardMultiplier > 0 && payloadBudgetHardMultiplier(payload) == 0 {
+		payload["budget_hard_multiplier"] = inst.HardMultiplier
 	}
 }
 
@@ -778,6 +792,35 @@ func payloadBudgetTokens(payload map[string]any) int64 {
 	}
 	tokens, _ := allowance.ParseTokenValue(payload["budget_tokens"], "budget_tokens")
 	return tokens
+}
+
+func payloadBudgetHard(payload map[string]any) bool {
+	if payload == nil {
+		return false
+	}
+	for _, key := range []string{"budget_hard", "hard"} {
+		if raw, ok := payload[key]; ok {
+			if value, ok := raw.(bool); ok {
+				return value
+			}
+		}
+	}
+	return false
+}
+
+func payloadBudgetHardMultiplier(payload map[string]any) float64 {
+	if payload == nil {
+		return 0
+	}
+	for _, key := range []string{"budget_hard_multiplier", "hard_multiplier"} {
+		if raw, ok := payload[key]; ok {
+			value, err := allowance.ParseHardMultiplierValue(raw, key)
+			if err == nil {
+				return value
+			}
+		}
+	}
+	return 0
 }
 
 func (r *EventResolver) clampPayloadBudgetToTeamHeadroom(payload map[string]any, eventOrigin origin.Envelope) map[string]any {
@@ -1770,23 +1813,46 @@ func (r *EventResolver) attachSpawnOwnership(meta *Metadata, payload map[string]
 	if meta == nil {
 		return
 	}
-	meta.Job = eventJobID(payload)
-	meta.Ticket = payloadString(payload, "ticket")
-	meta.Branch = branch
-	meta.PR = firstPayloadString(payload, "pr_url", "pr")
-	meta.Origin = origin.Merge(meta.Origin, r.originForPayload(meta.Instance, payload))
-	j := r.upsertDispatchJob(payload, meta.Instance, jobstore.StatusRunning, "dispatched", "running", branch, worktreePath)
+	applyOwnership := func(dst *Metadata) {
+		if dst == nil {
+			return
+		}
+		dst.Job = eventJobID(payload)
+		dst.Ticket = payloadString(payload, "ticket")
+		dst.Branch = branch
+		dst.PR = firstPayloadString(payload, "pr_url", "pr")
+		dst.Origin = origin.Merge(dst.Origin, r.originForPayload(dst.Instance, payload))
+	}
+	current := *meta
+	if latest, err := ReadMetadata(r.mgr.daemonRoot, meta.Instance); err == nil && latest.PID == meta.PID {
+		current = *latest
+	}
+	applyOwnership(&current)
+	j := r.upsertDispatchJob(payload, current.Instance, jobstore.StatusRunning, "dispatched", "running", branch, worktreePath)
 	if j != nil {
-		meta.Job = j.ID
-		meta.Ticket = j.Ticket
-		meta.PR = j.PR
+		current.Job = j.ID
+		current.Ticket = j.Ticket
+		current.PR = j.PR
 		if stepID, ok := linearDispatchStepFromPayload(payload); ok && !jobIsProbe(j) {
 			r.writeLinearDispatchInProgress(j, stepID)
 		}
 	}
-	if err := WriteMetadata(r.mgr.daemonRoot, meta); err != nil {
+	r.mgr.mu.Lock()
+	if t, ok := r.mgr.instances[meta.Instance]; ok && t.meta != nil && t.meta.PID == meta.PID {
+		applyOwnership(t.meta)
+		if j != nil {
+			t.meta.Job = j.ID
+			t.meta.Ticket = j.Ticket
+			t.meta.PR = j.PR
+		}
+		current = *t.meta
+	}
+	err := WriteMetadata(r.mgr.daemonRoot, &current)
+	r.mgr.mu.Unlock()
+	if err != nil {
 		return
 	}
+	*meta = current
 }
 
 func (r *EventResolver) upsertDispatchJob(payload map[string]any, instance string, status jobstore.Status, lastEvent, lastStatus, branch, worktreePath string) *jobstore.Job {
@@ -1876,6 +1942,11 @@ func (r *EventResolver) upsertDispatchJob(payload map[string]any, instance strin
 	}
 	applyProbeProfileToPipelineJob(j)
 	j.UpdatedAt = now
+	if status != "" && !jobStatusTerminal(status) {
+		if latest, err := jobstore.Read(r.teamDir, j.ID); err == nil && jobStatusTerminal(latest.Status) {
+			return latest
+		}
+	}
 	if err := r.writeJobWithAudit(j, "", "daemon", "", dispatchJobEventData(payload, branch, worktreePath)); err != nil {
 		return nil
 	}
@@ -1888,6 +1959,8 @@ func applyPayloadBudgetToJob(j *jobstore.Job, payload map[string]any) {
 	}
 	tokens := payloadBudgetTokens(payload)
 	timeBudget := strings.TrimSpace(payloadString(payload, "budget_time"))
+	hardBudget := payloadBudgetHard(payload)
+	hardMultiplier := payloadBudgetHardMultiplier(payload)
 	levels := payloadReminderLevels(payload)
 	stepID := payloadString(payload, "pipeline_step")
 	if stepID != "" {
@@ -1901,6 +1974,12 @@ func applyPayloadBudgetToJob(j *jobstore.Job, payload map[string]any) {
 			if timeBudget != "" {
 				j.Steps[i].TimeBudget = timeBudget
 			}
+			if hardBudget {
+				j.Steps[i].HardBudget = true
+			}
+			if hardMultiplier > 0 {
+				j.Steps[i].HardMultiplier = hardMultiplier
+			}
 			if len(levels) > 0 {
 				j.Steps[i].ReminderLevels = levels
 			}
@@ -1912,6 +1991,12 @@ func applyPayloadBudgetToJob(j *jobstore.Job, payload map[string]any) {
 	}
 	if timeBudget != "" {
 		j.TimeBudget = timeBudget
+	}
+	if hardBudget {
+		j.HardBudget = true
+	}
+	if hardMultiplier > 0 {
+		j.HardMultiplier = hardMultiplier
 	}
 	if len(levels) > 0 {
 		j.ReminderLevels = levels
@@ -2632,7 +2717,7 @@ func (r *EventResolver) reconcileEphemeralJobExit(meta *Metadata) {
 		status = jobstore.StatusFailed
 		eventType = "instance_crashed"
 		message = "instance crashed"
-		if meta.ExitCode != nil {
+		if meta.ExitCode != nil && *meta.ExitCode != 0 {
 			message = fmt.Sprintf("instance exited with code %d", *meta.ExitCode)
 		}
 	}
