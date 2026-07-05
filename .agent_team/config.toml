@@ -49,3 +49,6 @@ upstream = "agent-team"
 kind     = "linear"
 team_key = "SQU"
 label    = "feedback"
+
+[project]
+id = "a1290ed4-258f-4706-964b-c1aa3d82f6fc"
