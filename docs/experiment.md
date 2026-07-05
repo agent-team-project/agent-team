@@ -45,16 +45,28 @@ same context.
 
 ## The Live Topology
 
-The repo currently declares four teams.
+The repo currently declares five teams.
 
 | Team | What it owns | Running pieces |
 | --- | --- | --- |
 | `delivery` | Normal ticket-to-PR delivery. | `manager`, `ticket-manager`, 3 `worker` replicas, 2 `reviewer` replicas, the `ticket_to_pr` pipeline, and the 12h `feedback-triage` schedule. |
 | `platform` | Framework infrastructure work such as provider seams, provenance, scoping, and resource constraints. | 2 `platform-worker` replicas, 1 `platform-reviewer`, and a separate `platform_ticket_to_pr` pipeline triggered by `platform.ticket`. |
 | `quality` | Proactive architecture, tech-debt, and harness auditing. | Weekly `debt-auditor` and weekly `harness-reviewer` schedules. |
-| `pr` | Public voice and documentation work. | Daily `comms` digest schedule and `docs-writer`, a worker instance pinned to the Claude runtime for narrative docs. |
+| `pr` | Public voice and outward communication. | Daily `comms` digest schedule for shipped-work digests, release announcements, and community intake. |
+| `docs` | Documentation authoring and freshness. | `docs-writer`, a worker instance pinned to the Claude runtime for narrative docs, plus the weekly `docs-freshness` schedule. |
 
-The self-improving part is mostly carried by four autonomous loops:
+It also declares five schedules:
+
+| Schedule | Cadence | Owning team | What it does |
+| --- | --- | --- | --- |
+| `feedback-triage` | Every 12 hours. | `delivery` | Cluster local `agent-team feedback submit` reports plus system pain signals; file, fold, or dismiss tickets. |
+| `debt-sweep` | Every 168 hours. | `quality` | Audit one subsystem and file at most three evidence-backed tech-debt tickets. |
+| `harness-review` | Every 168 hours. | `quality` | Inspect bounce classes, feedback trends, and failure patterns; propose prompt, skill, or pipeline-instruction tickets. |
+| `discord-digest` | Every 24 hours. | `pr` | Draft or publish a shipped-work digest through the sanctioned comms path. |
+| `docs-freshness` | Every 168 hours. | `docs` | Audit docs against the shipped binary, latest release, repo identity, and quickstart; file or fix stale-docs findings. |
+
+The core self-improvement path is mostly carried by the board-driven delivery
+pipeline plus the feedback, debt, harness, and docs-freshness loops:
 
 | Loop | Trigger or cadence | What it is allowed to do |
 | --- | --- | --- |
@@ -62,10 +74,10 @@ The self-improving part is mostly carried by four autonomous loops:
 | Feedback triage | Every 12 hours. | Cluster local `agent-team feedback submit` reports plus system pain signals; file, fold, or dismiss tickets. Filed tickets land in Backlog. |
 | Debt sweep | Every 168 hours. | Audit one subsystem and file at most three evidence-backed tech-debt tickets. Filed tickets land in Backlog. |
 | Harness review | Every 168 hours. | Inspect bounce classes, feedback trends, and failure patterns; propose prompt, skill, or pipeline-instruction tickets. Filed tickets land in Backlog. |
+| Docs freshness | Every 168 hours. | Check docs against the live CLI, release record, repo identity, links, and quickstart; file findings or fix them directly when dispatched. |
 
-The PR team also has a 24h Discord digest schedule. It is part of the current
-topology, but it is outward communication rather than the core self-improvement
-loop.
+The PR team's 24h Discord digest schedule is part of the current topology, but
+it is outward communication rather than the core self-improvement loop.
 
 ## The Delivery Loop
 
