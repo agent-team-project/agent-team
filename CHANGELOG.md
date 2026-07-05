@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.4.0 — 2026-07-05
+
+The self-improving release. Three teams now ship in the bundled topology, four autonomous loops run on cadence, and two of the headline fixes in this release were found by the system itself.
+
+### Pluggable PM providers
+
+- **`internal/pmprovider` seam** — intake, board write-back, and doctor consume a provider interface; Linear moved behind it with zero behavior change. `[pm] provider = "linear" | "github" | "none"` (`team.pm_tool` remains as a legacy alias). (SQU-86, #90)
+- **GitHub provider** — Issues/Projects implement the same interface end to end: column-move intake, board write-back to issue state/labels/column, a `github` skill mirroring the linear skill's verbs, and provider-aware bundled agent prompts. The seam is proven by its second implementation. (SQU-96, #92)
+
+### Three teams, four loops
+
+- **Bundled topology ships `delivery`, `platform`, and `quality` teams** — platform gets its own worker/reviewer pool and `platform_ticket_to_pr` pipeline on a distinct trigger event; framework work and product delivery scale independently.
+- **Feedback loop** (12h): `agent-team feedback submit` captures one-line agent observations with auto-stamped context; a scheduled triage manager clusters, files to Backlog via `[feedback.routes]` (external destinations supported), folds, or dismisses with reasons. (SQU-79 #84, SQU-80)
+- **Debt sweep** (weekly): the new `auditor` agent audits one subsystem per run and files at most three evidence-backed `tech-debt` tickets. Its first sweep's findings are all remediated in this release: `job.go` queue/events split (#91), centralized `--commands` validation — 698 repeated checks became one helper (#93), consolidated quarantine plumbing (#95).
+- **Harness review** (weekly): trends in bounce findings, feedback, and failure patterns become `harness`-labeled prompt/skill/instruction tickets. Its first run aggregated a 16-report feedback class into SQU-97 — fixed in this release.
+- Schedule-triggered ephemerals fixed (schedule payload `name` is the schedule's identity, not an instance-name request) — the documented pattern now actually works.
+
+### Provenance and scoping (the resource-model foundation)
+
+- **Origin envelope** — `[project].id` at init (backfilled for existing repos); `{project, team, instance, agent, job, trigger, build}` stamped at creation on jobs, queue items, events, lock leases, and usage records. Queryable: `job ls --team/--trigger`, `ps --team`, `usage --by team`. Outward Linear writes carry a machine-parseable origin footer. (SQU-90, #94)
+- **Identity resolves from topology only.** Three review rounds proved the rule the hard way: inbound payload `team` keys, dispatch target aliases, and absent origin jobs can none of them influence ownership or authority.
+- **Scoping, audit mode** — `scope = "machine" | "team" | "job"` on locks/channels/schedules; per-agent authority allowlists with `:own` job qualifiers; violations logged to job events and triage, nothing blocked. Enforcement stays off until real violation streams validate the ACLs. (SQU-92, #96)
+- Design docs: `documentation/resource-constraints.md` (budgets, priority, preemption, backpressure — the SQU-91 epic) with scoping as its sibling.
+
+### Runtime parity & operator polish
+
+- **Startup-command shims are durable on every dispatch path** — daemon-routed `run --prompt` and event dispatch use per-instance state dirs, so `inbox check`/`channel.sh` work identically in Claude and Codex adapters; the orchestration demo executes the real commands to pin prompt-vs-adapter parity. (SQU-97, #97)
+- **Resume visibility** — `resume_count`, last-activity, progressing/quiet hints, and incarnation timelines in `ps`/`inspect`/`job explain`, scoped to the explained job. From the vg team's 20-hour production report. (SQU-83, #86)
+- **Team-level skills** — `[skills] team = [...]` registers shared skills for every agent; `instance rm` refuses (without `--force`) removals that would orphan a sole-owned skill. (SQU-84, #89)
+- `job show --json` steps use lowercase snake_case keys (legacy aliases for one release, leak-proofed by a guard test) (SQU-87, #87); duplicate job ids report structured conflicts and `event publish` accepts `key=value` shorthand (SQU-88/89, #88); aborted confirmations point at `--force`; bounce attention escalation warns and flags triage after repeated bounces (SQU-77).
+- Installable templates: `init github.com/org/repo@tag` with SHA-keyed cache, `template ls/show/pull`, publishing conventions — render-only trust boundary. (SQU-85, #85)
+
 ## v0.3.0 — 2026-07-04
 
 The board-as-control-plane release. Driven almost entirely by day-1 field feedback from the v0.2.0 deployment and live dogfooding of the shipped defaults.
