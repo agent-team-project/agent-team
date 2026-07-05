@@ -16,6 +16,7 @@ import (
 func TestPlanJSONShowsTopologyAndDaemonMetadata(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	daemonRoot := daemon.DaemonRoot(teamDir)
 	if err := daemon.WriteMetadata(daemonRoot, &daemon.Metadata{
@@ -53,8 +54,8 @@ func TestPlanJSONShowsTopologyAndDaemonMetadata(t *testing.T) {
 	if body.Daemon.Running {
 		t.Fatalf("daemon should be reported down: %+v", body.Daemon)
 	}
-	if body.Summary.Total != 10 || body.Summary.Start != 1 || body.Summary.Resume != 1 || body.Summary.OnDemand != 7 || body.Summary.Extra != 1 {
-		t.Fatalf("summary = %+v, want start/resume/on-demand/extra counts", body.Summary)
+	if body.Summary.Total != 7 || body.Summary.Start != 1 || body.Summary.Resume != 1 || body.Summary.OnDemand != 4 || body.Summary.Extra != 1 {
+		t.Fatalf("summary = %+v, want fixture start/resume/on-demand/extra counts", body.Summary)
 	}
 	byName := map[string]planRow{}
 	for _, row := range body.Instances {
@@ -76,6 +77,34 @@ func TestPlanJSONShowsTopologyAndDaemonMetadata(t *testing.T) {
 	}
 	if row := byName["adhoc"]; row.Kind != "extra" || row.Action != "extra" || row.Status != "stopped" {
 		t.Fatalf("adhoc row = %+v, want stopped extra", row)
+	}
+}
+
+func TestPlanBundledDefaultTopologyCanary(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"plan", "--summary", "--json", "--target", tmp})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan --summary --json: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var body lifecycleActionSummaryResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode bundled plan summary json: %v\nbody=%s", err, out.String())
+	}
+	// This is the one Go canary for the bundled template's current topology.
+	// Other exact plan-shape tests overwrite instances.toml with a local
+	// fixture so adding a bundled instance only updates this test.
+	if body.Summary.Total != 9 || body.Summary.Actions["start"] != 2 || body.Summary.Actions["on-demand"] != 7 || !body.Summary.DryRun {
+		t.Fatalf("bundled topology summary = %+v, want current bundled default shape", body.Summary)
+	}
+	if body.Summary.Statuses["unknown"] != 9 {
+		t.Fatalf("bundled topology statuses = %+v, want unknown=9", body.Summary.Statuses)
 	}
 }
 
@@ -247,6 +276,7 @@ func TestPlanFiltersRowsByRuntime(t *testing.T) {
 func TestPlanSummaryJSONShowsAggregateCounts(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -261,17 +291,18 @@ func TestPlanSummaryJSONShowsAggregateCounts(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
 		t.Fatalf("decode plan summary json: %v\nbody=%s", err, out.String())
 	}
-	if body.Summary.Total != 9 || body.Summary.Actions["start"] != 2 || body.Summary.Actions["on-demand"] != 7 || !body.Summary.DryRun {
-		t.Fatalf("summary = %+v, want two starts and two on-demand previews", body.Summary)
+	if body.Summary.Total != 6 || body.Summary.Actions["start"] != 2 || body.Summary.Actions["on-demand"] != 4 || !body.Summary.DryRun {
+		t.Fatalf("summary = %+v, want fixture start/on-demand previews", body.Summary)
 	}
-	if body.Summary.Statuses["unknown"] != 9 {
-		t.Fatalf("statuses = %+v, want unknown=9", body.Summary.Statuses)
+	if body.Summary.Statuses["unknown"] != 6 {
+		t.Fatalf("statuses = %+v, want unknown=6", body.Summary.Statuses)
 	}
 }
 
 func TestPlanStopExtrasMarksOnlyRunningExtras(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	daemonRoot := daemon.DaemonRoot(teamDir)
 	if err := daemon.WriteMetadata(daemonRoot, &daemon.Metadata{
@@ -307,7 +338,7 @@ func TestPlanStopExtrasMarksOnlyRunningExtras(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
 		t.Fatalf("decode plan json: %v\nbody=%s", err, out.String())
 	}
-	if body.Summary.Total != 11 || body.Summary.Stop != 1 || body.Summary.Extra != 1 {
+	if body.Summary.Total != 8 || body.Summary.Stop != 1 || body.Summary.Extra != 1 {
 		t.Fatalf("summary = %+v, want one stop preview and one remaining extra", body.Summary)
 	}
 	byName := map[string]planRow{}
@@ -676,6 +707,7 @@ func TestPlanFormatRejectsJSONAndInvalidTemplate(t *testing.T) {
 func TestPlanTextRendersTableAndSummary(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -694,7 +726,7 @@ func TestPlanTextRendersTableAndSummary(t *testing.T) {
 		"worker",
 		"start",
 		"on-demand",
-		"summary: total=9 start=2 resume=0 keep=0 on-demand=7 extra=0",
+		"summary: total=6 start=2 resume=0 keep=0 on-demand=4 extra=0",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("plan output missing %q:\n%s", want, body)

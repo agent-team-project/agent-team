@@ -18,6 +18,7 @@ import (
 func TestSyncDryRunJSONUsesPlanAndDoesNotStartDaemon(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 
 	cmd := NewRootCmd()
@@ -36,8 +37,8 @@ func TestSyncDryRunJSONUsesPlanAndDoesNotStartDaemon(t *testing.T) {
 	if body.Daemon.Running {
 		t.Fatalf("daemon should not be running: %+v", body.Daemon)
 	}
-	if body.Summary.Start != 2 || body.Summary.OnDemand != 7 {
-		t.Fatalf("summary = %+v, want two starts and seven on-demand rows", body.Summary)
+	if body.Summary.Start != 2 || body.Summary.OnDemand != 4 {
+		t.Fatalf("summary = %+v, want fixture start/on-demand rows", body.Summary)
 	}
 	if _, err := os.Stat(daemon.PidPath(teamDir)); !os.IsNotExist(err) {
 		t.Fatalf("dry-run should not create daemon pidfile, stat err=%v", err)
@@ -50,6 +51,7 @@ func TestSyncDryRunJSONUsesPlanAndDoesNotStartDaemon(t *testing.T) {
 func TestSyncDryRunSummaryJSONUsesPlanAndDoesNotStartDaemon(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 
 	cmd := NewRootCmd()
@@ -65,11 +67,11 @@ func TestSyncDryRunSummaryJSONUsesPlanAndDoesNotStartDaemon(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
 		t.Fatalf("decode sync dry-run summary json: %v\nbody=%s", err, out.String())
 	}
-	if body.Summary.Total != 9 || body.Summary.Actions["start"] != 2 || body.Summary.Actions["on-demand"] != 7 || !body.Summary.DryRun {
-		t.Fatalf("summary = %+v, want two starts and two on-demand dry-run rows", body.Summary)
+	if body.Summary.Total != 6 || body.Summary.Actions["start"] != 2 || body.Summary.Actions["on-demand"] != 4 || !body.Summary.DryRun {
+		t.Fatalf("summary = %+v, want fixture start/on-demand dry-run rows", body.Summary)
 	}
-	if body.Summary.Statuses["unknown"] != 9 {
-		t.Fatalf("statuses = %+v, want unknown=9", body.Summary.Statuses)
+	if body.Summary.Statuses["unknown"] != 6 {
+		t.Fatalf("statuses = %+v, want unknown=6", body.Summary.Statuses)
 	}
 	if _, err := os.Stat(daemon.PidPath(teamDir)); !os.IsNotExist(err) {
 		t.Fatalf("dry-run should not create daemon pidfile, stat err=%v", err)
@@ -82,6 +84,7 @@ func TestSyncDryRunSummaryJSONUsesPlanAndDoesNotStartDaemon(t *testing.T) {
 func TestSyncDryRunFormatUsesPlanAndDoesNotStartDaemon(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 
 	cmd := NewRootCmd()
@@ -115,6 +118,7 @@ func TestSyncDryRunFormatUsesPlanAndDoesNotStartDaemon(t *testing.T) {
 func TestSyncDryRunFiltersPlanRowsAndDoesNotStartDaemon(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 
 	cmd := NewRootCmd()
@@ -143,6 +147,7 @@ func TestSyncDryRunFiltersPlanRowsAndDoesNotStartDaemon(t *testing.T) {
 func TestSyncDryRunFiltersPlanRowsByPhase(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	writeStatus(t, filepath.Join(teamDir, "state", "manager"), `[status]
 phase = "blocked"
@@ -178,6 +183,7 @@ description = "ready"
 func TestSyncDryRunFiltersPlanRowsByRuntime(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	daemonRoot := daemon.DaemonRoot(teamDir)
 	for _, meta := range []*daemon.Metadata{
@@ -226,6 +232,7 @@ func TestSyncDryRunFiltersPlanRowsByRuntime(t *testing.T) {
 func TestSyncDryRunFiltersPlanRowsByAction(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 
 	cmd := NewRootCmd()

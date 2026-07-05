@@ -476,6 +476,7 @@ func TestLifecycleActionsStaleRejectsExplicitNames(t *testing.T) {
 func TestStartDryRunJSONDoesNotStartDaemon(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 
 	cmd := NewRootCmd()
@@ -518,6 +519,7 @@ func TestStartDryRunJSONDoesNotStartDaemon(t *testing.T) {
 func TestStartDryRunCommandsPrintsApplyCommand(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 
 	cmd := NewRootCmd()
@@ -573,6 +575,7 @@ func TestStartDryRunCommandsPrintsApplyCommand(t *testing.T) {
 func TestStartDryRunSummaryJSONCountsActions(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 
 	cmd := NewRootCmd()
@@ -2621,6 +2624,7 @@ func TestRestartDryRunRejectsWait(t *testing.T) {
 func TestRestartQuietDryRunSuppressesOutput(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 
 	cmd := NewRootCmd()
@@ -2642,6 +2646,7 @@ func TestRestartQuietDryRunSuppressesOutput(t *testing.T) {
 func TestRestartDryRunFormatPrintsActionRows(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -2670,6 +2675,7 @@ func TestRestartDryRunFormatPrintsActionRows(t *testing.T) {
 func TestRestartForceDryRunAccepted(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -2691,6 +2697,7 @@ func TestRestartForceDryRunAccepted(t *testing.T) {
 func TestRestartDryRunSummaryJSONCountsStartsAndRestarts(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), &daemon.Metadata{
 		Instance: "manager",
@@ -3604,6 +3611,7 @@ func TestStatusSummaryResourcesTextIncludesResourceSummary(t *testing.T) {
 func TestStatusSummaryPlanJSONIncludesPlanSummary(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
@@ -3631,6 +3639,7 @@ func TestStatusSummaryPlanJSONIncludesPlanSummary(t *testing.T) {
 func TestStatusSummaryPlanTextIncludesPlanSummary(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}

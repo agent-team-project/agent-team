@@ -16,6 +16,7 @@ import (
 func TestWatchCommandJSONEmitsMonitorSnapshots(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
@@ -132,6 +133,7 @@ func TestWatchFallbacksRewriteRuntimeHealthActions(t *testing.T) {
 func TestWatchSummaryJSONEmitsHealthSnapshots(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
@@ -519,6 +521,7 @@ func TestWatchFormatRejectsConflictingModes(t *testing.T) {
 func TestWatchSummaryPlanJSONIncludesPlanSummary(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
