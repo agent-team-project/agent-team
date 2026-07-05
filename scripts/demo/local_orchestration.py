@@ -169,6 +169,26 @@ def main(argv: list[str]) -> int:
         else:
             print("persistent instances: skipped for Codex one-shot runtime")
 
+        step("verify daemon-routed run prompt startup commands")
+        probe = run(
+            binary,
+            "run",
+            "worker",
+            "--name",
+            "worker-run-prompt-probe",
+            "--target",
+            repo,
+            "--prompt",
+            "Probe startup command surface",
+            "--format",
+            "{{.Instance}}",
+            env=env,
+        ).strip()
+        if probe != "worker-run-prompt-probe":
+            raise DemoError(f"run --prompt probe dispatched unexpected instance: {probe!r}")
+        run(binary, "wait", probe, "--target", repo, "--until", "terminal", "--timeout", "10s", "--json", parse_json=True)
+        verify_startup_command_surface(repo, probe)
+
         step("verify lock-held queue drain")
         if args.exercise_lock_queue and args.runtime == "claude":
             verify_lock_queue(binary, repo)

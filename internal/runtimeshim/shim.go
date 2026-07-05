@@ -30,6 +30,10 @@ func Install(root string, skillPaths map[string]string) (string, error) {
 		return "", fmt.Errorf("create runtime shim bin: %w", err)
 	}
 	for _, spec := range DefaultSpecs {
+		link := filepath.Join(binDir, spec.Command)
+		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("replace runtime shim %s: %w", spec.Command, err)
+		}
 		skillDir := strings.TrimSpace(skillPaths[spec.Skill])
 		if skillDir == "" {
 			continue
@@ -39,10 +43,6 @@ func Install(root string, skillPaths map[string]string) (string, error) {
 			return "", fmt.Errorf("runtime shim %s target: %w", spec.Command, err)
 		} else if st.IsDir() {
 			return "", fmt.Errorf("runtime shim %s target is a directory: %s", spec.Command, target)
-		}
-		link := filepath.Join(binDir, spec.Command)
-		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
-			return "", fmt.Errorf("replace runtime shim %s: %w", spec.Command, err)
 		}
 		body := "#!/bin/sh\nexec " + shellQuote(target) + " \"$@\"\n"
 		if err := os.WriteFile(link, []byte(body), 0o755); err != nil {

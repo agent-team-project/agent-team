@@ -1028,6 +1028,7 @@ func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 	var (
 		mu       sync.Mutex
 		gotArgs  []string
+		gotEnv   []string
 		gotSpace string
 		gotStdin string
 	)
@@ -1035,6 +1036,7 @@ func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), func(args []string, env []string, workspace, stdoutPath, stderrPath, stdinContent string) (*os.Process, error) {
 		mu.Lock()
 		gotArgs = append([]string(nil), args...)
+		gotEnv = append([]string(nil), env...)
 		gotSpace = workspace
 		gotStdin = stdinContent
 		mu.Unlock()
@@ -1069,6 +1071,7 @@ func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 
 	mu.Lock()
 	args := append([]string(nil), gotArgs...)
+	env := append([]string(nil), gotEnv...)
 	workspace := gotSpace
 	stdin := gotStdin
 	mu.Unlock()
@@ -1092,11 +1095,27 @@ func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 	if got, ok := argValue(args, "--output-last-message"); !ok || got != wantLastMessage {
 		t.Fatalf("codex daemon args last-message path = %q, %v; want %q in %v", got, ok, wantLastMessage, args)
 	}
+	wantShimBin := filepath.Join(wantTeamDir, "state", "manager", "bin")
+	path := envValue(env, "PATH")
+	if path == "" {
+		t.Fatalf("codex daemon env missing PATH: %v", env)
+	}
+	if got := strings.Split(path, string(os.PathListSeparator))[0]; got != wantShimBin {
+		t.Fatalf("codex daemon PATH first entry = %q, want durable shim bin %q; PATH=%q", got, wantShimBin, path)
+	}
+	for _, name := range []string{"channel.sh", "inbox"} {
+		if st, err := os.Stat(filepath.Join(wantShimBin, name)); err != nil {
+			t.Fatalf("durable runtime shim %s missing after dispatch: %v", name, err)
+		} else if st.Mode().Perm()&0o111 == 0 {
+			t.Fatalf("durable runtime shim %s is not executable: mode=%s", name, st.Mode())
+		}
+	}
 	for _, want := range []string{
 		"shell_environment_policy.set.AGENT_TEAM_ROOT=" + strconv.Quote(wantTeamDir),
 		"shell_environment_policy.set.AGENT_TEAM_INSTANCE=" + strconv.Quote("manager"),
 		"shell_environment_policy.set.AGENT_TEAM_STATE_DIR=" + strconv.Quote(filepath.Join(wantTeamDir, "state", "manager")),
 		"shell_environment_policy.set.AGENT_TEAM_DAEMON_SOCKET=" + strconv.Quote(daemon.SocketPath(wantTeamDir)),
+		"shell_environment_policy.set.PATH=" + strconv.Quote(path),
 	} {
 		if !containsString(args, want) {
 			t.Fatalf("codex daemon args missing env config %q: %v", want, args)
