@@ -17,6 +17,10 @@ declaring, running, observing, and recovering teams of LLM agents.
 **Status:** pre-v1. The project is actively dogfooded, released, and changing.
 Command shapes and file schemas are product surface, but still allowed to move.
 
+Read [The Self-Improving Configuration](./docs/experiment.md) for the live
+delivery/platform/quality/PR topology, autonomous loops, budget model, and
+ticket/PR evidence behind the current experiment.
+
 ## What It Is
 
 `agent-team` vendors an editable `.agent_team/` directory into any repo and uses

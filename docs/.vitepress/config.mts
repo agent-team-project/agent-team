@@ -33,6 +33,7 @@ export default defineConfig({
         text: 'Guide',
         items: [
           { text: 'Overview', link: '/guide/' },
+          { text: 'Self-Improving Experiment', link: '/experiment' },
           { text: 'Quickstart', link: '/guide/quickstart' },
           { text: 'Concepts', link: '/guide/concepts' },
           { text: 'Architecture', link: '/guide/architecture' },
