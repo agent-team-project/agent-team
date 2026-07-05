@@ -2239,6 +2239,49 @@ func TestJobCreateDryRunDoesNotWrite(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".agent_team", "jobs", "squ-46.toml")); !os.IsNotExist(err) {
 		t.Fatalf("pipeline dispatch dry-run wrote job file, err=%v", err)
 	}
+
+	probeCmd := NewRootCmd()
+	probeOut, probeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	probeCmd.SetOut(probeOut)
+	probeCmd.SetErr(probeErr)
+	probeCmd.SetArgs([]string{"job", "create", "SQU-50", "--repo", tmp, "--pipeline", "ticket_to_pr", "--profile", "probe", "--dry-run", "--dispatch", "--json", "--workspace", "worktree"})
+	if err := probeCmd.Execute(); err != nil {
+		t.Fatalf("probe pipeline job create --dry-run --dispatch: %v\nstderr=%s", err, probeErr.String())
+	}
+	var probePreview jobAdvancePreview
+	if err := json.Unmarshal(probeOut.Bytes(), &probePreview); err != nil {
+		t.Fatalf("decode probe pipeline dispatch dry-run json: %v\nbody=%s", err, probeOut.String())
+	}
+	if probePreview.Job == nil || probePreview.Job.Kind != job.KindProbe || len(probePreview.Job.Steps) != 3 {
+		t.Fatalf("probe preview job = %+v", probePreview.Job)
+	}
+	if probePreview.Job.Steps[1].Status != job.StatusDone || !probePreview.Job.Steps[1].Skipped || probePreview.Job.Steps[1].SkipReason != job.ProbeSkipReason {
+		t.Fatalf("probe review step = %+v", probePreview.Job.Steps[1])
+	}
+	if probePreview.Job.Steps[2].Status != job.StatusDone || !probePreview.Job.Steps[2].Skipped || probePreview.Job.Steps[2].SkipReason != job.ProbeSkipReason {
+		t.Fatalf("probe approve step = %+v", probePreview.Job.Steps[2])
+	}
+	probePayload := probePreview.Dispatch.Preview.Payload
+	if probePayload["kind"] != job.KindProbe || probePayload["workspace"] != "repo" {
+		t.Fatalf("probe dispatch payload = %+v", probePayload)
+	}
+
+	probeCommandsCmd := NewRootCmd()
+	probeCommandsOut, probeCommandsErr := &bytes.Buffer{}, &bytes.Buffer{}
+	probeCommandsCmd.SetOut(probeCommandsOut)
+	probeCommandsCmd.SetErr(probeCommandsErr)
+	probeCommandsCmd.SetArgs([]string{"job", "create", "SQU-51", "--repo", tmp, "--profile", "probe", "--dry-run", "--commands"})
+	if err := probeCommandsCmd.Execute(); err != nil {
+		t.Fatalf("probe job create --commands: %v\nstderr=%s", err, probeCommandsErr.String())
+	}
+	wantProbeCommand := strings.Join(shellQuoteArgs([]string{
+		"agent-team", "job", "create", "SQU-51",
+		"--repo", tmp,
+		"--profile", "probe",
+	}), " ") + "\n"
+	if got := probeCommandsOut.String(); got != wantProbeCommand {
+		t.Fatalf("probe job create --commands = %q, want %q", got, wantProbeCommand)
+	}
 }
 
 func TestJobDispatchDryRunDoesNotMutate(t *testing.T) {

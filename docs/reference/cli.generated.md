@@ -2583,6 +2583,7 @@ Flags:
       --kickoff string            Kickoff text for the target agent.
       --kickoff-file string       Read kickoff text from a file, or '-' for stdin.
       --pipeline string           Create this job from a declared pipeline in instances.toml.
+      --profile string            Job dispatch profile: default or probe.
       --repo string               Repo root containing .agent_team. (default "<repo>")
       --runtime string            Runtime profile for --dispatch (claude or codex). Overrides env and repo config.
       --runtime-bin string        Runtime binary for --dispatch. Overrides env and repo config.
