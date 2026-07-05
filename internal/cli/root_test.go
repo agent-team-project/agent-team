@@ -115,7 +115,7 @@ func TestRepoScopedCommandsResolveFromAgentTeamRootEnv(t *testing.T) {
 		},
 		{
 			name: "send",
-			args: []string{"send", "worker-squ-100", "review is ready", "--allow-missing", "--json"},
+			args: []string{"send", "worker", "review is ready", "--json"},
 			want: `"delivered":true`,
 		},
 		{
