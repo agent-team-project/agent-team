@@ -31,6 +31,15 @@ const (
 	StatusFailed  Status = "failed"
 )
 
+// Supported job kinds. Empty kind is the normal delivery workflow.
+const (
+	KindProbe = "probe"
+)
+
+// ProbeSkipReason is recorded on pipeline steps intentionally bypassed for
+// report-only probe jobs.
+const ProbeSkipReason = "probe profile skips delivery review and gates"
+
 // Supported pipeline step gates.
 const (
 	StepGateManual = "manual"
@@ -44,6 +53,7 @@ type Job struct {
 	TicketURL              string          `toml:"ticket_url,omitempty"`
 	Target                 string          `toml:"target"`
 	Kickoff                string          `toml:"kickoff,omitempty"`
+	Kind                   string          `toml:"kind,omitempty"`
 	Instance               string          `toml:"instance,omitempty"`
 	Pipeline               string          `toml:"pipeline,omitempty"`
 	Status                 Status          `toml:"status"`
@@ -223,6 +233,24 @@ func ParseStatus(raw string) (Status, error) {
 	return s, nil
 }
 
+// NormalizeKind validates a job kind/profile and returns the persisted value.
+func NormalizeKind(raw string) (string, error) {
+	kind := strings.ToLower(strings.TrimSpace(raw))
+	switch kind {
+	case "", "default":
+		return "", nil
+	case KindProbe:
+		return KindProbe, nil
+	default:
+		return "", fmt.Errorf("unknown job profile %q", raw)
+	}
+}
+
+// IsProbe reports whether kind selects the reduced report-only probe contract.
+func IsProbe(kind string) bool {
+	return strings.EqualFold(strings.TrimSpace(kind), KindProbe)
+}
+
 // New builds a queued job with normalized defaults.
 func New(ticket, target, kickoff string, now time.Time) (*Job, error) {
 	ticket, ticketURL := TicketIdentity(ticket)
@@ -267,6 +295,13 @@ func Validate(j *Job) error {
 	}
 	if strings.TrimSpace(j.Target) == "" {
 		return errors.New("target is required")
+	}
+	kind, err := NormalizeKind(j.Kind)
+	if err != nil {
+		return err
+	}
+	if j.Kind != kind {
+		return fmt.Errorf("job kind %q must be normalized as %q", j.Kind, kind)
 	}
 	if !ValidStatus(j.Status) {
 		return fmt.Errorf("unknown job status %q", j.Status)

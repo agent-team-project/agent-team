@@ -127,6 +127,90 @@ func TestEvent_PipelineAutoAdvanceDispatchesNextStep(t *testing.T) {
 	}
 }
 
+func TestEvent_ProbePipelineSkipsReviewAndCompletesOnImplementExit(t *testing.T) {
+	root := t.TempDir()
+	teamDir := autoAdvanceTeamDir(t)
+	top := mustParseCustomTopo(t, `
+[instances.worker]
+agent = "worker"
+ephemeral = true
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[instances.reviewer]
+agent = "reviewer"
+ephemeral = true
+[[instances.reviewer.triggers]]
+event = "agent.dispatch"
+match.target = "reviewer"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+auto_advance = true
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "review"
+target = "reviewer"
+after = ["implement"]
+
+[[pipelines.ticket_to_pr.steps]]
+id = "approve"
+target = "reviewer"
+after = ["review"]
+gate = "manual"
+`)
+
+	fake := newFakeSpawner(time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+	srv := httptest.NewServer(Handler(m, nil, resolver, teamDir))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"ticket.created","payload":{"ticket":"SQU-94","kickoff":"measure SQU-94","kind":"probe","workspace":"worktree"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	if err := m.WaitForReaper("worker-squ-94", 5*time.Second); err != nil {
+		t.Fatalf("wait worker reaper: %v", err)
+	}
+	if fake.callCount() != 1 {
+		t.Fatalf("spawn calls=%d, want only probe implement step", fake.callCount())
+	}
+	if _, err := ReadMetadata(root, "reviewer-squ-94"); !os.IsNotExist(err) {
+		t.Fatalf("reviewer metadata err=%v, want not spawned", err)
+	}
+	j, err := jobstore.Read(teamDir, "squ-94")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if j.Kind != jobstore.KindProbe || j.Status != jobstore.StatusDone {
+		t.Fatalf("probe job = %+v, want done probe", j)
+	}
+	if j.Branch != "" || j.Worktree != "" {
+		t.Fatalf("probe job recorded branch/worktree: %+v", j)
+	}
+	if j.Steps[0].Status != jobstore.StatusDone {
+		t.Fatalf("implement step = %+v, want done", j.Steps[0])
+	}
+	if len(j.Steps) != 3 {
+		t.Fatalf("steps = %+v, want implement/review/approve", j.Steps)
+	}
+	for _, step := range j.Steps[1:] {
+		if step.Status != jobstore.StatusDone || !step.Skipped || step.SkipReason != jobstore.ProbeSkipReason {
+			t.Fatalf("downstream step = %+v, want skipped done", step)
+		}
+	}
+	if !strings.Contains(j.LastStatus, "probe completed") {
+		t.Fatalf("last status = %q, want probe artifact hint", j.LastStatus)
+	}
+}
+
 // Gate stop: auto-advance must NOT cross a manual gate — the gated step stays
 // blocked for `agent-team job approve`, and nothing new spawns.
 func TestEvent_PipelineAutoAdvanceStopsAtManualGate(t *testing.T) {

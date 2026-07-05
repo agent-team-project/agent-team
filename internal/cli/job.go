@@ -226,6 +226,7 @@ func newJobCreateCmd() *cobra.Command {
 		repo          string
 		targetAgent   string
 		pipeline      string
+		profile       string
 		id            string
 		ticketURL     string
 		kickoff       string
@@ -304,6 +305,11 @@ func newJobCreateCmd() *cobra.Command {
 				return err
 			}
 			ticket := args[0]
+			kind, err := job.NormalizeKind(profile)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
+				return exitErr(2)
+			}
 			kickoffText, err := dispatchKickoff(ticket, kickoff, kickoffFile, args[1:])
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
@@ -329,6 +335,7 @@ func newJobCreateCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
 				return exitErr(2)
 			}
+			j.Kind = kind
 			if pipelineDef != nil {
 				j.Pipeline = pipelineDef.Name
 				j.Steps = jobStepsFromPipeline(pipelineDef)
@@ -336,6 +343,7 @@ func newJobCreateCmd() *cobra.Command {
 				if pipelineDef.ReapWorktree != worktreepolicy.Never {
 					j.ReapWorktree = pipelineDef.ReapWorktree
 				}
+				applyProbeProfileToJob(j)
 			}
 			if strings.TrimSpace(id) != "" {
 				normalized := job.NormalizeID(id)
@@ -365,6 +373,8 @@ func newJobCreateCmd() *cobra.Command {
 					TargetSet:       cmd.Flags().Changed("target"),
 					Pipeline:        pipeline,
 					PipelineSet:     cmd.Flags().Changed("pipeline"),
+					Profile:         profile,
+					ProfileSet:      cmd.Flags().Changed("profile"),
 					ID:              id,
 					IDSet:           cmd.Flags().Changed("id"),
 					TicketURL:       ticketURL,
@@ -404,6 +414,7 @@ func newJobCreateCmd() *cobra.Command {
 					}
 					payload["job_id"] = j.ID
 					payload["job"] = j.ID
+					applyJobKindToPayload(j, payload)
 					if err := applyJobReapWorktreePolicyToPayload(teamDir, j, payload); err != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job create: %v\n", err)
 						return exitErr(2)
@@ -543,6 +554,7 @@ func newJobCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", cwd, repoFlagHelp)
 	cmd.Flags().StringVar(&targetAgent, "target", "worker", "Target agent that should own this job.")
 	cmd.Flags().StringVar(&pipeline, "pipeline", "", "Create this job from a declared pipeline in instances.toml.")
+	cmd.Flags().StringVar(&profile, "profile", "", "Job dispatch profile: default or probe.")
 	cmd.Flags().StringVar(&id, "id", "", "Override the normalized job id (default: ticket slug).")
 	cmd.Flags().StringVar(&ticketURL, "ticket-url", "", "Canonical ticket URL to store on the job.")
 	cmd.Flags().StringVar(&kickoff, "kickoff", "", "Kickoff text for the target agent.")
@@ -616,6 +628,39 @@ func jobStepsFromPipeline(p *topology.Pipeline) []job.Step {
 		})
 	}
 	return steps
+}
+
+func applyProbeProfileToJob(j *job.Job) {
+	if j == nil || !job.IsProbe(j.Kind) {
+		return
+	}
+	if len(j.Steps) <= 1 {
+		return
+	}
+	now := j.CreatedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	for i := 1; i < len(j.Steps); i++ {
+		step := &j.Steps[i]
+		step.Status = job.StatusDone
+		step.Skipped = true
+		step.SkipReason = job.ProbeSkipReason
+		if step.StartedAt.IsZero() {
+			step.StartedAt = now
+		}
+		if step.FinishedAt.IsZero() {
+			step.FinishedAt = now
+		}
+	}
+}
+
+func applyJobKindToPayload(j *job.Job, payload map[string]any) {
+	if j == nil || payload == nil || !job.IsProbe(j.Kind) {
+		return
+	}
+	payload["kind"] = job.KindProbe
+	payload["workspace"] = "repo"
 }
 
 func jobMergeFromPipeline(merge *topology.PipelineMerge) *job.Merge {
@@ -1133,6 +1178,7 @@ func newJobDispatchCmd() *cobra.Command {
 				}
 				payload["job_id"] = j.ID
 				payload["job"] = j.ID
+				applyJobKindToPayload(j, payload)
 				if err := applyJobReapWorktreePolicyToPayload(teamDir, j, payload); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job dispatch: %v\n", err)
 					return exitErr(2)
@@ -5063,6 +5109,7 @@ func newJobReopenCmd() *cobra.Command {
 					}
 					payload["job_id"] = j.ID
 					payload["job"] = j.ID
+					applyJobKindToPayload(j, payload)
 					if err := applyJobReapWorktreePolicyToPayload(teamDir, j, payload); err != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reopen: %v\n", err)
 						return exitErr(2)
@@ -11416,6 +11463,7 @@ func dispatchJobWithPrefix(cmd *cobra.Command, teamDir string, j *job.Job, sourc
 	}
 	payload["job_id"] = j.ID
 	payload["job"] = j.ID
+	applyJobKindToPayload(j, payload)
 	if err := applyJobReapWorktreePolicyToPayload(teamDir, j, payload); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", prefix, err)
 		return nil, "", exitErr(2)
@@ -11444,7 +11492,9 @@ func dispatchJobWithPrefix(cmd *cobra.Command, teamDir string, j *job.Job, sourc
 	}); err != nil {
 		return nil, "", err
 	}
-	writeLinearDispatchInProgress(teamDir, j)
+	if !job.IsProbe(j.Kind) {
+		writeLinearDispatchInProgress(teamDir, j)
+	}
 	return &jobDispatchResult{Job: j, Event: res}, requestedName, nil
 }
 
@@ -13004,7 +13054,9 @@ func advanceJobStep(cmd *cobra.Command, teamDir string, j *job.Job, step *job.St
 	if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"step": stepID}); err != nil {
 		return nil, err
 	}
-	writeLinearStepDispatchInProgress(teamDir, j, stepID)
+	if !job.IsProbe(j.Kind) {
+		writeLinearStepDispatchInProgress(teamDir, j, stepID)
+	}
 	if idx := jobStepIndex(j, stepID); idx >= 0 {
 		return &jobAdvanceResult{Job: j, Step: &j.Steps[idx], Event: res}, nil
 	}
@@ -13028,6 +13080,7 @@ func buildJobStepDispatchPayload(teamDir string, j *job.Job, step *job.Step, wor
 	}
 	payload["job_id"] = j.ID
 	payload["job"] = j.ID
+	applyJobKindToPayload(j, payload)
 	if j.Pipeline != "" {
 		payload["pipeline"] = j.Pipeline
 	}
@@ -15112,6 +15165,8 @@ type jobCreateApplyCommandOptions struct {
 	TargetSet       bool
 	Pipeline        string
 	PipelineSet     bool
+	Profile         string
+	ProfileSet      bool
 	ID              string
 	IDSet           bool
 	TicketURL       string
@@ -15288,6 +15343,9 @@ func jobCreateApplyCommandArgs(opts jobCreateApplyCommandOptions) []string {
 	}
 	if opts.PipelineSet && strings.TrimSpace(opts.Pipeline) != "" {
 		args = append(args, "--pipeline", opts.Pipeline)
+	}
+	if opts.ProfileSet && strings.TrimSpace(opts.Profile) != "" {
+		args = append(args, "--profile", opts.Profile)
 	}
 	if opts.IDSet && strings.TrimSpace(opts.ID) != "" {
 		args = append(args, "--id", opts.ID)
@@ -16736,6 +16794,9 @@ func renderJobDetailWithRuntime(w io.Writer, teamDir string, j *job.Job, queueIt
 		fmt.Fprintf(w, "Ticket URL:  %s\n", j.TicketURL)
 	}
 	fmt.Fprintf(w, "Target:      %s\n", j.Target)
+	if strings.TrimSpace(j.Kind) != "" {
+		fmt.Fprintf(w, "Kind:        %s\n", j.Kind)
+	}
 	if j.Instance != "" {
 		fmt.Fprintf(w, "Instance:    %s\n", j.Instance)
 		if meta := runtimeMeta[j.Instance]; meta != nil {

@@ -315,7 +315,9 @@ func (r *EventResolver) actuatePipeline(pipeline *topology.Pipeline, eventType s
 	if ticketURL := payloadString(payload, "ticket_url"); ticketURL != "" {
 		j.TicketURL = ticketURL
 	}
+	j.Kind = payloadJobKind(payload)
 	j.Steps = pipelineJobSteps(pipeline)
+	applyProbeProfileToPipelineJob(j)
 	pipelineEvent := "pipeline_created"
 	if existing, err := jobstore.Read(r.teamDir, j.ID); err == nil {
 		if canAdoptDirectPipelineDispatch(pipeline, existing, directOutcomes) {
@@ -457,6 +459,9 @@ func (r *EventResolver) pipelineReentryNoop(pipeline *topology.Pipeline, eventTy
 
 func hydratePipelineJob(j *jobstore.Job, pipeline *topology.Pipeline, payload map[string]any) {
 	j.Pipeline = pipeline.Name
+	if kind := payloadJobKind(payload); kind != "" {
+		j.Kind = kind
+	}
 	if pipeline.ReapWorktree != worktreepolicy.Never && strings.TrimSpace(j.ReapWorktree) == "" {
 		j.ReapWorktree = pipeline.ReapWorktree
 	}
@@ -469,6 +474,7 @@ func hydratePipelineJob(j *jobstore.Job, pipeline *topology.Pipeline, payload ma
 	if len(j.Steps) == 0 {
 		j.Steps = pipelineJobSteps(pipeline)
 	}
+	applyProbeProfileToPipelineJob(j)
 }
 
 func resetPipelineJobForReentry(j *jobstore.Job, pipeline *topology.Pipeline, eventType string, payload map[string]any, now time.Time) {
@@ -485,6 +491,7 @@ func resetPipelineJobForReentry(j *jobstore.Job, pipeline *topology.Pipeline, ev
 	j.PR = ""
 	j.Drift = nil
 	j.Steps = pipelineJobSteps(pipeline)
+	applyProbeProfileToPipelineJob(j)
 	j.LastEvent = "reopened"
 	j.LastStatus = "reopened by pipeline re-entry"
 	j.UpdatedAt = now
@@ -521,6 +528,10 @@ func (r *EventResolver) dispatchPipelineStepWithDirectOutcomes(pipeline *topolog
 	dispatchPayload["pipeline"] = pipeline.Name
 	dispatchPayload["pipeline_step"] = step.ID
 	dispatchPayload["ticket"] = j.Ticket
+	if jobIsProbe(j) || payloadIsProbe(dispatchPayload) {
+		dispatchPayload["kind"] = jobstore.KindProbe
+		dispatchPayload["workspace"] = "repo"
+	}
 	if payloadString(dispatchPayload, "reap_worktree") == "" && pipeline.ReapWorktree != worktreepolicy.Never {
 		dispatchPayload["reap_worktree"] = pipeline.ReapWorktree
 	}
@@ -652,6 +663,48 @@ func pipelineJobSteps(pipeline *topology.Pipeline) []jobstore.Step {
 		})
 	}
 	return steps
+}
+
+func payloadJobKind(payload map[string]any) string {
+	for _, key := range []string{"kind", "profile"} {
+		if kind, err := jobstore.NormalizeKind(payloadString(payload, key)); err == nil && kind != "" {
+			return kind
+		}
+	}
+	return ""
+}
+
+func payloadIsProbe(payload map[string]any) bool {
+	return jobstore.IsProbe(payloadJobKind(payload))
+}
+
+func jobIsProbe(j *jobstore.Job) bool {
+	return j != nil && jobstore.IsProbe(j.Kind)
+}
+
+func applyProbeProfileToPipelineJob(j *jobstore.Job) {
+	if !jobIsProbe(j) || len(j.Steps) <= 1 {
+		return
+	}
+	now := j.CreatedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	for i := 1; i < len(j.Steps); i++ {
+		step := &j.Steps[i]
+		if step.Status == jobstore.StatusDone && step.Skipped {
+			continue
+		}
+		step.Status = jobstore.StatusDone
+		step.Skipped = true
+		step.SkipReason = jobstore.ProbeSkipReason
+		if step.StartedAt.IsZero() {
+			step.StartedAt = now
+		}
+		if step.FinishedAt.IsZero() {
+			step.FinishedAt = now
+		}
+	}
 }
 
 func jobMergeFromPipeline(merge *topology.PipelineMerge) *jobstore.Merge {
@@ -1368,11 +1421,12 @@ func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, p
 	body, _ := json.Marshal(map[string]any{"event": eventType, "payload": payload})
 	prompt := fmt.Sprintf("Topology event for declared instance %q (agent=%s):\n%s",
 		inst.Name, inst.Agent, string(body))
+	prompt = prependProbeKickoffPreamble(prompt, payload)
 	workspace := r.teamDirParent()
 	worktreePath := ""
 	branch := ""
 	cleanupWorkspace := func() {}
-	if payloadString(payload, "workspace") == "worktree" || payloadString(payload, "isolation") == "worktree" {
+	if !payloadIsProbe(payload) && (payloadString(payload, "workspace") == "worktree" || payloadString(payload, "isolation") == "worktree") {
 		workspace, branch, cleanupWorkspace, err = r.prepareEphemeralWorktree(name, payloadString(payload, "ticket"))
 		if err != nil {
 			return nil, err
@@ -1452,6 +1506,15 @@ func (r *EventResolver) appendUnreadMailboxToPrompt(instance, agent, prompt stri
 	}
 	r.recordKickoffMailDelivered(instance, agent, payload, branch, delivered, len(section), truncated)
 	return prompt + "\n\n" + section, nil
+}
+
+func prependProbeKickoffPreamble(prompt string, payload map[string]any) string {
+	if !payloadIsProbe(payload) {
+		return prompt
+	}
+	return "## Probe job\n\n" +
+		"This dispatch is kind=probe. Use the reduced contract: report findings to the state summary and inbox, do not open a PR, do not transition the ticket, do not create or use a branch, and do not run delivery gates or reviewer handoff.\n\n" +
+		prompt
 }
 
 func formatKickoffMailbox(messages []*Message, maxBytes int) (section string, delivered int, truncated bool, cursor string) {
@@ -1586,7 +1649,7 @@ func (r *EventResolver) attachSpawnOwnership(meta *Metadata, payload map[string]
 		meta.Job = j.ID
 		meta.Ticket = j.Ticket
 		meta.PR = j.PR
-		if stepID, ok := linearDispatchStepFromPayload(payload); ok {
+		if stepID, ok := linearDispatchStepFromPayload(payload); ok && !jobIsProbe(j) {
 			r.writeLinearDispatchInProgress(j, stepID)
 		}
 	}
@@ -1642,6 +1705,9 @@ func (r *EventResolver) upsertDispatchJob(payload map[string]any, instance strin
 	if ticketURL := payloadString(payload, "ticket_url"); ticketURL != "" {
 		j.TicketURL = ticketURL
 	}
+	if kind := payloadJobKind(payload); kind != "" {
+		j.Kind = kind
+	}
 	if pipeline := payloadString(payload, "pipeline"); pipeline != "" {
 		j.Pipeline = pipeline
 	}
@@ -1673,6 +1739,7 @@ func (r *EventResolver) upsertDispatchJob(payload map[string]any, instance strin
 			markPipelineStep(j, stepID, jobstore.StatusRunning, instance, lastStatus, now)
 		}
 	}
+	applyProbeProfileToPipelineJob(j)
 	j.UpdatedAt = now
 	if err := r.writeJobWithAudit(j, "", "daemon", "", dispatchJobEventData(payload, branch, worktreePath)); err != nil {
 		return nil
@@ -1682,7 +1749,7 @@ func (r *EventResolver) upsertDispatchJob(payload map[string]any, instance strin
 
 func dispatchJobEventData(payload map[string]any, branch, worktreePath string) map[string]string {
 	data := map[string]string{}
-	for _, key := range []string{"target", "agent", "pipeline", "pipeline_step", "ticket", "ticket_url", "team", "runtime", "runtime_binary"} {
+	for _, key := range []string{"target", "agent", "pipeline", "pipeline_step", "ticket", "ticket_url", "kind", "profile", "team", "runtime", "runtime_binary"} {
 		if value := payloadString(payload, key); value != "" {
 			data[key] = value
 		}
@@ -1849,6 +1916,9 @@ func dispatchContextEnv(payload map[string]any, branch, worktreePath string) []s
 	env := []string{}
 	if id := eventJobID(payload); id != "" {
 		env = append(env, "AGENT_TEAM_JOB_ID="+id)
+	}
+	if kind := payloadJobKind(payload); kind != "" {
+		env = append(env, "AGENT_TEAM_JOB_KIND="+kind)
 	}
 	if ticket := payloadString(payload, "ticket"); ticket != "" {
 		env = append(env, "AGENT_TEAM_TICKET="+ticket)
@@ -2358,6 +2428,9 @@ func (r *EventResolver) reconcileEphemeralJobExit(meta *Metadata) {
 	}
 	if meta.PR != "" {
 		j.PR = meta.PR
+	}
+	if status == jobstore.StatusDone && jobIsProbe(j) {
+		message = "probe completed; report stored in last-message"
 	}
 	if reconcilePipelineStepExit(j, meta.Instance, status, now) {
 		if status == jobstore.StatusDone && !allPipelineStepsDone(j) {

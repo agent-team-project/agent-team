@@ -1335,6 +1335,65 @@ func TestEvent_DirectDispatchWithJobIDWritesLinearInProgress(t *testing.T) {
 	_ = m.WaitForReaper("worker-squ-96", 5*time.Second)
 }
 
+func TestEvent_ProbeDispatchMarksJobAndSkipsDeliverySideEffects(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "")
+	t.Setenv("LINEAR_USER_API_KEY", "")
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	if err := os.WriteFile(filepath.Join(teamDir, "config.toml"), []byte("[team]\npm_tool = \"linear\"\n\n[linear]\nteam_id = \"demo\"\nticket_prefix = \"SQU\"\nin_progress_state = \"In Progress\"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
+	srv := httptest.NewServer(Handler(m, nil, resolver, root))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"agent.dispatch","payload":{"target":"worker","name":"worker-squ-97","ticket":"SQU-97","job_id":"squ-97","kind":"probe","kickoff":"measure harness behavior","workspace":"worktree"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	j, err := jobstore.Read(teamDir, "squ-97")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if j.Kind != jobstore.KindProbe || j.Status != jobstore.StatusRunning {
+		t.Fatalf("job = %+v, want running probe", j)
+	}
+	events, err := jobstore.ListEvents(teamDir, "squ-97")
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	for _, ev := range events {
+		if ev.Type == "linear_writeback_skipped" {
+			t.Fatalf("probe dispatch attempted Linear writeback: %+v", events)
+		}
+	}
+	meta, err := ReadMetadata(root, "worker-squ-97")
+	if err != nil {
+		t.Fatalf("metadata: %v", err)
+	}
+	if meta.Branch != "" || meta.Workspace != filepath.Dir(teamDir) {
+		t.Fatalf("metadata = %+v, want repo workspace without branch", meta)
+	}
+	env := fake.lastEnv()
+	if !containsString(env, "AGENT_TEAM_JOB_KIND=probe") {
+		t.Fatalf("env missing probe kind: %v", env)
+	}
+	if containsEnvPrefix(env, "AGENT_TEAM_BRANCH=") || containsEnvPrefix(env, "AGENT_TEAM_WORKTREE=") {
+		t.Fatalf("probe env unexpectedly contains branch/worktree: %v", env)
+	}
+	combined := strings.Join(fake.lastCall(), " ") + fake.lastStdin()
+	for _, want := range []string{"## Probe job", "do not open a PR", "do not create or use a branch"} {
+		if !strings.Contains(combined, want) {
+			t.Fatalf("probe prompt missing %q:\n%s", want, combined)
+		}
+	}
+	_, _ = m.Stop("worker-squ-97")
+	_ = m.WaitForReaper("worker-squ-97", 5*time.Second)
+}
+
 func TestEvent_TicketDispatchCreatesJobAndExportsContext(t *testing.T) {
 	t.Setenv("LINEAR_API_KEY", "")
 	t.Setenv("LINEAR_USER_API_KEY", "")
