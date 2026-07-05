@@ -31,6 +31,7 @@ event = "user_invocation"
 
 [instances.worker]
 agent         = "worker"
+token_budget  = "60M"
 ephemeral     = true
 replicas      = 3
 reap_worktree = "on_merge"   # reap the job worktree + local branch after its PR merges; `agent-team job keep-worktree <id>` opts one job out
@@ -44,6 +45,7 @@ match.target = "worker"
 
 [instances.reviewer]
 agent       = "reviewer"
+token_budget = "40M"
 ephemeral   = true
 replicas    = 2
 token_budget = "10M"
@@ -128,6 +130,7 @@ kind = "feedback_triage"
 
 [instances.feedback-triage]
 agent       = "manager"
+token_budget = "15M"
 ephemeral   = true
 description = "Scheduled feedback triage: local store + system signals -> tickets/folds/dismissals."
 
@@ -148,6 +151,7 @@ kind = "debt_sweep"
 
 [instances.debt-auditor]
 agent       = "auditor"
+token_budget = "25M"
 ephemeral   = true
 description = "Scheduled architecture/tech-debt audit: one subsystem per run, evidence-backed tickets."
 
@@ -166,6 +170,7 @@ match.target = "debt-auditor"
 # platform work scale independently.
 [instances.platform-worker]
 agent         = "worker"
+token_budget  = "80M"
 ephemeral     = true
 replicas      = 2
 reap_worktree = "on_merge"
@@ -179,6 +184,7 @@ match.target = "platform-worker"
 
 [instances.platform-reviewer]
 agent       = "reviewer"
+token_budget = "40M"
 ephemeral   = true
 replicas    = 1
 token_budget = "10M"
@@ -255,6 +261,7 @@ kind = "harness_review"
 
 [instances.harness-reviewer]
 agent       = "manager"
+token_budget = "25M"
 ephemeral   = true
 description = "Scheduled harness review: bounce/feedback/failure trends -> prompt and instruction improvement tickets."
 
