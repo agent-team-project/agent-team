@@ -46,6 +46,7 @@ type runCapture struct {
 	skills       []string
 	settings     string
 	settingsBody string
+	shims        []string
 }
 
 type runtimeCapture struct {
@@ -84,6 +85,13 @@ func captureRun(t *testing.T, rc error) (*runCapture, func()) {
 						}
 						sort.Strings(cap.skills)
 					}
+				}
+				shimRoot := filepath.Join(cap.addDir, "bin")
+				if entries, err := os.ReadDir(shimRoot); err == nil {
+					for _, entry := range entries {
+						cap.shims = append(cap.shims, entry.Name())
+					}
+					sort.Strings(cap.shims)
 				}
 			case "--append-system-prompt-file":
 				cap.promptFile = args[i+1]
@@ -315,6 +323,26 @@ func envValue(env []string, key string) string {
 	return ""
 }
 
+func assertRuntimeCommandSurface(t *testing.T, addDir string, env []string, shims []string) {
+	t.Helper()
+	if addDir == "" {
+		t.Fatalf("missing runtime add-dir")
+	}
+	path := envValue(env, "PATH")
+	if path == "" {
+		t.Fatalf("runtime env missing PATH: %v", env)
+	}
+	wantBin := filepath.Join(addDir, "bin")
+	if got := strings.Split(path, string(os.PathListSeparator))[0]; got != wantBin {
+		t.Fatalf("PATH first entry = %q, want runtime shim bin %q; PATH=%q", got, wantBin, path)
+	}
+	for _, want := range []string{"channel.sh", "inbox"} {
+		if !containsString(shims, want) {
+			t.Fatalf("runtime shims = %v, want %s", shims, want)
+		}
+	}
+}
+
 func TestRun_ExecsClaudeWithExpectedArgs(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -361,6 +389,7 @@ func TestRun_ExecsClaudeWithExpectedArgs(t *testing.T) {
 	if !cap.skillsDirOK {
 		t.Errorf("skills dir not created at %s/.claude/skills (snapshotted during exec)", cap.addDir)
 	}
+	assertRuntimeCommandSurface(t, cap.addDir, cap.env, cap.shims)
 	if cap.promptFile == "" {
 		t.Fatalf("missing --append-system-prompt-file: %v", cap.args)
 	}
@@ -656,6 +685,7 @@ func TestRun_CodexRuntimeBuildsDirectExecArgs(t *testing.T) {
 	if !containsString(cap.args, "--add-dir") || cap.addDir == "" || !cap.skillsDirOK {
 		t.Fatalf("codex args missing add-dir with skills: args=%v addDir=%q skills=%v", cap.args, cap.addDir, cap.skillsDirOK)
 	}
+	assertRuntimeCommandSurface(t, cap.addDir, cap.env, cap.shims)
 	if !containsString(cap.args, "--sandbox") || !containsString(cap.args, "workspace-write") {
 		t.Fatalf("forwarded codex args missing: %v", cap.args)
 	}
@@ -672,6 +702,7 @@ func TestRun_CodexRuntimeBuildsDirectExecArgs(t *testing.T) {
 		"shell_environment_policy.set.AGENT_TEAM_INSTANCE=" + strconv.Quote("manager"),
 		"shell_environment_policy.set.AGENT_TEAM_STATE_DIR=" + strconv.Quote(filepath.Join(wantTeamDir, "state", "manager")),
 		"shell_environment_policy.set.AGENT_TEAM_DAEMON_SOCKET=" + strconv.Quote(daemon.SocketPath(wantTeamDir)),
+		"shell_environment_policy.set.PATH=" + strconv.Quote(envValue(cap.env, "PATH")),
 	} {
 		if !containsString(cap.args, want) {
 			t.Fatalf("codex args missing env config %q: %v", want, cap.args)
@@ -997,6 +1028,7 @@ func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 	var (
 		mu       sync.Mutex
 		gotArgs  []string
+		gotEnv   []string
 		gotSpace string
 		gotStdin string
 	)
@@ -1004,6 +1036,7 @@ func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), func(args []string, env []string, workspace, stdoutPath, stderrPath, stdinContent string) (*os.Process, error) {
 		mu.Lock()
 		gotArgs = append([]string(nil), args...)
+		gotEnv = append([]string(nil), env...)
 		gotSpace = workspace
 		gotStdin = stdinContent
 		mu.Unlock()
@@ -1038,6 +1071,7 @@ func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 
 	mu.Lock()
 	args := append([]string(nil), gotArgs...)
+	env := append([]string(nil), gotEnv...)
 	workspace := gotSpace
 	stdin := gotStdin
 	mu.Unlock()
@@ -1061,11 +1095,27 @@ func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 	if got, ok := argValue(args, "--output-last-message"); !ok || got != wantLastMessage {
 		t.Fatalf("codex daemon args last-message path = %q, %v; want %q in %v", got, ok, wantLastMessage, args)
 	}
+	wantShimBin := filepath.Join(wantTeamDir, "state", "manager", "bin")
+	path := envValue(env, "PATH")
+	if path == "" {
+		t.Fatalf("codex daemon env missing PATH: %v", env)
+	}
+	if got := strings.Split(path, string(os.PathListSeparator))[0]; got != wantShimBin {
+		t.Fatalf("codex daemon PATH first entry = %q, want durable shim bin %q; PATH=%q", got, wantShimBin, path)
+	}
+	for _, name := range []string{"channel.sh", "inbox"} {
+		if st, err := os.Stat(filepath.Join(wantShimBin, name)); err != nil {
+			t.Fatalf("durable runtime shim %s missing after dispatch: %v", name, err)
+		} else if st.Mode().Perm()&0o111 == 0 {
+			t.Fatalf("durable runtime shim %s is not executable: mode=%s", name, st.Mode())
+		}
+	}
 	for _, want := range []string{
 		"shell_environment_policy.set.AGENT_TEAM_ROOT=" + strconv.Quote(wantTeamDir),
 		"shell_environment_policy.set.AGENT_TEAM_INSTANCE=" + strconv.Quote("manager"),
 		"shell_environment_policy.set.AGENT_TEAM_STATE_DIR=" + strconv.Quote(filepath.Join(wantTeamDir, "state", "manager")),
 		"shell_environment_policy.set.AGENT_TEAM_DAEMON_SOCKET=" + strconv.Quote(daemon.SocketPath(wantTeamDir)),
+		"shell_environment_policy.set.PATH=" + strconv.Quote(path),
 	} {
 		if !containsString(args, want) {
 			t.Fatalf("codex daemon args missing env config %q: %v", want, args)

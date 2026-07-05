@@ -21,6 +21,7 @@ import (
 	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/jamesaud/agent-team/internal/runtimehooks"
 	"github.com/jamesaud/agent-team/internal/runtimeotel"
+	"github.com/jamesaud/agent-team/internal/runtimeshim"
 	"github.com/jamesaud/agent-team/internal/template"
 	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/spf13/cobra"
@@ -378,17 +379,6 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		return exitErr(2)
 	}
 	teamEnv = append(teamEnv, otelLaunch.Env...)
-	runtimeArgs, runtimeStdin, err := buildRuntimeArgs(rt, target, tmpdir, agentsJSON, promptFile, kickoff, cfg.prompt, forwarded, agents, teamEnv, lastMessagePath, mailboxHook, otelLaunch)
-	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
-		return exitErr(2)
-	}
-
-	baseEnv := os.Environ()
-	if otelCfg.Configured() {
-		baseEnv = runtimeotel.StripOwnedEnv(baseEnv)
-	}
-	env := append(baseEnv, teamEnv...)
 
 	// Daemon-aware routing: one-shot dispatches (--prompt given) route
 	// through the daemon when one is running, and --detach opts into daemon
@@ -420,55 +410,75 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 			return err
 		}
 	}
-	if !cfg.noDaemon && daemonCapable && (cfg.prompt != "" || cfg.detach || cfg.attach) {
-		if dispatchClient != nil {
-			// runtimeArgs already starts with --agents/--add-dir/.../-p; the
-			// daemon prepends the Claude-compatible binary and session id, so we strip nothing
-			// — the daemon's spawn surface accepts arbitrary trailing argv
-			// via DispatchInput.Args.
-			disp, derr := dispatchClient.Dispatch(dispatchPayload{
-				Agent:         agentName,
-				Name:          instance,
-				Prompt:        cfg.prompt,
-				Workspace:     target,
-				Runtime:       string(rt.Kind),
-				RuntimeBinary: rt.Binary,
-				Args:          runtimeArgs,
-				Env:           teamEnv,
-				Stdin:         runtimeStdin,
-			})
-			if derr != nil {
-				return fmt.Errorf("daemon dispatch: %w", derr)
-			}
-			row := runDispatchJSON{
-				Instance:  disp.InstanceID,
-				Agent:     agentName,
-				Runtime:   disp.Runtime,
-				PID:       disp.PID,
-				SessionID: disp.SessionID,
-				StartedAt: disp.StartedAt.Format(time.RFC3339),
-				Follow:    fmt.Sprintf("agent-team logs %s --follow", disp.InstanceID),
-			}
-			if cfg.jsonOut {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(row)
-			}
-			if formatTemplate != nil {
-				return renderRunFormat(cmd.OutOrStdout(), row, formatTemplate)
-			}
-			if cfg.attach {
-				out := cmd.OutOrStdout()
-				printRunDispatchLine(out, disp)
-				fmt.Fprintf(out, "\nattaching to %s (Ctrl-C to detach)\n", disp.InstanceID)
-				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-				defer stop()
-				return followLifecycleLog(ctx, out, dispatchClient, disp.InstanceID, tailLines)
-			}
-			printRunDispatchLine(cmd.OutOrStdout(), disp)
-			fmt.Fprintf(cmd.OutOrStdout(),
-				"  follow: agent-team logs %s --follow\n", disp.InstanceID)
-			return nil
+	daemonDispatch := !cfg.noDaemon && daemonCapable && (cfg.prompt != "" || cfg.detach || cfg.attach) && dispatchClient != nil
+	shimRoot := tmpdir
+	if daemonDispatch {
+		shimRoot = stateDir
+	}
+	shimBinDir, err := runtimeshim.Install(shimRoot, skillPaths)
+	if err != nil {
+		return err
+	}
+
+	baseEnv := os.Environ()
+	if otelCfg.Configured() {
+		baseEnv = runtimeotel.StripOwnedEnv(baseEnv)
+	}
+	env := runtimeshim.PrependPath(append(baseEnv, teamEnv...), shimBinDir)
+	runtimeArgEnv := append([]string(nil), teamEnv...)
+	runtimeArgEnv = runtimeshim.PrependPath(append(runtimeArgEnv, "PATH="+os.Getenv("PATH")), shimBinDir)
+	runtimeArgs, runtimeStdin, err := buildRuntimeArgs(rt, target, tmpdir, agentsJSON, promptFile, kickoff, cfg.prompt, forwarded, agents, runtimeArgEnv, lastMessagePath, mailboxHook, otelLaunch)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
+		return exitErr(2)
+	}
+
+	if daemonDispatch {
+		// runtimeArgs already starts with --agents/--add-dir/.../-p; the
+		// daemon prepends the selected runtime binary and session metadata
+		// when needed, so we strip nothing. The daemon's spawn surface
+		// accepts arbitrary trailing argv via DispatchInput.Args.
+		disp, derr := dispatchClient.Dispatch(dispatchPayload{
+			Agent:         agentName,
+			Name:          instance,
+			Prompt:        cfg.prompt,
+			Workspace:     target,
+			Runtime:       string(rt.Kind),
+			RuntimeBinary: rt.Binary,
+			Args:          runtimeArgs,
+			Env:           runtimeArgEnv,
+			Stdin:         runtimeStdin,
+		})
+		if derr != nil {
+			return fmt.Errorf("daemon dispatch: %w", derr)
 		}
-		// Daemon not running → fall through to direct exec.
+		row := runDispatchJSON{
+			Instance:  disp.InstanceID,
+			Agent:     agentName,
+			Runtime:   disp.Runtime,
+			PID:       disp.PID,
+			SessionID: disp.SessionID,
+			StartedAt: disp.StartedAt.Format(time.RFC3339),
+			Follow:    fmt.Sprintf("agent-team logs %s --follow", disp.InstanceID),
+		}
+		if cfg.jsonOut {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(row)
+		}
+		if formatTemplate != nil {
+			return renderRunFormat(cmd.OutOrStdout(), row, formatTemplate)
+		}
+		if cfg.attach {
+			out := cmd.OutOrStdout()
+			printRunDispatchLine(out, disp)
+			fmt.Fprintf(out, "\nattaching to %s (Ctrl-C to detach)\n", disp.InstanceID)
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return followLifecycleLog(ctx, out, dispatchClient, disp.InstanceID, tailLines)
+		}
+		printRunDispatchLine(cmd.OutOrStdout(), disp)
+		fmt.Fprintf(cmd.OutOrStdout(),
+			"  follow: agent-team logs %s --follow\n", disp.InstanceID)
+		return nil
 	}
 
 	if cfg.lastMessage {
