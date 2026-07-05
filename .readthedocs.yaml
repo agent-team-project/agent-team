@@ -1,0 +1,13 @@
+# Read the Docs — builds the VitePress site via custom commands.
+# https://app.readthedocs.org/projects/agent-team/
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    nodejs: "20"
+  commands:
+    - npm ci
+    - npm run docs:build
+    - mkdir -p $READTHEDOCS_OUTPUT/html
+    - cp -r docs/.vitepress/dist/* $READTHEDOCS_OUTPUT/html/
