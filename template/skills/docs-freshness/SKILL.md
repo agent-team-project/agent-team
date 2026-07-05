@@ -20,7 +20,7 @@ Docs rot silently: a command changes, a repo moves, a feature ships, and the pro
 - README leads accurately (experiment framing intact, status current, RTD link live).
 - Quickstart and getting-started commands run verbatim in a fresh `/tmp` repo.
 - `docs/experiment.md` still matches `.agent_team/instances.toml` (team/loop/schedule counts and cadences).
-- No `github.com/jamesaud/agent-team` outside CHANGELOG history.
+- No stale owner/module paths outside CHANGELOG history.
 - Every guide page's commands exist in the current binary.
 
 ## Output

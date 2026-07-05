@@ -17,8 +17,10 @@ declaring, running, observing, and recovering teams of LLM agents.
 **Status:** pre-v1. The project is actively dogfooded, released, and changing.
 Command shapes and file schemas are product surface, but still allowed to move.
 
+**Hosted docs:** [agent-team.readthedocs.io](https://agent-team.readthedocs.io)
+
 Read [The Self-Improving Configuration](./docs/experiment.md) for the live
-delivery/platform/quality/PR topology, autonomous loops, budget model, and
+delivery/platform/quality/pr/docs topology, autonomous loops, budget model, and
 ticket/PR evidence behind the current experiment.
 
 ## What It Is
@@ -124,7 +126,8 @@ to be edited, replaced, or used as a starting point.
 | `delivery` | Manager, ticket-manager, workers, reviewers, and the default ticket-to-PR pipeline. |
 | `platform` | Separate worker/reviewer pool for framework infrastructure work. |
 | `quality` | Architecture debt audits and harness-review work. |
-| `pr` | Public digest, release-announcement, community-feedback, and docs-writing agents. |
+| `pr` | Public digest, release-announcement, and community-feedback agents. |
+| `docs` | Docs-writing agents and the weekly freshness sweep. |
 
 The core delivery loop is event-driven:
 
@@ -136,7 +139,8 @@ ticket enters Ready for Agent
   -> merge / bounce / follow-up
 ```
 
-Four scheduled loops keep the system improving around that delivery path:
+Five schedules keep the system improving and communicating around that delivery
+path:
 
 | Loop | Cadence | Purpose |
 | --- | --- | --- |
@@ -144,6 +148,7 @@ Four scheduled loops keep the system improving around that delivery path:
 | Debt sweep | weekly | Audit one subsystem and file at most three evidence-backed tech-debt tickets. |
 | Harness review | weekly | Turn bounce patterns, failures, and feedback into prompt/skill improvement tickets. |
 | Discord digest | daily | Draft or publish a shipped-work digest through the sanctioned comms path. |
+| Docs freshness | weekly | Audit docs against the shipped binary, latest release, repo identity, and quickstart. |
 
 Budgets and watchdogs are part of the model. Topology can declare per-team,
 per-job, and per-step token/time allowances; the daemon records usage, sends
@@ -192,6 +197,9 @@ agent-team daemon status
 ```
 
 ## Documentation
+
+Hosted docs are published at
+[agent-team.readthedocs.io](https://agent-team.readthedocs.io).
 
 Start with the guide pages:
 

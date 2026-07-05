@@ -17,7 +17,7 @@ features:
   - title: File-backed orchestration
     details: Templates, jobs, topology, queues, schedules, and runtime state live under each repo's .agent_team directory.
   - title: Self-improving configuration
-    details: This repo dogfoods four declared teams, scheduled feedback and audit loops, budget constraints, and review gates.
+    details: This repo dogfoods five declared teams, scheduled feedback, audit, communication, and docs-freshness loops, budget constraints, and review gates.
   - title: Docker-like CLI control
     details: Start, stop, restart, inspect, monitor, attach, and repair agent instances through a per-repo daemon.
   - title: Durable work units
