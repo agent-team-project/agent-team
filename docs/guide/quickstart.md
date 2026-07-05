@@ -26,7 +26,7 @@ agent-team job create "Probe this repo layout and report the available agents" \
   --wait-timeout 30s \
   --json
 agent-team job show gs-probe --events all
-agent-team logs --job gs-probe --tail 80 --clean
+agent-team job logs gs-probe --tail 80 --clean
 ```
 
 `agent-team init` writes `.agent_team/` and the explicit settings above keep
@@ -49,8 +49,9 @@ agent-team init \
 ```
 
 When `pm.provider = "linear"`, `linear.team_id` and `linear.ticket_prefix` are
-required and validated during init. Passing `linear.*` values without
-`pm.provider` still enables Linear for compatibility with older setup commands.
+required and validated during init. `team.pm_tool` is a deprecated
+compatibility alias; setting it alongside `pm.provider` keeps older scripts and
+generated configs aligned.
 
 ## GitHub Opt-In
 

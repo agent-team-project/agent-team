@@ -82,7 +82,7 @@ agent-team job create "Probe this repo layout and report the available agents" \
   --wait-timeout 30s \
   --json
 agent-team job show gs-probe --events all
-agent-team logs --job gs-probe --tail 80 --clean
+agent-team job logs gs-probe --tail 80 --clean
 ```
 
 The initial commit matters because worker dispatch creates Git worktrees. In
