@@ -96,6 +96,66 @@ func findJobEvent(events []job.Event, eventType string) (job.Event, bool) {
 	return job.Event{}, false
 }
 
+func writeJobAuthorityTopology(t *testing.T, teamDir string) {
+	t.Helper()
+	body := topoFixture + `
+[authority.agents.worker]
+allow = ["job.gate.*:own", "job.merge:own"]
+
+[authority.agents.reviewer]
+allow = ["job.gate.*:own", "job.merge:own"]
+
+[authority.agents.manager]
+allow = ["job.*"]
+`
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write instances.toml: %v", err)
+	}
+}
+
+func setJobAuthorityOriginEnv(t *testing.T, agent, jobID string) {
+	t.Helper()
+	t.Setenv("AGENT_TEAM_PROJECT", "project-1")
+	t.Setenv("AGENT_TEAM_TEAM", "platform")
+	t.Setenv("AGENT_TEAM_INSTANCE", agent+"-"+jobID)
+	t.Setenv("AGENT_TEAM_ORIGIN_INSTANCE", "")
+	t.Setenv("AGENT_TEAM_ORIGIN_AGENT", agent)
+	t.Setenv("AGENT_TEAM_JOB_ID", jobID)
+	t.Setenv("AGENT_TEAM_ORIGIN_JOB", "")
+	t.Setenv("AGENT_TEAM_ORIGIN_TRIGGER", "pipeline:ticket_to_pr:test")
+	t.Setenv("AGENT_TEAM_ORIGIN_BUILD", "")
+}
+
+func jobAuthorityViolationEvents(t *testing.T, teamDir, jobID string) []job.Event {
+	t.Helper()
+	events, err := job.ListEvents(teamDir, jobID)
+	if err != nil {
+		t.Fatalf("job events: %v", err)
+	}
+	var out []job.Event
+	for _, ev := range events {
+		if ev.Type == "authority_violation" {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+func daemonAuthorityViolationEvents(t *testing.T, teamDir string) []*daemon.LifecycleEvent {
+	t.Helper()
+	events, err := daemon.ListLifecycleEvents(daemon.DaemonRoot(teamDir))
+	if err != nil {
+		t.Fatalf("lifecycle events: %v", err)
+	}
+	var out []*daemon.LifecycleEvent
+	for _, ev := range events {
+		if ev.Action == "authority_violation" {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
 func decodeJobShowJSONStep(t *testing.T, raw []byte, wrapped bool) map[string]json.RawMessage {
 	t.Helper()
 	var body map[string]json.RawMessage
@@ -3029,6 +3089,54 @@ func TestJobTriageSummarySeparatesActiveAndTerminalJobs(t *testing.T) {
 	}
 	if snapshot.Summary.Total != 5 || snapshot.Summary.Active != 3 || snapshot.Summary.Terminal != 2 {
 		t.Fatalf("job triage summary = %+v", snapshot.Summary)
+	}
+}
+
+func TestJobTriageSurfacesAuthorityViolations(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	j := mustNewJob(t, "SQU-920", "worker")
+	j.Status = job.StatusRunning
+	j.UpdatedAt = time.Now().UTC()
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	if err := job.AppendEvent(teamDir, &job.Event{
+		JobID:    j.ID,
+		Type:     "authority_violation",
+		Instance: "worker-squ-920",
+		Message:  "authority violation: agent=worker team=platform verb=queue.drop resource=queue:q-1",
+		Origin:   origin.Envelope{Agent: "worker", Team: "platform", Job: j.ID},
+		Data:     map[string]string{"verb": "queue.drop", "resource": "queue:q-1"},
+	}); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "triage", "--repo", tmp, "--reason", "authority_violation", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job triage: %v\nstderr=%s", err, stderr.String())
+	}
+	var snapshot jobTriageSnapshot
+	if err := json.Unmarshal(out.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode triage json: %v\nbody=%s", err, out.String())
+	}
+	if len(snapshot.Attention) != 1 {
+		t.Fatalf("attention = %+v", snapshot.Attention)
+	}
+	item := snapshot.Attention[0]
+	if item.JobID != j.ID || item.AuthorityViolations != 1 || !containsString(item.Reasons, "authority_violation") {
+		t.Fatalf("triage item = %+v", item)
+	}
+	if item.Message != "authority violation: agent=worker team=platform verb=queue.drop resource=queue:q-1" {
+		t.Fatalf("message = %q", item.Message)
+	}
+	if !containsString(item.Actions, "agent-team job events "+j.ID+" --type authority_violation") {
+		t.Fatalf("actions = %+v", item.Actions)
 	}
 }
 
@@ -14432,6 +14540,76 @@ func TestJobStepSkipMarksDoneAndUnblocksDependents(t *testing.T) {
 	}
 }
 
+func TestJobGateSetAuthorityAuditAllowlist(t *testing.T) {
+	cases := []struct {
+		name             string
+		actor            string
+		originJobID      string
+		missingOriginJob bool
+		wantViolation    bool
+	}{
+		{name: "worker-own-job", actor: "worker"},
+		{name: "reviewer-own-job", actor: "reviewer"},
+		{name: "worker-cross-job", actor: "worker", originJobID: "SQU-actor", wantViolation: true},
+		{name: "reviewer-cross-job", actor: "reviewer", originJobID: "SQU-actor", wantViolation: true},
+		// SQU-92 round 4: an agent identity with NO recorded origin job must
+		// audit — absent identity never satisfies :own.
+		{name: "worker-missing-origin-job", actor: "worker", missingOriginJob: true, wantViolation: true},
+		{name: "manager-any-job", actor: "manager", originJobID: "SQU-actor"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			initInto(t, root)
+			teamDir := filepath.Join(root, ".agent_team")
+			writeJobAuthorityTopology(t, teamDir)
+			j := mustNewJob(t, "SQU-610", "worker")
+			if err := job.Write(teamDir, j); err != nil {
+				t.Fatalf("write job: %v", err)
+			}
+			originJobID := tc.originJobID
+			if originJobID == "" && !tc.missingOriginJob {
+				originJobID = j.ID
+			}
+			setJobAuthorityOriginEnv(t, tc.actor, originJobID)
+
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs([]string{"job", "gate", "set", j.ID, "review", "--repo", root, "--status", "pass", "--json"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("job gate set: %v\nstderr=%s", err, stderr.String())
+			}
+			records, err := job.ListGateRecords(teamDir, j.ID)
+			if err != nil {
+				t.Fatalf("list gate records: %v", err)
+			}
+			if len(records) != 1 || records[0].Name != "review" || records[0].Status != job.GateStatusPass {
+				t.Fatalf("gate records = %+v", records)
+			}
+			jobViolations := jobAuthorityViolationEvents(t, teamDir, j.ID)
+			daemonViolations := daemonAuthorityViolationEvents(t, teamDir)
+			want := 0
+			if tc.wantViolation {
+				want = 1
+			}
+			if len(jobViolations) != want || len(daemonViolations) != want {
+				t.Fatalf("violations: job=%+v daemon=%+v want %d", jobViolations, daemonViolations, want)
+			}
+			if tc.wantViolation {
+				ev := jobViolations[0]
+				if ev.JobID != j.ID || ev.Data["verb"] != "job.gate.set" || ev.Data["resource"] != "job:"+j.ID+":gate:review" || ev.Origin.Agent != tc.actor || ev.Origin.Team != "platform" || ev.Data["actor_job"] != originJobID {
+					t.Fatalf("job authority event = %+v", ev)
+				}
+				if daemonViolations[0].Origin.Agent != tc.actor || daemonViolations[0].Origin.Team != "platform" {
+					t.Fatalf("daemon authority event = %+v", daemonViolations[0])
+				}
+			}
+		})
+	}
+}
+
 func TestJobMergeRefusesMissingPRWithoutBranch(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -14501,6 +14679,80 @@ func TestJobMergeSquashUsesRecordedPR(t *testing.T) {
 	}
 	if result.Action != "merged" || result.Strategy != "squash" || result.PR != j.PR {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestJobMergeAuthorityAuditAllowlist(t *testing.T) {
+	cases := []struct {
+		name             string
+		actor            string
+		originJobID      string
+		missingOriginJob bool
+		wantViolation    bool
+	}{
+		{name: "worker-own-job", actor: "worker"},
+		{name: "reviewer-own-job", actor: "reviewer"},
+		{name: "worker-cross-job", actor: "worker", originJobID: "SQU-actor", wantViolation: true},
+		{name: "reviewer-cross-job", actor: "reviewer", originJobID: "SQU-actor", wantViolation: true},
+		// SQU-92 round 4: an agent identity with NO recorded origin job must
+		// audit — absent identity never satisfies :own.
+		{name: "worker-missing-origin-job", actor: "worker", missingOriginJob: true, wantViolation: true},
+		{name: "manager-any-job", actor: "manager", originJobID: "SQU-actor"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			initInto(t, tmp)
+			teamDir := filepath.Join(tmp, ".agent_team")
+			writeJobAuthorityTopology(t, teamDir)
+			installRecordingFakeGHForJobTest(t, 0)
+			j := mustNewJob(t, "SQU-611", "worker")
+			j.PR = "https://github.com/acme/repo/pull/611"
+			j.Branch = "worker-squ-611"
+			j.Merge = &job.Merge{Strategy: "squash"}
+			if err := job.Write(teamDir, j); err != nil {
+				t.Fatalf("write job: %v", err)
+			}
+			originJobID := tc.originJobID
+			if originJobID == "" && !tc.missingOriginJob {
+				originJobID = j.ID
+			}
+			setJobAuthorityOriginEnv(t, tc.actor, originJobID)
+
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs([]string{"job", "merge", j.ID, "--repo", tmp, "--json"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("job merge: %v\nstderr=%s", err, stderr.String())
+			}
+			updated, err := job.Read(teamDir, j.ID)
+			if err != nil {
+				t.Fatalf("read updated job: %v", err)
+			}
+			if updated.Status != job.StatusDone || updated.LastEvent != "merged" {
+				t.Fatalf("updated job = %+v", updated)
+			}
+			jobViolations := jobAuthorityViolationEvents(t, teamDir, j.ID)
+			daemonViolations := daemonAuthorityViolationEvents(t, teamDir)
+			want := 0
+			if tc.wantViolation {
+				want = 1
+			}
+			if len(jobViolations) != want || len(daemonViolations) != want {
+				t.Fatalf("violations: job=%+v daemon=%+v want %d", jobViolations, daemonViolations, want)
+			}
+			if tc.wantViolation {
+				ev := jobViolations[0]
+				if ev.JobID != j.ID || ev.Data["verb"] != "job.merge" || ev.Data["resource"] != "job:"+j.ID || ev.Origin.Agent != tc.actor || ev.Origin.Team != "platform" || ev.Data["actor_job"] != originJobID {
+					t.Fatalf("job authority event = %+v", ev)
+				}
+				if daemonViolations[0].Origin.Agent != tc.actor || daemonViolations[0].Origin.Team != "platform" {
+					t.Fatalf("daemon authority event = %+v", daemonViolations[0])
+				}
+			}
+		})
 	}
 }
 

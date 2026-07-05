@@ -20,11 +20,13 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/jamesaud/agent-team/internal/buildinfo"
 	"github.com/jamesaud/agent-team/internal/daemon"
 	"github.com/jamesaud/agent-team/internal/intake"
 	"github.com/jamesaud/agent-team/internal/job"
 	"github.com/jamesaud/agent-team/internal/jobwrite"
 	"github.com/jamesaud/agent-team/internal/mergepolicy"
+	"github.com/jamesaud/agent-team/internal/origin"
 	"github.com/jamesaud/agent-team/internal/runtimebin"
 	"github.com/jamesaud/agent-team/internal/topology"
 	"github.com/jamesaud/agent-team/internal/worktreecleanup"
@@ -5412,6 +5414,7 @@ func newJobMergeCmd() *cobra.Command {
 			if dryRun {
 				return renderJobMergeResult(cmd.OutOrStdout(), result, jsonOut)
 			}
+			auditCLIJobAuthority(teamDir, j, "job.merge", "job:"+j.ID)
 			if err := applyJobMerge(cmd.Context(), teamDir, j, result); err != nil {
 				var blocked mergeBlockedError
 				if errors.As(err, &blocked) {
@@ -7680,6 +7683,57 @@ func writeJobWithAudit(teamDir string, j *job.Job, eventType, actor, message str
 	return nil
 }
 
+func auditCLIJobAuthority(teamDir string, j *job.Job, verb, resource string) {
+	if j == nil {
+		return
+	}
+	top, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil || top == nil || top.Authority == nil || !top.Authority.Configured() {
+		return
+	}
+	actor := cliAuthorityActor(teamDir, j)
+	daemon.AuditAuthority(daemon.AuthorityAuditOptions{
+		TeamDir:    teamDir,
+		DaemonRoot: daemon.DaemonRoot(teamDir),
+		Topology:   top,
+		Actor:      actor,
+		Verb:       verb,
+		Resource:   resource,
+		JobID:      j.ID,
+		TargetJob:  j.ID,
+		EventActor: "cli",
+	})
+}
+
+func cliAuthorityActor(teamDir string, j *job.Job) origin.Envelope {
+	build := buildinfo.Current("")
+	var fromEnv origin.Envelope
+	if raw := daemonOriginHeaderFromEnv(build); raw != "" {
+		fromEnv, _ = origin.ParseHeaderValue(raw)
+	}
+	projectID, _ := origin.ProjectID(teamDir)
+	// The actor's job comes from its origin identity ONLY — never defaulted
+	// from the target job, or a caller with no recorded job would silently
+	// pass every :own check (SQU-92 round 4).
+	actor := origin.Merge(fromEnv, origin.Envelope{
+		Project: projectID,
+		Build:   build.Display(),
+	})
+	if strings.TrimSpace(actor.Instance) != "" {
+		if meta, err := daemon.ReadMetadata(daemon.DaemonRoot(teamDir), actor.Instance); err == nil && meta != nil {
+			metaOrigin := meta.Origin
+			if metaOrigin.Agent == "" {
+				metaOrigin.Agent = meta.Agent
+			}
+			if metaOrigin.Instance == "" {
+				metaOrigin.Instance = meta.Instance
+			}
+			actor = origin.Merge(actor, metaOrigin)
+		}
+	}
+	return actor.Clean()
+}
+
 func runJobEvents(w io.Writer, teamDir, id string, tail int, filters jobEventFilters, sortMode string, jsonOut, summary bool, tmpl *template.Template) error {
 	events, err := job.ListEvents(teamDir, id)
 	if err != nil {
@@ -8873,6 +8927,7 @@ type jobTriageItem struct {
 	GateInfra                       int             `json:"gate_infra,omitempty"`
 	Bounces                         int             `json:"bounces,omitempty"`
 	GateContent                     int             `json:"gate_content,omitempty"`
+	AuthorityViolations             int             `json:"authority_violations,omitempty"`
 }
 
 type jobTriageQueueStats struct {
@@ -8893,6 +8948,11 @@ type jobTriageOutboxQuarantineStats struct {
 	QuarantineUnrestorable    int
 	QuarantinePaths           []string
 	QuarantineRestorablePaths []string
+}
+
+type jobAuthorityViolationStats struct {
+	Count         int
+	LatestMessage string
 }
 
 type jobTriageFilters struct {
@@ -9371,9 +9431,13 @@ func collectJobTriage(teamDir string, now time.Time, staleAfter time.Duration) (
 	if err != nil {
 		return jobTriageSnapshot{}, err
 	}
+	authorityViolationsByJob, err := jobAuthorityViolationsByJob(teamDir, jobs)
+	if err != nil {
+		return jobTriageSnapshot{}, err
+	}
 	attention := make([]jobTriageItem, 0, len(jobs))
 	for _, j := range jobs {
-		if item, ok := triageJob(j, inspectNextJobStep(j), queueByJob[j.ID], outboxQuarantineByJob[j.ID], gateFailuresByJob[j.ID], now, staleAfter, bounceAttentionAfter); ok {
+		if item, ok := triageJob(j, inspectNextJobStep(j), queueByJob[j.ID], outboxQuarantineByJob[j.ID], gateFailuresByJob[j.ID], authorityViolationsByJob[j.ID], now, staleAfter, bounceAttentionAfter); ok {
 			attention = append(attention, item)
 		}
 	}
@@ -9532,7 +9596,34 @@ func addOutboxQuarantineItemToTriageStats(stats *jobTriageOutboxQuarantineStats,
 	}
 }
 
-func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, outboxQuarantineStats jobTriageOutboxQuarantineStats, gateFailures []jobGateResult, now time.Time, staleAfter time.Duration, bounceAttentionAfter int) (jobTriageItem, bool) {
+func jobAuthorityViolationsByJob(teamDir string, jobs []*job.Job) (map[string]jobAuthorityViolationStats, error) {
+	out := make(map[string]jobAuthorityViolationStats, len(jobs))
+	for _, j := range jobs {
+		if j == nil {
+			continue
+		}
+		events, err := job.ListEvents(teamDir, j.ID)
+		if err != nil {
+			return nil, err
+		}
+		var stats jobAuthorityViolationStats
+		for _, ev := range events {
+			if ev.Type != "authority_violation" {
+				continue
+			}
+			stats.Count++
+			if message := strings.TrimSpace(ev.Message); message != "" {
+				stats.LatestMessage = message
+			}
+		}
+		if stats.Count > 0 {
+			out[j.ID] = stats
+		}
+	}
+	return out, nil
+}
+
+func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, outboxQuarantineStats jobTriageOutboxQuarantineStats, gateFailures []jobGateResult, authorityStats jobAuthorityViolationStats, now time.Time, staleAfter time.Duration, bounceAttentionAfter int) (jobTriageItem, bool) {
 	gateInfra, gateContent := jobGateClassCounts(gateFailures)
 	item := jobTriageItem{
 		JobID:                           j.ID,
@@ -9560,6 +9651,7 @@ func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, o
 		GateFailures:                    append([]jobGateResult(nil), gateFailures...),
 		GateInfra:                       gateInfra,
 		GateContent:                     gateContent,
+		AuthorityViolations:             authorityStats.Count,
 	}
 	if next.Step != nil {
 		item.StepID = next.Step.ID
@@ -9619,6 +9711,9 @@ func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, o
 	if gateContent > 0 {
 		addTriageReason("gate_content_failed", "critical")
 	}
+	if authorityStats.Count > 0 {
+		addTriageReason("authority_violation", "warning")
+	}
 	switch next.State {
 	case "failed":
 		addTriageReason("failed_step", "critical")
@@ -9635,6 +9730,8 @@ func triageJob(j *job.Job, next jobNextResult, queueStats jobTriageQueueStats, o
 	}
 	if stringSliceContains(item.Reasons, "expired_hold") {
 		item.Message = heldJobMessage(j)
+	} else if authorityStats.LatestMessage != "" && stringSliceContains(item.Reasons, "authority_violation") {
+		item.Message = authorityStats.LatestMessage
 	} else if strings.TrimSpace(j.LastStatus) != "" {
 		item.Message = j.LastStatus
 	} else if strings.TrimSpace(next.Message) != "" {
@@ -9827,6 +9924,9 @@ func actionsForJobTriageItem(item jobTriageItem) []string {
 	}
 	if stringSliceContains(item.Reasons, "gate_infra_failed") || stringSliceContains(item.Reasons, "gate_content_failed") {
 		add(fmt.Sprintf("agent-team job gates %s", item.JobID))
+	}
+	if stringSliceContains(item.Reasons, "authority_violation") {
+		add(fmt.Sprintf("agent-team job events %s --type authority_violation", item.JobID))
 	}
 	if stringSliceContains(item.Reasons, "failed") || stringSliceContains(item.Reasons, "failed_step") {
 		add(fmt.Sprintf("agent-team job retry %s --dispatch", item.JobID))
@@ -16895,7 +16995,7 @@ func jobDetailActions(j *job.Job, teamDir string, queueItems []*daemon.QueueItem
 	}
 	sort.Strings(outboxQuarantineStats.QuarantinePaths)
 	sort.Strings(outboxQuarantineStats.QuarantineRestorablePaths)
-	if triage, ok := triageJob(j, inspectNextJobStep(j), stats, outboxQuarantineStats, nil, now, 0, 0); ok {
+	if triage, ok := triageJob(j, inspectNextJobStep(j), stats, outboxQuarantineStats, nil, jobAuthorityViolationStats{}, now, 0, 0); ok {
 		for _, action := range triage.Actions {
 			add(action)
 		}

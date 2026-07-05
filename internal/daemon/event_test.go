@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -1952,6 +1953,98 @@ instances = ["worker"]
 	_ = m.WaitForReaper("worker-squ-101", 5*time.Second)
 }
 
+func TestEvent_TeamScopedDispatchLockDoesNotContendAcrossTeams(t *testing.T) {
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	top := mustParseCustomTopo(t, `
+[locks.build]
+slots = 1
+scope = "team"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+replicas = 1
+locks = ["build"]
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[instances.platform-worker]
+agent = "worker"
+ephemeral = true
+replicas = 1
+locks = ["build"]
+
+[[instances.platform-worker.triggers]]
+event = "agent.dispatch"
+match.target = "platform-worker"
+
+[teams.delivery]
+instances = ["worker"]
+
+[teams.platform]
+instances = ["platform-worker"]
+`)
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+
+	first, err := resolver.EventWithResult(topology.EventAgentDispatch, map[string]any{
+		"target": "worker",
+		"name":   "worker-squ-100",
+		"job":    "squ-100",
+	})
+	if err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	second, err := resolver.EventWithResult(topology.EventAgentDispatch, map[string]any{
+		"target": "platform-worker",
+		"name":   "platform-worker-squ-101",
+		"job":    "squ-101",
+	})
+	if err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+	if len(first.Outcomes) != 1 || first.Outcomes[0].Action != "dispatched" {
+		t.Fatalf("first outcomes = %+v", first.Outcomes)
+	}
+	if len(second.Outcomes) != 1 || second.Outcomes[0].Action != "dispatched" {
+		t.Fatalf("second outcomes = %+v, want independent team-scoped dispatch", second.Outcomes)
+	}
+	if fake.callCount() != 2 {
+		t.Fatalf("spawn calls=%d, want both dispatched", fake.callCount())
+	}
+	deliveryLease, err := ReadLockLease(root, "team.delivery.build", "worker-squ-100")
+	if err != nil {
+		t.Fatalf("delivery ReadLockLease: %v", err)
+	}
+	if deliveryLease.Name != "build" || deliveryLease.Scope != topology.ScopeTeam || deliveryLease.Origin.Team != "delivery" {
+		t.Fatalf("delivery lease = %+v", deliveryLease)
+	}
+	platformLease, err := ReadLockLease(root, "team.platform.build", "platform-worker-squ-101")
+	if err != nil {
+		t.Fatalf("platform ReadLockLease: %v", err)
+	}
+	if platformLease.Name != "build" || platformLease.Scope != topology.ScopeTeam || platformLease.Origin.Team != "platform" {
+		t.Fatalf("platform lease = %+v", platformLease)
+	}
+	snapshots := resolver.LockSnapshots()
+	if len(snapshots) != 2 {
+		t.Fatalf("snapshots = %+v, want two scoped lock rows", snapshots)
+	}
+	storage := []string{snapshots[0].Storage, snapshots[1].Storage}
+	sort.Strings(storage)
+	if !reflect.DeepEqual(storage, []string{"team.delivery.build", "team.platform.build"}) {
+		t.Fatalf("snapshot storage = %v", storage)
+	}
+	_, _ = m.Stop("worker-squ-100")
+	_, _ = m.Stop("platform-worker-squ-101")
+	_ = m.WaitForReaper("worker-squ-100", 5*time.Second)
+	_ = m.WaitForReaper("platform-worker-squ-101", 5*time.Second)
+}
+
 func TestEvent_LockReleaseDrainsCrossInstanceWaiters(t *testing.T) {
 	// SQU-76: lock_held waiters queued under a DIFFERENT declared instance
 	// than the lock holder must dispatch when the lock frees — the reap-time
@@ -2495,6 +2588,52 @@ pipelines = ["ticket_to_pr"]
 	}
 }
 
+func TestEvent_OriginAgentIsResolvedTemplateNotTargetAlias(t *testing.T) {
+	// SQU-92 round-3 finding: a declared instance alias (platform-reviewer)
+	// must stamp origin.agent with its resolved agent template (reviewer) so
+	// agent-type-keyed authority allowlists apply; payload target is not
+	// identity.
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	writeFixtureAgent(t, teamDir, "reviewer")
+	top := mustParseCustomTopo(t, `
+[instances.platform-reviewer]
+agent = "reviewer"
+ephemeral = true
+
+[[instances.platform-reviewer.triggers]]
+event = "agent.dispatch"
+match.target = "platform-reviewer"
+
+[teams.platform]
+instances = ["platform-reviewer"]
+`)
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+
+	result, err := resolver.EventWithResult(topology.EventAgentDispatch, map[string]any{
+		"target":  "platform-reviewer",
+		"name":    "platform-reviewer-x1",
+		"kickoff": "review something",
+	})
+	if err != nil {
+		t.Fatalf("EventWithResult: %v", err)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Action != "dispatched" {
+		t.Fatalf("outcomes = %+v", result.Outcomes)
+	}
+	meta, err := ReadMetadata(root, "platform-reviewer-x1")
+	if err != nil {
+		t.Fatalf("metadata: %v", err)
+	}
+	if meta.Origin.Agent != "reviewer" || meta.Origin.Team != "platform" {
+		t.Fatalf("origin = %+v, want agent=reviewer team=platform", meta.Origin)
+	}
+	_, _ = m.Stop("platform-reviewer-x1")
+	_ = m.WaitForReaper("platform-reviewer-x1", 5*time.Second)
+}
+
 func TestEvent_PipelineDispatchOriginIgnoresPayloadTeam(t *testing.T) {
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)
@@ -2963,6 +3102,59 @@ payload.workspace = "repo"
 		t.Fatalf("read messages: %v", err)
 	}
 	if len(messages) != 1 || !strings.Contains(messages[0].Body, `"event":"schedule"`) || !strings.Contains(messages[0].Body, `"name":"nightly"`) {
+		t.Fatalf("messages = %+v", messages)
+	}
+}
+
+func TestEvent_TeamScopedSchedulePersistsScopedState(t *testing.T) {
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	top, err := topology.Parse([]byte(`
+[instances.manager]
+agent = "manager"
+
+[[instances.manager.triggers]]
+event = "schedule"
+match.name = "nightly"
+
+[schedules.nightly]
+every = "1s"
+run_on_start = true
+scope = "team"
+
+[teams.platform]
+instances = ["manager"]
+schedules = ["nightly"]
+`))
+	if err != nil {
+		t.Fatalf("parse topology: %v", err)
+	}
+	m := NewInstanceManager(root, nil)
+	resolver := NewEventResolver(m, teamDir, top)
+	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+
+	fired, err := resolver.FireDueSchedulesWithResult(now)
+	if err != nil {
+		t.Fatalf("FireDueSchedulesWithResult: %v", err)
+	}
+	if fired.Fired != 1 || len(fired.Schedules) != 1 || fired.Schedules[0].Name != "nightly" {
+		t.Fatalf("fired = %+v", fired)
+	}
+	persisted, err := ReadScheduleState(root, "team.platform.nightly")
+	if err != nil {
+		t.Fatalf("ReadScheduleState scoped: %v", err)
+	}
+	if persisted.Name != "team.platform.nightly" || !persisted.LastFiredAt.Equal(now) {
+		t.Fatalf("persisted = %+v", persisted)
+	}
+	if _, err := ReadScheduleState(root, "nightly"); !os.IsNotExist(err) {
+		t.Fatalf("unscoped schedule state changed, err=%v", err)
+	}
+	messages, err := ReadMessages(root, "manager")
+	if err != nil {
+		t.Fatalf("read messages: %v", err)
+	}
+	if len(messages) != 1 || !strings.Contains(messages[0].Body, `"name":"nightly"`) {
 		t.Fatalf("messages = %+v", messages)
 	}
 }
