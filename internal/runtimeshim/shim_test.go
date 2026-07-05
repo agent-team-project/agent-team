@@ -56,6 +56,19 @@ func TestAgentTeamShimAllowsKnownLeafVerbsWithPositionals(t *testing.T) {
 	}
 }
 
+func TestAgentTeamShimPassesThroughWhenNoAuthorityDeclared(t *testing.T) {
+	shim, _, calls := installTestAgentTeamShim(t)
+
+	cmd := exec.Command(shim, "job", "gate", "set", "squ-1", "review", "--status", "done")
+	cmd.Env = shimEnvUnset()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("default (no authority declared) must pass through, got err=%v out=%s", err, out)
+	}
+	if got := strings.TrimSpace(readFile(t, calls)); got != "job gate set squ-1 review --status done" {
+		t.Fatalf("real agent-team args = %q", got)
+	}
+}
+
 func TestAgentTeamShimDeniesKnownVerbOutsideAllowlist(t *testing.T) {
 	shim, _, calls := installTestAgentTeamShim(t)
 
@@ -189,11 +202,13 @@ func runShimExpectExit(t *testing.T, shim, allow string, args ...string) (string
 }
 
 func cleanShimEnv(allow string) []string {
-	env := []string{"PATH=" + os.Getenv("PATH")}
-	if allow != "" {
-		env = append(env, EnvAuthorityAllowlist+"="+allow)
-	}
-	return env
+	// allow=="" means SET-but-empty (declared deny-all); use shimEnvUnset for
+	// the no-authority-declared (pass-through) case.
+	return []string{"PATH=" + os.Getenv("PATH"), EnvAuthorityAllowlist + "=" + allow}
+}
+
+func shimEnvUnset() []string {
+	return []string{"PATH=" + os.Getenv("PATH")}
 }
 
 func readFile(t *testing.T, path string) string {

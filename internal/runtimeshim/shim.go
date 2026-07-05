@@ -528,6 +528,11 @@ func validateExecutableFile(path string) error {
 func agentTeamShimBody(real string) string {
 	return "#!/bin/sh\n" +
 		"REAL_AGENT_TEAM=" + shellQuote(real) + "\n" +
+		"# No declared authority => shim is a pass-through (closed-world applies only\n" +
+		"# to instances that opt in; the bundled default declares none).\n" +
+		"if [ -z \"${" + EnvAuthorityAllowlist + "+x}\" ]; then\n" +
+		"  exec \"$REAL_AGENT_TEAM\" \"$@\"\n" +
+		"fi\n" +
 		"AUTHORITY_ALLOWLIST=${" + EnvAuthorityAllowlist + ":-}\n" +
 		"KNOWN_VERBS=" + shellQuote(strings.Join(KnownAgentTeamVerbs, "\n")) + "\n" +
 		"\n" +
