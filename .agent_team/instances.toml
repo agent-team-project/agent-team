@@ -262,3 +262,16 @@ schedules   = ["feedback-triage"]
 # [schedules.nightly]
 # every = "24h"
 # payload.workspace = "repo"
+
+# Live budgets (SQU-103 dogfood): generous caps that only bite on runaways.
+[budgets.delivery]
+tokens_per_day = 600_000_000
+jobs_in_flight = 4
+
+[budgets.platform]
+tokens_per_day = 400_000_000
+jobs_in_flight = 3
+
+[budgets.quality]
+tokens_per_day = 100_000_000
+jobs_in_flight = 2
