@@ -1820,6 +1820,9 @@ func (r *EventResolver) upsertDispatchJob(payload map[string]any, instance strin
 		}
 		j.ID = id
 	}
+	if status != "" && !jobStatusTerminal(status) && jobStatusTerminal(j.Status) {
+		return j
+	}
 	if target := firstPayloadString(payload, "target", "agent"); target != "" {
 		j.Target = target
 	}

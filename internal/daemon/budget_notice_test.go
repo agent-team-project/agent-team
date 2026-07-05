@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -10,6 +11,39 @@ import (
 
 	jobstore "github.com/jamesaud/agent-team/internal/job"
 )
+
+func fastCodexUsageSpawner(line string) Spawner {
+	return func(args []string, env []string, workspace, stdoutPath, stderrPath, stdinContent string) (*os.Process, error) {
+		bin, err := exec.LookPath("sh")
+		if err != nil {
+			return nil, err
+		}
+		stdin, err := os.Open(os.DevNull)
+		if err != nil {
+			return nil, err
+		}
+		stdout, err := os.OpenFile(stdoutPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+		if err != nil {
+			_ = stdin.Close()
+			return nil, err
+		}
+		stderr, err := os.OpenFile(stderrPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+		if err != nil {
+			_ = stdin.Close()
+			_ = stdout.Close()
+			return nil, err
+		}
+		defer stdin.Close()
+		defer stdout.Close()
+		defer stderr.Close()
+		childEnv := append(append([]string(nil), env...), "AGENTTEAM_TEST_CODEX_USAGE="+line)
+		return os.StartProcess(bin, []string{"sh", "-c", `printf '%s\n' "$AGENTTEAM_TEST_CODEX_USAGE"`}, &os.ProcAttr{
+			Dir:   workspace,
+			Env:   childEnv,
+			Files: []*os.File{stdin, stdout, stderr},
+		})
+	}
+}
 
 func TestBudgetNoticeWritesEventsAndMailboxForCodexTokenCrossing(t *testing.T) {
 	teamDir := filepath.Join(t.TempDir(), ".agent_team")
@@ -146,5 +180,74 @@ func TestBudgetNoticeForClaudeRuntimeUsesTimeOnly(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Data["dimension"] != "time" || events[0].Data["runtime"] != "claude" {
 		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestBudgetNoticeFinalReapSweepForFastCodexRuntime(t *testing.T) {
+	teamDir := fixtureTeamDir(t)
+	root := DaemonRoot(teamDir)
+	writeFixtureRuntimeCommandSkills(t, teamDir, "worker")
+	now := time.Now().UTC()
+	j, err := jobstore.New("SQU-104", "worker", "finish quickly", now)
+	if err != nil {
+		t.Fatalf("job.New: %v", err)
+	}
+	j.TokenBudget = 1000
+	j.ReminderLevels = []int{50, 80, 100}
+	if err := jobstore.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	m := NewInstanceManager(root, fastCodexUsageSpawner(`{"type":"turn.completed","usage":{"input_tokens":900,"output_tokens":100}}`))
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
+
+	result, err := resolver.EventWithResult("agent.dispatch", map[string]any{
+		"target":         "worker",
+		"ticket":         "SQU-104",
+		"job_id":         "squ-104",
+		"kickoff":        "finish quickly",
+		"runtime":        "codex",
+		"runtime_binary": "codex",
+		"workspace":      t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("dispatch event: %v", err)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Action != "dispatched" {
+		t.Fatalf("dispatch result = %+v", result)
+	}
+	instance := result.Outcomes[0].InstanceID
+	if err := m.WaitForReaper(instance, 5*time.Second); err != nil {
+		t.Fatalf("wait reaper: %v", err)
+	}
+
+	updated, err := jobstore.Read(teamDir, "squ-104")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if updated.Status != jobstore.StatusDone {
+		t.Fatalf("job status = %s, want done; job=%+v", updated.Status, updated)
+	}
+	if got, want := updated.TokenBudgetNotices, []int{50, 80, 100}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("token notices = %v, want %v", got, want)
+	}
+	events, err := jobstore.ListEvents(teamDir, "squ-104")
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	var levels []string
+	for _, ev := range events {
+		if ev.Type == "budget_notice" && ev.Data["dimension"] == "tokens" {
+			levels = append(levels, ev.Data["level"])
+		}
+	}
+	if got, want := strings.Join(levels, ","), "50,80,100"; got != want {
+		t.Fatalf("budget notice levels = %s, want %s; events=%+v", got, want, events)
+	}
+	messages, err := ReadMessages(root, instance)
+	if err != nil {
+		t.Fatalf("read messages: %v", err)
+	}
+	if len(messages) != 3 || !strings.Contains(messages[2].Body, "over allowance") {
+		t.Fatalf("messages = %+v, want three durable budget notices with 100%% warning", messages)
 	}
 }
