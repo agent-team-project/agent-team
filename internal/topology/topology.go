@@ -104,8 +104,10 @@ type Instance struct {
 	Brief bool
 	// TokenBudget and TimeBudget are soft per-run allowances surfaced to the
 	// spawned agent. They do not enforce cutoffs.
-	TokenBudget int64
-	TimeBudget  time.Duration
+	TokenBudget    int64
+	TimeBudget     time.Duration
+	HardBudget     bool
+	HardMultiplier float64
 	// Config holds per-instance overrides for the resolved config tree —
 	// dotted-path keys flattened from `[instances.<name>.config]` in TOML.
 	// Empty when no overrides are declared.
@@ -199,6 +201,8 @@ type PipelineStep struct {
 	Timeout          time.Duration
 	TokenBudget      int64
 	TimeBudget       time.Duration
+	HardBudget       bool
+	HardMultiplier   float64
 	ReminderLevels   []int
 	MaxAttempts      int
 	RetryOnCrash     bool
@@ -659,18 +663,20 @@ type rawTopology struct {
 }
 
 type rawInstance struct {
-	Agent        string           `toml:"agent"`
-	Ephemeral    bool             `toml:"ephemeral"`
-	Description  string           `toml:"description"`
-	Locks        []string         `toml:"locks"`
-	Replicas     *int             `toml:"replicas"`
-	ReapWorktree string           `toml:"reap_worktree"`
-	Restart      string           `toml:"restart"`
-	Brief        *bool            `toml:"brief"`
-	TokenBudget  any              `toml:"token_budget"`
-	TimeBudget   string           `toml:"time_budget"`
-	Config       map[string]any   `toml:"config"`
-	Triggers     []map[string]any `toml:"triggers"`
+	Agent          string           `toml:"agent"`
+	Ephemeral      bool             `toml:"ephemeral"`
+	Description    string           `toml:"description"`
+	Locks          []string         `toml:"locks"`
+	Replicas       *int             `toml:"replicas"`
+	ReapWorktree   string           `toml:"reap_worktree"`
+	Restart        string           `toml:"restart"`
+	Brief          *bool            `toml:"brief"`
+	TokenBudget    any              `toml:"token_budget"`
+	TimeBudget     string           `toml:"time_budget"`
+	Hard           bool             `toml:"hard"`
+	HardMultiplier any              `toml:"hard_multiplier"`
+	Config         map[string]any   `toml:"config"`
+	Triggers       []map[string]any `toml:"triggers"`
 }
 
 type rawLock struct {
@@ -909,6 +915,10 @@ func finaliseInstance(name string, ri *rawInstance) (*Instance, error) {
 	if err != nil {
 		return nil, fmt.Errorf("instance %q: %w", name, err)
 	}
+	hardMultiplier, err := allowance.ParseHardMultiplierValue(ri.HardMultiplier, "hard_multiplier")
+	if err != nil {
+		return nil, fmt.Errorf("instance %q: %w", name, err)
+	}
 	cfg := template.Tree{}
 	if len(ri.Config) > 0 {
 		// `config` arrives as a free-form map[string]any from BurntSushi/toml.
@@ -921,19 +931,21 @@ func finaliseInstance(name string, ri *rawInstance) (*Instance, error) {
 		return nil, err
 	}
 	return &Instance{
-		Name:         name,
-		Agent:        ri.Agent,
-		Ephemeral:    ri.Ephemeral,
-		Description:  ri.Description,
-		Locks:        locks,
-		Replicas:     replicas,
-		ReapWorktree: reapWorktree,
-		Restart:      restart,
-		Brief:        brief,
-		TokenBudget:  tokenBudget,
-		TimeBudget:   timeBudget,
-		Config:       cfg,
-		Triggers:     triggers,
+		Name:           name,
+		Agent:          ri.Agent,
+		Ephemeral:      ri.Ephemeral,
+		Description:    ri.Description,
+		Locks:          locks,
+		Replicas:       replicas,
+		ReapWorktree:   reapWorktree,
+		Restart:        restart,
+		Brief:          brief,
+		TokenBudget:    tokenBudget,
+		TimeBudget:     timeBudget,
+		HardBudget:     ri.Hard,
+		HardMultiplier: hardMultiplier,
+		Config:         cfg,
+		Triggers:       triggers,
 	}, nil
 }
 
@@ -1625,6 +1637,14 @@ func parsePipelineSteps(name string, raw []map[string]any) ([]*PipelineStep, err
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
 		}
+		hardBudget, err := parseStepHard(body["hard"])
+		if err != nil {
+			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
+		}
+		hardMultiplier, err := allowance.ParseHardMultiplierValue(body["hard_multiplier"], "hard_multiplier")
+		if err != nil {
+			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
+		}
 		reminderLevels, err := parseStepReminderLevels(body["reminder_levels"])
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
@@ -1641,7 +1661,7 @@ func parsePipelineSteps(name string, raw []map[string]any) ([]*PipelineStep, err
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
 		}
-		steps = append(steps, &PipelineStep{ID: id, Label: label, Description: description, Instructions: instructions, Target: target, Locks: locks, Workspace: workspace, Runtime: runtime, RuntimeBin: runtimeBin, After: after, Gate: gate, ApprovalRequired: approvalRequired, Optional: optional, Timeout: timeout, TokenBudget: tokenBudget, TimeBudget: timeBudget, ReminderLevels: reminderLevels, MaxAttempts: maxAttempts, RetryOnCrash: retryOnCrash})
+		steps = append(steps, &PipelineStep{ID: id, Label: label, Description: description, Instructions: instructions, Target: target, Locks: locks, Workspace: workspace, Runtime: runtime, RuntimeBin: runtimeBin, After: after, Gate: gate, ApprovalRequired: approvalRequired, Optional: optional, Timeout: timeout, TokenBudget: tokenBudget, TimeBudget: timeBudget, HardBudget: hardBudget, HardMultiplier: hardMultiplier, ReminderLevels: reminderLevels, MaxAttempts: maxAttempts, RetryOnCrash: retryOnCrash})
 	}
 	for _, step := range steps {
 		for _, dep := range step.After {
@@ -1909,6 +1929,17 @@ func parseStepOptional(raw any) (bool, error) {
 	value, ok := raw.(bool)
 	if !ok {
 		return false, fmt.Errorf("optional must be a boolean")
+	}
+	return value, nil
+}
+
+func parseStepHard(raw any) (bool, error) {
+	if raw == nil {
+		return false, nil
+	}
+	value, ok := raw.(bool)
+	if !ok {
+		return false, fmt.Errorf("hard must be a boolean")
 	}
 	return value, nil
 }

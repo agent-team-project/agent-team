@@ -11428,6 +11428,43 @@ func TestPipelineRunCreatesDurableJob(t *testing.T) {
 	}
 }
 
+func TestPipelineRunAcceptsBudgetFlags(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+	teamDir := filepath.Join(root, ".agent_team")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{
+		"pipeline", "run", "ticket_to_pr", "SQU-314",
+		"--repo", root,
+		"--budget-tokens", "1.5M",
+		"--budget-time", "20m",
+		"--budget-hard",
+		"--budget-hard-multiplier", "1.5",
+		"--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("pipeline run: %v\nstderr=%s", err, stderr.String())
+	}
+	var created job.Job
+	if err := json.Unmarshal(out.Bytes(), &created); err != nil {
+		t.Fatalf("decode pipeline run json: %v\nbody=%s", err, out.String())
+	}
+	if created.TokenBudget != 1500000 || created.TimeBudget != "20m0s" || !created.HardBudget || created.HardMultiplier != 1.5 {
+		t.Fatalf("created budget fields = token %d time %q hard %v multiplier %v", created.TokenBudget, created.TimeBudget, created.HardBudget, created.HardMultiplier)
+	}
+	persisted, err := job.Read(teamDir, "squ-314")
+	if err != nil {
+		t.Fatalf("read created job: %v", err)
+	}
+	if persisted.TokenBudget != 1500000 || persisted.TimeBudget != "20m0s" || !persisted.HardBudget || persisted.HardMultiplier != 1.5 {
+		t.Fatalf("persisted budget fields = %+v", persisted)
+	}
+}
+
 func TestPipelineRunDryRunDoesNotWrite(t *testing.T) {
 	root := t.TempDir()
 	initInto(t, root)
@@ -11484,6 +11521,10 @@ func TestPipelineRunDryRunDoesNotWrite(t *testing.T) {
 		"--repo", root,
 		"--id", "SQU 309 Custom",
 		"--ticket-url", "https://linear.app/squirtlesquad/issue/SQU-309/review-runner",
+		"--budget-tokens", "2M",
+		"--budget-time", "30m",
+		"--budget-hard",
+		"--budget-hard-multiplier", "1.5",
 		"--dry-run",
 		"--commands",
 	})
@@ -11495,6 +11536,10 @@ func TestPipelineRunDryRunDoesNotWrite(t *testing.T) {
 		"--repo", root,
 		"--id", "SQU 309 Custom",
 		"--ticket-url", "https://linear.app/squirtlesquad/issue/SQU-309/review-runner",
+		"--budget-tokens", "2M",
+		"--budget-time", "30m0s",
+		"--budget-hard",
+		"--budget-hard-multiplier", "1.5",
 		"review", "runner",
 	}), " ") + "\n"
 	if got := commandsOut.String(); got != wantCreateCommand {

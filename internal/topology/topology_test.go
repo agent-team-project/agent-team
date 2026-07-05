@@ -135,6 +135,53 @@ brief = true
 	}
 }
 
+func TestParse_HardBudgetCutoffs(t *testing.T) {
+	top, err := Parse([]byte(`
+[instances.worker]
+agent = "worker"
+ephemeral = true
+token_budget = "10M"
+time_budget = "45m"
+hard_multiplier = 1.5
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+token_budget = "2M"
+time_budget = "30m"
+hard = true
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	worker := top.Instances["worker"]
+	if worker == nil || worker.TokenBudget != 10000000 || worker.TimeBudget != 45*time.Minute || worker.HardMultiplier != 1.5 {
+		t.Fatalf("worker hard budget fields = %+v", worker)
+	}
+	step := top.Pipelines["ticket_to_pr"].Steps[0]
+	if step.TokenBudget != 2000000 || step.TimeBudget != 30*time.Minute || !step.HardBudget {
+		t.Fatalf("step hard budget fields = %+v", step)
+	}
+}
+
+func TestParse_HardMultiplierRejectsBelowOne(t *testing.T) {
+	_, err := Parse([]byte(`
+[instances.worker]
+agent = "worker"
+hard_multiplier = 0.5
+`))
+	if err == nil || !strings.Contains(err.Error(), "hard_multiplier must be >= 1") {
+		t.Fatalf("Parse err = %v, want hard multiplier validation", err)
+	}
+}
+
 func TestParse_ResourceScopesChannelsAndAuthority(t *testing.T) {
 	top, err := Parse([]byte(`
 [locks.build]

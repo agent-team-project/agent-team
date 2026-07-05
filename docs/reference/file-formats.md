@@ -133,6 +133,8 @@ ephemeral = true
 replicas = 3
 token_budget = "40M"
 time_budget = "45m"
+# hard = true
+# hard_multiplier = 1.5
 locks = ["build"]
 
 [locks.build]
@@ -163,6 +165,7 @@ workspace = "worktree"
 runtime = "codex"
 token_budget = "40M"
 time_budget = "45m"
+# hard_multiplier = 1.5
 reminder_levels = [50, 80, 100]
 locks = ["build"]
 
@@ -212,7 +215,11 @@ persisted clock key while publishing the same schedule event name.
 are defaults; pipeline step values override them. `[budgets].reminder_levels`
 sets the default percentage crossings that create `budget_notice` job events
 and inbox messages; pipeline step values and job-level overrides take
-precedence.
+precedence. Add `hard = true` to make the allowance itself a hard cutoff, or
+`hard_multiplier = 1.5` to cut off at allowance multiplied by that value. Hard
+cutoffs are for runaway protection: crossing one records `budget_exceeded_hard`,
+crash-finalizes the runtime, frees its slot, and lets normal failure
+write-back/attention handling run.
 
 Declared `[channels.<name>]` entries are only needed for scoped channel storage;
 undeclared channels still work. Team-scoped channels always use the owning

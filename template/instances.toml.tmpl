@@ -36,6 +36,10 @@ replicas      = 3
 reap_worktree = "on_merge"   # reap the job worktree + local branch after its PR merges; `agent-team job keep-worktree <id>` opts one job out
 token_budget  = "40M"
 time_budget   = "45m"
+# Hard cutoffs are off by default. Uncomment only as runaway protection; soft
+# budget_notice levels are the normal pacing mechanism.
+# hard = true
+# hard_multiplier = 1.5
 description   = "Code-writing agent. Spawned on `agent.dispatch` (see assign-worker skill)."
 
 [[instances.worker.triggers]]
@@ -80,6 +84,9 @@ workspace    = "worktree"
 timeout      = "45m"
 token_budget = "40M"
 time_budget  = "45m"
+# Hard cutoffs are off by default. Uncomment only as runaway protection; soft
+# budget_notice levels are the normal pacing mechanism.
+# hard_multiplier = 1.5
 max_attempts = 1
 
 [[pipelines.ticket_to_pr.steps]]
@@ -175,6 +182,9 @@ replicas      = 2
 reap_worktree = "on_merge"
 token_budget  = "40M"
 time_budget   = "45m"
+# Hard cutoffs are off by default. Uncomment only as runaway protection; soft
+# budget_notice levels are the normal pacing mechanism.
+# hard_multiplier = 1.5
 description   = "Platform-team code writer for framework-infrastructure jobs."
 
 [[instances.platform-worker.triggers]]
@@ -209,6 +219,9 @@ workspace = "worktree"
 timeout      = "60m"
 token_budget = "40M"
 time_budget  = "45m"
+# Hard cutoffs are off by default. Uncomment only as runaway protection; soft
+# budget_notice levels are the normal pacing mechanism.
+# hard_multiplier = 1.5
 max_attempts = 1
 
 [[pipelines.platform_ticket_to_pr.steps]]

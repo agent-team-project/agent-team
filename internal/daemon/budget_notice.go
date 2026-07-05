@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jamesaud/agent-team/internal/allowance"
@@ -24,14 +25,23 @@ type budgetNotice struct {
 	StepID    string
 }
 
-func (m *InstanceManager) startBudgetNoticeWatcher(meta Metadata, reaped <-chan struct{}) {
+type budgetHardCutoff struct {
+	Dimension  string
+	Used       int64
+	Budget     int64
+	HardLimit  int64
+	Multiplier float64
+	StepID     string
+}
+
+func (m *InstanceManager) startBudgetNoticeWatcher(meta Metadata, proc *os.Process, reaped <-chan struct{}) {
 	if strings.TrimSpace(meta.Job) == "" || reaped == nil {
 		return
 	}
-	go m.budgetNoticeWatcher(meta, reaped)
+	go m.budgetNoticeWatcher(meta, proc, reaped)
 }
 
-func (m *InstanceManager) budgetNoticeWatcher(meta Metadata, reaped <-chan struct{}) {
+func (m *InstanceManager) budgetNoticeWatcher(meta Metadata, proc *os.Process, reaped <-chan struct{}) {
 	ticker := time.NewTicker(budgetNoticePollInterval)
 	defer ticker.Stop()
 	for {
@@ -39,23 +49,41 @@ func (m *InstanceManager) budgetNoticeWatcher(meta Metadata, reaped <-chan struc
 		case <-reaped:
 			return
 		case now := <-ticker.C:
-			_ = m.checkBudgetNotices(meta, now.UTC())
+			if !m.budgetNoticeInstanceRunning(meta.Instance, proc) {
+				return
+			}
+			cutoff, _ := m.checkBudgetThresholds(meta, now.UTC())
+			if cutoff != nil && m.enforceUsageBudgetCutoff(meta.Instance, proc, reaped, *cutoff) {
+				return
+			}
 		}
 	}
 }
 
+func (m *InstanceManager) budgetNoticeInstanceRunning(instance string, proc *os.Process) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.instances[instance]
+	return ok && t.meta != nil && t.process == proc && t.meta.Status == StatusRunning
+}
+
 func (m *InstanceManager) checkBudgetNotices(meta Metadata, now time.Time) error {
+	_, err := m.checkBudgetThresholds(meta, now)
+	return err
+}
+
+func (m *InstanceManager) checkBudgetThresholds(meta Metadata, now time.Time) (*budgetHardCutoff, error) {
 	teamDir := filepath.Dir(m.daemonRoot)
 	j, err := jobstore.Read(teamDir, meta.Job)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return nil, nil
 		}
-		return err
+		return nil, err
 	}
 	target := budgetNoticeTargetForInstance(j, meta.Instance)
 	if target.tokenBudget <= 0 && target.timeBudget <= 0 {
-		return nil
+		return nil, nil
 	}
 	rec := liveUsageForBudgetNotice(meta, now)
 	var notices []budgetNotice
@@ -71,22 +99,39 @@ func (m *InstanceManager) checkBudgetNotices(meta Metadata, now time.Time) error
 			notices = append(notices, budgetNotice{Dimension: "time", Level: level, Used: used, Budget: budget, StepID: target.stepID})
 		}
 	}
+	cutoff := budgetHardCutoffForTarget(target, rec, meta, now)
 	if len(notices) == 0 {
-		return nil
+		if cutoff != nil {
+			recorded, err := recordBudgetHardCutoff(teamDir, j, meta, *cutoff, now)
+			if err != nil {
+				return nil, err
+			}
+			if !recorded {
+				return cutoff, nil
+			}
+		}
+		return cutoff, nil
 	}
 	for _, notice := range notices {
+		if latest, err := jobstore.Read(teamDir, j.ID); err == nil {
+			j = latest
+		} else {
+			return nil, err
+		}
 		applyBudgetNoticeToJob(j, notice)
 		message := budgetNoticeMessage(j.ID, meta.Instance, notice)
-		j.LastEvent = "budget_notice"
-		j.LastStatus = message
-		j.UpdatedAt = now
+		if !budgetNoticeJobTerminal(j.Status) {
+			j.LastEvent = "budget_notice"
+			j.LastStatus = message
+			j.UpdatedAt = now
+		}
 		if err := jobwrite.WriteWithAudit(teamDir, j, jobwrite.Options{
 			EventType: "budget_notice",
 			Actor:     "daemon",
 			Message:   message,
 			Data:      budgetNoticeEventData(meta, notice),
 		}); err != nil {
-			return err
+			return nil, err
 		}
 		_ = AppendMessage(m.daemonRoot, meta.Instance, &Message{
 			From: "agent-teamd",
@@ -95,13 +140,20 @@ func (m *InstanceManager) checkBudgetNotices(meta Metadata, now time.Time) error
 			TS:   now,
 		})
 	}
-	return nil
+	if cutoff != nil {
+		if _, err := recordBudgetHardCutoff(teamDir, j, meta, *cutoff, now); err != nil {
+			return nil, err
+		}
+	}
+	return cutoff, nil
 }
 
 type budgetNoticeTarget struct {
 	stepID         string
 	tokenBudget    int64
 	timeBudget     time.Duration
+	hardBudget     bool
+	hardMultiplier float64
 	reminderLevels []int
 	tokenNotices   []int
 	timeNotices    []int
@@ -120,6 +172,8 @@ func budgetNoticeTargetForInstance(j *jobstore.Job, instance string) budgetNotic
 			stepID:         step.ID,
 			tokenBudget:    step.TokenBudget,
 			timeBudget:     parseBudgetNoticeDuration(step.TimeBudget),
+			hardBudget:     step.HardBudget,
+			hardMultiplier: step.HardMultiplier,
 			reminderLevels: step.ReminderLevels,
 			tokenNotices:   step.TokenBudgetNotices,
 			timeNotices:    step.TimeBudgetNotices,
@@ -128,10 +182,31 @@ func budgetNoticeTargetForInstance(j *jobstore.Job, instance string) budgetNotic
 	return budgetNoticeTarget{
 		tokenBudget:    j.TokenBudget,
 		timeBudget:     parseBudgetNoticeDuration(j.TimeBudget),
+		hardBudget:     j.HardBudget,
+		hardMultiplier: j.HardMultiplier,
 		reminderLevels: j.ReminderLevels,
 		tokenNotices:   j.TokenBudgetNotices,
 		timeNotices:    j.TimeBudgetNotices,
 	}
+}
+
+func budgetHardCutoffForTarget(target budgetNoticeTarget, rec usage.Record, meta Metadata, now time.Time) *budgetHardCutoff {
+	if !target.hardBudget && target.hardMultiplier <= 0 {
+		return nil
+	}
+	if limit := allowance.HardLimit(target.tokenBudget, target.hardBudget, target.hardMultiplier); limit > 0 && rec.TokensAvailable {
+		used := liveTokenTotal(rec)
+		if used >= limit {
+			return &budgetHardCutoff{Dimension: "tokens", Used: used, Budget: target.tokenBudget, HardLimit: limit, Multiplier: target.hardMultiplier, StepID: target.stepID}
+		}
+	}
+	if limit := allowance.HardLimit(int64(target.timeBudget.Milliseconds()), target.hardBudget, target.hardMultiplier); limit > 0 {
+		used := int64(now.Sub(meta.StartedAt.UTC()).Milliseconds())
+		if used >= limit {
+			return &budgetHardCutoff{Dimension: "time", Used: used, Budget: int64(target.timeBudget.Milliseconds()), HardLimit: limit, Multiplier: target.hardMultiplier, StepID: target.stepID}
+		}
+	}
+	return nil
 }
 
 func parseBudgetNoticeDuration(raw string) time.Duration {
@@ -197,6 +272,62 @@ func applyBudgetNoticeToJob(j *jobstore.Job, notice budgetNotice) {
 	}
 }
 
+func recordBudgetHardCutoff(teamDir string, j *jobstore.Job, meta Metadata, cutoff budgetHardCutoff, now time.Time) (bool, error) {
+	if j == nil {
+		return false, nil
+	}
+	if latest, err := jobstore.Read(teamDir, j.ID); err == nil {
+		j = latest
+	} else {
+		return false, err
+	}
+	if budgetHardCutoffAlreadyRecorded(teamDir, j.ID, cutoff) {
+		return false, nil
+	}
+	message := budgetHardCutoffMessage(j.ID, meta.Instance, cutoff)
+	if !budgetNoticeJobTerminal(j.Status) {
+		j.LastEvent = "budget_exceeded_hard"
+		j.LastStatus = message
+		j.UpdatedAt = now
+	}
+	if err := jobwrite.WriteWithAudit(teamDir, j, jobwrite.Options{
+		EventType: "budget_exceeded_hard",
+		Actor:     "daemon",
+		Message:   message,
+		Data:      budgetHardCutoffEventData(meta, cutoff),
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func budgetNoticeJobTerminal(status jobstore.Status) bool {
+	return status == jobstore.StatusDone || status == jobstore.StatusFailed
+}
+
+func budgetHardCutoffAlreadyRecorded(teamDir, jobID string, cutoff budgetHardCutoff) bool {
+	events, err := jobstore.ListEvents(teamDir, jobID)
+	if err != nil {
+		return false
+	}
+	for _, event := range events {
+		if event.Type != "budget_exceeded_hard" {
+			continue
+		}
+		if event.Data["dimension"] != cutoff.Dimension {
+			continue
+		}
+		if cutoff.StepID != "" && event.Data["step"] != cutoff.StepID {
+			continue
+		}
+		if cutoff.StepID == "" && event.Data["step"] != "" {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func budgetNoticeMessage(jobID, instance string, notice budgetNotice) string {
 	subject := strings.TrimSpace(jobID)
 	if notice.StepID != "" {
@@ -235,4 +366,87 @@ func formatBudgetNoticeAmount(dimension string, value int64) string {
 		return (time.Duration(value) * time.Millisecond).String()
 	}
 	return fmt.Sprintf("%d tokens", value)
+}
+
+func budgetHardCutoffMessage(jobID, instance string, cutoff budgetHardCutoff) string {
+	subject := strings.TrimSpace(jobID)
+	if cutoff.StepID != "" {
+		subject += " step " + cutoff.StepID
+	}
+	if subject == "" {
+		subject = strings.TrimSpace(instance)
+	}
+	return fmt.Sprintf("%s exceeded hard %s budget (%s/%s hard line; allowance %s)", subject, cutoff.Dimension, formatBudgetNoticeAmount(cutoff.Dimension, cutoff.Used), formatBudgetNoticeAmount(cutoff.Dimension, cutoff.HardLimit), formatBudgetNoticeAmount(cutoff.Dimension, cutoff.Budget))
+}
+
+func budgetHardCutoffEventData(meta Metadata, cutoff budgetHardCutoff) map[string]string {
+	data := map[string]string{
+		"dimension":  cutoff.Dimension,
+		"used":       fmt.Sprint(cutoff.Used),
+		"budget":     fmt.Sprint(cutoff.Budget),
+		"hard_limit": fmt.Sprint(cutoff.HardLimit),
+		"instance":   meta.Instance,
+		"runtime":    meta.Runtime,
+	}
+	if cutoff.Multiplier > 0 {
+		data["hard_multiplier"] = fmt.Sprintf("%g", cutoff.Multiplier)
+	} else {
+		data["hard"] = "true"
+	}
+	if cutoff.StepID != "" {
+		data["step"] = cutoff.StepID
+	}
+	return data
+}
+
+func (m *InstanceManager) enforceUsageBudgetCutoff(instance string, proc *os.Process, reaped <-chan struct{}, cutoff budgetHardCutoff) bool {
+	if proc == nil {
+		return false
+	}
+	out, pid, ok := m.markInstanceCrashedForBudgetCutoff(instance, proc, cutoff, false)
+	if !ok {
+		return false
+	}
+	m.recordEvent("watchdog", &out, budgetHardCutoffMessage(out.Job, out.Instance, cutoff)+"; killing")
+	_ = signalProcessGroupOrProcess(proc, pid, syscall.SIGTERM)
+	if waitForProcessExit(pid, reaped, stopKillWaitTimeout) {
+		return true
+	}
+	_ = signalProcessGroupOrProcess(proc, pid, syscall.SIGKILL)
+	return true
+}
+
+func (m *InstanceManager) markReapedInstanceCrashedForBudgetCutoff(instance string, proc *os.Process, cutoff budgetHardCutoff) (*Metadata, bool) {
+	out, _, ok := m.markInstanceCrashedForBudgetCutoff(instance, proc, cutoff, true)
+	if !ok {
+		return nil, false
+	}
+	return &out, true
+}
+
+func (m *InstanceManager) markInstanceCrashedForBudgetCutoff(instance string, proc *os.Process, cutoff budgetHardCutoff, allowExited bool) (Metadata, int, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.instances[instance]
+	if !ok || t.meta == nil || t.process != proc {
+		return Metadata{}, 0, false
+	}
+	switch t.meta.Status {
+	case StatusRunning:
+	case StatusExited:
+		if !allowExited {
+			return Metadata{}, 0, false
+		}
+	case StatusCrashed:
+		out := *t.meta
+		return out, t.meta.PID, true
+	default:
+		return Metadata{}, 0, false
+	}
+	t.meta.Status = StatusCrashed
+	out := *t.meta
+	if err := WriteMetadata(m.daemonRoot, t.meta); err != nil {
+		_ = err
+	}
+	return out, t.meta.PID, true
 }

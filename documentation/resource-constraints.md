@@ -2,9 +2,10 @@
 
 How a large agent fleet stays inside its means. Today the framework measures well and constrains almost nothing; every governor is either manual (`slots`, `replicas`), after-the-fact (usage at reap), or time-shaped (watchdogs). This sketch maps the real constraint surface — grounded in field evidence — and phases the work.
 
-Status: SQU-91 epic sketch. Team admission budgets shipped first; SQU-104 adds
-soft per-job/per-step allowances and notices. Hard runtime cutoffs remain
-deferred to SQU-105.
+Status: SQU-91 epic sketch. Team admission budgets shipped first; SQU-104 added
+soft per-job/per-step allowances and notices. SQU-105 adds opt-in hard runtime
+cutoffs (`hard = true` or `hard_multiplier`) that kill runaway jobs with
+watchdog semantics.
 
 ## What actually constrains a fleet (field evidence)
 
@@ -51,10 +52,14 @@ Soft and hard are different verbs: soft 100% notifies, flags triage, and lets wo
 
 The Codex JSONL stream emits `turn.completed` usage *during* the run; Claude's OTel telemetry can report live token counts. A usage watchdog is the token analog of the time watchdog: kill (crash-finalize, slot freed, attention write-back) at N tokens. Catches the chatty-wedge failure mode time budgets miss. Same extend verb (`job extend --tokens 10M`) for operator judgment.
 
-SQU-104 implements the soft precursor only: the daemon tails the live Codex JSONL
+SQU-104 implements the soft precursor: the daemon tails the live Codex JSONL
 with the same parser used at reap, records `budget_notice` events, and sends
-mailbox reminders. It never kills a runtime. Claude paths never fake token
-counts; they can only trigger time-budget notices in this phase.
+mailbox reminders. SQU-105 layers opt-in hard cutoffs on the same live watcher:
+crossing the hard line records `budget_exceeded_hard`, marks the runtime
+crashed, terminates it with the watchdog signal path, and lets normal
+reap/failure write-back free the slot and surface attention. Claude paths never
+fake token counts; they can only trigger time-budget notices and hard time
+cutoffs until reliable live token telemetry is available.
 
 ### Layer 3 — priority + preemption
 

@@ -104,6 +104,8 @@ replicas  = 3            # max 3 concurrent
 reap_worktree = "never"  # opt-in cleanup: never, on_close, or on_merge
 token_budget = "40M"     # soft per-run allowance, default for dispatches
 time_budget = "45m"      # soft per-run wall-clock allowance
+# hard = true            # optional runaway cutoff at the allowance
+# hard_multiplier = 1.5  # optional cutoff at allowance * multiplier
 locks = ["build"]        # optional named dispatch locks held while spawned
 
 [locks.build]
@@ -150,6 +152,7 @@ workspace = "worktree"
 runtime = "codex"
 token_budget = "40M"
 time_budget = "45m"
+# hard_multiplier = 1.5
 reminder_levels = [50, 80, 100]
 locks = ["build"]
 
@@ -231,7 +234,9 @@ channel write/read maps to, while authority allowlists audit write verbs.
 | `replicas` | no | `1` | Max concurrent runs. Ephemeral only — for persistent, this is implicitly 1. |
 | `reap_worktree` | no | `never` | Opt-in cleanup policy for job-owned worker worktrees created by this instance. Supported values: `"never"`, `"on_close"`, or `"on_merge"`. |
 | `token_budget` | no | empty | Soft per-run token allowance applied to dispatches for this instance when the payload or pipeline step does not provide one. Integers and decimal suffix strings such as `"40M"` are accepted. |
-| `time_budget` | no | empty | Soft per-run wall-clock allowance applied to dispatches for this instance when the payload or pipeline step does not provide one. This is visibility only and does not arm the watchdog; use step `timeout` for watchdog cutoffs. |
+| `time_budget` | no | empty | Soft per-run wall-clock allowance applied to dispatches for this instance when the payload or pipeline step does not provide one. This is visibility unless `hard` or `hard_multiplier` is set; use step `timeout` for routine wall-clock watchdog cutoffs. |
+| `hard` | no | `false` | Opt into a hard cutoff at the declared token/time allowance. Crossing it records `budget_exceeded_hard`, marks the runtime crashed, and terminates it with watchdog semantics. Use for runaway protection, not normal pacing. |
+| `hard_multiplier` | no | empty | Opt into a hard cutoff at allowance multiplied by this number, for example `1.5`. Must be at least `1`. A multiplier is useful when soft notices should remain the primary control and only larger overruns should be killed. |
 | `triggers` | no | empty | List of trigger blocks. Empty triggers list → instance only invokable by explicit `agent-team run <name>`. |
 
 ### Pipeline field reference
@@ -265,7 +270,9 @@ Pipelines live under `[pipelines.<name>]`. A pipeline trigger creates or updates
 | `steps[].optional` | no | `false` | If `true`, a failed step does not block downstream dependencies. |
 | `steps[].timeout` | no | empty | Duration string used by stale-step timeout commands before falling back to repo stale-job thresholds. |
 | `steps[].token_budget` | no | target instance default | Soft token allowance for this step's runtime. It is clamped to remaining team budget headroom at dispatch and exported as `AGENT_TEAM_BUDGET_TOKENS`. |
-| `steps[].time_budget` | no | target instance default | Soft wall-clock allowance for this step's runtime, exported as `AGENT_TEAM_BUDGET_TIME`. This does not kill the runtime. |
+| `steps[].time_budget` | no | target instance default | Soft wall-clock allowance for this step's runtime, exported as `AGENT_TEAM_BUDGET_TIME`. This does not kill the runtime unless hard cutoffs are enabled. |
+| `steps[].hard` | no | target/job default | Opt into a hard cutoff at the step's token/time allowance. Crossing it records `budget_exceeded_hard`, crash-finalizes the instance, frees its slot, and lets normal failure attention/write-back run. |
+| `steps[].hard_multiplier` | no | target/job default | Opt into a hard cutoff at allowance multiplied by this number. Must be at least `1`; use values above `1` for runaway protection while preserving soft notice workflow. |
 | `steps[].reminder_levels` | no | `[budgets].reminder_levels` or `[50, 80, 100]` | Percentage thresholds that create `budget_notice` job events and mailbox messages when live usage crosses them. Job-level reminder levels override this at dispatch. |
 | `steps[].max_attempts` | no | unlimited | Positive integer cap for dispatch attempts. Retry commands skip failed steps once the stored attempt count reaches this value. |
 | `steps[].retry_on_crash` | no | `false` | If `true`, daemon auto-advance may retry this step once after an instance crash/nonzero exit, but only when that instance recorded no job gate/verdict. Use only for read-only/idempotent steps such as reviewers; implementation steps should leave this false to avoid duplicate PR side effects. |

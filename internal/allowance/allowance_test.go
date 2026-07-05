@@ -67,3 +67,33 @@ func TestNormalizeReminderLevelsSortsAndDeduplicates(t *testing.T) {
 		t.Fatalf("NormalizeReminderLevels = %v, want %v", got, want)
 	}
 }
+
+func TestParseHardMultiplierValue(t *testing.T) {
+	got, err := ParseHardMultiplierValue("1.5", "hard_multiplier")
+	if err != nil {
+		t.Fatalf("ParseHardMultiplierValue: %v", err)
+	}
+	if got != 1.5 {
+		t.Fatalf("multiplier = %v, want 1.5", got)
+	}
+
+	for _, raw := range []any{0.5, -1, "soon"} {
+		t.Run("reject", func(t *testing.T) {
+			if _, err := ParseHardMultiplierValue(raw, "hard_multiplier"); err == nil {
+				t.Fatalf("ParseHardMultiplierValue(%v) succeeded, want error", raw)
+			}
+		})
+	}
+}
+
+func TestHardLimit(t *testing.T) {
+	if got := HardLimit(100, true, 0); got != 100 {
+		t.Fatalf("hard limit = %d, want 100", got)
+	}
+	if got := HardLimit(101, false, 1.5); got != 152 {
+		t.Fatalf("multiplier hard limit = %d, want 152", got)
+	}
+	if got := HardLimit(100, false, 0); got != 0 {
+		t.Fatalf("disabled hard limit = %d, want 0", got)
+	}
+}

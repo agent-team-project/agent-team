@@ -342,7 +342,7 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 	out := *meta
 	m.recordEvent("dispatch", &out, "instance dispatched")
 	capture := m.startCodexSessionCapture(rt.Kind, out)
-	m.startBudgetNoticeWatcher(out, reaped)
+	m.startBudgetNoticeWatcher(out, proc, reaped)
 	go m.reap(in.Name, proc, reaped)
 	if watchdogUpdate != nil {
 		go m.watchdog(in.Name, proc, reaped, watchdogUpdate)
@@ -1517,6 +1517,10 @@ func (m *InstanceManager) launchPrepared(in DispatchInput, expected *Metadata) (
 	meta := &Metadata{
 		Instance:      in.Name,
 		Agent:         in.Agent,
+		Job:           in.Job,
+		Ticket:        in.Ticket,
+		Branch:        in.Branch,
+		PR:            in.PR,
 		Origin:        in.Origin,
 		Runtime:       string(rt.Kind),
 		RuntimeBinary: rt.Binary,
@@ -1546,7 +1550,7 @@ func (m *InstanceManager) launchPrepared(in DispatchInput, expected *Metadata) (
 	out := *meta
 	m.recordEvent("dispatch", &out, "instance dispatched")
 	capture := m.startCodexSessionCapture(rt.Kind, out)
-	m.startBudgetNoticeWatcher(out, reaped)
+	m.startBudgetNoticeWatcher(out, proc, reaped)
 	go m.reap(in.Name, proc, reaped)
 	if watchdogUpdate != nil {
 		go m.watchdog(in.Name, proc, reaped, watchdogUpdate)
@@ -1796,6 +1800,7 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 	now := time.Now().UTC()
 	t.meta.ExitedAt = now
 	eventAction := ""
+	eventMessage := "instance process exited"
 
 	switch {
 	case err != nil:
@@ -1844,10 +1849,19 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 	}
 	// Fast runtimes can exit before the live watcher reaches its first tick.
 	// Run one final sweep after usage capture and before `reaped` closes so
-	// terminal token crossings are still durable.
-	_ = m.checkBudgetNotices(eventMeta, now)
+	// terminal token crossings are still durable. Hard cutoffs remain absolute:
+	// if a child exits cleanly after crossing the hard line before the poller saw
+	// it, classify the incarnation as a watchdog crash before the reap hook
+	// reconciles the job.
+	if cutoff, err := m.checkBudgetThresholds(eventMeta, now); err == nil && cutoff != nil && eventMeta.Status != StatusCrashed {
+		if updated, ok := m.markReapedInstanceCrashedForBudgetCutoff(instance, proc, *cutoff); ok {
+			eventMeta = *updated
+			eventAction = "watchdog"
+			eventMessage = budgetHardCutoffMessage(eventMeta.Job, eventMeta.Instance, *cutoff)
+		}
+	}
 	if eventAction != "" {
-		m.recordEvent(eventAction, &eventMeta, "instance process exited")
+		m.recordEvent(eventAction, &eventMeta, eventMessage)
 	}
 	if hook != nil {
 		hook(instance)
