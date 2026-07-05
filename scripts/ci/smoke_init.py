@@ -32,6 +32,8 @@ EXPECTED_AFTER_INIT = [
     ".agent_team/agents/manager/skills/assign-worker/SKILL.md",
     ".agent_team/agents/worker/agent.md",
     ".agent_team/agents/worker/config.toml",
+    ".agent_team/skills/github/SKILL.md",
+    ".agent_team/skills/github/scripts/github-api.sh",
     ".agent_team/skills/linear/SKILL.md",
     ".agent_team/skills/linear/scripts/linear-graphql.sh",
     ".agent_team/skills/pull-request/SKILL.md",
@@ -233,6 +235,8 @@ def main(argv: list[str]) -> int:
                 if work.get(key) != expected:
                     problems.append(f"status skill did not default work.{key}: {status_doc}")
 
+        check_helper_env_loading(target, problems)
+
         # Re-init without --force should keep the user-edited config.toml.
         cfg_path = target / ".agent_team" / "config.toml"
         cfg_path.write_text("# user-edited\n")
@@ -344,6 +348,138 @@ def check_bundled_topology_canary(binary: Path, target: Path, problems: list[str
 
 def write_plan_shape_topology_fixture(team_dir: Path) -> None:
     (team_dir / "instances.toml").write_text(PLAN_SHAPE_TOPOLOGY_FIXTURE, encoding="utf-8")
+
+
+def check_helper_env_loading(target: Path, problems: list[str]) -> None:
+    """Regression test for token loading from non-shell-sourceable .env lines."""
+    team_dir = target / ".agent_team"
+    cfg_path = team_dir / "config.toml"
+    env_path = target / ".env"
+    linear_helper = team_dir / "skills" / "linear" / "scripts" / "linear-graphql.sh"
+    github_helper = team_dir / "skills" / "github" / "scripts" / "github-api.sh"
+    query = "query { viewer { id } }"
+
+    if not linear_helper.is_file():
+        problems.append(f"missing rendered Linear helper for .env loading smoke: {linear_helper}")
+        return
+    if not github_helper.is_file():
+        problems.append(f"missing rendered GitHub helper for .env loading smoke: {github_helper}")
+        return
+
+    original_cfg = cfg_path.read_text()
+    original_env = env_path.read_text() if env_path.exists() else None
+    linear_token = "linear-$! & token with spaces, \"double quotes\", and 'single quotes'"
+    github_token = "github-$! & token with spaces, \"double quotes\", and 'single quotes'"
+    # Keep these values unquoted: source/xargs-style loaders treat the spaces and
+    # `&` as shell syntax or word splits, while the helper parser reads the key's
+    # full line value.
+    env_text = (
+        "# intentionally not shell-sourceable\n"
+        f"LINEAR_API_KEY={linear_token}\n"
+        f"export GITHUB_TOKEN={github_token}\n"
+    )
+    github_cfg = """
+[pm]
+provider = "github"
+
+[team]
+pm_tool = "github"
+
+[github]
+owner = "smoke-owner"
+repo = "smoke-repo"
+"""
+
+    try:
+        env_path.write_text(env_text, encoding="utf-8")
+        with tempfile.TemporaryDirectory(prefix="agt-helper-curl-", dir="/tmp") as fake_dir:
+            fake_bin = Path(fake_dir)
+            fake_curl = fake_bin / "curl"
+            fake_curl.write_text(
+                """#!/usr/bin/env python3
+import json
+import os
+import sys
+
+args = sys.argv[1:]
+expected_auth = os.environ["EXPECTED_AUTHORIZATION"]
+expected_query = os.environ["EXPECTED_QUERY"]
+headers = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "-H"]
+if expected_auth not in headers:
+    print(f"missing expected Authorization header: {expected_auth!r}; headers={headers!r}", file=sys.stderr)
+    sys.exit(17)
+payloads = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "-d"]
+if len(payloads) != 1:
+    print(f"expected exactly one -d payload, got {payloads!r}", file=sys.stderr)
+    sys.exit(18)
+try:
+    payload = json.loads(payloads[0])
+except Exception as e:
+    print(f"payload was not JSON: {e}: {payloads[0]!r}", file=sys.stderr)
+    sys.exit(19)
+if payload.get("query") != expected_query:
+    print(f"unexpected query payload: {payload!r}", file=sys.stderr)
+    sys.exit(20)
+print(json.dumps({"ok": True}))
+""",
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+
+            env = os.environ.copy()
+            for key in ("LINEAR_API_KEY", "LINEAR_USER_API_KEY", "GITHUB_TOKEN", "GH_TOKEN"):
+                env.pop(key, None)
+            env.update({
+                "AGENT_TEAM_ROOT": str(team_dir),
+                "EXPECTED_QUERY": query,
+                "PATH": f"{fake_bin}{os.pathsep}{env.get('PATH', '')}",
+            })
+
+            run_helper_env_smoke(
+                [str(linear_helper), query],
+                target,
+                env | {"EXPECTED_AUTHORIZATION": f"Authorization: {linear_token}"},
+                "Linear",
+                problems,
+            )
+
+            cfg_path.write_text(github_cfg, encoding="utf-8")
+            run_helper_env_smoke(
+                [str(github_helper), "graphql", query],
+                target,
+                env | {"EXPECTED_AUTHORIZATION": f"Authorization: Bearer {github_token}"},
+                "GitHub",
+                problems,
+            )
+    finally:
+        cfg_path.write_text(original_cfg, encoding="utf-8")
+        if original_env is None:
+            env_path.unlink(missing_ok=True)
+        else:
+            env_path.write_text(original_env, encoding="utf-8")
+
+
+def run_helper_env_smoke(
+    cmd: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    name: str,
+    problems: list[str],
+) -> None:
+    r = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
+    if r.returncode != 0:
+        problems.append(
+            f"{name} helper did not preserve shell-special .env token: "
+            f"rc={r.returncode}\nstdout={r.stdout}\nstderr={r.stderr}"
+        )
+        return
+    try:
+        body = json.loads(r.stdout)
+    except Exception as e:  # noqa: BLE001
+        problems.append(f"{name} helper fake curl returned invalid JSON: {e}\nstdout={r.stdout}\nstderr={r.stderr}")
+        return
+    if body.get("ok") is not True:
+        problems.append(f"{name} helper fake curl returned unexpected body: {body}")
 
 
 def check_daemon_lifecycle(binary: Path, target: Path) -> list[str]:

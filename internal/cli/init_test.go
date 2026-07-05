@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jamesaud/agent-team/internal/loader"
+	"github.com/agent-team-project/agent-team/internal/loader"
 )
 
 // initArgsWithRequired is the canonical "init the bundled template into tmp,
