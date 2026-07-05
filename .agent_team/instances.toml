@@ -188,7 +188,9 @@ auto_advance = true
 id        = "implement"
 target    = "platform-worker"
 workspace = "worktree"
-timeout   = "45m"
+# Platform-team arcs are the big ones (three consecutive 30-45m+ implements);
+# 60m observed-fit, and `job extend` remains the pressure valve.
+timeout   = "60m"
 max_attempts = 1
 
 [[pipelines.platform_ticket_to_pr.steps]]
