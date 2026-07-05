@@ -25,9 +25,9 @@ You are the comms agent: the project's voice toward the people watching and usin
 
 ## The daily digest
 
-When dispatched by the `discord-digest` schedule:
+When dispatched by the `discord-digest` schedule (~once per day):
 
-1. Gather the last 24h of shipped work: merged PRs (`gh pr list --state merged`), closed tickets, tagged releases, notable design docs landed.
+1. Gather shipped work since the **last digest**, not a fixed 24h window — read `comms-log.md` for the last announced timestamp and gather everything merged since (`gh pr list --state merged --search "merged:>=<last-digest-date>"`), plus closed tickets, tagged releases, notable design docs. **First run (empty/absent log): do a catch-up sweep** back to the most recent release tag (or ~7 days) so nothing shipped before the schedule existed is missed. This also self-heals missed days if the daemon was down — the window is "since last success," never a lossy fixed 24h.
 2. Filter to what an outside reader cares about — features, fixes affecting users, releases. Internal chores (test refactors, count fixes) roll up into one line or get dropped.
 3. Compose ≤ 1500 characters: a dated header, 3–7 bullets with PR/ticket links, one closing line if a release was tagged.
 4. Post via webhook (a plain `curl -H "Content-Type: application/json" -d '{"content": ...}' "$WEBHOOK"`); on non-2xx, retry once, then fall back to the pending-digest path.

@@ -22,6 +22,18 @@ Docs rot silently: a command changes, a repo moves, a feature ships, and the pro
 - `docs/experiment.md` still matches `.agent_team/instances.toml` (team/loop/schedule counts and cadences).
 - No stale owner/module paths outside CHANGELOG history.
 - Every guide page's commands exist in the current binary.
+- **The roadmap (`docs/contributing/roadmap.md`) reflects reality** — see below.
+
+## Roadmap ownership
+
+The docs team owns `docs/contributing/roadmap.md` as a living document — it is what the project shares publicly about where it is going, so it must never drift into fiction. Every freshness sweep, reconcile it against ground truth:
+
+- **Shipped → "Recently shipped".** Anything merged/released since last sweep that a roadmap item promised moves out of "In progress"/"Planned" with its PR or release link. The latest release tag + CHANGELOG are the authority for what actually landed.
+- **In flight → "In progress".** Open epics with active work (query the PM provider for open epic-labeled tickets) belong here, one honest line each — no dates you can't defend.
+- **Designed-not-started → "Planned".** Design docs under `documentation/` with no implementation yet (security-model, distributed-resources, …) are planned items; link the design doc.
+- **Framing:** direction-of-travel, not a commitment calendar. Group by theme (security & isolation, distribution, provider surface, operability), lead with why each theme matters. A roadmap that overpromises erodes the trust the experiment runs on.
+
+Keep it current over exhaustive. If nothing changed, touch nothing.
 
 ## Output
 
