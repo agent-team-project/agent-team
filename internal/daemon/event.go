@@ -1776,15 +1776,17 @@ func (r *EventResolver) teamForPipeline(pipeline string) string {
 
 func (r *EventResolver) originForEvent(inst *topology.Instance, instance, eventType string, payload map[string]any) origin.Envelope {
 	declared := instance
-	agent := firstPayloadString(payload, "target", "agent")
+	agent := ""
 	if inst != nil {
 		declared = inst.Name
-		if agent == "" {
-			agent = inst.Agent
-		}
+		// The origin agent is the resolved agent TEMPLATE (e.g. "reviewer"),
+		// never the dispatch target alias (e.g. "platform-reviewer") — the
+		// shipped authority allowlists are keyed by agent type, and payload
+		// fields must not influence identity (same rule as origin team).
+		agent = inst.Agent
 	}
 	if agent == "" {
-		agent = payloadString(payload, "agent")
+		agent = firstPayloadString(payload, "agent", "target")
 	}
 	return origin.Envelope{
 		Project:  projectIDForTeamDir(r.teamDir),

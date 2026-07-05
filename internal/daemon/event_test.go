@@ -2588,6 +2588,52 @@ pipelines = ["ticket_to_pr"]
 	}
 }
 
+func TestEvent_OriginAgentIsResolvedTemplateNotTargetAlias(t *testing.T) {
+	// SQU-92 round-3 finding: a declared instance alias (platform-reviewer)
+	// must stamp origin.agent with its resolved agent template (reviewer) so
+	// agent-type-keyed authority allowlists apply; payload target is not
+	// identity.
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	writeFixtureAgent(t, teamDir, "reviewer")
+	top := mustParseCustomTopo(t, `
+[instances.platform-reviewer]
+agent = "reviewer"
+ephemeral = true
+
+[[instances.platform-reviewer.triggers]]
+event = "agent.dispatch"
+match.target = "platform-reviewer"
+
+[teams.platform]
+instances = ["platform-reviewer"]
+`)
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+
+	result, err := resolver.EventWithResult(topology.EventAgentDispatch, map[string]any{
+		"target":  "platform-reviewer",
+		"name":    "platform-reviewer-x1",
+		"kickoff": "review something",
+	})
+	if err != nil {
+		t.Fatalf("EventWithResult: %v", err)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Action != "dispatched" {
+		t.Fatalf("outcomes = %+v", result.Outcomes)
+	}
+	meta, err := ReadMetadata(root, "platform-reviewer-x1")
+	if err != nil {
+		t.Fatalf("metadata: %v", err)
+	}
+	if meta.Origin.Agent != "reviewer" || meta.Origin.Team != "platform" {
+		t.Fatalf("origin = %+v, want agent=reviewer team=platform", meta.Origin)
+	}
+	_, _ = m.Stop("platform-reviewer-x1")
+	_ = m.WaitForReaper("platform-reviewer-x1", 5*time.Second)
+}
+
 func TestEvent_PipelineDispatchOriginIgnoresPayloadTeam(t *testing.T) {
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)
