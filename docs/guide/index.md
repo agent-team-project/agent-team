@@ -54,7 +54,7 @@ The system is now more than a launcher. The main layers are:
    - Channels provide file-backed pub/sub for shared coordination.
 
 7. **Board control plane**
-   - Linear status-change intake can route tickets by board column.
+   - Linear and GitHub Projects status-change intake can route tickets by board column.
    - Pipelines can write best-effort Linear state changes back to the ticket.
    - Re-entry and agent-authored webhook loops are guarded by explicit config.
 
@@ -88,10 +88,10 @@ agent-team init
 agent-team daemon start
 agent-team job create "fix the flaky login test" --dispatch --workspace worktree
 agent-team job show <job-id> --events all
-agent-team logs --job <job-id> --follow
+agent-team job logs <job-id> --follow
 ```
 
-Add Linear later by setting `[team].pm_tool = "linear"` plus `[linear].team_id`
+Add Linear later by setting `[pm].provider = "linear"` plus `[linear].team_id`
 and `[linear].ticket_prefix`, or pass those values during init. See the
 [Quickstart](./quickstart.md) for both paths.
 

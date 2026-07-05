@@ -130,7 +130,7 @@ agent-team extend worker-squ-42 --by 30m
 Use retry commands for failed dispatch or failed pipeline steps:
 
 ```sh
-agent-team job retry squ-42 --dry-run --dispatch
+agent-team job reopen squ-42 --dry-run --dispatch
 agent-team pipeline retry ticket_to_pr --dry-run --dispatch --preview-routes
 agent-team repair --retry-pipelines --dry-run --preview-routes
 ```

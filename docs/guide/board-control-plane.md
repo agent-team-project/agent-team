@@ -9,8 +9,8 @@ the intentional gesture for starting the default ticket-to-PR pipeline.
 Opt in during `init` or edit `.agent_team/config.toml`:
 
 ```toml
-[team]
-pm_tool = "linear"
+[pm]
+provider = "linear"
 
 [linear]
 team_id = "00000000-0000-0000-0000-000000000000"
@@ -23,7 +23,8 @@ in_progress_state = "In Progress"
 
 `linear.team_id` and `linear.ticket_prefix` are required in Linear mode.
 `linear.agent_column` names the status column that dispatches work. The
-template default is `Ready for Agent`.
+template default is `Ready for Agent`. Legacy configs may still carry
+`[team].pm_tool = "linear"`, but new setup should use `[pm].provider`.
 
 ## Configure GitHub Mode
 
