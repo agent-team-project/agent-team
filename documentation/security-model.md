@@ -37,6 +37,15 @@ Open question the probe answers first: does `workspace-write` break the worker f
 - `env_allow = ["PATTERN", ...]` per instance: the launch env is filtered to the allowlist plus daemon-required vars (`AGENT_TEAM_*`). A reviewer gets no Linear key; the auditor gets nothing but its own state. Inverts today's strip-listed *denylist* into an allowlist for opted-in instances.
 - Log redaction at capture: scrub known secret shapes (the strip-list values, common token patterns) from child logs before they persist. Best-effort, but closes the accidental-print channel.
 
+### L2b — control-plane / workspace split (the shared-`.agent_team` problem)
+
+Today everything writes to one `.agent_team/` tree: the daemon's control plane (`jobs/`, `daemon/`, queue, mailbox, lock ledger, budget allocations) sits *beside* per-instance scratch (`state/<instance>/`), and every agent process can write all of it as the same user. So a worker isn't just able to edit its own worktree — it can rewrite another job's record, drain a queue, or forge a gate. Worktree isolation protects the *source tree*; it does nothing for the control plane. Two moves, cheapest first:
+
+- **The daemon owns the control plane; agents reach it only through the API.** Agents already talk to the daemon over the unix socket for dispatch/gate/mailbox — the direct-filesystem paths into `jobs/`/`daemon/` are the ones to close. An agent's *filesystem* write surface shrinks to its own `state/<instance>/` and its worktree; everything durable and shared goes through authority-checked API verbs (which L1 already gates). This makes the CLI-surface concern and the directory concern the *same* fix: once the only way to mutate a job is an authority-checked verb, an unfiltered CLI can't do damage a filtered API wouldn't, and a rogue file write has nowhere to land.
+- **OS-level backing (L2 sandbox).** `sandbox = "workspace"` then makes the filesystem *enforce* what the API design intends — the worker literally cannot write outside its worktree + state dir, so the split is guaranteed, not just conventional.
+
+Sequencing note: this is why the sandbox probe (SQU-120) is the keystone — it measures whether `workspace-write` can hold while the agent still reaches the daemon socket. If yes, L1 (authority) + L2 (sandbox) + L2b (control-plane split) compose into real isolation; the CLI allowlist (SQU-123) is then defense-in-depth, not the only wall.
+
 ### L4 — untrusted-input profiles
 
 Any instance whose job includes reading public content (community triage, comms intake) declares `input = "untrusted"`:
