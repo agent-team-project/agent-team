@@ -66,3 +66,15 @@ Same as scoping: measure first (audit/probe), enforce second, default-on for new
 3. `sandbox = "workspace"` for workers/reviewers, informed by the probe.
 4. Untrusted-input profile before community triage goes live.
 5. Log redaction; authority enforcement graduation; containers + egress last.
+
+## Prior art & adopted decisions (research synthesis, 2026-07-05)
+
+From a prior-art review (SPIFFE/SPIRE, systemd credentials, k8s SA/RBAC, Vault, capability systems, OPA/Cedar, MCP security guidance, CaMeL/dual-LLM, Copilot/Codex-cloud agent postures), five decisions, cheap→dear:
+
+1. **Identity: the instance secret leaves env.** Daemon mints a 256-bit per-instance token at spawn, delivered as a 0600 file in the instance's private state dir (systemd-credentials shape) — env keeps only non-secret labels (`AGENT_TEAM_*`). Socket connects present the token; the daemon cross-checks `SO_PEERCRED`/`getpeereid` (kernel-attested locality; can't be the sole identity since all agents share a UID). Graduate to SPIFFE/SPIRE only if we go multi-host.
+2. **Secrets: broker, don't distribute.** The daemon holds provider keys (Linear/GitHub/PM); agents get narrow daemon verbs (create_ticket, open_pr, comment) and provider keys are stripped from agent env entirely. Our socket+verb API already is a capability broker — this extends it. Also the confused-deputy fix: the daemon, not the agent, decides may-X-call-Y. Vault only when downstream creds must reach agent processes and multiply.
+3. **Authz: capabilities over roles.** The per-instance token carries a narrow verb-set; managers hand spawned workers an attenuated (strictly-subset) capability. Enforced at the socket boundary. Hand-rolled allowlists stay right-sized; embedded Cedar (not OPA) only if policy ever becomes relational.
+4. **Untrusted input: reader/actor split (structural, not prompt-level).** The instance reading public issues holds no credentialed write verbs and emits a fixed-schema, size-capped summary; a separate privileged instance acts on the summary and never sees raw issue text. Never co-locate private-data access + untrusted content + egress in one instance (the lethal trifecta). Agent-emitted text bound for credentialed sinks is data, never instructions. Apply only on the untrusted path — trusted-internal flows stay loose (security here costs agent generality; CaMeL measures ~7pt task loss).
+5. **Audit→enforce, per-verb.** Gatekeeper's dryrun→warn→deny ladder: keep structured decision logs, flip each verb to enforce once its deny-set is stable. No policy engine needed at this stage.
+
+Validating context from industry: Copilot's cloud agent uses separate agent-scoped secrets, read-only repos, `copilot/*`-branch-scoped pushes and still got injection-tricked via a crafted issue; Codex cloud ships egress-off-by-default with allowlists that have demonstrated exfil paths. Everyone converges on scoped-creds + branch-scoped writes + egress control **plus** the reader/actor boundary — no one trusts prompt-level defense alone.
