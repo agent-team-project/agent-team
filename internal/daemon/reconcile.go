@@ -308,6 +308,11 @@ func launchDeclaredFreshWithPrompt(teamDir string, m *InstanceManager, topo *top
 		env = snapshotEnv
 		envComplete = true
 	}
+	if tokenFile, err := EnsureInstanceToken(teamDir, inst.Name); err != nil {
+		return nil, false, fmt.Errorf("restart: daemon token: %w", err)
+	} else {
+		env = mergeEnv(env, []string{DaemonTokenFileEnv + "=" + tokenFile})
+	}
 	otelCtx := runtimeotel.Context{
 		Agent:    inst.Agent,
 		Instance: inst.Name,

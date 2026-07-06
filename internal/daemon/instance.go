@@ -303,6 +303,10 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dispatch: launch env: %w", err)
 	}
+	env, err = m.withMintedInstanceTokenEnv(in.Name, env)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch: daemon token: %w", err)
+	}
 	stdin := dispatchStdin(rt, in)
 	proc, err := m.spawner(args, env, in.Workspace, logPath, logPath, stdin)
 	if err != nil {
@@ -1466,6 +1470,10 @@ func (m *InstanceManager) launchPrepared(in DispatchInput, expected *Metadata) (
 	if err != nil {
 		return nil, false, fmt.Errorf("dispatch: launch env: %w", err)
 	}
+	env, err = m.withMintedInstanceTokenEnv(in.Name, env)
+	if err != nil {
+		return nil, false, fmt.Errorf("dispatch: daemon token: %w", err)
+	}
 	stdin := dispatchStdin(rt, in)
 
 	m.mu.Lock()
@@ -1571,9 +1579,11 @@ func (m *InstanceManager) startEnvWithOTelArgs(instance string) ([]string, []str
 	}
 	if ok {
 		out, codexArgs := m.applyCurrentOTelConfigWithArgs(instance, env)
-		return out, codexArgs, nil
+		out, err = m.withInstanceTokenEnv(instance, out)
+		return out, codexArgs, err
 	}
-	return os.Environ(), nil, nil
+	out, err := m.withInstanceTokenEnv(instance, os.Environ())
+	return out, nil, err
 }
 
 // applyCurrentOTelConfig reconciles a persisted launch env with the repo's
@@ -1645,6 +1655,22 @@ func (m *InstanceManager) launchPreparedEnv(instance string, overlay []string, c
 		env = runtimeotel.StripOwnedEnv(env)
 	}
 	return filterEnvAllow(mergeEnv(env, overlay), envAllow)
+}
+
+func (m *InstanceManager) withInstanceTokenEnv(instance string, env []string) ([]string, error) {
+	tokenPath, err := EnsureInstanceToken(filepath.Dir(m.daemonRoot), instance)
+	if err != nil {
+		return nil, err
+	}
+	return mergeEnv(env, []string{DaemonTokenFileEnv + "=" + tokenPath}), nil
+}
+
+func (m *InstanceManager) withMintedInstanceTokenEnv(instance string, env []string) ([]string, error) {
+	tokenPath, err := MintInstanceToken(filepath.Dir(m.daemonRoot), instance)
+	if err != nil {
+		return nil, err
+	}
+	return mergeEnv(env, []string{DaemonTokenFileEnv + "=" + tokenPath}), nil
 }
 
 func mergeEnv(base, overlay []string) []string {

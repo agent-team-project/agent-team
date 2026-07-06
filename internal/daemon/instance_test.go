@@ -400,6 +400,49 @@ func TestInstance_DispatchPersistsLaunchEnvSnapshot(t *testing.T) {
 	waitForStatusNot(t, m, "worker-squ-1", StatusRunning)
 }
 
+func TestInstance_DispatchExportsTokenFileButNotTokenValue(t *testing.T) {
+	root := t.TempDir()
+	teamDir := filepath.Dir(root)
+	fake := newFakeSpawner(2 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+
+	if _, err := m.Dispatch(DispatchInput{
+		Agent:     "worker",
+		Name:      "worker-token",
+		Prompt:    "hello",
+		Workspace: t.TempDir(),
+		Env:       []string{"MARKER=dispatch"},
+	}); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	tokenPath := InstanceTokenPath(teamDir, "worker-token")
+	token, err := ReadTokenFile(tokenPath)
+	if err != nil {
+		t.Fatalf("ReadTokenFile: %v", err)
+	}
+	env := fake.lastEnv()
+	if got := lastEnvValue(env, DaemonTokenFileEnv); got != tokenPath {
+		t.Fatalf("%s = %q, want %q in %+v", DaemonTokenFileEnv, got, tokenPath, env)
+	}
+	if strings.Contains(strings.Join(env, "\n"), token) {
+		t.Fatalf("child env leaked daemon token value: %+v", env)
+	}
+	snapshot, err := ReadInstanceLaunchEnv(root, "worker-token")
+	if err != nil {
+		t.Fatalf("ReadInstanceLaunchEnv: %v", err)
+	}
+	if got := lastEnvValue(snapshot.Env, DaemonTokenFileEnv); got != tokenPath {
+		t.Fatalf("snapshot %s = %q, want %q in %+v", DaemonTokenFileEnv, got, tokenPath, snapshot.Env)
+	}
+	if strings.Contains(strings.Join(snapshot.Env, "\n"), token) {
+		t.Fatalf("snapshot env leaked daemon token value: %+v", snapshot.Env)
+	}
+	if _, err := m.Stop("worker-token"); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	waitForStatusNot(t, m, "worker-token", StatusRunning)
+}
+
 func TestInstance_DispatchEnvAllowFiltersChildEnvAndSnapshot(t *testing.T) {
 	t.Setenv("SAFE_FOR_ENV_ALLOW", "from-parent")
 	t.Setenv("SECRET_FOR_ENV_ALLOW", "must-not-leak")
