@@ -299,6 +299,115 @@ event        = "agent.dispatch"
 match.target = "comms"
 
 
+# The release lane is manual-only: no schedule or PM-column trigger starts it.
+# Operators start it explicitly, for example:
+#   agent-team pipeline run release v0.5.0 --id release-v0.5.0 --dispatch
+[instances.release-worker]
+agent         = "worker"
+ephemeral     = true
+replicas      = 1
+reap_worktree = "on_merge"
+token_budget  = "40M"
+time_budget   = "45m"
+description   = "Release-lane worker for changelog/version prep, verification, tag shipping, and asset checks."
+
+[[instances.release-worker.triggers]]
+event        = "agent.dispatch"
+match.target = "release-worker"
+
+[pipelines.release]
+trigger.event = "release.requested"
+auto_advance  = true
+redispatch_on_reentry = false
+reap_worktree = "on_merge"
+
+[[pipelines.release.steps]]
+id           = "prepare"
+label        = "Prepare"
+target       = "release-worker"
+workspace    = "worktree"
+timeout      = "45m"
+token_budget = "40M"
+time_budget  = "45m"
+max_attempts = 1
+instructions = """
+Use the release skill. Draft the changelog from merged PRs since the last tag,
+bump release/version references for the requested version, and open or update
+the release PR. Include the API-cleanup sweep gate (SQU-138 in the agent-team
+board) as done, blocking, or explicitly deferred before this step is marked
+done. Do not tag or publish.
+"""
+
+[[pipelines.release.steps]]
+id           = "verify"
+label        = "Verify"
+target       = "release-worker"
+after        = ["prepare"]
+workspace    = "worktree"
+timeout      = "45m"
+token_budget = "40M"
+time_budget  = "45m"
+max_attempts = 1
+instructions = """
+Use the release skill. Run the release verification gate against the release PR:
+GoReleaser snapshot dry-run, the full repository suite, smoke, generated CLI
+docs check, and docs build. Record every gate result on the job. Do not tag or
+publish.
+"""
+
+[[pipelines.release.steps]]
+id           = "approve"
+label        = "Approve"
+target       = "manager"
+after        = ["verify"]
+gate         = "manual"
+timeout      = "30m"
+token_budget = "10M"
+time_budget  = "30m"
+instructions = """
+Manual release decision. Read the release PR, changelog, SQU-138 gate status,
+and verify-step gate ledger. If approved, merge the release PR into main and
+mark this step done/advance so ship can tag exactly what was approved. If not
+approved, leave the job held or reject with the reason.
+"""
+
+[[pipelines.release.steps]]
+id           = "ship"
+label        = "Ship"
+target       = "release-worker"
+after        = ["approve"]
+workspace    = "worktree"
+timeout      = "45m"
+token_budget = "40M"
+time_budget  = "45m"
+max_attempts = 1
+instructions = """
+Use the release skill. After approval has merged the release PR, fetch main,
+create and push the release tag, watch the GitHub release workflow, then verify
+the four platform tarball assets are downloadable from the GitHub release and
+emit the daemon self-upgrade checklist. Do not draft or post the public
+announcement from this step.
+"""
+
+[[pipelines.release.steps]]
+id           = "announce"
+label        = "Announce"
+target       = "comms"
+after        = ["ship"]
+workspace    = "repo"
+timeout      = "30m"
+token_budget = "15M"
+time_budget  = "30m"
+max_attempts = 1
+instructions = """
+Use the release skill and existing comms digest machinery in release-announcement
+mode. Draft the release announcement from the merged changelog and GitHub
+release notes, then deliver only through the sanctioned webhook path; if the
+webhook is unavailable, write the pending announcement and notify the supervisor.
+Never post through worker-owned automation or a user account.
+"""
+
+
 [instances.docs-writer]
 agent        = "worker"
 ephemeral    = true
@@ -330,6 +439,11 @@ kind = "docs_freshness"
 description = "Public relations: community digests, announcements, discussions, outward feedback intake."
 instances   = ["comms"]
 schedules   = ["discord-digest"]
+
+[teams.release]
+description = "Manual release train: prepare, verify, approve, tag, asset-check, and announce."
+instances   = ["release-worker", "manager", "comms"]
+pipelines   = ["release"]
 
 [teams.docs]
 description = "Documentation: README/guide/narrative authoring on the claude runtime, plus a weekly freshness audit against the shipped binary and latest release."
