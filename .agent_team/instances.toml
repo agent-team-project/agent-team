@@ -277,6 +277,7 @@ match.kind = "harness_review"
 # incident feedback immediately. See the sentinel skill.
 [schedules.sentinel]
 every = "6h"
+run_on_start = true
 
 [schedules.sentinel.payload]
 kind = "sentinel"
