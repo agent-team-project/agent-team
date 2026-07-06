@@ -26,7 +26,7 @@ func TestBudgetStatusCommandReportsConfiguredTeam(t *testing.T) {
 tokens_per_day = 200
 jobs_in_flight = 2
 `)
-	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 	used := writeUsageJobForTest(t, teamDir, "SQU-103", usage.Record{
 		Instance:        "worker-squ-103",
 		TokensAvailable: true,
