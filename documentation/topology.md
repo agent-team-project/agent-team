@@ -232,6 +232,8 @@ channel write/read maps to, while authority allowlists audit write verbs.
 | `ephemeral` | no | `false` | If `true`, spawn-on-trigger and exit on completion. If `false`, brought up by `agent-team start`, runs until stopped. |
 | `restart` | no | `never` | Reconcile relaunch policy for persistent instances: `never`, `on-failure`, or `always`. |
 | `brief` | no | persistent: `true`; ephemeral: `false` | Generate `<state-dir>/brief.md` and inject it into fresh launches / managed resumes. Set `false` to opt a persistent instance out. |
+| `runtime` | no | repo default | Runtime default for this declared instance. Supported values are `"claude"` and `"codex"`. Operator `--runtime` dispatch flags override it. |
+| `runtime_bin` | no | runtime default | Runtime binary or wrapper default for this declared instance. Operator `--runtime-bin` dispatch flags override it. |
 | `description` | no | empty | Human-readable. Shown in `instance ps`. |
 | `config.<dotted.key>` | no | — | Override values for the resolved per-instance config (layers between repo and CLI flags). Same dotted-key syntax as parameter declarations in `template.toml`. |
 | `locks` | no | empty | Named dispatch locks this instance's ephemeral children hold until exit. References must exist under `[locks]`. |

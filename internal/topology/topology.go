@@ -95,6 +95,8 @@ type Instance struct {
 	Name        string
 	Agent       string
 	Ephemeral   bool
+	Runtime     string
+	RuntimeBin  string
 	Description string
 	// Locks names dispatch locks held while this instance's ephemeral child runs.
 	Locks []string
@@ -678,6 +680,8 @@ type rawTopology struct {
 type rawInstance struct {
 	Agent          string           `toml:"agent"`
 	Ephemeral      bool             `toml:"ephemeral"`
+	Runtime        any              `toml:"runtime"`
+	RuntimeBin     any              `toml:"runtime_bin"`
 	Description    string           `toml:"description"`
 	Locks          []string         `toml:"locks"`
 	Replicas       *int             `toml:"replicas"`
@@ -910,6 +914,14 @@ func finaliseInstance(name string, ri *rawInstance) (*Instance, error) {
 		// author either fixes the config or marks the instance ephemeral.
 		return nil, fmt.Errorf("instance %q: replicas only valid on ephemeral instances", name)
 	}
+	runtime, err := parseStepRuntime(ri.Runtime)
+	if err != nil {
+		return nil, fmt.Errorf("instance %q: %w", name, err)
+	}
+	runtimeBin, err := parseStepText(ri.RuntimeBin, "runtime_bin")
+	if err != nil {
+		return nil, fmt.Errorf("instance %q: %w", name, err)
+	}
 	reapWorktree, err := worktreepolicy.Normalize(ri.ReapWorktree)
 	if err != nil {
 		return nil, fmt.Errorf("instance %q: %w", name, err)
@@ -953,6 +965,8 @@ func finaliseInstance(name string, ri *rawInstance) (*Instance, error) {
 		Name:           name,
 		Agent:          ri.Agent,
 		Ephemeral:      ri.Ephemeral,
+		Runtime:        runtime,
+		RuntimeBin:     runtimeBin,
 		Description:    ri.Description,
 		Locks:          locks,
 		Replicas:       replicas,
