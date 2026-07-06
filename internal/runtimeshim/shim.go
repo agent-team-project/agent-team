@@ -132,19 +132,38 @@ func installAgentTeamShim(binDir string, opts Options) error {
 }
 
 func resolveRealAgentTeam(explicit string) (string, error) {
+	exe, _ := os.Executable()
+	return resolveRealAgentTeamFrom(explicit, exe, exec.LookPath)
+}
+
+// resolveRealAgentTeamFrom is the testable core. The shim must exec the
+// agent-team CLI, never the agent-teamd daemon — critical because the daemon
+// itself installs shims, and os.Executable() there is agent-teamd. Matching by
+// prefix ("agent-team") wrongly accepts "agent-teamd"; we require an exact base
+// name and otherwise prefer the sibling agent-team binary shipped next to the
+// current executable.
+func resolveRealAgentTeamFrom(explicit, currentExe string, lookPath func(string) (string, error)) (string, error) {
 	if explicit = strings.TrimSpace(explicit); explicit != "" {
 		return explicit, validateExecutableFile(explicit)
 	}
-	if exe, err := os.Executable(); err == nil && strings.HasPrefix(filepath.Base(exe), "agent-team") {
-		return exe, validateExecutableFile(exe)
+	// Current executable is exactly the CLI (the `agent-team run` path).
+	if currentExe != "" && filepath.Base(currentExe) == "agent-team" {
+		return currentExe, validateExecutableFile(currentExe)
 	}
-	if path, err := exec.LookPath("agent-team"); err == nil {
-		return path, validateExecutableFile(path)
+	// Otherwise (daemon-installed shim: currentExe is agent-teamd) prefer the
+	// sibling agent-team binary — they are installed together.
+	if currentExe != "" {
+		sibling := filepath.Join(filepath.Dir(currentExe), "agent-team")
+		if validateExecutableFile(sibling) == nil {
+			return sibling, nil
+		}
 	}
-	if exe, err := os.Executable(); err == nil {
-		return exe, validateExecutableFile(exe)
+	if lookPath != nil {
+		if path, err := lookPath("agent-team"); err == nil {
+			return path, validateExecutableFile(path)
+		}
 	}
-	return "", fmt.Errorf("agent-team binary not found")
+	return "", fmt.Errorf("agent-team CLI binary not found (must not fall back to agent-teamd)")
 }
 
 func validateExecutableFile(path string) error {
