@@ -18,6 +18,7 @@ import (
 // resolve exactly as a real invocation would. Unknown commands exit non-zero.
 //
 // Output: the canonical verb path with segments joined by '.', e.g.
+//
 //	agent-team job merge squ-1   -> "job.merge"
 //	agent-team ls                -> "ps"
 //	agent-team run worker        -> "run"

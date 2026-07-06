@@ -40,7 +40,6 @@ var DefaultSpecs = []Spec{
 	{Command: "channel.sh", Skill: "channel", Script: filepath.Join("scripts", "channel.sh")},
 }
 
-
 func Install(root string, skillPaths map[string]string) (string, error) {
 	return InstallWithOptions(root, skillPaths, Options{})
 }
