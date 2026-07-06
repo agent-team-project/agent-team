@@ -44,6 +44,11 @@ func TestOrchestrationOTelPipelineExportsJobTrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read running job: %v", err)
 	}
+	seedPushedBranchArtifact(t, teamDir, "squ-974")
+	running, err = jobstore.Read(teamDir, "squ-974")
+	if err != nil {
+		t.Fatalf("read artifact job: %v", err)
+	}
 	running.PR = "https://github.com/acme/repo/pull/974"
 	if err := jobstore.Write(teamDir, running); err != nil {
 		t.Fatalf("record PR before review exits: %v", err)
@@ -219,6 +224,11 @@ target = "worker"
 	running, err := jobstore.Read(teamDir, "squ-976")
 	if err != nil {
 		t.Fatalf("read running job: %v", err)
+	}
+	seedPushedBranchArtifact(t, teamDir, "squ-976")
+	running, err = jobstore.Read(teamDir, "squ-976")
+	if err != nil {
+		t.Fatalf("read artifact job: %v", err)
 	}
 	running.PR = "https://github.com/acme/repo/pull/976"
 	if err := jobstore.Write(teamDir, running); err != nil {

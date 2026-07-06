@@ -66,6 +66,12 @@ const (
 	budgetDrainPollInterval = time.Second
 )
 
+const (
+	deliveryContractBranch     = "branch"
+	deliveryContractPR         = "pr"
+	deliveryContractTicketToPR = "ticket_to_pr"
+)
+
 // EventResolver routes inbound events to declared instances per the topology.
 // Persistent instances receive a JSON-encoded event payload via mailbox
 // (the inbox skill drains it on the agent side). Ephemeral instances spawn
@@ -323,8 +329,12 @@ func (r *EventResolver) actuatePipeline(pipeline *topology.Pipeline, eventType s
 	}
 	j.Kind = payloadJobKind(payload)
 	j.Steps = pipelineJobSteps(pipeline)
+	j.DeliveryContract = pipelineDeliveryArtifactContract(pipeline)
 	jobstore.SetImplementationAgentFromSteps(j)
 	applyProbeProfileToPipelineJob(j)
+	if jobIsProbe(j) {
+		j.DeliveryContract = ""
+	}
 	pipelineEvent := "pipeline_created"
 	if existing, err := jobstore.Read(r.teamDir, j.ID); err == nil {
 		if canAdoptDirectPipelineDispatch(pipeline, existing, directOutcomes) {
@@ -469,6 +479,11 @@ func hydratePipelineJob(j *jobstore.Job, pipeline *topology.Pipeline, payload ma
 	if kind := payloadJobKind(payload); kind != "" {
 		j.Kind = kind
 	}
+	if jobIsProbe(j) {
+		j.DeliveryContract = ""
+	} else if contract := pipelineDeliveryArtifactContract(pipeline); contract != "" {
+		j.DeliveryContract = contract
+	}
 	if pipeline.ReapWorktree != worktreepolicy.Never && strings.TrimSpace(j.ReapWorktree) == "" {
 		j.ReapWorktree = pipeline.ReapWorktree
 	}
@@ -493,6 +508,7 @@ func resetPipelineJobForReentry(j *jobstore.Job, pipeline *topology.Pipeline, ev
 	j.Held = false
 	j.HoldReason = ""
 	j.HoldUntil = time.Time{}
+	j.DeliveryContract = pipelineDeliveryArtifactContract(pipeline)
 	j.Instance = ""
 	j.Branch = ""
 	j.Worktree = ""
@@ -501,6 +517,9 @@ func resetPipelineJobForReentry(j *jobstore.Job, pipeline *topology.Pipeline, ev
 	j.Steps = pipelineJobSteps(pipeline)
 	jobstore.SetImplementationAgentFromSteps(j)
 	applyProbeProfileToPipelineJob(j)
+	if jobIsProbe(j) {
+		j.DeliveryContract = ""
+	}
 	j.LastEvent = "reopened"
 	j.LastStatus = "reopened by pipeline re-entry"
 	j.UpdatedAt = now
@@ -540,6 +559,9 @@ func (r *EventResolver) dispatchPipelineStepWithDirectOutcomes(pipeline *topolog
 	if jobIsProbe(j) || payloadIsProbe(dispatchPayload) {
 		dispatchPayload["kind"] = jobstore.KindProbe
 		dispatchPayload["workspace"] = "repo"
+	}
+	if !payloadIsProbe(dispatchPayload) && payloadString(dispatchPayload, "workspace") == "" && strings.TrimSpace(step.Workspace) != "" {
+		dispatchPayload["workspace"] = strings.TrimSpace(step.Workspace)
 	}
 	if payloadString(dispatchPayload, "reap_worktree") == "" && pipeline.ReapWorktree != worktreepolicy.Never {
 		dispatchPayload["reap_worktree"] = pipeline.ReapWorktree
@@ -662,6 +684,7 @@ func pipelineJobSteps(pipeline *topology.Pipeline) []jobstore.Step {
 			Description:      step.Description,
 			Instructions:     step.Instructions,
 			Target:           step.Target,
+			Workspace:        step.Workspace,
 			Status:           status,
 			After:            append([]string(nil), step.After...),
 			Gate:             step.Gate,
@@ -1966,6 +1989,11 @@ func (r *EventResolver) upsertDispatchJob(payload map[string]any, instance strin
 	if pipeline := payloadString(payload, "pipeline"); pipeline != "" {
 		j.Pipeline = pipeline
 	}
+	if payloadIsProbe(payload) {
+		j.DeliveryContract = ""
+	} else if contract := payloadDeliveryArtifactContract(payload); contract != "" {
+		j.DeliveryContract = contract
+	}
 	if policy := payloadString(payload, "reap_worktree"); policy != "" {
 		if normalized, err := worktreepolicy.Normalize(policy); err == nil {
 			j.ReapWorktree = normalized
@@ -2882,7 +2910,16 @@ func (r *EventResolver) missingDeliveryArtifactReason(j *jobstore.Job, meta *Met
 	if r.jobHasDeliveryArtifact(j, meta) {
 		return ""
 	}
-	return "delivery artifact missing: expected a recorded PR, pushed branch, or non-empty committed diff before accepting done"
+	return "delivery artifact missing: expected an open PR, pushed branch, or non-empty committed diff before accepting done"
+}
+
+func MissingDeliveryArtifactReason(teamDir string, j *jobstore.Job, meta *Metadata) string {
+	r := &EventResolver{teamDir: teamDir}
+	return r.missingDeliveryArtifactReason(j, meta)
+}
+
+func DeliveryArtifactContract(j *jobstore.Job) string {
+	return deliveryArtifactContract(j)
 }
 
 func jobRequiresDeliveryArtifact(j *jobstore.Job) bool {
@@ -2899,11 +2936,19 @@ func deliveryArtifactContract(j *jobstore.Job) string {
 	if j == nil {
 		return ""
 	}
-	if strings.EqualFold(strings.TrimSpace(j.Pipeline), "ticket_to_pr") {
-		return "ticket_to_pr"
+	if jobIsProbe(j) {
+		return ""
 	}
-	if strings.TrimSpace(j.Branch) != "" || strings.TrimSpace(j.Worktree) != "" {
-		return "branch"
+	if contract := normalizeDeliveryArtifactContract(j.DeliveryContract); contract != "" {
+		return contract
+	}
+	if strings.EqualFold(strings.TrimSpace(j.Pipeline), deliveryContractTicketToPR) {
+		return deliveryContractTicketToPR
+	}
+	for _, step := range j.Steps {
+		if strings.EqualFold(strings.TrimSpace(step.Workspace), "worktree") {
+			return deliveryContractBranch
+		}
 	}
 	return ""
 }
@@ -2912,13 +2957,14 @@ func (r *EventResolver) jobHasDeliveryArtifact(j *jobstore.Job, meta *Metadata) 
 	if j == nil {
 		return false
 	}
-	if strings.TrimSpace(j.PR) != "" || (meta != nil && strings.TrimSpace(meta.PR) != "") {
-		return true
-	}
 	repoRoot := r.teamDirParent()
 	branch := strings.TrimSpace(j.Branch)
 	worktree := strings.TrimSpace(j.Worktree)
+	pr := strings.TrimSpace(j.PR)
 	if meta != nil {
+		if pr == "" {
+			pr = strings.TrimSpace(meta.PR)
+		}
 		if branch == "" {
 			branch = strings.TrimSpace(meta.Branch)
 		}
@@ -2926,10 +2972,77 @@ func (r *EventResolver) jobHasDeliveryArtifact(j *jobstore.Job, meta *Metadata) 
 			worktree = strings.TrimSpace(meta.Workspace)
 		}
 	}
+	if openPullRequestExists(repoRoot, worktree, pr) {
+		return true
+	}
 	if pushedBranchExists(repoRoot, worktree, branch) {
 		return true
 	}
 	return committedBranchDiffExists(repoRoot, worktree, branch)
+}
+
+func normalizeDeliveryArtifactContract(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case deliveryContractBranch:
+		return deliveryContractBranch
+	case deliveryContractPR:
+		return deliveryContractPR
+	case deliveryContractTicketToPR:
+		return deliveryContractTicketToPR
+	default:
+		return ""
+	}
+}
+
+func payloadDeliveryArtifactContract(payload map[string]any) string {
+	if payload == nil || payloadIsProbe(payload) {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(payloadString(payload, "pipeline")), deliveryContractTicketToPR) {
+		return deliveryContractTicketToPR
+	}
+	if firstPayloadString(payload, "pr_url", "pr") != "" {
+		return deliveryContractPR
+	}
+	if strings.EqualFold(payloadString(payload, "workspace"), "worktree") || strings.EqualFold(payloadString(payload, "isolation"), "worktree") {
+		return deliveryContractBranch
+	}
+	return ""
+}
+
+func pipelineDeliveryArtifactContract(pipeline *topology.Pipeline) string {
+	if pipeline == nil {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(pipeline.Name), deliveryContractTicketToPR) {
+		return deliveryContractTicketToPR
+	}
+	for _, step := range pipeline.Steps {
+		if strings.EqualFold(strings.TrimSpace(step.Workspace), "worktree") {
+			return deliveryContractBranch
+		}
+	}
+	return ""
+}
+
+func openPullRequestExists(repoRoot, worktree, pr string) bool {
+	pr = strings.TrimSpace(pr)
+	if pr == "" {
+		return false
+	}
+	dir := deliveryGitDir(repoRoot, worktree)
+	if dir == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "view", pr, "--json", "state", "--jq", ".state")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(string(out)), "OPEN")
 }
 
 func pushedBranchExists(repoRoot, worktree, branch string) bool {
@@ -3018,12 +3131,20 @@ func (r *EventResolver) notifyManagerMissingDeliveryArtifact(j *jobstore.Job, me
 	if meta != nil {
 		instance = strings.TrimSpace(meta.Instance)
 	}
+	NotifyManagerMissingDeliveryArtifact(r.mgr.daemonRoot, j, instance, reason)
+}
+
+func NotifyManagerMissingDeliveryArtifact(daemonRoot string, j *jobstore.Job, instance, reason string) {
+	if j == nil || strings.TrimSpace(daemonRoot) == "" {
+		return
+	}
+	instance = strings.TrimSpace(instance)
 	if instance == "" {
 		instance = "the instance"
 	}
-	body := fmt.Sprintf("Job %s was marked failed after %s exited cleanly: %s. Expected a PR, pushed branch, or committed diff before accepting done.",
+	body := fmt.Sprintf("Job %s was marked failed after %s exited cleanly: %s. Expected an open PR, pushed branch, or committed diff before accepting done.",
 		j.ID, instance, reason)
-	_ = AppendMessage(r.mgr.daemonRoot, "manager", &Message{From: "daemon", Body: body})
+	_ = AppendMessage(daemonRoot, "manager", &Message{From: "daemon", Body: body})
 }
 
 func (r *EventResolver) onTerminalMetadata(meta *Metadata) {

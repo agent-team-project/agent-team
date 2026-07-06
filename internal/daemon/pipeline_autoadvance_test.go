@@ -107,10 +107,7 @@ func TestEvent_PipelineAutoAdvanceDispatchesNextStep(t *testing.T) {
 	if j.Steps[1].Status != jobstore.StatusRunning || j.Steps[1].Instance != "reviewer-squ-92" {
 		t.Fatalf("review step = %+v, want running on reviewer-squ-92", j.Steps[1])
 	}
-	j.PR = "https://github.com/acme/repo/pull/999"
-	if err := jobstore.Write(teamDir, j); err != nil {
-		t.Fatalf("record PR before review exits: %v", err)
-	}
+	seedPushedBranchArtifact(t, teamDir, "squ-92")
 
 	// The reviewer's prompt (JSON-encoded payload) must carry the worker's output.
 	combined := strings.Join(fake.lastCall(), " ") + fake.lastStdin()
@@ -275,6 +272,57 @@ target = "worker"
 	}
 	if len(messages) != 1 || !strings.Contains(messages[0].Body, "squ-155") || !strings.Contains(messages[0].Body, "delivery artifact missing") {
 		t.Fatalf("manager messages = %+v, want missing-deliverable notification", messages)
+	}
+}
+
+func TestEvent_TicketToPRPipelineDoneWithBogusPRStillFails(t *testing.T) {
+	root := t.TempDir()
+	teamDir := autoAdvanceTeamDir(t)
+	top := mustParseCustomTopo(t, `
+[instances.worker]
+agent = "worker"
+ephemeral = true
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+auto_advance = true
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+`)
+
+	fake := newFakeSpawner(time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+	srv := httptest.NewServer(Handler(m, nil, resolver, teamDir))
+	defer srv.Close()
+
+	resp := mustPost(t, srv.URL+"/v1/event",
+		`{"type":"ticket.created","payload":{"ticket":"SQU-156","kickoff":"implement SQU-156","workspace":"repo"}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	j, err := jobstore.Read(teamDir, "squ-156")
+	if err != nil {
+		t.Fatalf("read running job: %v", err)
+	}
+	j.PR = "https://github.com/acme/repo/pull/999999"
+	if err := jobstore.Write(teamDir, j); err != nil {
+		t.Fatalf("write bogus PR: %v", err)
+	}
+	if err := m.WaitForReaper("worker-squ-156", 5*time.Second); err != nil {
+		t.Fatalf("wait worker reaper: %v", err)
+	}
+	j, err = jobstore.Read(teamDir, "squ-156")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if j.Status != jobstore.StatusFailed || j.LastEvent != "deliverable_missing" {
+		t.Fatalf("job = %+v, want failed deliverable_missing despite bogus PR URL", j)
 	}
 }
 
