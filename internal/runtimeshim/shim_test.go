@@ -2,6 +2,7 @@ package runtimeshim
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,7 +120,7 @@ func TestAgentTeamShimDeniesUnknownVerbEvenWithWildcard(t *testing.T) {
 	if code != 3 {
 		t.Fatalf("exit code = %d, want 3; stderr=%s", code, stderr)
 	}
-	if got := strings.TrimSpace(stderr); got != "agent-team shim: denied unknown verb future-dangerous-verb" {
+	if got := strings.TrimSpace(stderr); got != "agent-team shim: denied unknown verb" {
 		t.Fatalf("stderr = %q", got)
 	}
 	if _, err := os.Stat(calls); !errors.Is(err, os.ErrNotExist) {
@@ -134,7 +135,7 @@ func TestAgentTeamShimDeniesUnknownTopLevelVerbWithPositionals(t *testing.T) {
 	if code != 3 {
 		t.Fatalf("exit code = %d, want 3; stderr=%s", code, stderr)
 	}
-	if got := strings.TrimSpace(stderr); got != "agent-team shim: denied unknown verb future-dangerous-verb" {
+	if got := strings.TrimSpace(stderr); got != "agent-team shim: denied unknown verb" {
 		t.Fatalf("stderr = %q", got)
 	}
 	if _, err := os.Stat(calls); !errors.Is(err, os.ErrNotExist) {
@@ -142,14 +143,17 @@ func TestAgentTeamShimDeniesUnknownTopLevelVerbWithPositionals(t *testing.T) {
 	}
 }
 
-func TestAgentTeamShimDeniesUnknownSubverbUnderKnownGroup(t *testing.T) {
-	shim, _, calls := installEnforcingShim(t, []string{"*"})
+func TestAgentTeamShimDeniesGroupVerbOutsideAllowlist(t *testing.T) {
+	// `job <anything>` resolves to the runnable group `job` (Cobra help); under a
+	// narrow allowlist that does not grant `job`, it is denied — the allowlist
+	// gates the command that actually executes.
+	shim, _, calls := installEnforcingShim(t, []string{"job.gate.*:own"})
 
 	stderr, code := runShimExpectExit(t, shim, "job", "future-dangerous-verb")
 	if code != 3 {
 		t.Fatalf("exit code = %d, want 3; stderr=%s", code, stderr)
 	}
-	if got := strings.TrimSpace(stderr); got != "agent-team shim: denied unknown verb job.future-dangerous-verb" {
+	if got := strings.TrimSpace(stderr); got != "agent-team shim: denied verb job" {
 		t.Fatalf("stderr = %q", got)
 	}
 	if _, err := os.Stat(calls); !errors.Is(err, os.ErrNotExist) {
@@ -208,7 +212,13 @@ func installShim(t *testing.T, opts Options) (string, string, string) {
 	tmp := t.TempDir()
 	calls := filepath.Join(tmp, "calls.txt")
 	real := filepath.Join(tmp, "real-agent-team")
-	body := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shellQuote(calls) + "\n"
+	// The fake real-binary delegates `__resolve-verb` to the actually-built
+	// agent-team so verb resolution is exercised against the true Cobra tree
+	// (no stub table to drift); every other invocation is recorded, standing in
+	// for the real command running.
+	body := "#!/bin/sh\n" +
+		"if [ \"$1\" = __resolve-verb ]; then exec " + shellQuote(builtAgentTeam(t)) + " \"$@\"; fi\n" +
+		"printf '%s\\n' \"$*\" >> " + shellQuote(calls) + "\n"
 	if err := os.WriteFile(real, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +228,36 @@ func installShim(t *testing.T, opts Options) (string, string, string) {
 		t.Fatal(err)
 	}
 	return filepath.Join(bin, "agent-team"), real, calls
+}
+
+// builtAgentTeam returns the path to a real agent-team binary built once for the
+// whole test binary (see TestMain), so shim tests resolve verbs against the true
+// Cobra command tree rather than a stub table that could drift.
+func builtAgentTeam(t *testing.T) string {
+	t.Helper()
+	if builtAgentTeamPath == "" {
+		t.Fatal("agent-team not built; TestMain did not run")
+	}
+	return builtAgentTeamPath
+}
+
+var builtAgentTeamPath string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "runtimeshim-agent-team")
+	if err != nil {
+		panic(err)
+	}
+	out := filepath.Join(dir, "agent-team")
+	if b, err := exec.Command("go", "build", "-o", out, "github.com/agent-team-project/agent-team/cmd/agent-team").CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "build agent-team for shim tests: %v\n%s", err, b)
+		os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	builtAgentTeamPath = out
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func runShim(t *testing.T, shim string, args ...string) {
