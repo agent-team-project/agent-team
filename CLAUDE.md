@@ -134,6 +134,7 @@ Lead with a short summary of what changed and why. Link the ticket via `Closes h
 - Strong layer boundaries: CLI ↔ template ↔ vendored copy ↔ consumer extensions.
 - If a value would be hardcoded in a template file (UUID, label, path, ticket prefix), it goes in `.agent_team/config.toml` instead — declared as a `[[parameter]]` in the bundled `template/template.toml` and substituted via a `.tmpl` file. Extend the schema rather than embedding.
 - Runtime Go deps stay minimal — currently `cobra` + `BurntSushi/toml`.
+- Pre-v1: no backwards compatibility. Remove superseded APIs, flags, config keys, and wrapper functions outright — no deprecation shims, no dual paths. Each release ships the clean surface.
 
 If a PR doesn't meet this bar, it doesn't land.
 
