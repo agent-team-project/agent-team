@@ -2807,7 +2807,8 @@ func (r *EventResolver) reconcileEphemeralJobExit(meta *Metadata) {
 	if status == jobstore.StatusDone && jobIsProbe(j) {
 		message = "probe completed; report stored in last-message"
 	}
-	if reconcilePipelineStepExit(j, meta.Instance, status, now) {
+	completedStep := reconcilePipelineStepExit(j, meta.Instance, status, now)
+	if completedStep != nil {
 		if status == jobstore.StatusDone && !allPipelineStepsDone(j) {
 			j.Status = jobstore.StatusRunning
 			message = "completed pipeline step"
@@ -2816,6 +2817,19 @@ func (r *EventResolver) reconcileEphemeralJobExit(meta *Metadata) {
 		}
 	} else {
 		j.Status = status
+	}
+	deliverableMissing := false
+	if j.Status == jobstore.StatusDone {
+		if reason := r.missingDeliveryArtifactReason(j, meta); reason != "" {
+			status = jobstore.StatusFailed
+			j.Status = jobstore.StatusFailed
+			if completedStep != nil {
+				completedStep.Status = jobstore.StatusFailed
+			}
+			eventType = "deliverable_missing"
+			message = reason
+			deliverableMissing = true
+		}
 	}
 	j.LastEvent = eventType
 	j.LastStatus = message
@@ -2829,6 +2843,9 @@ func (r *EventResolver) reconcileEphemeralJobExit(meta *Metadata) {
 	}
 	if meta.ExitCode != nil {
 		data["exit_code"] = fmt.Sprint(*meta.ExitCode)
+	}
+	if deliverableMissing {
+		data["deliverable_contract"] = deliveryArtifactContract(j)
 	}
 	if released, err := budget.ReleaseJobInstanceAllocations(r.teamDir, j, meta.Instance, now); err != nil {
 		data["budget_release_error"] = err.Error()
@@ -2847,12 +2864,166 @@ func (r *EventResolver) reconcileEphemeralJobExit(meta *Metadata) {
 	if err := r.writeJobWithAudit(j, eventType, "daemon", message, data); err != nil {
 		return
 	}
+	if deliverableMissing {
+		r.notifyManagerMissingDeliveryArtifact(j, meta, message)
+	}
 
 	// Opt-in: dispatch the next ready step without waiting for a manual
 	// `agent-team pipeline tick`. Safe to call here — onReap has already released
 	// r.mu, and this reuses the normal dispatch path (which does its own locking).
 	r.tryAutoAdvancePipeline(j, meta, status)
 	r.autoReapJob(meta.Job, worktreepolicy.OnClose)
+}
+
+func (r *EventResolver) missingDeliveryArtifactReason(j *jobstore.Job, meta *Metadata) string {
+	if !jobRequiresDeliveryArtifact(j) {
+		return ""
+	}
+	if r.jobHasDeliveryArtifact(j, meta) {
+		return ""
+	}
+	return "delivery artifact missing: expected a recorded PR, pushed branch, or non-empty committed diff before accepting done"
+}
+
+func jobRequiresDeliveryArtifact(j *jobstore.Job) bool {
+	if j == nil || jobIsProbe(j) {
+		return false
+	}
+	if deliveryArtifactContract(j) != "" {
+		return true
+	}
+	return false
+}
+
+func deliveryArtifactContract(j *jobstore.Job) string {
+	if j == nil {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(j.Pipeline), "ticket_to_pr") {
+		return "ticket_to_pr"
+	}
+	if strings.TrimSpace(j.Branch) != "" || strings.TrimSpace(j.Worktree) != "" {
+		return "branch"
+	}
+	return ""
+}
+
+func (r *EventResolver) jobHasDeliveryArtifact(j *jobstore.Job, meta *Metadata) bool {
+	if j == nil {
+		return false
+	}
+	if strings.TrimSpace(j.PR) != "" || (meta != nil && strings.TrimSpace(meta.PR) != "") {
+		return true
+	}
+	repoRoot := r.teamDirParent()
+	branch := strings.TrimSpace(j.Branch)
+	worktree := strings.TrimSpace(j.Worktree)
+	if meta != nil {
+		if branch == "" {
+			branch = strings.TrimSpace(meta.Branch)
+		}
+		if worktree == "" {
+			worktree = strings.TrimSpace(meta.Workspace)
+		}
+	}
+	if pushedBranchExists(repoRoot, worktree, branch) {
+		return true
+	}
+	return committedBranchDiffExists(repoRoot, worktree, branch)
+}
+
+func pushedBranchExists(repoRoot, worktree, branch string) bool {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return false
+	}
+	dir := deliveryGitDir(repoRoot, worktree)
+	if dir == "" {
+		return false
+	}
+	out, ok := gitOutput(dir, "ls-remote", "--heads", "origin", "refs/heads/"+branch)
+	return ok && strings.TrimSpace(out) != ""
+}
+
+func committedBranchDiffExists(repoRoot, worktree, branch string) bool {
+	dir := deliveryGitDir(repoRoot, worktree)
+	if dir == "" {
+		return false
+	}
+	head := "HEAD"
+	if strings.TrimSpace(branch) != "" {
+		ref := "refs/heads/" + strings.TrimSpace(branch)
+		if _, ok := gitOutput(dir, "rev-parse", "--verify", ref+"^{commit}"); ok {
+			head = ref
+		}
+	}
+	for _, base := range []string{"origin/main", "origin/master", "main", "master"} {
+		if _, ok := gitOutput(dir, "rev-parse", "--verify", base+"^{commit}"); !ok {
+			continue
+		}
+		mergeBase, ok := gitOutput(dir, "merge-base", base, head)
+		if !ok {
+			continue
+		}
+		if gitDiffHasChanges(dir, strings.TrimSpace(mergeBase), head) {
+			return true
+		}
+	}
+	return false
+}
+
+func deliveryGitDir(repoRoot, worktree string) string {
+	for _, dir := range []string{strings.TrimSpace(worktree), strings.TrimSpace(repoRoot)} {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(dir); err == nil {
+			return dir
+		}
+	}
+	return ""
+}
+
+func gitOutput(dir string, args ...string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(out)), true
+}
+
+func gitDiffHasChanges(dir, base, head string) bool {
+	if strings.TrimSpace(base) == "" || strings.TrimSpace(head) == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "diff", "--quiet", base, head)
+	err := cmd.Run()
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
+}
+
+func (r *EventResolver) notifyManagerMissingDeliveryArtifact(j *jobstore.Job, meta *Metadata, reason string) {
+	if r == nil || r.mgr == nil || j == nil {
+		return
+	}
+	instance := ""
+	if meta != nil {
+		instance = strings.TrimSpace(meta.Instance)
+	}
+	if instance == "" {
+		instance = "the instance"
+	}
+	body := fmt.Sprintf("Job %s was marked failed after %s exited cleanly: %s. Expected a PR, pushed branch, or committed diff before accepting done.",
+		j.ID, instance, reason)
+	_ = AppendMessage(r.mgr.daemonRoot, "manager", &Message{From: "daemon", Body: body})
 }
 
 func (r *EventResolver) onTerminalMetadata(meta *Metadata) {
@@ -3111,9 +3282,9 @@ func (r *EventResolver) readInstanceFinalMessage(instance string) string {
 	return strings.TrimSpace(string(data))
 }
 
-func reconcilePipelineStepExit(j *jobstore.Job, instance string, status jobstore.Status, now time.Time) bool {
+func reconcilePipelineStepExit(j *jobstore.Job, instance string, status jobstore.Status, now time.Time) *jobstore.Step {
 	if j == nil || instance == "" {
-		return false
+		return nil
 	}
 	for i := range j.Steps {
 		step := &j.Steps[i]
@@ -3134,9 +3305,9 @@ func reconcilePipelineStepExit(j *jobstore.Job, instance string, status jobstore
 			step.RunningAt = step.StartedAt
 		}
 		step.FinishedAt = now
-		return true
+		return step
 	}
-	return false
+	return nil
 }
 
 func allPipelineStepsDone(j *jobstore.Job) bool {

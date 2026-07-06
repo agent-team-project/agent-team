@@ -1860,7 +1860,7 @@ func TestEvent_EphemeralJobExitAutoReapsWorktreeOnClose(t *testing.T) {
 		worktreecleanup.LiveProcessReferenceCheck = previousCheck
 	}()
 
-	fake := newFakeSpawner(time.Second)
+	fake := newFakeSpawner(3 * time.Second)
 	m := NewInstanceManager(root, fake.spawn)
 	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
 	srv := httptest.NewServer(Handler(m, nil, resolver, root))
@@ -1883,6 +1883,11 @@ func TestEvent_EphemeralJobExitAutoReapsWorktreeOnClose(t *testing.T) {
 	if _, err := os.Stat(worktreePath); err != nil {
 		t.Fatalf("worktree missing before stop: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(worktreePath, "deliverable.txt"), []byte("done\n"), 0o644); err != nil {
+		t.Fatalf("write deliverable: %v", err)
+	}
+	runGit(t, worktreePath, "add", "deliverable.txt")
+	runGit(t, worktreePath, "commit", "-m", "add deliverable")
 
 	if err := m.WaitForReaper("worker-squ-142", 5*time.Second); err != nil {
 		t.Fatalf("wait reaper: %v", err)
