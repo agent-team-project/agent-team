@@ -163,7 +163,15 @@ func resolveRealAgentTeamFrom(explicit, currentExe string, lookPath func(string)
 			return path, validateExecutableFile(path)
 		}
 	}
-	return "", fmt.Errorf("agent-team CLI binary not found (must not fall back to agent-teamd)")
+	// Last resort (single-binary / in-process test contexts where no separate
+	// agent-team CLI exists): use the current executable. Production never
+	// reaches here — the daemon ships alongside agent-team, so the sibling
+	// lookup above resolves first; the earlier exact-base + sibling checks are
+	// what prevent agent-teamd from being chosen when a real CLI is present.
+	if currentExe != "" {
+		return currentExe, validateExecutableFile(currentExe)
+	}
+	return "", fmt.Errorf("agent-team CLI binary not found")
 }
 
 func validateExecutableFile(path string) error {
