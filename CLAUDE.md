@@ -135,6 +135,7 @@ Lead with a short summary of what changed and why. Link the ticket via `Closes h
 - If a value would be hardcoded in a template file (UUID, label, path, ticket prefix), it goes in `.agent_team/config.toml` instead — declared as a `[[parameter]]` in the bundled `template/template.toml` and substituted via a `.tmpl` file. Extend the schema rather than embedding.
 - Runtime Go deps stay minimal — currently `cobra` + `BurntSushi/toml`.
 - Pre-v1: no backwards compatibility. Remove superseded APIs, flags, config keys, and wrapper functions outright — no deprecation shims, no dual paths. Each release ships the clean surface.
+- Pre-v1 this extends to STRUCTURE: wholesale repo/package restructures are fair game and encouraged when the architecture calls for it — flatten or split `internal/` packages, move the module path, reshape the on-disk `.agent_team` layout, relocate whole subsystems. Do not preserve a package boundary, directory, or file layout just because it exists. Land big restructures as their own reviewed PRs (mechanical move separate from behavior change where possible) so review stays tractable.
 
 If a PR doesn't meet this bar, it doesn't land.
 
