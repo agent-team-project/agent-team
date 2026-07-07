@@ -1,6 +1,8 @@
 package usage
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -62,5 +64,40 @@ func TestMergeRecordIsIdempotentByInstanceAndStart(t *testing.T) {
 	}
 	if len(u.Records) != 1 || u.Summary.InputTokens != 14 {
 		t.Fatalf("updated usage = %+v", u)
+	}
+}
+
+func TestCapturePreservesResourceURIs(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "codex.jsonl")
+	if err := os.WriteFile(logPath, []byte(`{"type":"turn.completed","usage":{"input_tokens":10}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 7, 7, 9, 0, 0, 0, time.UTC)
+	rec, err := Capture(CaptureInput{
+		Instance:            "worker-squ-156",
+		DeploymentURI:       "agt://dep/project/dep",
+		DeploymentParentURI: "agt://parent/project/parent",
+		InstanceURI:         "agt://dep/instance/worker-squ-156",
+		JobURI:              "agt://dep/job/squ-156",
+		WorkspaceURI:        "agt://dep/workspace/branch:squ-156-b347bce8",
+		Agent:               "worker",
+		Runtime:             "codex",
+		LogPath:             logPath,
+		SourceURI:           "agt://dep/log/worker-squ-156",
+		StartedAt:           started,
+		EndedAt:             started.Add(time.Second),
+		Now:                 started.Add(2 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if rec.URI != "agt://dep/usage/worker-squ-156#started_at=2026-07-07T09:00:00Z" ||
+		rec.DeploymentParentURI != "agt://parent/project/parent" ||
+		rec.InstanceURI != "agt://dep/instance/worker-squ-156" ||
+		rec.JobURI != "agt://dep/job/squ-156" ||
+		rec.WorkspaceURI != "agt://dep/workspace/branch:squ-156-b347bce8" ||
+		rec.SourceURI != "agt://dep/log/worker-squ-156" {
+		t.Fatalf("record URIs = %+v", rec)
 	}
 }

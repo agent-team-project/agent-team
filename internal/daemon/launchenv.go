@@ -11,21 +11,28 @@ import (
 	"time"
 
 	"github.com/agent-team-project/agent-team/internal/buildinfo"
+	"github.com/agent-team-project/agent-team/internal/resource"
 	"github.com/agent-team-project/agent-team/internal/runtimeotel"
 )
 
 // LaunchEnv is the daemon's boot-time process snapshot. Restart uses this to
 // decouple relaunch from the shell environment of the operator running restart.
 type LaunchEnv struct {
-	Bin        string         `json:"bin"`
-	Args       []string       `json:"args,omitempty"`
-	Dir        string         `json:"dir,omitempty"`
-	Env        []string       `json:"env,omitempty"`
-	Stripped   []string       `json:"stripped,omitempty"`
-	RecordedAt time.Time      `json:"recorded_at"`
-	PID        int            `json:"pid,omitempty"`
-	Version    int            `json:"version"`
-	Build      buildinfo.Info `json:"build,omitempty"`
+	URI                 string         `json:"uri,omitempty"`
+	DeploymentURI       string         `json:"deployment_uri,omitempty"`
+	DeploymentParentURI string         `json:"deployment_parent_uri,omitempty"`
+	InstanceURI         string         `json:"instance_uri,omitempty"`
+	WorkspaceURI        string         `json:"workspace_uri,omitempty"`
+	StateURI            string         `json:"state_uri,omitempty"`
+	Bin                 string         `json:"bin"`
+	Args                []string       `json:"args,omitempty"`
+	Dir                 string         `json:"dir,omitempty"`
+	Env                 []string       `json:"env,omitempty"`
+	Stripped            []string       `json:"stripped,omitempty"`
+	RecordedAt          time.Time      `json:"recorded_at"`
+	PID                 int            `json:"pid,omitempty"`
+	Version             int            `json:"version"`
+	Build               buildinfo.Info `json:"build,omitempty"`
 }
 
 var DefaultStrippedEnvKeys = []string{
@@ -134,6 +141,7 @@ func WriteLaunchEnv(daemonRoot string, le *LaunchEnv) error {
 		return fmt.Errorf("launch-env: mkdir: %w", err)
 	}
 	snapshot := sanitizedLaunchEnvSnapshot(le)
+	backfillLaunchEnvResourceURIs(daemonRoot, "", &snapshot)
 	body, err := json.MarshalIndent(&snapshot, "", "  ")
 	if err != nil {
 		return fmt.Errorf("launch-env: marshal: %w", err)
@@ -162,6 +170,7 @@ func WriteInstanceLaunchEnv(daemonRoot, instance string, le *LaunchEnv) error {
 		return fmt.Errorf("launch-env: mkdir: %w", err)
 	}
 	snapshot := sanitizedLaunchEnvSnapshot(le)
+	backfillLaunchEnvResourceURIs(daemonRoot, instance, &snapshot)
 	body, err := json.MarshalIndent(&snapshot, "", "  ")
 	if err != nil {
 		return fmt.Errorf("launch-env: marshal: %w", err)
@@ -196,6 +205,7 @@ func ReadLaunchEnv(daemonRoot string) (*LaunchEnv, error) {
 	if err := json.Unmarshal(body, &le); err != nil {
 		return nil, fmt.Errorf("launch-env: parse %s: %w", path, err)
 	}
+	backfillLaunchEnvResourceURIs(daemonRoot, "", &le)
 	return &le, nil
 }
 
@@ -211,7 +221,43 @@ func ReadInstanceLaunchEnv(daemonRoot, instance string) (*LaunchEnv, error) {
 	if err := json.Unmarshal(body, &le); err != nil {
 		return nil, fmt.Errorf("launch-env: parse %s: %w", path, err)
 	}
+	backfillLaunchEnvResourceURIs(daemonRoot, instance, &le)
 	return &le, nil
+}
+
+func backfillLaunchEnvResourceURIs(daemonRoot, instance string, le *LaunchEnv) {
+	if le == nil {
+		return
+	}
+	deployment, _ := resource.DeploymentFromTeamDir(filepath.Dir(daemonRoot))
+	deploymentID := strings.TrimSpace(deployment.ID)
+	if deploymentID == "" {
+		return
+	}
+	if le.DeploymentURI == "" {
+		le.DeploymentURI = deployment.URI
+	}
+	if le.DeploymentParentURI == "" {
+		le.DeploymentParentURI = deployment.ParentURI
+	}
+	if le.URI == "" {
+		le.URI = resource.LaunchEnvURI(deploymentID, instance)
+	}
+	if instance != "" {
+		if le.InstanceURI == "" {
+			le.InstanceURI = resource.InstanceURI(deploymentID, instance)
+		}
+		if le.StateURI == "" {
+			le.StateURI = resource.StateURI(deploymentID, instance)
+		}
+	}
+	if le.WorkspaceURI == "" {
+		if envURI := envValue(le.Env, "AGENT_TEAM_WORKSPACE_URI"); envURI != "" {
+			le.WorkspaceURI = envURI
+		} else {
+			le.WorkspaceURI = resource.WorkspaceURIFor(deploymentID, le.Dir, envValue(le.Env, "AGENT_TEAM_BRANCH"), envValue(le.Env, "AGENT_TEAM_JOB_ID"), instance)
+		}
+	}
 }
 
 func writeLaunchEnvFileAtomic(target string, body []byte) error {

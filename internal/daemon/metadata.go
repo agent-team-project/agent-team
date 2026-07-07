@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/agent-team-project/agent-team/internal/origin"
+	"github.com/agent-team-project/agent-team/internal/resource"
 	"github.com/agent-team-project/agent-team/internal/usage"
 )
 
@@ -28,19 +30,26 @@ const (
 // `.agent_team/daemon/<instance>/meta.json`. It is the source of truth on
 // daemon restart — the in-memory map is rebuilt from these files.
 type Metadata struct {
-	Instance      string          `json:"instance"`
-	Agent         string          `json:"agent"`
-	Job           string          `json:"job,omitempty"`
-	Ticket        string          `json:"ticket,omitempty"`
-	Branch        string          `json:"branch,omitempty"`
-	PR            string          `json:"pr,omitempty"`
-	Origin        origin.Envelope `json:"origin,omitempty"`
-	Runtime       string          `json:"runtime,omitempty"`
-	RuntimeBinary string          `json:"runtime_binary,omitempty"`
+	Instance            string          `json:"instance"`
+	URI                 string          `json:"uri,omitempty"`
+	SpecURI             string          `json:"spec_uri,omitempty"`
+	DeploymentURI       string          `json:"deployment_uri,omitempty"`
+	DeploymentParentURI string          `json:"deployment_parent_uri,omitempty"`
+	Agent               string          `json:"agent"`
+	Job                 string          `json:"job,omitempty"`
+	JobURI              string          `json:"job_uri,omitempty"`
+	Ticket              string          `json:"ticket,omitempty"`
+	Branch              string          `json:"branch,omitempty"`
+	PR                  string          `json:"pr,omitempty"`
+	Origin              origin.Envelope `json:"origin,omitempty"`
+	Runtime             string          `json:"runtime,omitempty"`
+	RuntimeBinary       string          `json:"runtime_binary,omitempty"`
 	// EffectiveRuntime is the delegated runtime whose logs expose usage data.
 	// Empty means Runtime is also the effective runtime.
 	EffectiveRuntime string        `json:"effective_runtime,omitempty"`
 	Workspace        string        `json:"workspace"`
+	WorkspaceURI     string        `json:"workspace_uri,omitempty"`
+	StateURI         string        `json:"state_uri,omitempty"`
 	PID              int           `json:"pid"`
 	SessionID        string        `json:"session_id,omitempty"`
 	StartedAt        time.Time     `json:"started_at"`
@@ -53,6 +62,7 @@ type Metadata struct {
 	ExitedAt         time.Time     `json:"exited_at,omitempty"`
 	Status           Status        `json:"status"`
 	LogPath          string        `json:"log_path,omitempty"`
+	LogURI           string        `json:"log_uri,omitempty"`
 	ExitCode         *int          `json:"exit_code,omitempty"`
 	Usage            *usage.Record `json:"usage,omitempty"`
 	Adopted          bool          `json:"adopted,omitempty"`
@@ -77,6 +87,7 @@ func WriteMetadata(daemonRoot string, m *Metadata) error {
 	if m.Instance == "" {
 		return errors.New("metadata: instance is required")
 	}
+	backfillMetadataResourceURIs(daemonRoot, m)
 	if err := os.MkdirAll(instanceDir(daemonRoot, m.Instance), 0o755); err != nil {
 		return fmt.Errorf("metadata: mkdir: %w", err)
 	}
@@ -118,6 +129,7 @@ func ReadMetadata(daemonRoot, instance string) (*Metadata, error) {
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, fmt.Errorf("metadata: parse %s: %w", instance, err)
 	}
+	backfillMetadataResourceURIs(daemonRoot, &m)
 	return &m, nil
 }
 
@@ -155,4 +167,64 @@ func ListMetadata(daemonRoot string) ([]*Metadata, error) {
 // daemon needs this for ephemeral cleanup.
 func RemoveInstance(daemonRoot, instance string) error {
 	return os.RemoveAll(instanceDir(daemonRoot, instance))
+}
+
+func backfillMetadataResourceURIs(daemonRoot string, m *Metadata) {
+	if m == nil {
+		return
+	}
+	deployment, _ := resource.DeploymentFromTeamDir(filepath.Dir(daemonRoot))
+	deploymentID := strings.TrimSpace(deployment.ID)
+	if deploymentID == "" {
+		return
+	}
+	if m.DeploymentURI == "" {
+		m.DeploymentURI = deployment.URI
+	}
+	if m.DeploymentParentURI == "" {
+		m.DeploymentParentURI = deployment.ParentURI
+	}
+	if m.URI == "" {
+		m.URI = resource.InstanceURI(deploymentID, m.Instance)
+	}
+	if m.SpecURI == "" {
+		m.SpecURI = m.URI
+	}
+	if m.Job != "" && m.JobURI == "" {
+		m.JobURI = resource.JobURI(deploymentID, m.Job)
+	}
+	if m.WorkspaceURI == "" {
+		m.WorkspaceURI = resource.WorkspaceURIFor(deploymentID, m.Workspace, m.Branch, m.Job, m.Instance)
+	}
+	if m.StateURI == "" {
+		m.StateURI = resource.StateURI(deploymentID, m.Instance)
+	}
+	if m.LogPath != "" && m.LogURI == "" {
+		m.LogURI = resource.LogURI(deploymentID, m.Instance)
+	}
+	m.Origin = m.Origin.WithResourceURIs()
+	if m.Usage != nil {
+		if m.Usage.DeploymentURI == "" {
+			m.Usage.DeploymentURI = m.DeploymentURI
+		}
+		if m.Usage.DeploymentParentURI == "" {
+			m.Usage.DeploymentParentURI = m.DeploymentParentURI
+		}
+		if m.Usage.InstanceURI == "" {
+			m.Usage.InstanceURI = m.URI
+		}
+		if m.Usage.JobURI == "" {
+			m.Usage.JobURI = m.JobURI
+		}
+		if m.Usage.WorkspaceURI == "" {
+			m.Usage.WorkspaceURI = m.WorkspaceURI
+		}
+		if m.Usage.SourceURI == "" {
+			m.Usage.SourceURI = m.LogURI
+		}
+		if m.Usage.URI == "" {
+			m.Usage.URI = resource.UsageURI(deploymentID, m.Usage.Instance, m.Usage.StartedAt)
+		}
+		m.Usage.Origin = m.Usage.Origin.WithResourceURIs()
+	}
 }

@@ -627,6 +627,86 @@ func TestEvent_EphemeralDispatchUsesRequestedChildName(t *testing.T) {
 	}
 }
 
+func TestEvent_EphemeralDispatchBackfillsResourceURIs(t *testing.T) {
+	teamDir := fixtureTeamDir(t)
+	if err := os.WriteFile(filepath.Join(teamDir, "config.toml"), []byte("[project]\nid = \"dep\"\nparent_uri = \"agt://parent/project/parent\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := DaemonRoot(teamDir)
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
+
+	result, err := resolver.EventWithResult(topology.EventAgentDispatch, map[string]any{
+		"target":    "worker",
+		"name":      "worker-squ-156",
+		"ticket":    "SQU-156",
+		"job_id":    "squ-156",
+		"kickoff":   "implement SQU-156",
+		"workspace": "repo",
+	})
+	if err != nil {
+		t.Fatalf("EventWithResult: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = m.Stop("worker-squ-156")
+		_ = m.WaitForReaper("worker-squ-156", 5*time.Second)
+	})
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Action != "dispatched" {
+		t.Fatalf("outcomes = %+v", result.Outcomes)
+	}
+	meta, err := ReadMetadata(root, "worker-squ-156")
+	if err != nil {
+		t.Fatalf("ReadMetadata: %v", err)
+	}
+	if meta.URI != "agt://dep/instance/worker-squ-156" ||
+		meta.SpecURI != "agt://dep/instance/worker" ||
+		meta.DeploymentParentURI != "agt://parent/project/parent" ||
+		meta.JobURI != "agt://dep/job/squ-156" ||
+		meta.WorkspaceURI != "agt://dep/workspace/repo" ||
+		meta.StateURI != "agt://dep/state/worker-squ-156" {
+		t.Fatalf("metadata URIs = %+v", meta)
+	}
+	env := fake.lastEnv()
+	for _, want := range []string{
+		"AGENT_TEAM_DEPLOYMENT_URI=agt://dep/project/dep",
+		"AGENT_TEAM_DEPLOYMENT_PARENT_URI=agt://parent/project/parent",
+		"AGENT_TEAM_INSTANCE_URI=agt://dep/instance/worker-squ-156",
+		"AGENT_TEAM_SPEC_URI=agt://dep/instance/worker",
+		"AGENT_TEAM_JOB_URI=agt://dep/job/squ-156",
+		"AGENT_TEAM_WORKSPACE_URI=agt://dep/workspace/repo",
+		"AGENT_TEAM_STATE_URI=agt://dep/state/worker-squ-156",
+	} {
+		if !containsString(env, want) {
+			t.Fatalf("env missing %q: %#v", want, env)
+		}
+	}
+	prompt, ok := argValue(fake.lastCall(), "-p")
+	if !ok {
+		t.Fatalf("spawn call missing -p prompt: %#v", fake.lastCall())
+	}
+	for _, want := range []string{
+		`"deployment_uri":"agt://dep/project/dep"`,
+		`"deployment_parent_uri":"agt://parent/project/parent"`,
+		`"instance_uri":"agt://dep/instance/worker-squ-156"`,
+		`"spec_uri":"agt://dep/instance/worker"`,
+		`"job_uri":"agt://dep/job/squ-156"`,
+		`"workspace_uri":"agt://dep/workspace/repo"`,
+		`"state_uri":"agt://dep/state/worker-squ-156"`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	j, err := jobstore.Read(teamDir, "squ-156")
+	if err != nil {
+		t.Fatalf("job read: %v", err)
+	}
+	if j.URI != "agt://dep/job/squ-156" || j.InstanceURI != meta.URI || j.WorkspaceURI != "agt://dep/workspace/repo" {
+		t.Fatalf("job URIs = %+v", j)
+	}
+}
+
 func TestEvent_EphemeralDispatchDeliversUnreadMailboxInKickoff(t *testing.T) {
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)
@@ -3244,9 +3324,23 @@ tokens_per_day = 100
 	if meta.Origin.Project != "project-1" || meta.Origin.Team != "platform" || meta.Origin.Instance != "worker-squ-92" || meta.Origin.Trigger != "pipeline:ticket_to_pr:implement" {
 		t.Fatalf("metadata origin = %+v", meta.Origin)
 	}
+	const stepSpecURI = "agt://project-1/job/squ-92#step=implement"
+	if meta.SpecURI != stepSpecURI || meta.JobURI != "agt://project-1/job/squ-92" {
+		t.Fatalf("metadata URIs = %+v", meta)
+	}
 	env := fake.lastEnv()
 	if !containsString(env, "AGENT_TEAM_BUDGET_TOKENS=30") || !containsString(env, "AGENT_TEAM_BUDGET_TIME=45m0s") {
 		t.Fatalf("env missing clamped budget values: %#v", env)
+	}
+	if !containsString(env, "AGENT_TEAM_SPEC_URI="+stepSpecURI) {
+		t.Fatalf("env missing step spec URI: %#v", env)
+	}
+	prompt, ok := argValue(fake.lastCall(), "-p")
+	if !ok {
+		t.Fatalf("spawn call missing -p prompt: %#v", fake.lastCall())
+	}
+	if !strings.Contains(prompt, `"spec_uri":"`+stepSpecURI+`"`) {
+		t.Fatalf("prompt missing step spec URI:\n%s", prompt)
 	}
 	events, err := jobstore.ListEvents(teamDir, "squ-92")
 	if err != nil {

@@ -20,13 +20,19 @@ func captureUsageForMetadata(meta *Metadata, now time.Time) error {
 		return nil
 	}
 	record, err := usage.Capture(usage.CaptureInput{
-		Instance:  meta.Instance,
-		Agent:     meta.Agent,
-		Runtime:   metadataEffectiveRuntime(meta),
-		LogPath:   meta.LogPath,
-		StartedAt: meta.StartedAt,
-		EndedAt:   terminalUsageTime(meta),
-		Now:       now,
+		Instance:            meta.Instance,
+		DeploymentURI:       meta.DeploymentURI,
+		DeploymentParentURI: meta.DeploymentParentURI,
+		InstanceURI:         meta.URI,
+		JobURI:              meta.JobURI,
+		WorkspaceURI:        meta.WorkspaceURI,
+		Agent:               meta.Agent,
+		Runtime:             metadataEffectiveRuntime(meta),
+		LogPath:             meta.LogPath,
+		SourceURI:           meta.LogURI,
+		StartedAt:           meta.StartedAt,
+		EndedAt:             terminalUsageTime(meta),
+		Now:                 now,
 	})
 	if err != nil {
 		return err

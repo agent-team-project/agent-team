@@ -117,6 +117,46 @@ func TestJobReadWriteList(t *testing.T) {
 	}
 }
 
+func TestJobResourceURIBackfill(t *testing.T) {
+	teamDir := filepath.Join(t.TempDir(), ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "config.toml"), []byte("[project]\nid = \"dep\"\nparent_uri = \"agt://parent/project/parent\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 7, 9, 0, 0, 0, time.UTC)
+	j, err := New("SQU-156", "worker", "add URIs", now)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	j.Instance = "worker-squ-156"
+	j.Branch = "squ-156-b347bce8"
+	j.Worktree = "/repo/.claude/worktrees/worker-squ-156-b347bce8"
+	j.Steps = []Step{{ID: "implement", Target: "worker", Status: StatusRunning, Instance: j.Instance, Workspace: "worktree"}}
+	if err := Write(teamDir, j); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := Read(teamDir, "SQU-156")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.URI != "agt://dep/job/squ-156" ||
+		got.DeploymentURI != "agt://dep/project/dep" ||
+		got.DeploymentParentURI != "agt://parent/project/parent" ||
+		got.InstanceURI != "agt://dep/instance/worker-squ-156" ||
+		got.WorkspaceURI != "agt://dep/workspace/branch:squ-156-b347bce8" {
+		t.Fatalf("job URIs = %+v", got)
+	}
+	if len(got.Steps) != 1 ||
+		got.Steps[0].URI != "agt://dep/job/squ-156#step=implement" ||
+		got.Steps[0].JobURI != got.URI ||
+		got.Steps[0].InstanceURI != got.InstanceURI ||
+		got.Steps[0].WorkspaceURI != got.WorkspaceURI {
+		t.Fatalf("step URIs = %+v", got.Steps)
+	}
+}
+
 func TestJobReadAndEventsAcceptTicketURL(t *testing.T) {
 	teamDir := filepath.Join(t.TempDir(), ".agent_team")
 	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)

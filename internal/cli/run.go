@@ -19,6 +19,7 @@ import (
 
 	"github.com/agent-team-project/agent-team/internal/daemon"
 	"github.com/agent-team-project/agent-team/internal/loader"
+	"github.com/agent-team-project/agent-team/internal/resource"
 	"github.com/agent-team-project/agent-team/internal/runtimebin"
 	"github.com/agent-team-project/agent-team/internal/runtimehooks"
 	"github.com/agent-team-project/agent-team/internal/runtimeotel"
@@ -363,6 +364,8 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 	if daemonURL := daemonURLForRuntimeEnv(teamDir); daemonURL != "" {
 		teamEnv = append(teamEnv, "AGENT_TEAM_DAEMON_URL="+daemonURL)
 	}
+	runResources := runDispatchResourcePayload(teamDir, instance, target)
+	teamEnv = append(teamEnv, runResourceEnv(runResources)...)
 	otelCfg, err := runtimeotel.FromTree(resolved)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
@@ -449,27 +452,42 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		// when needed, so we strip nothing. The daemon's spawn surface
 		// accepts arbitrary trailing argv via DispatchInput.Args.
 		disp, derr := dispatchClient.Dispatch(dispatchPayload{
-			Agent:         agentName,
-			Name:          instance,
-			Prompt:        cfg.prompt,
-			Workspace:     target,
-			Runtime:       string(rt.Kind),
-			RuntimeBinary: rt.Binary,
-			Args:          runtimeArgs,
-			Env:           runtimeArgEnv,
-			Stdin:         runtimeStdin,
+			Agent:               agentName,
+			Name:                instance,
+			URI:                 runResources.URI,
+			SpecURI:             runResources.SpecURI,
+			DeploymentURI:       runResources.DeploymentURI,
+			DeploymentParentURI: runResources.DeploymentParentURI,
+			JobURI:              runResources.JobURI,
+			Prompt:              cfg.prompt,
+			Workspace:           target,
+			WorkspaceURI:        runResources.WorkspaceURI,
+			StateURI:            runResources.StateURI,
+			Runtime:             string(rt.Kind),
+			RuntimeBinary:       rt.Binary,
+			Args:                runtimeArgs,
+			Env:                 runtimeArgEnv,
+			Stdin:               runtimeStdin,
 		})
 		if derr != nil {
 			return fmt.Errorf("daemon dispatch: %w", derr)
 		}
 		row := runDispatchJSON{
-			Instance:  disp.InstanceID,
-			Agent:     agentName,
-			Runtime:   disp.Runtime,
-			PID:       disp.PID,
-			SessionID: disp.SessionID,
-			StartedAt: disp.StartedAt.Format(time.RFC3339),
-			Follow:    fmt.Sprintf("agent-team logs %s --follow", disp.InstanceID),
+			Instance:            disp.InstanceID,
+			URI:                 disp.URI,
+			SpecURI:             disp.SpecURI,
+			DeploymentURI:       disp.DeploymentURI,
+			DeploymentParentURI: disp.DeploymentParentURI,
+			JobURI:              disp.JobURI,
+			WorkspaceURI:        disp.WorkspaceURI,
+			StateURI:            disp.StateURI,
+			LogURI:              disp.LogURI,
+			Agent:               agentName,
+			Runtime:             disp.Runtime,
+			PID:                 disp.PID,
+			SessionID:           disp.SessionID,
+			StartedAt:           disp.StartedAt.Format(time.RFC3339),
+			Follow:              fmt.Sprintf("agent-team logs %s --follow", disp.InstanceID),
 		}
 		if cfg.jsonOut {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(row)
@@ -495,6 +513,58 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		return execRuntimeAndPrintLastMessage(cmd, rt.Binary, runtimeArgs, env, target, runtimeStdin, lastMessagePath)
 	}
 	return execClaude(cmd, rt.Binary, runtimeArgs, env, target, runtimeStdin)
+}
+
+type runResourcePayload struct {
+	URI                 string
+	SpecURI             string
+	DeploymentURI       string
+	DeploymentParentURI string
+	JobURI              string
+	WorkspaceURI        string
+	StateURI            string
+}
+
+func runDispatchResourcePayload(teamDir, instance, workspace string) runResourcePayload {
+	deployment, _ := resource.DeploymentFromTeamDir(teamDir)
+	deploymentID := strings.TrimSpace(deployment.ID)
+	if deploymentID == "" {
+		return runResourcePayload{}
+	}
+	jobID := strings.TrimSpace(os.Getenv("AGENT_TEAM_JOB_ID"))
+	branch := strings.TrimSpace(os.Getenv("AGENT_TEAM_BRANCH"))
+	instanceURI := resource.InstanceURI(deploymentID, instance)
+	return runResourcePayload{
+		URI:                 instanceURI,
+		SpecURI:             instanceURI,
+		DeploymentURI:       deployment.URI,
+		DeploymentParentURI: deployment.ParentURI,
+		JobURI:              resource.JobURI(deploymentID, jobID),
+		WorkspaceURI:        resource.WorkspaceURIFor(deploymentID, workspace, branch, jobID, instance),
+		StateURI:            resource.StateURI(deploymentID, instance),
+	}
+}
+
+func runResourceEnv(payload runResourcePayload) []string {
+	items := []struct {
+		key   string
+		value string
+	}{
+		{"AGENT_TEAM_DEPLOYMENT_URI", payload.DeploymentURI},
+		{"AGENT_TEAM_DEPLOYMENT_PARENT_URI", payload.DeploymentParentURI},
+		{"AGENT_TEAM_INSTANCE_URI", payload.URI},
+		{"AGENT_TEAM_SPEC_URI", payload.SpecURI},
+		{"AGENT_TEAM_JOB_URI", payload.JobURI},
+		{"AGENT_TEAM_WORKSPACE_URI", payload.WorkspaceURI},
+		{"AGENT_TEAM_STATE_URI", payload.StateURI},
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.value) != "" {
+			out = append(out, item.key+"="+item.value)
+		}
+	}
+	return out
 }
 
 func buildRuntimeArgs(rt runtimebin.Runtime, target, addDir, agentsJSON, promptFile, kickoff, prompt string, forwarded []string, agents []*loader.Agent, env []string, lastMessagePath string, mailboxHook *runtimehooks.MailboxHook, otelLaunch runtimeotel.Launch) ([]string, string, error) {
@@ -590,13 +660,21 @@ func renderRunFormat(w fmtWriter, row runDispatchJSON, tmpl *texttemplate.Templa
 }
 
 type runDispatchJSON struct {
-	Instance  string `json:"instance"`
-	Agent     string `json:"agent"`
-	Runtime   string `json:"runtime,omitempty"`
-	PID       int    `json:"pid"`
-	SessionID string `json:"session_id,omitempty"`
-	StartedAt string `json:"started_at"`
-	Follow    string `json:"follow"`
+	Instance            string `json:"instance"`
+	URI                 string `json:"uri,omitempty"`
+	SpecURI             string `json:"spec_uri,omitempty"`
+	DeploymentURI       string `json:"deployment_uri,omitempty"`
+	DeploymentParentURI string `json:"deployment_parent_uri,omitempty"`
+	JobURI              string `json:"job_uri,omitempty"`
+	WorkspaceURI        string `json:"workspace_uri,omitempty"`
+	StateURI            string `json:"state_uri,omitempty"`
+	LogURI              string `json:"log_uri,omitempty"`
+	Agent               string `json:"agent"`
+	Runtime             string `json:"runtime,omitempty"`
+	PID                 int    `json:"pid"`
+	SessionID           string `json:"session_id,omitempty"`
+	StartedAt           string `json:"started_at"`
+	Follow              string `json:"follow"`
 }
 
 func printRunDispatchLine(w fmtWriter, disp *dispatchResponse) {
