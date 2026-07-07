@@ -108,6 +108,10 @@ agent-team init \
 
 Move a Linear card or GitHub Project item into the configured agent column
 (`Ready for Agent` by default) to dispatch the default ticket-to-PR pipeline.
+The bundled template defaults to the slim consumer profile: manager, worker,
+reviewer, and the ticket-to-PR pipeline. Use `agent-team init --profile full`
+when you explicitly want the full self-dogfood topology with release, docs,
+comms, quality, sentinel, and product-verifier loops.
 
 For a no-LLM local orchestration walkthrough, run the fake-runtime demo from the
 source checkout:

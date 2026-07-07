@@ -23,6 +23,13 @@ default     = ""
 description = "Optional parent deployment URI for nested or dynamically created teams."
 
 [[parameter]]
+key         = "template.profile"
+type        = "string"
+default     = "slim"
+pattern     = "^(slim|full)$"
+description = "Bundled template profile: slim is the external-consumer starter; full is the self-dogfood topology with scheduled governance loops."
+
+[[parameter]]
 key         = "linear.team_id"
 type        = "string"
 default     = ""
@@ -230,3 +237,22 @@ key         = "notifications.idle_renotify"
 type        = "string"
 default     = "0"
 description = "How often to repeat an idle notification while an instance remains idle. Set to 0 to disable repeats."
+
+[profiles.slim]
+description = "External-consumer starter: manager, worker, reviewer, core provider skills, and the ticket_to_pr pipeline only."
+exclude = [
+  "agents/auditor",
+  "agents/comms",
+  "agents/ticket-manager",
+  "skills/comms",
+  "skills/docs-freshness",
+  "skills/product-verify",
+  "skills/release",
+  "skills/review-harness",
+  "skills/sentinel",
+  "skills/triage-feedback",
+]
+
+[profiles.full]
+description = "Full self-dogfood topology with platform, quality, release, docs, comms, and sentinel loops."
+exclude = []
