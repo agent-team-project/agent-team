@@ -19,6 +19,7 @@ const (
 
 type daemonTransportContextKey struct{}
 type bearerOriginContextKey struct{}
+type bearerOperatorContextKey struct{}
 
 func daemonConnContext(ctx context.Context, c net.Conn) context.Context {
 	if c != nil && strings.HasPrefix(c.LocalAddr().Network(), "tcp") {
@@ -52,7 +53,9 @@ func loopbackAuthHandler(next http.Handler, teamDir string, mgr *InstanceManager
 			writeAuthError(w, build, "daemon http auth: invalid bearer token")
 			return
 		}
-		if !identity.Operator {
+		if identity.Operator {
+			r = requestWithOperatorBearerOrigin(r, identity.Origin)
+		} else {
 			r = requestWithBearerOrigin(r, identity.Origin)
 		}
 		next.ServeHTTP(w, r)
@@ -97,22 +100,49 @@ func bearerTokenFromRequest(r *http.Request) (string, bool) {
 }
 
 func requestWithBearerOrigin(r *http.Request, tokenOrigin origin.Envelope) *http.Request {
+	return requestWithBearerOriginValue(r, tokenOrigin, false)
+}
+
+func requestWithOperatorBearerOrigin(r *http.Request, tokenOrigin origin.Envelope) *http.Request {
+	return requestWithBearerOriginValue(r, tokenOrigin, true)
+}
+
+func requestWithBearerOriginValue(r *http.Request, tokenOrigin origin.Envelope, operator bool) *http.Request {
 	if r == nil {
 		return r
 	}
 	tokenOrigin = tokenOrigin.Clean()
-	if tokenOrigin.Empty() {
+	if tokenOrigin.Empty() && !operator {
 		return r
 	}
 	fromHeader, _ := origin.ParseHeaderValue(r.Header.Get(origin.HeaderName))
 	merged := origin.Merge(tokenOrigin, fromHeader)
-	ctx := context.WithValue(r.Context(), bearerOriginContextKey{}, tokenOrigin)
+	ctx := r.Context()
+	if !tokenOrigin.Empty() {
+		ctx = context.WithValue(ctx, bearerOriginContextKey{}, tokenOrigin)
+	}
+	if operator {
+		ctx = context.WithValue(ctx, bearerOperatorContextKey{}, true)
+	}
 	clone := r.Clone(ctx)
 	clone.Header = r.Header.Clone()
+	if operator {
+		// Operator tokens authorize the transport; they must not overwrite the
+		// request's source provenance, which may describe a forwarded agent event.
+		return clone
+	}
 	if rendered := origin.HeaderValue(merged); rendered != "" {
 		clone.Header.Set(origin.HeaderName, rendered)
 	}
 	return clone
+}
+
+func trustedBearerOperatorFromRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	value, ok := r.Context().Value(bearerOperatorContextKey{}).(bool)
+	return ok && value
 }
 
 func trustedBearerOriginFromRequest(r *http.Request) (origin.Envelope, bool) {
