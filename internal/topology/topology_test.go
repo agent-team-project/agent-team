@@ -306,6 +306,12 @@ channels = ["supervisor"]
 	if top.Authority.Allows(AuthorityDecision{Agent: "worker", Verb: "job.merge"}) {
 		t.Fatalf("worker job.merge should not be allowed")
 	}
+	if !top.Authority.Allows(AuthorityDecision{Operator: true, Verb: "job.merge"}) {
+		t.Fatalf("trusted operator should be allowed by operator wildcard")
+	}
+	if top.Authority.Allows(AuthorityDecision{Agent: "operator", Verb: "job.merge"}) {
+		t.Fatalf("spoofed operator agent without trusted operator marker should not be allowed")
+	}
 	if got := top.TeamForInstance("worker-squ-92"); got != "platform" {
 		t.Fatalf("TeamForInstance(worker-squ-92) = %q, want platform", got)
 	}

@@ -275,6 +275,7 @@ type AuthorityDecision struct {
 	Instance  string
 	Agent     string
 	Team      string
+	Operator  bool
 	Verb      string
 	ActorJob  string
 	TargetJob string
@@ -319,6 +320,11 @@ func (a *Authority) Evaluate(decision AuthorityDecision) AuthorityEvaluation {
 	decision = cleanAuthorityDecision(decision)
 	eval = AuthorityEvaluation{Decision: decision}
 	if decision.Verb == "" {
+		return eval
+	}
+	if decision.Operator {
+		eval.Allowed = true
+		eval.Sources = []string{"operator.token"}
 		return eval
 	}
 	for _, candidate := range []struct {
@@ -369,6 +375,7 @@ func cleanAuthorityDecision(decision AuthorityDecision) AuthorityDecision {
 		Instance:  strings.TrimSpace(decision.Instance),
 		Agent:     strings.TrimSpace(decision.Agent),
 		Team:      strings.TrimSpace(decision.Team),
+		Operator:  decision.Operator,
 		Verb:      strings.TrimSpace(decision.Verb),
 		ActorJob:  strings.TrimSpace(decision.ActorJob),
 		TargetJob: strings.TrimSpace(decision.TargetJob),

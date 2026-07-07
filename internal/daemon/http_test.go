@@ -1264,6 +1264,110 @@ allow = ["instance.remove"]
 	}
 }
 
+func TestHTTP_LoopbackOperatorTokenAllowsAuthorityEnforcedInboxSend(t *testing.T) {
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	tokenPath, err := EnsureOperatorToken(teamDir)
+	if err != nil {
+		t.Fatalf("EnsureOperatorToken: %v", err)
+	}
+	token, err := ReadTokenFile(tokenPath)
+	if err != nil {
+		t.Fatalf("ReadTokenFile: %v", err)
+	}
+	top := mustParseCustomTopo(t, `
+[instances.manager]
+agent = "manager"
+
+[authority]
+enforcement = "enforce"
+
+[authority.instances.manager]
+allow = ["*"]
+`)
+	m := NewInstanceManager(root, nil)
+	resolver := NewEventResolver(m, teamDir, top)
+	handler := loopbackAuthHandler(Handler(m, nil, resolver, teamDir), teamDir, m, buildinfo.Current("test"))
+
+	req, err := http.NewRequest(http.MethodPost, "http://daemon/v1/message", bytes.NewReader([]byte(`{"from":"(cli)","to":"manager","body":"hello from operator"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req = req.WithContext(context.WithValue(req.Context(), daemonTransportContextKey{}, daemonTransportTCP))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("message status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	messages, err := ReadMessages(root, "manager")
+	if err != nil {
+		t.Fatalf("ReadMessages: %v", err)
+	}
+	if len(messages) != 1 || messages[0].From != "(cli)" || messages[0].Body != "hello from operator" {
+		t.Fatalf("messages = %+v", messages)
+	}
+	events, err := ListLifecycleEvents(root)
+	if err != nil {
+		t.Fatalf("ListLifecycleEvents: %v", err)
+	}
+	for _, ev := range events {
+		if ev.Action == authorityViolationAction {
+			t.Fatalf("unexpected authority violation: %+v", ev)
+		}
+	}
+}
+
+func TestHTTP_UnidentifiedCLISenderDeniedByAuthorityEnforcement(t *testing.T) {
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	top := mustParseCustomTopo(t, `
+[instances.manager]
+agent = "manager"
+
+[authority]
+enforcement = "enforce"
+
+[authority.instances.manager]
+allow = ["*"]
+`)
+	m := NewInstanceManager(root, nil)
+	resolver := NewEventResolver(m, teamDir, top)
+	srv := httptest.NewServer(Handler(m, nil, resolver, teamDir))
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/message", bytes.NewReader([]byte(`{"from":"(cli)","to":"manager","body":"hello without identity"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("message status = %d body=%s", resp.StatusCode, readBody(t, resp))
+	}
+	messages, err := ReadMessages(root, "manager")
+	if err != nil {
+		t.Fatalf("ReadMessages: %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("messages = %+v, want none", messages)
+	}
+	events, err := ListLifecycleEvents(root)
+	if err != nil {
+		t.Fatalf("ListLifecycleEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Action != authorityViolationAction {
+		t.Fatalf("lifecycle events = %+v", events)
+	}
+	if !strings.Contains(events[0].Message, "verb=inbox.send") || !strings.Contains(events[0].Message, "allowlist_source=none") {
+		t.Fatalf("violation message = %q", events[0].Message)
+	}
+}
+
 func TestHTTP_LoopbackTokenOriginFeedsAuthorityAudit(t *testing.T) {
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)

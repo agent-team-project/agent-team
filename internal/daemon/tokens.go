@@ -20,6 +20,8 @@ const DaemonTokenFileEnv = "AGENT_TEAM_DAEMON_TOKEN_FILE"
 
 const daemonTokenBytes = 32
 
+const operatorAuthorityIdentity = "operator"
+
 // OperatorTokenPath returns the machine-local token file used by CLI clients
 // when they must reach agent-teamd over loopback HTTP.
 func OperatorTokenPath(teamDir string) string {
@@ -142,7 +144,7 @@ func lookupBearerToken(teamDir, daemonRoot, token string) (bearerTokenIdentity, 
 		return bearerTokenIdentity{}, false
 	}
 	if operator, err := ReadTokenFile(OperatorTokenPath(teamDir)); err == nil && constantTimeEqual(operator, token) {
-		return bearerTokenIdentity{Operator: true}, true
+		return bearerTokenIdentity{Operator: true, Origin: operatorOriginForTeamDir(teamDir)}, true
 	}
 	stateRoot := filepath.Join(teamDir, "state")
 	entries, err := os.ReadDir(stateRoot)
@@ -164,6 +166,15 @@ func lookupBearerToken(teamDir, daemonRoot, token string) (bearerTokenIdentity, 
 		}, true
 	}
 	return bearerTokenIdentity{}, false
+}
+
+func operatorOriginForTeamDir(teamDir string) origin.Envelope {
+	return origin.Envelope{
+		Project:  projectIDForTeamDir(teamDir),
+		Team:     operatorAuthorityIdentity,
+		Instance: operatorAuthorityIdentity,
+		Agent:    operatorAuthorityIdentity,
+	}.Clean()
 }
 
 func constantTimeEqual(a, b string) bool {

@@ -80,6 +80,9 @@ func TestDaemonTokensAre0600AndMapToInstanceOrigin(t *testing.T) {
 	if !ok || !identity.Operator || identity.Instance != "" {
 		t.Fatalf("operator identity = %+v ok=%v", identity, ok)
 	}
+	if identity.Origin.Agent != operatorAuthorityIdentity || identity.Origin.Instance != operatorAuthorityIdentity || identity.Origin.Team != operatorAuthorityIdentity {
+		t.Fatalf("operator origin = %+v, want operator identity", identity.Origin)
+	}
 }
 
 func TestBearerTokenLookupConcurrent(t *testing.T) {

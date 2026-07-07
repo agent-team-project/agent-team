@@ -29,6 +29,7 @@ type AuthorityAuditOptions struct {
 	DaemonRoot string
 	Topology   *topology.Topology
 	Actor      origin.Envelope
+	Operator   bool
 	Verb       string
 	Resource   string
 	JobID      string
@@ -46,16 +47,17 @@ func AuditAuthority(opts AuthorityAuditOptions) error {
 		return nil
 	}
 	actor := opts.Actor.Clean()
+	operator := opts.Operator
 	verb := strings.TrimSpace(opts.Verb)
 	resource := strings.TrimSpace(opts.Resource)
-	if authorityActorIdentityEmpty(actor) {
+	if authorityActorIdentityEmpty(actor) && !operator {
 		return nil
 	}
 	targetJob := strings.TrimSpace(opts.TargetJob)
 	if targetJob == "" {
 		targetJob = strings.TrimSpace(opts.JobID)
 	}
-	decision := authorityDecisionForActor(topo, actor, verb, targetJob)
+	decision := authorityDecisionForActor(topo, actor, operator, verb, targetJob)
 	eval := topo.Authority.Evaluate(decision)
 	if eval.Allowed {
 		return nil
@@ -127,6 +129,7 @@ func (a *authorityAuditor) audit(r *http.Request, verb, resource string, fallbac
 		DaemonRoot: daemonRoot,
 		Topology:   topo,
 		Actor:      actor,
+		Operator:   trustedBearerOperatorFromRequest(r),
 		Verb:       verb,
 		Resource:   resource,
 		EventActor: "daemon",
@@ -166,7 +169,7 @@ func authorityActorIdentityEmpty(actor origin.Envelope) bool {
 	return actor.Instance == "" && actor.Agent == "" && actor.Team == ""
 }
 
-func authorityDecisionForActor(topo *topology.Topology, actor origin.Envelope, verb, targetJob string) topology.AuthorityDecision {
+func authorityDecisionForActor(topo *topology.Topology, actor origin.Envelope, operator bool, verb, targetJob string) topology.AuthorityDecision {
 	actor = actor.Clean()
 	instance := actor.Instance
 	agent := actor.Agent
@@ -191,6 +194,7 @@ func authorityDecisionForActor(topo *topology.Topology, actor origin.Envelope, v
 		Instance:  instance,
 		Agent:     agent,
 		Team:      team,
+		Operator:  operator,
 		Verb:      verb,
 		ActorJob:  actor.Job,
 		TargetJob: targetJob,
