@@ -21,23 +21,21 @@ class ProductVerifyError(RuntimeError):
 FieldSpec = tuple[str, tuple[str, ...], Any]
 
 
-INSTANCE_FIELDS: tuple[FieldSpec, ...] = (
+# Equivalence projections define the state both the daemon endpoint and CLI
+# expose for the same underlying resource. CLI-only enrichment such as PR links,
+# process IDs, runtime binaries, or resume counters is intentionally excluded.
+INSTANCE_EQUIVALENCE_FIELDS: tuple[FieldSpec, ...] = (
     ("instance", ("instance",), ""),
     ("agent", ("agent",), ""),
     ("job", ("job",), ""),
-    ("ticket", ("ticket",), ""),
     ("branch", ("branch",), ""),
-    ("pr", ("pr",), ""),
     ("workspace", ("workspace",), ""),
-    ("pid", ("pid",), 0),
     ("status", ("status",), ""),
     ("runtime", ("runtime",), ""),
-    ("runtime_binary", ("runtime_binary",), ""),
-    ("resume_count", ("resume_count",), 0),
 )
 
 
-JOB_FIELDS: tuple[FieldSpec, ...] = (
+JOB_EQUIVALENCE_FIELDS: tuple[FieldSpec, ...] = (
     ("id", ("id", "ID"), ""),
     ("ticket", ("ticket", "Ticket"), ""),
     ("ticket_url", ("ticket_url", "TicketURL"), ""),
@@ -56,7 +54,7 @@ JOB_FIELDS: tuple[FieldSpec, ...] = (
 )
 
 
-TOPOLOGY_SECTIONS: dict[str, tuple[str, tuple[FieldSpec, ...]]] = {
+TOPOLOGY_EQUIVALENCE_SECTIONS: dict[str, tuple[str, tuple[FieldSpec, ...]]] = {
     "instances": (
         "name",
         (
@@ -165,18 +163,18 @@ def normalize_record_list(
 
 
 def normalize_instances(records: Any) -> dict[str, dict[str, Any]]:
-    return normalize_record_list(records, "instance", INSTANCE_FIELDS)
+    return normalize_record_list(records, "instance", INSTANCE_EQUIVALENCE_FIELDS)
 
 
 def normalize_jobs(records: Any) -> dict[str, dict[str, Any]]:
-    return normalize_record_list(records, "id", JOB_FIELDS)
+    return normalize_record_list(records, "id", JOB_EQUIVALENCE_FIELDS)
 
 
 def normalize_topology(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ProductVerifyError(f"expected topology object, got {type(payload).__name__}")
     out: dict[str, Any] = {}
-    for section, (key_field, fields) in TOPOLOGY_SECTIONS.items():
+    for section, (key_field, fields) in TOPOLOGY_EQUIVALENCE_SECTIONS.items():
         out[section] = normalize_record_list(payload.get(section, []), key_field, fields)
     out["budget_reminder_levels"] = canonical(payload.get("budget_reminder_levels", []))
     return out
@@ -236,7 +234,7 @@ def compare_topology(ui_payload: Any, cli_payload: Any) -> dict[str, Any]:
     ui_topology = normalize_topology(ui_payload)
     cli_topology = normalize_topology(cli_payload)
     diffs: list[dict[str, Any]] = []
-    for section in TOPOLOGY_SECTIONS:
+    for section in TOPOLOGY_EQUIVALENCE_SECTIONS:
         diffs.extend(diff_record_maps(f"topology.{section}", ui_topology[section], cli_topology[section]))
     if ui_topology["budget_reminder_levels"] != cli_topology["budget_reminder_levels"]:
         diffs.append(
@@ -252,8 +250,8 @@ def compare_topology(ui_payload: Any, cli_payload: Any) -> dict[str, Any]:
     return {
         "name": "topology",
         "ok": not diffs,
-        "ui_count": sum(len(ui_topology[section]) for section in TOPOLOGY_SECTIONS),
-        "cli_count": sum(len(cli_topology[section]) for section in TOPOLOGY_SECTIONS),
+        "ui_count": sum(len(ui_topology[section]) for section in TOPOLOGY_EQUIVALENCE_SECTIONS),
+        "cli_count": sum(len(cli_topology[section]) for section in TOPOLOGY_EQUIVALENCE_SECTIONS),
         "diffs": diffs,
     }
 

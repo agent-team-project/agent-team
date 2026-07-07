@@ -55,8 +55,14 @@ The helper:
 - fetches `/v1/instances`, `/v1/jobs`, and `/v1/topology`;
 - runs `agent-team ps --json`, `agent-team job ls --json`, and
   `agent-team topology show --json`;
-- compares stable projections of the same state; and
+- compares explicit stable equivalence projections of the same state; and
 - prints JSON with `status`, `comparisons`, and capped `findings`.
+
+The instance equivalence projection is limited to fields both `/v1/instances`
+and `agent-team ps --json` faithfully expose for the same daemon-owned state:
+`instance`, `agent`, `status`, `branch`, `job`, `runtime`, and `workspace`.
+CLI-only enrichment such as PR links, process IDs, runtime binaries, and resume
+counters is intentionally excluded from this diff.
 
 Exit codes:
 

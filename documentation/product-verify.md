@@ -7,8 +7,14 @@ the existing feedback-triage loop to cluster and route.
 v1 is intentionally headless. It fetches daemon UI data endpoints
 (`/v1/instances`, `/v1/jobs`, and `/v1/topology`) with the operator token from
 `.agent_team/daemon/operator.token`, reads the same state through the CLI, and
-diffs stable fields. Any mismatch is filed as `agent-team feedback submit
---category bug`.
+diffs explicit equivalence projections. Any mismatch is filed as `agent-team
+feedback submit --category bug`.
+
+For instance rows, the projection is intentionally limited to daemon/CLI shared
+state: `instance`, `agent`, `status`, `branch`, `job`, `runtime`, and
+`workspace`. CLI-only enrichment such as PR links, process IDs, runtime
+binaries, and resume counters is excluded so the loop reports only mismatches in
+the same underlying product state.
 
 The mechanical helper is shipped with the bundled skill at
 `.agent_team/skills/product-verify/scripts/product_verify_diff.py`.

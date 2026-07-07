@@ -14,6 +14,85 @@ import product_verify_diff as verifier
 
 
 class ProductVerifyDiffTest(unittest.TestCase):
+    def test_instance_projection_ignores_cli_only_enrichment(self) -> None:
+        ui_instances = [
+            {
+                "instance": "docs-writer-squ-109",
+                "agent": "worker",
+                "status": "done",
+                "branch": "squ-109-docs",
+                "job": "squ-109",
+                "runtime": "codex",
+                "workspace": "/repo/.claude/worktrees/docs-writer-squ-109",
+            }
+        ]
+        cli_instances = [
+            {
+                "instance": "docs-writer-squ-109",
+                "agent": "worker",
+                "status": "done",
+                "branch": "squ-109-docs",
+                "job": "squ-109",
+                "runtime": "codex",
+                "workspace": "/repo/.claude/worktrees/docs-writer-squ-109",
+                "pr": "https://github.com/agent-team-project/kensho/pull/107",
+                "pid": 12345,
+                "runtime_binary": "codex",
+                "resume_count": 2,
+            }
+        ]
+
+        result = verifier.compare_records(
+            "instances", ui_instances, cli_instances, verifier.normalize_instances
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["diffs"], [])
+
+    def test_instance_projection_reports_projected_field_mismatch(self) -> None:
+        ui_instances = [
+            {
+                "instance": "platform-worker-squ-187",
+                "agent": "worker",
+                "status": "running",
+                "branch": "squ-187",
+                "job": "squ-187",
+                "runtime": "codex",
+                "workspace": "/repo/.claude/worktrees/platform-worker-squ-187",
+            }
+        ]
+        cli_instances = [
+            {
+                "instance": "platform-worker-squ-187",
+                "agent": "worker",
+                "status": "done",
+                "branch": "squ-187",
+                "job": "squ-187",
+                "runtime": "codex",
+                "workspace": "/repo/.claude/worktrees/platform-worker-squ-187",
+                "pr": "https://github.com/agent-team-project/kensho/pull/190",
+            }
+        ]
+
+        result = verifier.compare_records(
+            "instances", ui_instances, cli_instances, verifier.normalize_instances
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["diffs"],
+            [
+                {
+                    "type": "field_mismatch",
+                    "comparison": "instances",
+                    "key": "platform-worker-squ-187",
+                    "field": "status",
+                    "ui": "running",
+                    "cli": "done",
+                }
+            ],
+        )
+
     def test_job_alias_normalization_matches_daemon_list_shape(self) -> None:
         ui_jobs = [
             {
