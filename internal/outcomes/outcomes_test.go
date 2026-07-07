@@ -147,6 +147,49 @@ func TestWorkUnitsForJobRequireRunningAt(t *testing.T) {
 	}
 }
 
+func TestBuildReportDoesNotFallbackForQueuedOnlySteps(t *testing.T) {
+	teamDir := testOutcomeTeamDir(t)
+	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	queuedAt := now.Add(-2 * time.Hour)
+	finishedAt := now.Add(-30 * time.Minute)
+
+	j, err := jobstore.New("SQU-161", "worker", "Implement SQU-161", queuedAt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	j.Status = jobstore.StatusDone
+	j.Pipeline = "ticket_to_pr"
+	j.Instance = "worker-squ-161"
+	j.UpdatedAt = finishedAt
+	j.Steps = []jobstore.Step{{
+		ID:         "implement",
+		Target:     "worker",
+		Status:     jobstore.StatusDone,
+		StartedAt:  queuedAt,
+		FinishedAt: finishedAt,
+	}}
+
+	rec, err := BuildRecord(teamDir, j, now)
+	if err != nil {
+		t.Fatalf("BuildRecord: %v", err)
+	}
+	if len(rec.WorkUnits) != 0 || !rec.WorkUnitsExhaustive {
+		t.Fatalf("work units = %+v exhaustive=%v", rec.WorkUnits, rec.WorkUnitsExhaustive)
+	}
+
+	report := BuildReport([]Record{*rec}, ReportOptions{Team: "delivery", Agent: "worker", TeamDir: teamDir, Now: now})
+	if len(report.Rows) != 1 {
+		t.Fatalf("rows = %+v", report.Rows)
+	}
+	row := report.Rows[0]
+	if row.EffectiveConcurrency != 0 || row.PeakConcurrentWorkUnits != 0 {
+		t.Fatalf("row concurrency = %+v", row)
+	}
+	if report.Summary.EffectiveConcurrency != 0 || report.Summary.PeakConcurrentWorkUnits != 0 {
+		t.Fatalf("summary concurrency = %+v", report.Summary)
+	}
+}
+
 func TestBuildRecordUsesImplementationAgentAfterPipelineTargetRewrite(t *testing.T) {
 	teamDir := testOutcomeTeamDir(t)
 	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)

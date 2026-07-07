@@ -50,6 +50,7 @@ type Record struct {
 	BudgetNoticeEvents       []EventRef       `json:"budget_notice_events,omitempty"`
 	BudgetExceededEvents     []EventRef       `json:"budget_exceeded_events,omitempty"`
 	WorkUnits                []WorkUnitRecord `json:"work_units,omitempty"`
+	WorkUnitsExhaustive      bool             `json:"work_units_exhaustive,omitempty"`
 	TokenBudget              int64            `json:"token_budget,omitempty"`
 	TokensAllocated          int64            `json:"tokens_allocated,omitempty"`
 	TokensConsumed           int64            `json:"tokens_consumed,omitempty"`
@@ -240,6 +241,7 @@ func BuildRecord(teamDir string, j *jobstore.Job, now time.Time) (*Record, error
 	rec.BudgetNoticeEvents = selectEvents(events, isBudgetNoticeEvent)
 	rec.BudgetExceededEvents = selectEvents(events, isBudgetExceededEvent)
 	rec.WorkUnits = workUnitsForJob(j, rec.Agent, finalizedAt)
+	rec.WorkUnitsExhaustive = len(j.Steps) > 0
 	var budgetConsumed int64
 	rec.TokensAllocated, budgetConsumed, rec.TokensReleased = budgetAllocationTotals(events)
 	if rec.TokensConsumed == 0 && budgetConsumed > 0 {
@@ -933,6 +935,9 @@ func workIntervalsForRecord(rec Record, target string) []workInterval {
 	}
 	if len(out) > 0 {
 		return out
+	}
+	if rec.WorkUnitsExhaustive {
+		return nil
 	}
 	startedAt := rec.CreatedAt
 	finishedAt := rec.FinalizedAt
