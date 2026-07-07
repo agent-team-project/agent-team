@@ -33,8 +33,8 @@ CI timeout looked like infra, but the implementation still missed scope.`
 	j.TokenBudget = 200
 	j.TimeBudget = "3h"
 	j.Steps = []jobstore.Step{
-		{ID: "implement", Target: "worker", Status: jobstore.StatusDone, Attempts: 1, StartedAt: now.Add(-2 * time.Hour), FinishedAt: now.Add(-90 * time.Minute)},
-		{ID: "review", Target: "reviewer", Status: jobstore.StatusDone, Attempts: 3, StartedAt: now.Add(-80 * time.Minute), FinishedAt: now.Add(-10 * time.Minute)},
+		{ID: "implement", Target: "worker", Status: jobstore.StatusDone, Attempts: 1, StartedAt: now.Add(-2 * time.Hour), RunningAt: now.Add(-2 * time.Hour), FinishedAt: now.Add(-90 * time.Minute)},
+		{ID: "review", Target: "reviewer", Status: jobstore.StatusDone, Attempts: 3, StartedAt: now.Add(-80 * time.Minute), RunningAt: now.Add(-80 * time.Minute), FinishedAt: now.Add(-10 * time.Minute)},
 	}
 	j.Usage, _ = usage.MergeRecord(nil, usage.Record{
 		Instance:        "worker-squ-135",
@@ -98,6 +98,52 @@ CI timeout looked like infra, but the implementation still missed scope.`
 	}
 	if rec.GateFailures != 1 || rec.GateFailureClasses["signature"] != 1 {
 		t.Fatalf("gate failures = %d %+v", rec.GateFailures, rec.GateFailureClasses)
+	}
+}
+
+func TestWorkUnitsForJobRequireRunningAt(t *testing.T) {
+	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	queuedAt := now.Add(-2 * time.Hour)
+	runningAt := now.Add(-90 * time.Minute)
+	finishedAt := now.Add(-30 * time.Minute)
+
+	queuedOnly := &jobstore.Job{
+		ID:        "squ-161-queued",
+		Status:    jobstore.StatusDone,
+		CreatedAt: queuedAt,
+		Instance:  "worker-squ-161",
+		Steps: []jobstore.Step{{
+			ID:         "implement",
+			Target:     "worker",
+			Status:     jobstore.StatusDone,
+			StartedAt:  queuedAt,
+			FinishedAt: finishedAt,
+		}},
+	}
+	if units := workUnitsForJob(queuedOnly, "worker", now); len(units) != 0 {
+		t.Fatalf("queued-only step produced work units: %+v", units)
+	}
+
+	running := &jobstore.Job{
+		ID:        "squ-161-running",
+		Status:    jobstore.StatusDone,
+		CreatedAt: queuedAt,
+		Instance:  "worker-squ-161",
+		Steps: []jobstore.Step{{
+			ID:         "implement",
+			Target:     "worker",
+			Status:     jobstore.StatusDone,
+			StartedAt:  queuedAt,
+			RunningAt:  runningAt,
+			FinishedAt: finishedAt,
+		}},
+	}
+	units := workUnitsForJob(running, "worker", now)
+	if len(units) != 1 {
+		t.Fatalf("running step work units = %+v", units)
+	}
+	if units[0].StartedAt != runningAt || units[0].FinishedAt != finishedAt {
+		t.Fatalf("work interval = %s..%s, want %s..%s", units[0].StartedAt, units[0].FinishedAt, runningAt, finishedAt)
 	}
 }
 

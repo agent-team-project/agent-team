@@ -506,6 +506,9 @@ func workUnitsForJob(j *jobstore.Job, target string, finalizedAt time.Time) []Wo
 	if len(out) > 0 {
 		return out
 	}
+	if len(j.Steps) > 0 {
+		return nil
+	}
 	startedAt := utcOrZero(j.CreatedAt)
 	finishedAt := utcOrZero(finalizedAt)
 	if !validWorkInterval(startedAt, finishedAt) {
@@ -522,9 +525,6 @@ func workUnitsForJob(j *jobstore.Job, target string, finalizedAt time.Time) []Wo
 }
 
 func stepWorkStartedAt(step jobstore.Step) time.Time {
-	if !step.StartedAt.IsZero() {
-		return step.StartedAt.UTC()
-	}
 	if !step.RunningAt.IsZero() {
 		return step.RunningAt.UTC()
 	}
