@@ -26,6 +26,7 @@ type Options struct {
 
 func WriteWithAudit(teamDir string, j *job.Job, opts Options) error {
 	applyJobOrigin(teamDir, j, opts)
+	applyJobEpic(teamDir, j, &opts)
 	writeAttention := shouldWriteFailureAttention(teamDir, j)
 	if writeAttention {
 		j.LinearAttentionWritten = true
@@ -53,6 +54,31 @@ func WriteWithAudit(teamDir string, j *job.Job, opts Options) error {
 		})
 	}
 	return nil
+}
+
+func applyJobEpic(teamDir string, j *job.Job, opts *Options) {
+	if j == nil {
+		return
+	}
+	epic := job.EpicForJob(j)
+	if epic == "" {
+		return
+	}
+	if strings.TrimSpace(j.Epic) == "" {
+		// Derive fallback attribution on initial persistence, but let updates
+		// intentionally clear an explicit epic override later.
+		if _, err := job.Read(teamDir, j.ID); !errors.Is(err, os.ErrNotExist) {
+			return
+		}
+	}
+	j.Epic = epic
+	if opts == nil {
+		return
+	}
+	if opts.Data == nil {
+		opts.Data = map[string]string{}
+	}
+	opts.Data["epic"] = epic
 }
 
 func ReconcilePR(teamDir string, input job.ReconcileInput, now time.Time) (*job.ReconcileResult, error) {

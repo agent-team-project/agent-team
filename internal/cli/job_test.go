@@ -952,6 +952,85 @@ func TestJobCreateListShowClose(t *testing.T) {
 	}
 }
 
+func TestJobCreatePersistsOriginDerivedEpic(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	projectID, err := origin.ProjectID(teamDir)
+	if err != nil {
+		t.Fatalf("project id: %v", err)
+	}
+	if projectID == "" {
+		t.Fatal("project id is empty")
+	}
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{"job", "create", "SMK-1", "--repo", tmp, "--json"})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("job create: %v\nstderr=%s", err, createErr.String())
+	}
+	var created job.Job
+	if err := json.Unmarshal(createOut.Bytes(), &created); err != nil {
+		t.Fatalf("decode create json: %v\nbody=%s", err, createOut.String())
+	}
+	if created.Epic != projectID {
+		t.Fatalf("created epic = %q, want project id %q", created.Epic, projectID)
+	}
+
+	persisted, err := job.Read(teamDir, "smk-1")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if persisted.Epic != projectID {
+		t.Fatalf("persisted epic = %q, want project id %q", persisted.Epic, projectID)
+	}
+	events, err := job.ListEvents(teamDir, "smk-1")
+	if err != nil {
+		t.Fatalf("job events: %v", err)
+	}
+	createdEvent, ok := findJobEvent(events, "created")
+	if !ok {
+		t.Fatalf("created event missing: %+v", events)
+	}
+	if createdEvent.Data["epic"] != projectID {
+		t.Fatalf("created event data = %+v, want epic %q", createdEvent.Data, projectID)
+	}
+
+	closeCmd := NewRootCmd()
+	closeOut, closeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	closeCmd.SetOut(closeOut)
+	closeCmd.SetErr(closeErr)
+	closeCmd.SetArgs([]string{"job", "close", "smk-1", "--status", "done", "--repo", tmp, "--json"})
+	if err := closeCmd.Execute(); err != nil {
+		t.Fatalf("job close: %v\nstderr=%s", err, closeErr.String())
+	}
+
+	reportCmd := NewRootCmd()
+	reportOut, reportErr := &bytes.Buffer{}, &bytes.Buffer{}
+	reportCmd.SetOut(reportOut)
+	reportCmd.SetErr(reportErr)
+	reportCmd.SetArgs([]string{"outcomes", "report", "--target", tmp, "--by-epic", "--json"})
+	if err := reportCmd.Execute(); err != nil {
+		t.Fatalf("outcomes report --by-epic: %v\nstderr=%s", err, reportErr.String())
+	}
+	var report struct {
+		Rows []struct {
+			Epic string `json:"epic"`
+			Jobs int    `json:"jobs"`
+			Done int    `json:"done"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(reportOut.Bytes(), &report); err != nil {
+		t.Fatalf("decode outcomes report: %v\nbody=%s", err, reportOut.String())
+	}
+	if len(report.Rows) != 1 || report.Rows[0].Epic != projectID || report.Rows[0].Jobs != 1 || report.Rows[0].Done != 1 {
+		t.Fatalf("outcomes report rows = %+v, want one done job for epic %q", report.Rows, projectID)
+	}
+}
+
 func TestJobUpdateEpicAndClear(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)

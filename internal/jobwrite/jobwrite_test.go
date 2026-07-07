@@ -228,6 +228,9 @@ instances = ["platform-worker"]
 		persisted.Origin.Trigger != "schedule:feedback-triage" {
 		t.Fatalf("origin = %+v", persisted.Origin)
 	}
+	if persisted.Epic != "project-1" {
+		t.Fatalf("epic = %q, want origin project", persisted.Epic)
+	}
 	events, err := job.ListEvents(teamDir, j.ID)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
@@ -237,6 +240,9 @@ instances = ["platform-worker"]
 	}
 	if events[0].Origin.Team != "platform" || events[0].Origin.Project != "project-1" {
 		t.Fatalf("event origin = %+v", events[0].Origin)
+	}
+	if events[0].Data["epic"] != "project-1" {
+		t.Fatalf("event data = %+v, want epic project-1", events[0].Data)
 	}
 }
 
