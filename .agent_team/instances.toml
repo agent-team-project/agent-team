@@ -271,6 +271,32 @@ match.name = "harness-review"
 match.kind = "harness_review"
 
 
+# The org-review loop: every few days, turn the outcomes ledger, spend,
+# concurrency/capacity, bounce classes, cycle-time, and feedback trends into at
+# most a few evidence-backed process/topology/prompt/budget tickets. It is the
+# strategic complement to harness-review and never edits the system directly.
+# See the org-review skill and documentation/metrics-methodology.md.
+[schedules.org-review]
+every = "72h" # 3d; schedule durations use Go duration syntax
+
+[schedules.org-review.payload]
+kind = "org_review"
+task = "Run the org-review skill: analyze outcomes, spend, capacity, feedback, and review-loop health; file capped strategic improvement tickets."
+
+[instances.org-review]
+agent        = "manager"
+token_budget = "15M"
+time_budget  = "45m"
+ephemeral    = true
+env_allow    = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TERM_PROGRAM", "LANG", "LC_*", "XDG_*", "CODEX_HOME", "CLAUDE_CODE_*", "SSH_AUTH_SOCK"]
+description  = "Scheduled org review: outcomes/spend/capacity/feedback -> strategic improvement tickets."
+
+[[instances.org-review.triggers]]
+event      = "schedule"
+match.name = "org-review"
+match.kind = "org_review"
+
+
 # The sentinel loop: every six hours, check the post-merge public surface that
 # reviewers cannot see from a green PR alone — main CI, Read the Docs build and
 # rendered pages, release assets, and repo metadata. Failures are submitted as
@@ -501,8 +527,8 @@ schedules   = ["docs-freshness"]
 
 [teams.quality]
 description = "Proactive architecture, tech-debt, harness auditing, production sentinel checks, and product verification."
-instances   = ["debt-auditor", "harness-reviewer", "sentinel", "product-verifier"]
-schedules   = ["debt-sweep", "harness-review", "sentinel", "product-verify"]
+instances   = ["debt-auditor", "harness-reviewer", "org-review", "sentinel", "product-verifier"]
+schedules   = ["debt-sweep", "harness-review", "org-review", "sentinel", "product-verify"]
 
 [teams.delivery]
 description = "Default software-delivery team for ticket intake, implementation, review, and merge."

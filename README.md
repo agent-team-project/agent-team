@@ -142,9 +142,9 @@ The full self-dogfood profile currently includes:
 | --- | --- |
 | `delivery` | Manager, ticket-manager, workers, reviewers, and the full ticket-to-PR pipeline. |
 | `platform` | Separate worker/reviewer pool for framework infrastructure work. |
-| `quality` | Architecture debt audits and harness-review work. |
+| `quality` | Architecture debt audits, harness review, org review, sentinels, and product verification. |
 | `pr` | Public digest, release-announcement, and community-feedback agents. |
-| `docs` | Docs-writing agents and the weekly freshness sweep. |
+| `docs` | Docs-writing agents and the docs-freshness sweep. |
 
 The core delivery loop is event-driven:
 
@@ -156,16 +156,19 @@ ticket enters Ready for Agent
   -> merge / bounce / follow-up
 ```
 
-Five schedules keep the system improving and communicating around that delivery
-path:
+Scheduled loops keep the system improving and communicating around that
+delivery path:
 
 | Loop | Cadence | Purpose |
 | --- | --- | --- |
 | Feedback triage | 12h | Cluster agent feedback and file, fold, or dismiss follow-up tickets. |
-| Debt sweep | weekly | Audit one subsystem and file at most three evidence-backed tech-debt tickets. |
-| Harness review | weekly | Turn bounce patterns, failures, and feedback into prompt/skill improvement tickets. |
-| Discord digest | daily | Draft or publish a shipped-work digest through the sanctioned comms path. |
-| Docs freshness | weekly | Audit docs against the shipped binary, latest release, repo identity, and quickstart. |
+| Debt sweep | 24h | Audit one subsystem and file at most three evidence-backed tech-debt tickets. |
+| Harness review | 12h | Turn bounce patterns, failures, and feedback into prompt/skill improvement tickets. |
+| Org review | 3d | Read outcomes, spend, capacity, cycle-time, and feedback trends; propose strategic process/topology/prompt/budget tickets. |
+| Sentinel | 6h | Check post-merge public surfaces and submit incident feedback when they fail. |
+| Product verify | 24h | Compare daemon UI data with CLI ground truth and file capped product feedback. |
+| Discord digest | 24h | Draft or publish a shipped-work digest through the sanctioned comms path. |
+| Docs freshness | 24h | Audit docs against the shipped binary, latest release, repo identity, and quickstart. |
 
 Budgets and watchdogs are part of the model. Topology can declare per-team,
 per-job, and per-step token/time allowances; the daemon records usage, sends
