@@ -223,6 +223,9 @@ func agentTeamShimBody(real string, opts Options) string {
 		"      *,*) allow=${remaining%%,*}; remaining=${remaining#*,} ;;\n" +
 		"      *) allow=$remaining; remaining= ;;\n" +
 		"    esac\n" +
+		"    # Scoped grants (for example :own) are enforced by the real CLI's\n" +
+		"    # authority audit using trusted origin metadata; the shim only gates\n" +
+		"    # whether a known verb may reach that audited command implementation.\n" +
 		"    pattern=${allow%%:*}\n" +
 		"    case \"$pattern\" in\n" +
 		"      '') ;;\n" +

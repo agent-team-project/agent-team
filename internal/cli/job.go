@@ -505,6 +505,9 @@ func newJobCreateCmd() *cobra.Command {
 			if j.Pipeline != "" {
 				data["pipeline"] = j.Pipeline
 			}
+			if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job create", "job.create"); err != nil {
+				return err
+			}
 			if err := writeJobWithAudit(teamDir, j, "created", "cli", "created "+j.Ticket, data); err != nil {
 				return err
 			}
@@ -1519,6 +1522,9 @@ func newJobSendCmd() *cobra.Command {
 				}
 				return renderJobSendPreview(cmd.OutOrStdout(), j, instance, from, body, jsonOut, tmpl)
 			}
+			if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job send", "job.send"); err != nil {
+				return err
+			}
 			if err := runSendWithClient(io.Discard, cmd.ErrOrStderr(), client, instance, body, sendOptions{
 				From:           from,
 				AllowMissing:   allowMissing,
@@ -1631,6 +1637,9 @@ func newJobNoteCmd() *cobra.Command {
 				}
 				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
+			if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job note", "job.note"); err != nil {
+				return err
+			}
 			noteActor := strings.TrimSpace(actor)
 			if noteActor == "" {
 				noteActor = "cli"
@@ -1721,6 +1730,9 @@ func newJobBlockCmd() *cobra.Command {
 					})
 				}
 				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
+			}
+			if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job block", "job.block"); err != nil {
+				return err
 			}
 			blockActor := strings.TrimSpace(actor)
 			if blockActor == "" {
@@ -1843,6 +1855,11 @@ func newJobUnblockCmd() *cobra.Command {
 				client = localSendClient{daemonRoot: daemon.DaemonRoot(teamDir)}
 			}
 			fromLabel := normalizedJobUnblockSender(from)
+			if !dryRun {
+				if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job unblock", "job.unblock"); err != nil {
+					return err
+				}
+			}
 			if err := runSendWithClient(io.Discard, cmd.ErrOrStderr(), client, instance, body, sendOptions{
 				From:           fromLabel,
 				AllowMissing:   allowMissing,
@@ -3232,6 +3249,11 @@ func newJobCloseCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if !dryRun {
+				if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job close", "job.close"); err != nil {
+					return err
+				}
+			}
 			j.Status = job.Status(status)
 			j.LastEvent = "closed"
 			j.LastStatus = closeMessage
@@ -3364,6 +3386,11 @@ func newJobCancelCmd() *cobra.Command {
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
 			if err != nil {
 				return err
+			}
+			if !dryRun {
+				if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job cancel", "job.cancel"); err != nil {
+					return err
+				}
 			}
 			selection := jobInstanceSelection{Instance: strings.TrimSpace(j.Instance)}
 			if stopInstance || killInstance {
@@ -3530,6 +3557,9 @@ func newJobKeepWorktreeCmd() *cobra.Command {
 			}
 			teamDir, j, err := readJobAndTeamDir(cmd, repo, args[0])
 			if err != nil {
+				return err
+			}
+			if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job keep-worktree", "job.keep-worktree"); err != nil {
 				return err
 			}
 			message := strings.TrimSpace(strings.Join(args[1:], " "))
@@ -3900,6 +3930,9 @@ func timeoutJobLifecycle(teamDir string, j *job.Job, targetFilter, message strin
 	if dryRun {
 		return []pipelineTimeoutResult{result}, nil
 	}
+	if err := auditCLIJobAuthority(teamDir, j, "job.timeout", "job:"+j.ID); err != nil {
+		return nil, err
+	}
 	j.Status = job.StatusFailed
 	j.LastEvent = "job_timeout"
 	j.LastStatus = result.Message
@@ -4225,6 +4258,9 @@ func newJobUpdateCmd() *cobra.Command {
 				}
 				return renderJobUpdatePreview(cmd.OutOrStdout(), j, changed, jsonOut, jobTmpl)
 			}
+			if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job update", "job.update"); err != nil {
+				return err
+			}
 			if hasUpdate {
 				if err := writeJobWithAudit(teamDir, j, "", "cli", "", changed); err != nil {
 					return err
@@ -4450,6 +4486,10 @@ func newJobBounceCmd() *cobra.Command {
 					return renderJobBounceApplyCommand(cmd.OutOrStdout(), true, commandOptions)
 				}
 				return renderJobBouncePreview(cmd.OutOrStdout(), j, selectedStep, bounceNumber, jsonOut, jobTmpl)
+			}
+			if err := auditCLIJobAuthority(teamDir, j, "job.bounce", "job:"+j.ID); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job bounce: %v\n", err)
+				return exitErr(3)
 			}
 			data := map[string]string{
 				"step":     selectedStep,
@@ -4695,6 +4735,9 @@ func newJobHoldCmd() *cobra.Command {
 				}
 				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
+			if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job hold", "job.hold"); err != nil {
+				return err
+			}
 			changes := map[string]string{"held": "true"}
 			if !j.HoldUntil.IsZero() {
 				changes["hold_until"] = jobHoldUntilText(j)
@@ -4797,6 +4840,9 @@ func holdJobs(teamDir, reason string, holdUntil time.Time, stateFilter map[strin
 		}
 		if !j.HoldUntil.IsZero() {
 			changes["hold_until"] = jobHoldUntilText(j)
+		}
+		if err := auditCLIJobAuthority(teamDir, j, "job.hold", "job:"+j.ID); err != nil {
+			return nil, err
 		}
 		if err := writeJobWithAudit(teamDir, j, "", "cli", "", changes); err != nil {
 			return nil, err
@@ -4944,6 +4990,9 @@ func newJobReleaseCmd() *cobra.Command {
 				}
 				return renderJobActionPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
+			if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job release", "job.release"); err != nil {
+				return err
+			}
 			if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"held": "false", "hold_until": ""}); err != nil {
 				return err
 			}
@@ -5022,6 +5071,9 @@ func releaseJobs(teamDir, message string, limit int, expiredOnly bool, dryRun bo
 		if dryRun {
 			results = append(results, result)
 			continue
+		}
+		if err := auditCLIJobAuthority(teamDir, j, "job.release", "job:"+j.ID); err != nil {
+			return nil, err
 		}
 		if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"held": "false", "hold_until": ""}); err != nil {
 			return nil, err
@@ -5289,6 +5341,9 @@ func newJobReopenCmd() *cobra.Command {
 				}
 				return renderJobReopenPreview(cmd.OutOrStdout(), j, jsonOut, tmpl)
 			}
+			if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job reopen", "job.reopen"); err != nil {
+				return err
+			}
 			if err := writeJobWithAudit(teamDir, j, "", "cli", "", data); err != nil {
 				return err
 			}
@@ -5552,6 +5607,9 @@ func newJobCleanupCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job cleanup: %v\n", err)
 				return exitErr(2)
 			}
+			if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job cleanup", "job.cleanup"); err != nil {
+				return err
+			}
 			summary, err := cleanupJobOwnedWorktree(repoRoot, j, forceBranch, verifyPR)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job cleanup: %v\n", err)
@@ -5626,7 +5684,10 @@ func newJobMergeCmd() *cobra.Command {
 			if dryRun {
 				return renderJobMergeResult(cmd.OutOrStdout(), result, jsonOut)
 			}
-			auditCLIJobAuthority(teamDir, j, "job.merge", "job:"+j.ID)
+			if err := auditCLIJobAuthority(teamDir, j, "job.merge", "job:"+j.ID); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job merge: %v\n", err)
+				return exitErr(3)
+			}
 			if err := applyJobMerge(cmd.Context(), teamDir, j, result); err != nil {
 				var blocked mergeBlockedError
 				if errors.As(err, &blocked) {
@@ -6100,6 +6161,11 @@ func newJobRmCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job rm: refusing to remove active job %q with status %s; pass --force to remove it.\n", j.ID, j.Status)
 					return exitErr(2)
 				}
+				if !dryRun {
+					if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job rm", "job.rm"); err != nil {
+						return err
+					}
+				}
 				result, err := removeJobFiles(teamDir, j, jobRemoveOptions{DryRun: dryRun, Force: force})
 				if err != nil {
 					return err
@@ -6180,6 +6246,11 @@ func newJobPruneCmd() *cobra.Command {
 			for _, j := range jobs {
 				if !statusSet[j.Status] {
 					continue
+				}
+				if !dryRun {
+					if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job prune", "job.prune"); err != nil {
+						return err
+					}
 				}
 				result, err := removeJobFiles(teamDir, j, jobRemoveOptions{DryRun: dryRun})
 				if err != nil {
@@ -6718,6 +6789,12 @@ func newJobStepCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if !dryRun {
+				if err := auditCLIJobAuthority(teamDir, j, "job.step", "job:"+j.ID+":step:"+args[1]); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job step: %v\n", err)
+					return exitErr(3)
+				}
+			}
 			if err := validateJobStepRunningOwner(j, args[1], stepStatus, instance, force); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job step: %v\n", err)
 				return exitErr(2)
@@ -6996,6 +7073,10 @@ func newJobApproveCmd() *cobra.Command {
 				}
 				return renderJobStepPreview(cmd.OutOrStdout(), j, selectedStep, jsonOut, tmpl)
 			}
+			if err := auditCLIJobAuthority(teamDir, j, "job.approve", "job:"+j.ID+":step:"+selectedStep); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job approve: %v\n", err)
+				return exitErr(3)
+			}
 			if err := writeJobWithAudit(teamDir, j, "manual_gate_approved", "cli", approvalMessage, map[string]string{"step": selectedStep}); err != nil {
 				return err
 			}
@@ -7152,6 +7233,10 @@ func newJobRejectCmd() *cobra.Command {
 				}
 				return renderJobStepPreview(cmd.OutOrStdout(), j, selectedStep, jsonOut, tmpl)
 			}
+			if err := auditCLIJobAuthority(teamDir, j, "job.reject", "job:"+j.ID+":step:"+selectedStep); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reject: %v\n", err)
+				return exitErr(3)
+			}
 			if err := writeJobWithAudit(teamDir, j, "", "cli", "", map[string]string{"step": selectedStep}); err != nil {
 				return err
 			}
@@ -7270,6 +7355,9 @@ func newJobAdvanceCmd() *cobra.Command {
 					})
 				}
 				return renderJobAdvancePreview(cmd.OutOrStdout(), preview, jsonOut, tmpl)
+			}
+			if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job advance", "job.advance"); err != nil {
+				return err
 			}
 			res, err := advanceJob(cmd, teamDir, j, workspace, runtimeSelection{Kind: runtimeKind, Binary: runtimeBin})
 			if err != nil {
@@ -7708,6 +7796,10 @@ func newJobReconcileGitHubCmd() *cobra.Command {
 					}
 					cleanupPreview = &preview
 				} else {
+					if err := auditCLIJobAuthority(teamDir, result.Job, "job.cleanup", "job:"+result.Job.ID); err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reconcile github: %v\n", err)
+						return exitErr(3)
+					}
 					cleanupSummary, err = cleanupJobOwnedWorktree(repoRoot, result.Job, false, verifyPR)
 					if err != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reconcile github: %v\n", err)
@@ -7723,6 +7815,10 @@ func newJobReconcileGitHubCmd() *cobra.Command {
 				}
 			}
 			if !dryRun && result.Job != nil && result.Job.Status == job.StatusDone && cleanupSummary == "" {
+				if err := auditCLIJobAuthority(teamDir, result.Job, "job.cleanup", "job:"+result.Job.ID); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job reconcile github: %v\n", err)
+					return exitErr(3)
+				}
 				autoSummary, err := autoReapJobOwnedWorktree(teamDir, result.Job, worktreepolicy.OnMerge, "cli")
 				if err != nil {
 					return err
@@ -7895,16 +7991,24 @@ func writeJobWithAudit(teamDir string, j *job.Job, eventType, actor, message str
 	return nil
 }
 
-func auditCLIJobAuthority(teamDir string, j *job.Job, verb, resource string) {
+func auditCLIJobCommandAuthority(cmd *cobra.Command, teamDir string, j *job.Job, label, verb string) error {
+	if err := auditCLIJobAuthority(teamDir, j, verb, "job:"+j.ID); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", label, err)
+		return exitErr(3)
+	}
+	return nil
+}
+
+func auditCLIJobAuthority(teamDir string, j *job.Job, verb, resource string) error {
 	if j == nil {
-		return
+		return nil
 	}
 	top, err := topology.LoadFromTeamDir(teamDir)
 	if err != nil || top == nil || top.Authority == nil || !top.Authority.Configured() {
-		return
+		return nil
 	}
-	actor := cliAuthorityActor(teamDir, j)
-	daemon.AuditAuthority(daemon.AuthorityAuditOptions{
+	actor := cliAuthorityActor(teamDir, j, top)
+	return daemon.AuditAuthority(daemon.AuthorityAuditOptions{
 		TeamDir:    teamDir,
 		DaemonRoot: daemon.DaemonRoot(teamDir),
 		Topology:   top,
@@ -7917,7 +8021,7 @@ func auditCLIJobAuthority(teamDir string, j *job.Job, verb, resource string) {
 	})
 }
 
-func cliAuthorityActor(teamDir string, j *job.Job) origin.Envelope {
+func cliAuthorityActor(teamDir string, j *job.Job, top *topology.Topology) origin.Envelope {
 	build := buildinfo.Current("")
 	var fromEnv origin.Envelope
 	if raw := daemonOriginHeaderFromEnv(build); raw != "" {
@@ -7940,7 +8044,18 @@ func cliAuthorityActor(teamDir string, j *job.Job) origin.Envelope {
 			if metaOrigin.Instance == "" {
 				metaOrigin.Instance = meta.Instance
 			}
-			actor = origin.Merge(actor, metaOrigin)
+			if metaOrigin.Job == "" {
+				metaOrigin.Job = meta.Job
+			}
+			if top != nil {
+				if inst := top.FindRuntimeInstance(metaOrigin.Instance, metaOrigin.Agent); inst != nil && strings.TrimSpace(inst.Agent) != "" {
+					metaOrigin.Agent = strings.TrimSpace(inst.Agent)
+				}
+				if team := top.TeamForInstance(metaOrigin.Instance); team != "" {
+					metaOrigin.Team = team
+				}
+			}
+			actor = origin.Merge(metaOrigin, actor)
 		}
 	}
 	return actor.Clean()
@@ -11340,6 +11455,9 @@ func runJobInstanceUp(cmd *cobra.Command, repo, id, stepID string, opts instance
 	}
 	repoRoot := filepath.Dir(teamDir)
 	if !opts.DryRun {
+		if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job start", "job.start"); err != nil {
+			return err
+		}
 		if err := ensureDaemonReadyWithTimeout(cmd, repoRoot, opts.JSON || opts.Quiet || opts.Summary || opts.Format != nil, readyTimeout); err != nil {
 			return err
 		}
@@ -11390,6 +11508,11 @@ func runJobInstanceDown(cmd *cobra.Command, repo, id, stepID string, opts instan
 	if instance == "" {
 		printMissingJobInstanceError(cmd.ErrOrStderr(), downAction(opts), j, selection.StepID, "dispatch or adopt it first")
 		return exitErr(2)
+	}
+	if !opts.DryRun {
+		if err := auditCLIJobCommandAuthority(cmd, teamDir, j, "agent-team job "+downAction(opts), "job."+downAction(opts)); err != nil {
+			return err
+		}
 	}
 	if err := runInstanceDownWithOptions(cmd, filepath.Dir(teamDir), []string{instance}, opts); err != nil {
 		return err
@@ -11667,6 +11790,9 @@ func jobInstanceMatchesRuntime(instance string, runtimes map[string]bool, runtim
 }
 
 func dispatchJobWithPrefix(cmd *cobra.Command, teamDir string, j *job.Job, source, workspace string, selection runtimeSelection, prefix string) (*jobDispatchResult, string, error) {
+	if err := auditCLIJobCommandAuthority(cmd, teamDir, j, prefix, "job.dispatch"); err != nil {
+		return nil, "", err
+	}
 	payload, requestedName, err := buildDispatchEventPayload(j.Target, j.Ticket, j.Kickoff, j.Instance, source, workspace)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", prefix, err)
@@ -12202,6 +12328,9 @@ func reconcileSelectedJobsFromQueue(teamDir string, jobs []*job.Job, state strin
 		}
 		result := reconcileJobFromQueueItem(j, item, dryRun, now)
 		if result.Changed && !dryRun {
+			if err := auditCLIJobAuthority(teamDir, j, "job.reconcile.queue", "job:"+j.ID); err != nil {
+				return nil, err
+			}
 			if err := writeJobWithAudit(teamDir, j, "queue_reconcile", "cli", result.Message, map[string]string{
 				"queue_id":    item.ID,
 				"queue_state": item.State,
@@ -12267,6 +12396,9 @@ func reconcileSelectedJobsFromStatus(teamDir string, jobs []*job.Job, dryRun boo
 			if eventType == "deliverable_missing" {
 				data["deliverable_contract"] = daemon.DeliveryArtifactContract(j)
 			}
+			if err := auditCLIJobAuthority(teamDir, j, "job.reconcile.status", "job:"+j.ID); err != nil {
+				return nil, err
+			}
 			if err := writeJobWithAudit(teamDir, j, eventType, "cli", result.Message, data); err != nil {
 				return nil, err
 			}
@@ -12325,6 +12457,9 @@ func reconcileSelectedJobsFromEventsWithFilter(teamDir string, jobs []*job.Job, 
 			data := jobEventReconcileData(meta, matchedBy)
 			if result.Event == "deliverable_missing" {
 				data["deliverable_contract"] = daemon.DeliveryArtifactContract(j)
+			}
+			if err := auditCLIJobAuthority(teamDir, j, "job.reconcile.events", "job:"+j.ID); err != nil {
+				return nil, err
 			}
 			if err := writeJobWithAudit(teamDir, j, result.Event, "cli", result.Message, data); err != nil {
 				return nil, err
@@ -12407,6 +12542,9 @@ func reconcileJobsFromLifecycleEvents(teamDir, daemonRoot string, jobs []*job.Jo
 			}
 			if result.Event == "deliverable_missing" {
 				data["deliverable_contract"] = daemon.DeliveryArtifactContract(j)
+			}
+			if err := auditCLIJobAuthority(teamDir, j, "job.reconcile.events", "job:"+j.ID); err != nil {
+				return nil, err
 			}
 			if err := writeJobWithAudit(teamDir, j, result.Event, "cli", result.Message, data); err != nil {
 				return nil, err
@@ -14826,6 +14964,12 @@ func runJobCleanupJobs(teamDir, repoRoot string, jobs []*job.Job, dryRun, merged
 				item.Preview = &preview
 				result.Previewed++
 			}
+			result.Items = append(result.Items, item)
+			continue
+		}
+		if err := auditCLIJobAuthority(teamDir, j, "job.cleanup", "job:"+j.ID); err != nil {
+			item.Error = err.Error()
+			result.Failed++
 			result.Items = append(result.Items, item)
 			continue
 		}
