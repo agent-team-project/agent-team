@@ -27,9 +27,12 @@ ephemeral   = false
 project_id = "3d07030a"
 
 [[instances.tm-platform.triggers]]
-event         = "ticket_webhook"
+event         = "ticket.created"
 match.project = "Platform"
-match.event   = ["created", "updated"]
+
+[[instances.tm-platform.triggers]]
+event         = "ticket.updated"
+match.project = "Platform"
 
 [instances.tm-mobile]
 agent     = "ticket-manager"
@@ -39,7 +42,7 @@ ephemeral = false
 project_id = "50b6cd55"
 
 [[instances.tm-mobile.triggers]]
-event         = "ticket_webhook"
+event         = "ticket.created"
 match.project = "Mobile"
 
 [instances.worker]
@@ -78,19 +81,22 @@ func TestParse_Sample(t *testing.T) {
 	if !ok || got != "3d07030a" {
 		t.Errorf("tm-platform config: got %v ok=%v", got, ok)
 	}
-	if len(tmPlat.Triggers) != 1 {
+	if len(tmPlat.Triggers) != 2 {
 		t.Fatalf("tm-platform triggers: %d", len(tmPlat.Triggers))
 	}
 	trig := tmPlat.Triggers[0]
-	if trig.Event != "ticket_webhook" {
+	if trig.Event != "ticket.created" {
 		t.Errorf("trigger event: %s", trig.Event)
 	}
 	if trig.Match["project"].Single != "Platform" {
 		t.Errorf("project match: %+v", trig.Match["project"])
 	}
-	want := []string{"created", "updated"}
-	if !reflect.DeepEqual(trig.Match["event"].List, want) {
-		t.Errorf("event list match: got %v want %v", trig.Match["event"].List, want)
+	trig = tmPlat.Triggers[1]
+	if trig.Event != "ticket.updated" {
+		t.Errorf("second trigger event: %s", trig.Event)
+	}
+	if trig.Match["project"].Single != "Platform" {
+		t.Errorf("second trigger project match: %+v", trig.Match["project"])
 	}
 	worker := top.Instances["worker"]
 	if !worker.Ephemeral || worker.Replicas != 3 {
@@ -1370,7 +1376,7 @@ func TestParse_RejectsEmptyMatchValue(t *testing.T) {
 agent = "manager"
 
 [[instances.manager.triggers]]
-event         = "ticket_webhook"
+event         = "ticket.created"
 match.project = ""
 `))
 	if err == nil {
@@ -1395,43 +1401,7 @@ func TestMatch_SingleAndList(t *testing.T) {
 	}
 }
 
-func TestResolve_TicketWebhookRouting(t *testing.T) {
-	top, err := Parse([]byte(sampleTOML))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	matched := top.Resolve("ticket_webhook", map[string]any{
-		"project": "Platform",
-		"event":   "created",
-	})
-	if len(matched) != 1 || matched[0].Name != "tm-platform" {
-		t.Fatalf("expected only tm-platform, got %v", names(matched))
-	}
-	matched = top.Resolve("ticket_webhook", map[string]any{
-		"project": "Mobile",
-	})
-	if len(matched) != 1 || matched[0].Name != "tm-mobile" {
-		t.Fatalf("expected only tm-mobile, got %v", names(matched))
-	}
-	matched = top.Resolve("ticket_webhook", map[string]any{
-		"project": "Platform",
-		"event":   "deleted",
-	})
-	if len(matched) != 0 {
-		t.Errorf("event=deleted should not match (list miss): %v", names(matched))
-	}
-	matched = top.Resolve("agent.dispatch", map[string]any{"target": "worker"})
-	if len(matched) != 1 || matched[0].Name != "worker" {
-		t.Errorf("worker dispatch: %v", names(matched))
-	}
-	// Missing payload key → no match.
-	matched = top.Resolve("ticket_webhook", map[string]any{})
-	if len(matched) != 0 {
-		t.Errorf("empty payload should match nothing for keyed triggers: %v", names(matched))
-	}
-}
-
-func TestResolve_TicketWebhookAliasMatchesNormalizedIntakeEvents(t *testing.T) {
+func TestResolve_TicketRouting(t *testing.T) {
 	top, err := Parse([]byte(sampleTOML))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -1440,37 +1410,80 @@ func TestResolve_TicketWebhookAliasMatchesNormalizedIntakeEvents(t *testing.T) {
 		"project": "Platform",
 	})
 	if len(matched) != 1 || matched[0].Name != "tm-platform" {
-		t.Fatalf("expected ticket.created to match tm-platform legacy trigger, got %v", names(matched))
-	}
-	matched = top.Resolve("ticket.updated", map[string]any{
-		"project": "Platform",
-	})
-	if len(matched) != 1 || matched[0].Name != "tm-platform" {
-		t.Fatalf("expected ticket.updated to match tm-platform legacy trigger, got %v", names(matched))
-	}
-	matched = top.Resolve("ticket.commented", map[string]any{
-		"project": "Platform",
-	})
-	if len(matched) != 0 {
-		t.Fatalf("ticket.commented should miss legacy event filter, got %v", names(matched))
+		t.Fatalf("expected only tm-platform, got %v", names(matched))
 	}
 	matched = top.Resolve("ticket.created", map[string]any{
 		"project": "Mobile",
 	})
 	if len(matched) != 1 || matched[0].Name != "tm-mobile" {
-		t.Fatalf("expected ticket.created to match tm-mobile legacy trigger, got %v", names(matched))
+		t.Fatalf("expected only tm-mobile, got %v", names(matched))
+	}
+	matched = top.Resolve("ticket.updated", map[string]any{
+		"project": "Platform",
+	})
+	if len(matched) != 1 || matched[0].Name != "tm-platform" {
+		t.Fatalf("expected ticket.updated to match tm-platform, got %v", names(matched))
+	}
+	matched = top.Resolve("ticket.deleted", map[string]any{
+		"project": "Platform",
+	})
+	if len(matched) != 0 {
+		t.Errorf("ticket.deleted should not match exact ticket triggers: %v", names(matched))
+	}
+	matched = top.Resolve("agent.dispatch", map[string]any{"target": "worker"})
+	if len(matched) != 1 || matched[0].Name != "worker" {
+		t.Errorf("worker dispatch: %v", names(matched))
+	}
+	// Missing payload key → no match.
+	matched = top.Resolve("ticket.created", map[string]any{})
+	if len(matched) != 0 {
+		t.Errorf("empty payload should match nothing for keyed triggers: %v", names(matched))
 	}
 }
 
-func TestResolve_PRWebhookAliasMatchesNormalizedIntakeEvents(t *testing.T) {
+func TestResolve_TicketEventsMatchExactly(t *testing.T) {
+	top, err := Parse([]byte(sampleTOML))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	matched := top.Resolve("ticket.created", map[string]any{
+		"project": "Platform",
+	})
+	if len(matched) != 1 || matched[0].Name != "tm-platform" {
+		t.Fatalf("expected ticket.created to match tm-platform trigger, got %v", names(matched))
+	}
+	matched = top.Resolve("ticket.updated", map[string]any{
+		"project": "Platform",
+	})
+	if len(matched) != 1 || matched[0].Name != "tm-platform" {
+		t.Fatalf("expected ticket.updated to match tm-platform trigger, got %v", names(matched))
+	}
+	matched = top.Resolve("ticket.commented", map[string]any{
+		"project": "Platform",
+	})
+	if len(matched) != 0 {
+		t.Fatalf("ticket.commented should miss exact ticket triggers, got %v", names(matched))
+	}
+	matched = top.Resolve("ticket.created", map[string]any{
+		"project": "Mobile",
+	})
+	if len(matched) != 1 || matched[0].Name != "tm-mobile" {
+		t.Fatalf("expected ticket.created to match tm-mobile trigger, got %v", names(matched))
+	}
+}
+
+func TestResolve_PREventsMatchExactly(t *testing.T) {
 	top, err := Parse([]byte(`
 [instances.pr-reviewer]
 agent = "manager"
 
 [[instances.pr-reviewer.triggers]]
-event = "pr_webhook"
+event = "pr.opened"
 match.repository = "agent-team-project/agent-team"
-match.event = ["opened", "merged"]
+
+[[instances.pr-reviewer.triggers]]
+event = "pr.merged"
+match.repository = "agent-team-project/agent-team"
 `))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -1479,28 +1492,27 @@ match.event = ["opened", "merged"]
 		"repository": "agent-team-project/agent-team",
 	})
 	if len(matched) != 1 || matched[0].Name != "pr-reviewer" {
-		t.Fatalf("expected pr.opened to match legacy trigger, got %v", names(matched))
+		t.Fatalf("expected pr.opened to match PR trigger, got %v", names(matched))
 	}
 	matched = top.Resolve("pr.merged", map[string]any{
 		"repository": "agent-team-project/agent-team",
 	})
 	if len(matched) != 1 || matched[0].Name != "pr-reviewer" {
-		t.Fatalf("expected pr.merged to match legacy trigger, got %v", names(matched))
+		t.Fatalf("expected pr.merged to match PR trigger, got %v", names(matched))
 	}
 	matched = top.Resolve("pr.closed", map[string]any{
 		"repository": "agent-team-project/agent-team",
 	})
 	if len(matched) != 0 {
-		t.Fatalf("pr.closed should miss legacy event filter, got %v", names(matched))
+		t.Fatalf("pr.closed should miss exact PR triggers, got %v", names(matched))
 	}
 }
 
-func TestResolvePipelines_WebhookAliasMatchesNormalizedIntakeEvents(t *testing.T) {
+func TestResolvePipelines_TicketEventsMatchExactly(t *testing.T) {
 	top, err := Parse([]byte(`
 [pipelines.ticket_to_pr]
-trigger.event = "ticket_webhook"
+trigger.event = "ticket.created"
 trigger.match.project = "Core"
-trigger.match.event = "created"
 
 [[pipelines.ticket_to_pr.steps]]
 id = "implement"
@@ -1511,11 +1523,11 @@ target = "worker"
 	}
 	matched := top.ResolvePipelines("ticket.created", map[string]any{"project": "Core"})
 	if len(matched) != 1 || matched[0].Name != "ticket_to_pr" {
-		t.Fatalf("expected normalized ticket event to match legacy pipeline trigger, got %+v", matched)
+		t.Fatalf("expected ticket.created to match pipeline trigger, got %+v", matched)
 	}
 	matched = top.ResolvePipelines("ticket.updated", map[string]any{"project": "Core"})
 	if len(matched) != 0 {
-		t.Fatalf("ticket.updated should miss legacy pipeline event filter, got %+v", matched)
+		t.Fatalf("ticket.updated should miss exact pipeline trigger, got %+v", matched)
 	}
 }
 
@@ -1587,27 +1599,27 @@ target = "worker"
 	}
 }
 
-func TestTrace_ExplainsWebhookAliasPayloadPredicates(t *testing.T) {
+func TestTrace_ExplainsNormalizedEventPayloadPredicates(t *testing.T) {
 	top, err := Parse([]byte(`
 [instances.tm]
 agent = "ticket-manager"
 
 [[instances.tm.triggers]]
-event = "ticket_webhook"
-match.event = ["created", "updated"]
+event = "ticket.created"
+match.kind = ["bug", "feature"]
 match.project = "Core"
 `))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	deleted := top.Trace("ticket.deleted", map[string]any{"project": "Core"})
-	deletedEntry := findTraceEntry(t, deleted, "instances.tm")
-	if deletedEntry.Matched || deletedEntry.Matcher != "match.event=[created, updated]" || deletedEntry.Reason != "payload event=deleted not in [created, updated]" {
-		t.Fatalf("deleted trace = %+v", deletedEntry)
+	chore := top.Trace("ticket.created", map[string]any{"project": "Core", "kind": "chore"})
+	choreEntry := findTraceEntry(t, chore, "instances.tm")
+	if choreEntry.Matched || choreEntry.Matcher != "match.kind=[bug, feature]" || choreEntry.Reason != "payload kind=chore not in [bug, feature]" {
+		t.Fatalf("chore trace = %+v", choreEntry)
 	}
 	missing := top.Trace("ticket.created", map[string]any{})
 	missingEntry := findTraceEntry(t, missing, "instances.tm")
-	if missingEntry.Matched || missingEntry.Matcher != "match.project=Core" || missingEntry.Reason != "payload project missing" {
+	if missingEntry.Matched || missingEntry.Matcher != "match.kind=[bug, feature]" || missingEntry.Reason != "payload kind missing" {
 		t.Fatalf("missing trace = %+v", missingEntry)
 	}
 }

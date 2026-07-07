@@ -191,9 +191,8 @@ allow = ["inbox.send", "channel.*", "job.gate.*:own"]
 ```
 
 Normalized intake events use names like `ticket.created`, `ticket.updated`,
-`pr.opened`, and `pr.merged`. Older topology files may still use
-`ticket_webhook` or `pr_webhook`; those trigger names match the corresponding
-normalized events, with the suffix available as `match.event`.
+`pr.opened`, and `pr.merged`. Topology triggers match event names exactly, so
+declare one trigger per normalized event you want to route.
 
 Pipeline `infra_signatures` entries are regexes used to classify failed gate
 signatures reported by `agent-team job gate set`. They classify an explicit
