@@ -93,15 +93,18 @@ CI timeout looked like infra, but the implementation still missed scope.`
 	if len(rec.WatchdogEvents) != 1 || len(rec.BudgetNoticeEvents) != 1 || len(rec.BudgetExceededEvents) != 1 {
 		t.Fatalf("events = watchdog %d notices %d exceeded %d", len(rec.WatchdogEvents), len(rec.BudgetNoticeEvents), len(rec.BudgetExceededEvents))
 	}
-	if len(rec.WorkUnits) != 2 || rec.WorkUnits[0].Target != "worker" || rec.WorkUnits[0].StartedAt != now.Add(-2*time.Hour) {
+	if len(rec.WorkUnits) != 1 || rec.WorkUnits[0].Target != "worker" || rec.WorkUnits[0].StartedAt != now.Add(-2*time.Hour) || rec.WorkUnits[0].FinishedAt != now.Add(-30*time.Minute) {
 		t.Fatalf("work units = %+v", rec.WorkUnits)
+	}
+	if !rec.WorkUnitsExhaustive {
+		t.Fatalf("work units should be marked exhaustive")
 	}
 	if rec.GateFailures != 1 || rec.GateFailureClasses["signature"] != 1 {
 		t.Fatalf("gate failures = %d %+v", rec.GateFailures, rec.GateFailureClasses)
 	}
 }
 
-func TestWorkUnitsForJobRequireRunningAt(t *testing.T) {
+func TestWorkUnitsForJobUseRuntimeUsageRecords(t *testing.T) {
 	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
 	queuedAt := now.Add(-2 * time.Hour)
 	runningAt := now.Add(-90 * time.Minute)
@@ -120,11 +123,11 @@ func TestWorkUnitsForJobRequireRunningAt(t *testing.T) {
 			FinishedAt: finishedAt,
 		}},
 	}
-	if units := workUnitsForJob(queuedOnly, "worker", now); len(units) != 0 {
+	if units := workUnitsForJob(queuedOnly, "worker"); len(units) != 0 {
 		t.Fatalf("queued-only step produced work units: %+v", units)
 	}
 
-	running := &jobstore.Job{
+	runningWithoutUsage := &jobstore.Job{
 		ID:        "squ-161-running",
 		Status:    jobstore.StatusDone,
 		CreatedAt: queuedAt,
@@ -138,7 +141,19 @@ func TestWorkUnitsForJobRequireRunningAt(t *testing.T) {
 			FinishedAt: finishedAt,
 		}},
 	}
-	units := workUnitsForJob(running, "worker", now)
+	if units := workUnitsForJob(runningWithoutUsage, "worker"); len(units) != 0 {
+		t.Fatalf("running step without usage produced work units: %+v", units)
+	}
+
+	withUsage := *runningWithoutUsage
+	withUsage.Usage, _ = usage.MergeRecord(nil, usage.Record{
+		Instance:  "worker-squ-161",
+		Agent:     "worker",
+		Runtime:   "codex",
+		StartedAt: runningAt,
+		EndedAt:   finishedAt,
+	})
+	units := workUnitsForJob(&withUsage, "worker")
 	if len(units) != 1 {
 		t.Fatalf("running step work units = %+v", units)
 	}
@@ -147,7 +162,7 @@ func TestWorkUnitsForJobRequireRunningAt(t *testing.T) {
 	}
 }
 
-func TestBuildReportDoesNotFallbackForQueuedOnlySteps(t *testing.T) {
+func TestBuildReportDoesNotFallbackWithoutUsageRecords(t *testing.T) {
 	teamDir := testOutcomeTeamDir(t)
 	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
 	queuedAt := now.Add(-2 * time.Hour)
@@ -187,6 +202,62 @@ func TestBuildReportDoesNotFallbackForQueuedOnlySteps(t *testing.T) {
 	}
 	if report.Summary.EffectiveConcurrency != 0 || report.Summary.PeakConcurrentWorkUnits != 0 {
 		t.Fatalf("summary concurrency = %+v", report.Summary)
+	}
+}
+
+func TestBuildRecordUsesRuntimeUsageWindowForNoStepJob(t *testing.T) {
+	teamDir := testOutcomeTeamDir(t)
+	createdAt := time.Date(2026, 7, 5, 15, 46, 7, 0, time.UTC)
+	runningAt := time.Date(2026, 7, 5, 16, 16, 1, 0, time.UTC)
+	finishedAt := runningAt.Add(30 * time.Minute)
+
+	j, err := jobstore.New("SQU-112", "worker", "Implement SQU-112", createdAt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	j.Status = jobstore.StatusDone
+	j.Instance = "worker-squ-112"
+	j.UpdatedAt = finishedAt
+	j.Usage, _ = usage.MergeRecord(nil, usage.Record{
+		Instance:  "worker-squ-112",
+		Agent:     "worker",
+		Runtime:   "codex",
+		StartedAt: runningAt,
+		EndedAt:   finishedAt,
+	})
+
+	rec, err := BuildRecord(teamDir, j, finishedAt.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("BuildRecord: %v", err)
+	}
+	if len(rec.WorkUnits) != 1 {
+		t.Fatalf("work units = %+v", rec.WorkUnits)
+	}
+	if rec.WorkUnits[0].StartedAt != runningAt || rec.WorkUnits[0].FinishedAt != finishedAt {
+		t.Fatalf("work interval = %s..%s, want %s..%s", rec.WorkUnits[0].StartedAt, rec.WorkUnits[0].FinishedAt, runningAt, finishedAt)
+	}
+
+	earlier := Record{
+		JobID:       "squ-earlier",
+		Status:      "done",
+		Week:        rec.Week,
+		Team:        "delivery",
+		Agent:       "worker",
+		FinalizedAt: runningAt.Add(-6 * time.Minute),
+		WorkUnits: []WorkUnitRecord{{
+			ID:         "usage-earlier",
+			Target:     "worker",
+			StartedAt:  createdAt.Add(4 * time.Minute),
+			FinishedAt: runningAt.Add(-6 * time.Minute),
+		}},
+	}
+	report := BuildReport([]Record{earlier, *rec}, ReportOptions{Team: "delivery", Agent: "worker", TeamDir: teamDir, Now: finishedAt})
+	if len(report.Rows) != 1 {
+		t.Fatalf("rows = %+v", report.Rows)
+	}
+	row := report.Rows[0]
+	if row.EffectiveConcurrency != 1 || row.PeakConcurrentWorkUnits != 1 {
+		t.Fatalf("row concurrency = %+v", row)
 	}
 }
 

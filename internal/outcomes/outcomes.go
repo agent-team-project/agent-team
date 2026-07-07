@@ -81,9 +81,8 @@ type EventRef struct {
 	Data    map[string]string `json:"data,omitempty"`
 }
 
-// WorkUnitRecord captures one job step interval used for effective-concurrency
-// reporting. It records runtime work, not queue wait, when step timestamps are
-// available.
+// WorkUnitRecord captures one runtime usage interval used for
+// effective-concurrency reporting. It records runtime work, not queue wait.
 type WorkUnitRecord struct {
 	ID         string    `json:"id,omitempty"`
 	Target     string    `json:"target,omitempty"`
@@ -240,8 +239,8 @@ func BuildRecord(teamDir string, j *jobstore.Job, now time.Time) (*Record, error
 	rec.WatchdogEvents = selectEvents(events, isWatchdogEvent)
 	rec.BudgetNoticeEvents = selectEvents(events, isBudgetNoticeEvent)
 	rec.BudgetExceededEvents = selectEvents(events, isBudgetExceededEvent)
-	rec.WorkUnits = workUnitsForJob(j, rec.Agent, finalizedAt)
-	rec.WorkUnitsExhaustive = len(j.Steps) > 0
+	rec.WorkUnits = workUnitsForJob(j, rec.Agent)
+	rec.WorkUnitsExhaustive = true
 	var budgetConsumed int64
 	rec.TokensAllocated, budgetConsumed, rec.TokensReleased = budgetAllocationTotals(events)
 	if rec.TokensConsumed == 0 && budgetConsumed > 0 {
@@ -479,58 +478,31 @@ func reviewRounds(j *jobstore.Job, bounces int) int {
 	return rounds
 }
 
-func workUnitsForJob(j *jobstore.Job, target string, finalizedAt time.Time) []WorkUnitRecord {
-	if j == nil {
+func workUnitsForJob(j *jobstore.Job, target string) []WorkUnitRecord {
+	if j == nil || j.Usage == nil {
 		return nil
 	}
-	var out []WorkUnitRecord
-	for _, step := range j.Steps {
-		if !progressedWorkUnitStatus(string(step.Status)) {
-			continue
-		}
-		startedAt := stepWorkStartedAt(step)
-		finishedAt := step.FinishedAt
-		if finishedAt.IsZero() && jobstore.IsTerminalStatus(step.Status) {
-			finishedAt = finalizedAt
-		}
+	target = strings.TrimSpace(target)
+	out := make([]WorkUnitRecord, 0, len(j.Usage.Records))
+	for _, usageRec := range j.Usage.Records {
+		startedAt := utcOrZero(usageRec.StartedAt)
+		finishedAt := utcOrZero(usageRec.EndedAt)
 		if !validWorkInterval(startedAt, finishedAt) {
 			continue
 		}
+		unitTarget := strings.TrimSpace(usageRec.Agent)
+		if unitTarget == "" {
+			unitTarget = target
+		}
 		out = append(out, WorkUnitRecord{
-			ID:         strings.TrimSpace(step.ID),
-			Target:     strings.TrimSpace(step.Target),
-			Instance:   strings.TrimSpace(step.Instance),
-			Status:     string(step.Status),
-			StartedAt:  startedAt.UTC(),
-			FinishedAt: finishedAt.UTC(),
+			ID:         usage.RecordKey(usageRec),
+			Target:     unitTarget,
+			Instance:   strings.TrimSpace(usageRec.Instance),
+			StartedAt:  startedAt,
+			FinishedAt: finishedAt,
 		})
 	}
-	if len(out) > 0 {
-		return out
-	}
-	if len(j.Steps) > 0 {
-		return nil
-	}
-	startedAt := utcOrZero(j.CreatedAt)
-	finishedAt := utcOrZero(finalizedAt)
-	if !validWorkInterval(startedAt, finishedAt) {
-		return nil
-	}
-	return []WorkUnitRecord{{
-		ID:         "job",
-		Target:     strings.TrimSpace(target),
-		Instance:   strings.TrimSpace(j.Instance),
-		Status:     string(j.Status),
-		StartedAt:  startedAt,
-		FinishedAt: finishedAt,
-	}}
-}
-
-func stepWorkStartedAt(step jobstore.Step) time.Time {
-	if !step.RunningAt.IsZero() {
-		return step.RunningAt.UTC()
-	}
-	return time.Time{}
+	return out
 }
 
 func progressedWorkUnitStatus(status string) bool {
@@ -932,20 +904,6 @@ func workIntervalsForRecord(rec Record, target string) []workInterval {
 			continue
 		}
 		out = append(out, workInterval{start: unit.StartedAt.UTC(), end: unit.FinishedAt.UTC()})
-	}
-	if len(out) > 0 {
-		return out
-	}
-	if rec.WorkUnitsExhaustive {
-		return nil
-	}
-	startedAt := rec.CreatedAt
-	finishedAt := rec.FinalizedAt
-	if finishedAt.IsZero() {
-		finishedAt = rec.RecordedAt
-	}
-	if validWorkInterval(startedAt, finishedAt) {
-		out = append(out, workInterval{start: startedAt.UTC(), end: finishedAt.UTC()})
 	}
 	return out
 }
