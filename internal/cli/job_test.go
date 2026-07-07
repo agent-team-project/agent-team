@@ -100,7 +100,7 @@ func writeJobAuthorityTopology(t *testing.T, teamDir string) {
 	t.Helper()
 	body := topoFixture + `
 [authority.agents.worker]
-allow = ["job.gate.*:own", "job.merge:own"]
+allow = ["job.gate.*:own", "job.merge:own", "job.step:own"]
 
 [authority.agents.reviewer]
 allow = ["job.gate.*:own", "job.merge:own"]
@@ -123,7 +123,7 @@ enforcement = "enforce"
 allow = ["job.*"]
 
 [authority.agents.worker]
-allow = ["job.gate.*:own", "job.merge:own"]
+allow = ["job.gate.*:own", "job.merge:own", "job.step:own"]
 
 [authority.agents.reviewer]
 allow = ["job.gate.*:own", "job.merge:own"]
@@ -15020,6 +15020,233 @@ func TestJobMergeAuthorityEnforcementDeniesWorkerCrossJob(t *testing.T) {
 	jobViolations := jobAuthorityViolationEvents(t, teamDir, j.ID)
 	if len(jobViolations) != 1 || jobViolations[0].Data["verb"] != "job.merge" {
 		t.Fatalf("job violations = %+v", jobViolations)
+	}
+}
+
+func writeAuthorityStepJob(t *testing.T, teamDir, ticket string) *job.Job {
+	t.Helper()
+	j := mustNewJob(t, ticket, "worker")
+	j.Status = job.StatusRunning
+	j.Pipeline = "ticket_to_pr"
+	j.Steps = []job.Step{{
+		ID:       "implement",
+		Target:   "worker",
+		Status:   job.StatusRunning,
+		Instance: "worker-" + strings.ToLower(ticket),
+	}}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write job: %v", err)
+	}
+	return j
+}
+
+func TestJobStepAuthorityEnforcementAllowsWorkerOwnJob(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	writeJobAuthorityEnforcingTopology(t, teamDir)
+	j := writeAuthorityStepJob(t, teamDir, "SQU-620")
+	setJobAuthorityOriginEnv(t, "worker", j.ID)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "step", j.ID, "implement", "--repo", tmp, "--status", "done", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job step own job: %v\nstderr=%s", err, stderr.String())
+	}
+	updated, err := job.Read(teamDir, j.ID)
+	if err != nil {
+		t.Fatalf("read updated job: %v", err)
+	}
+	if updated.Steps[0].Status != job.StatusDone {
+		t.Fatalf("step status = %s, want done", updated.Steps[0].Status)
+	}
+	if violations := jobAuthorityViolationEvents(t, teamDir, j.ID); len(violations) != 0 {
+		t.Fatalf("unexpected authority violations = %+v", violations)
+	}
+}
+
+func TestJobStepAuthorityEnforcementDeniesWorkerCrossJob(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	writeJobAuthorityEnforcingTopology(t, teamDir)
+	victim := writeAuthorityStepJob(t, teamDir, "SQU-621")
+	setJobAuthorityOriginEnv(t, "worker", "SQU-OWN")
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "step", victim.ID, "implement", "--repo", tmp, "--status", "done", "--force", "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("job step cross-job succeeded; want authority denial")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 3 {
+		t.Fatalf("err = %v, want exit 3; stderr=%s", err, stderr.String())
+	}
+	if body := stderr.String(); !strings.Contains(body, "authority violation") || !strings.Contains(body, "verb=job.step") || !strings.Contains(body, "allowlist_source=authority.agents.worker") {
+		t.Fatalf("stderr = %q", body)
+	}
+	updated, err := job.Read(teamDir, victim.ID)
+	if err != nil {
+		t.Fatalf("read updated job: %v", err)
+	}
+	if updated.Steps[0].Status != job.StatusRunning {
+		t.Fatalf("step status = %s, want running", updated.Steps[0].Status)
+	}
+	violations := jobAuthorityViolationEvents(t, teamDir, victim.ID)
+	if len(violations) != 1 || violations[0].Data["verb"] != "job.step" || violations[0].Data["actor_job"] != "SQU-OWN" {
+		t.Fatalf("job violations = %+v", violations)
+	}
+}
+
+func TestJobStepAuthorityEnforcementDeniesUnauthorizedCaller(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	writeJobAuthorityEnforcingTopology(t, teamDir)
+	j := writeAuthorityStepJob(t, teamDir, "SQU-622")
+	setJobAuthorityOriginEnv(t, "reviewer", j.ID)
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "step", j.ID, "implement", "--repo", tmp, "--status", "done", "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("job step by reviewer succeeded; want authority denial")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 3 {
+		t.Fatalf("err = %v, want exit 3; stderr=%s", err, stderr.String())
+	}
+	if body := stderr.String(); !strings.Contains(body, "authority violation") || !strings.Contains(body, "verb=job.step") || !strings.Contains(body, "allowlist_source=authority.agents.reviewer") {
+		t.Fatalf("stderr = %q", body)
+	}
+	updated, err := job.Read(teamDir, j.ID)
+	if err != nil {
+		t.Fatalf("read updated job: %v", err)
+	}
+	if updated.Steps[0].Status != job.StatusRunning {
+		t.Fatalf("step status = %s, want running", updated.Steps[0].Status)
+	}
+}
+
+func TestDestructiveJobMutationVerbsRequireAuthority(t *testing.T) {
+	cases := []struct {
+		name       string
+		verb       string
+		args       func(root string, j *job.Job) []string
+		setup      func(*job.Job)
+		stillExist bool
+	}{
+		{
+			name: "close",
+			verb: "job.close",
+			args: func(root string, j *job.Job) []string {
+				return []string{"job", "close", j.ID, "--repo", root, "--status", "done"}
+			},
+			stillExist: true,
+		},
+		{
+			name: "cancel",
+			verb: "job.cancel",
+			args: func(root string, j *job.Job) []string {
+				return []string{"job", "cancel", j.ID, "--repo", root}
+			},
+			stillExist: true,
+		},
+		{
+			name: "update",
+			verb: "job.update",
+			args: func(root string, j *job.Job) []string {
+				return []string{"job", "update", j.ID, "--repo", root, "--status", "done"}
+			},
+			stillExist: true,
+		},
+		{
+			name: "hold",
+			verb: "job.hold",
+			args: func(root string, j *job.Job) []string {
+				return []string{"job", "hold", j.ID, "--repo", root}
+			},
+			stillExist: true,
+		},
+		{
+			name: "release",
+			verb: "job.release",
+			args: func(root string, j *job.Job) []string {
+				return []string{"job", "release", j.ID, "--repo", root}
+			},
+			setup: func(j *job.Job) {
+				j.Held = true
+				j.HoldReason = "waiting"
+			},
+			stillExist: true,
+		},
+		{
+			name: "advance",
+			verb: "job.advance",
+			args: func(root string, j *job.Job) []string {
+				return []string{"job", "advance", j.ID, "--repo", root}
+			},
+			stillExist: true,
+		},
+		{
+			name: "remove",
+			verb: "job.rm",
+			args: func(root string, j *job.Job) []string {
+				return []string{"job", "rm", j.ID, "--repo", root}
+			},
+			setup: func(j *job.Job) {
+				j.Status = job.StatusDone
+			},
+			stillExist: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			initInto(t, tmp)
+			teamDir := filepath.Join(tmp, ".agent_team")
+			writeJobAuthorityEnforcingTopology(t, teamDir)
+			j := mustNewJob(t, "SQU-63"+strconv.Itoa(len(tc.name)), "worker")
+			if tc.setup != nil {
+				tc.setup(j)
+			}
+			if err := job.Write(teamDir, j); err != nil {
+				t.Fatalf("write job: %v", err)
+			}
+			setJobAuthorityOriginEnv(t, "worker", j.ID)
+
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args(tmp, j))
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("%s succeeded; want authority denial", tc.name)
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 3 {
+				t.Fatalf("err = %v, want exit 3; stderr=%s", err, stderr.String())
+			}
+			if body := stderr.String(); !strings.Contains(body, "authority violation") || !strings.Contains(body, "verb="+tc.verb) {
+				t.Fatalf("stderr = %q", body)
+			}
+			if tc.stillExist {
+				if _, err := job.Read(teamDir, j.ID); err != nil {
+					t.Fatalf("job should remain after denial: %v", err)
+				}
+			}
+		})
 	}
 }
 
