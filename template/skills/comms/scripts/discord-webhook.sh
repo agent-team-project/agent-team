@@ -4,6 +4,19 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+PYTHON_HELPER="$SCRIPT_DIR/../../../scripts/skills/python.sh"
+if [[ ! -f "$PYTHON_HELPER" && -n "${AGENT_TEAM_ROOT:-}" ]]; then
+    PYTHON_HELPER="$AGENT_TEAM_ROOT/scripts/skills/python.sh"
+fi
+if [[ ! -f "$PYTHON_HELPER" ]]; then
+    echo "discord-webhook.sh: missing Python helper: $PYTHON_HELPER" >&2
+    exit 1
+fi
+# shellcheck source=../../../scripts/skills/python.sh
+# shellcheck disable=SC1091
+source "$PYTHON_HELPER"
+
 usage() {
     cat <<'EOF'
 Usage:
@@ -74,7 +87,7 @@ if [ -z "${CONTENT//[[:space:]]/}" ]; then
 fi
 
 read_config_key() {
-    python3 - <<'PY'
+    "$AGENT_TEAM_PYTHON_BIN" - <<'PY'
 import tomllib
 from pathlib import Path
 
@@ -93,7 +106,7 @@ PY
 }
 
 read_env_value() {
-    python3 - "$@" <<'PY'
+    "$AGENT_TEAM_PYTHON_BIN" - "$@" <<'PY'
 import sys
 from pathlib import Path
 
@@ -156,6 +169,7 @@ resolve_webhook() {
     return 1
 }
 
+AGENT_TEAM_PYTHON_BIN="$(agent_team_python311 "discord-webhook.sh")"
 WEBHOOK_ENV_KEY="$(read_config_key)"
 if ! WEBHOOK="$(resolve_webhook "$WEBHOOK_ENV_KEY")"; then
     echo "discord-webhook.sh: no Discord webhook found for $WEBHOOK_ENV_KEY in .env" >&2

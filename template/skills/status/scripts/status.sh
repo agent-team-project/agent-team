@@ -13,6 +13,19 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+PYTHON_HELPER="$SCRIPT_DIR/../../../scripts/skills/python.sh"
+if [[ ! -f "$PYTHON_HELPER" && -n "${AGENT_TEAM_ROOT:-}" ]]; then
+    PYTHON_HELPER="$AGENT_TEAM_ROOT/scripts/skills/python.sh"
+fi
+if [[ ! -f "$PYTHON_HELPER" ]]; then
+    echo "status.sh: missing Python helper: $PYTHON_HELPER" >&2
+    exit 1
+fi
+# shellcheck source=../../../scripts/skills/python.sh
+# shellcheck disable=SC1091
+source "$PYTHON_HELPER"
+
 VALID_PHASES="planning implementing awaiting_review idle done"
 
 usage() {
@@ -50,6 +63,12 @@ valid_phase() {
     return 1
 }
 
+run_status_writer() {
+    local python_bin
+    python_bin="$(agent_team_python311 "status.sh")"
+    "$python_bin" "$SCRIPT_DIR/_status_write.py"
+}
+
 [[ $# -ge 1 ]] || usage
 verb="$1"; shift
 
@@ -83,7 +102,7 @@ case "$verb" in
         STATUS_PR="$pr" \
         STATUS_BRANCH="$branch" \
         STATUS_LAST_ACTION="$last_action" \
-            python3 "$(dirname "$0")/_status_write.py"
+            run_status_writer
         ;;
     block)
         reason="" ask=""
@@ -103,13 +122,13 @@ case "$verb" in
         STATUS_VERB=block \
         STATUS_REASON="$reason" \
         STATUS_ASK="$ask" \
-            python3 "$(dirname "$0")/_status_write.py"
+            run_status_writer
         ;;
     clear-block)
         require_state_dir
         AGENT_TEAM_STATE_DIR="$AGENT_TEAM_STATE_DIR" \
         STATUS_VERB=clear-block \
-            python3 "$(dirname "$0")/_status_write.py"
+            run_status_writer
         ;;
     show)
         require_state_dir

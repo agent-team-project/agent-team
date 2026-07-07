@@ -23,6 +23,19 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+PYTHON_HELPER="$SCRIPT_DIR/../../../scripts/skills/python.sh"
+if [[ ! -f "$PYTHON_HELPER" && -n "${AGENT_TEAM_ROOT:-}" ]]; then
+    PYTHON_HELPER="$AGENT_TEAM_ROOT/scripts/skills/python.sh"
+fi
+if [[ ! -f "$PYTHON_HELPER" ]]; then
+    echo "linear-graphql.sh: missing Python helper: $PYTHON_HELPER" >&2
+    exit 1
+fi
+# shellcheck source=../../../scripts/skills/python.sh
+# shellcheck disable=SC1091
+source "$PYTHON_HELPER"
+
 usage() {
     sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-1}"
@@ -87,8 +100,10 @@ if [ -n "$QUERY_FILE" ] && [ ! -f "$QUERY_FILE" ]; then
     exit 1
 fi
 
+AGENT_TEAM_PYTHON_BIN="$(agent_team_python311 "linear-graphql.sh")"
+
 check_linear_config() {
-    python3 - <<'PY'
+    "$AGENT_TEAM_PYTHON_BIN" - <<'PY'
 import sys
 import tomllib
 from pathlib import Path
@@ -133,7 +148,7 @@ check_linear_config
 # --porcelain` is used instead of `git rev-parse --show-toplevel` so that calls
 # from inside a linked worktree still find the primary repo's .env.
 read_env_value() {
-    python3 - "$@" <<'PY'
+    "$AGENT_TEAM_PYTHON_BIN" - "$@" <<'PY'
 import sys
 from pathlib import Path
 
@@ -221,7 +236,7 @@ else
 fi
 
 origin_footer() {
-    python3 - <<'PY'
+    "$AGENT_TEAM_PYTHON_BIN" - <<'PY'
 import os
 import shlex
 import tomllib
