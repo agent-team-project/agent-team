@@ -348,7 +348,7 @@ func (r *EventResolver) popReadyQueuedEventLocked(inst *topology.Instance, tr *e
 			_ = WriteQueueItem(r.mgr.daemonRoot, queueItemFromEvent(inst.Name, ev, QueueStatePending))
 			continue
 		}
-		grant, err := r.grantPayloadBudgetLocked(ev.payload, ev.origin, now)
+		grant, err := r.grantPayloadBudgetLocked(ev.payload, ev.origin, ev.uniqueName, now)
 		if err != nil {
 			ev.lastError = err.Error()
 			ev.reason = "budget_error"
@@ -760,7 +760,7 @@ func (r *EventResolver) RetryQueueItem(id string) (EventOutcome, error) {
 		r.mu.Unlock()
 		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: ev.uniqueName, Reason: QueueReasonLockHeld}, nil
 	}
-	grant, err := r.grantPayloadBudgetLocked(ev.payload, ev.origin, time.Now().UTC())
+	grant, err := r.grantPayloadBudgetLocked(ev.payload, ev.origin, ev.uniqueName, time.Now().UTC())
 	if err != nil {
 		r.releaseLocksForInstanceLocked(ev.uniqueName)
 		r.mu.Unlock()

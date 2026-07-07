@@ -170,6 +170,7 @@ func (r *EventResolver) SpawnTeam(req TeamSpawnRequest) (*TeamSpawnResult, error
 	now := time.Now().UTC()
 	charterID := newTeamCharterID(name, now)
 	childDeploymentID := resource.ChildDeploymentID(parent.ID, name)
+	creator := r.creatorOrigin(req.Origin, target, instanceName).WithResourceURIs()
 	charter := &TeamCharter{
 		ID:                  charterID,
 		URI:                 resource.CharterURI(parent.ID, charterID),
@@ -184,12 +185,12 @@ func (r *EventResolver) SpawnTeam(req TeamSpawnRequest) (*TeamSpawnResult, error
 		ChildDeploymentURI:  resource.DeploymentURI(childDeploymentID),
 		Relationship:        childDeploymentRelationshipEphemeralTeam,
 		State:               TeamCharterStateChartered,
-		Creator:             r.creatorOrigin(req.Origin, target, instanceName).WithResourceURIs(),
+		Creator:             creator,
 		Budget: TeamCharterBudget{
 			RequestedTokens: req.Budget.Tokens,
 			GrantedTokens:   req.Budget.Tokens,
 			Time:            strings.TrimSpace(req.Budget.Time),
-			Team:            r.creatorOrigin(req.Origin, target, instanceName).Team,
+			Team:            creator.Team,
 		},
 		Lifecycle: cleanTeamSpawnLifecycle(req.Lifecycle),
 		CreatedAt: now,
@@ -224,7 +225,7 @@ func (r *EventResolver) SpawnTeam(req TeamSpawnRequest) (*TeamSpawnResult, error
 	if payloadString(payload, "job_id") == "" && charter.Creator.Job != "" {
 		payload["job_id"] = charter.Creator.Job
 	}
-	outcome := r.actuateEphemeral(inst, topology.EventAgentDispatch, payload)
+	outcome := r.actuateEphemeralWithBudgetOrigin(inst, topology.EventAgentDispatch, payload, charter.Creator)
 	charter.Outcome = &outcome
 	charter.UpdatedAt = time.Now().UTC()
 	switch outcome.Action {

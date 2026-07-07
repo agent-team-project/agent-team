@@ -36,15 +36,22 @@ replicas = 1
 event = "agent.dispatch"
 match.target = "worker"
 
-[teams.platform]
-instances = ["manager", "worker"]
+	[teams.platform]
+	instances = ["manager"]
 
-[budgets.platform]
-tokens_per_day = 100
-allocation = "reserve"
+	[teams.delivery]
+	instances = ["worker"]
 
-[authority.agents.manager]
-allow = ["team.spawn", "job.show", "inbox.*"]
+	[budgets.platform]
+	tokens_per_day = 100
+	allocation = "reserve"
+
+	[budgets.delivery]
+	tokens_per_day = 100
+	allocation = "reserve"
+
+	[authority.agents.manager]
+	allow = ["team.spawn", "job.show", "inbox.*"]
 `)
 	fake := newFakeSpawner(time.Second)
 	m := NewInstanceManager(DaemonRoot(teamDir), fake.spawn)
@@ -103,6 +110,29 @@ allow = ["team.spawn", "job.show", "inbox.*"]
 	}
 	if charter.Budget.RequestedTokens != 60 || charter.Budget.GrantedTokens != 60 || charter.Budget.AllocationURI == "" || charter.Budget.Team != "platform" {
 		t.Fatalf("charter budget = %+v", charter.Budget)
+	}
+	allocations, err := budget.ListAllocations(teamDir)
+	if err != nil {
+		t.Fatalf("list allocations: %v", err)
+	}
+	if len(allocations) != 1 {
+		t.Fatalf("allocations = %+v", allocations)
+	}
+	allocation := allocations[0]
+	if allocation.Team != "platform" || allocation.Instance != charter.Instance || allocation.Origin.Team != "platform" || allocation.Origin.Instance != "manager" || allocation.Origin.DeploymentURI != charter.ParentDeploymentURI {
+		t.Fatalf("allocation provenance = %+v", allocation)
+	}
+	rows, err := budget.Statuses(teamDir, top, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("budget statuses: %v", err)
+	}
+	parentBudget := budgetStatusByTeam(rows, "platform")
+	childBudget := budgetStatusByTeam(rows, "delivery")
+	if parentBudget == nil || parentBudget.TokensAllocated != 60 || parentBudget.TokensRemaining != 40 {
+		t.Fatalf("parent budget = %+v in rows %+v", parentBudget, rows)
+	}
+	if childBudget == nil || childBudget.TokensAllocated != 0 || childBudget.TokensRemaining != 100 {
+		t.Fatalf("child budget = %+v in rows %+v", childBudget, rows)
 	}
 	if !reflect.DeepEqual(charter.Authority.GrantedVerbs, []string{"inbox.send", "job.show"}) {
 		t.Fatalf("granted verbs = %#v", charter.Authority.GrantedVerbs)
@@ -179,12 +209,110 @@ allow = ["team.spawn", "job.show", "inbox.*"]
 	if reaped.State != TeamCharterStateReaped || reaped.ReapedAt.IsZero() || reaped.Tombstone["reason"] != "instance_reaped" {
 		t.Fatalf("reaped charter = %+v", reaped)
 	}
+	allocations, err = budget.ListAllocations(teamDir)
+	if err != nil {
+		t.Fatalf("list allocations: %v", err)
+	}
+	if len(allocations) != 1 || allocations[0].Team != "platform" || allocations[0].Status != budget.AllocationStatusReleased || allocations[0].ReleasedTokens != 60 {
+		t.Fatalf("allocations after reap = %+v", allocations)
+	}
+}
+
+func TestDynamicTeamSpawnOverParentBudgetQueuesWithoutChargingChildTeam(t *testing.T) {
+	teamDir := fixtureTeamDir(t)
+	writeFixtureAgent(t, teamDir, "manager")
+	if err := os.WriteFile(filepath.Join(teamDir, "config.toml"), []byte("[project]\nid = \"parent-dep\"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	top := mustParseCustomTopo(t, `
+	[instances.manager]
+	agent = "manager"
+	ephemeral = false
+
+	[instances.worker]
+	agent = "worker"
+	ephemeral = true
+	replicas = 1
+
+	[[instances.worker.triggers]]
+	event = "agent.dispatch"
+	match.target = "worker"
+
+	[teams.platform]
+	instances = ["manager"]
+
+	[teams.delivery]
+	instances = ["worker"]
+
+	[budgets.platform]
+	tokens_per_day = 50
+	allocation = "reserve"
+
+	[budgets.delivery]
+	tokens_per_day = 100
+	allocation = "reserve"
+
+	[authority.agents.manager]
+	allow = ["team.spawn", "job.show"]
+	`)
+	fake := newFakeSpawner(time.Second)
+	m := NewInstanceManager(DaemonRoot(teamDir), fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+
+	result, err := resolver.SpawnTeam(TeamSpawnRequest{
+		Name:   "Oversized Child",
+		Target: "worker",
+		Budget: TeamSpawnBudget{Tokens: 60},
+		Payload: map[string]any{
+			"job_id":  "gh155-over-parent-budget",
+			"ticket":  "GH155-dynteams-impl",
+			"kickoff": "run the oversized child team",
+		},
+		Origin: origin.Envelope{
+			Project:  "parent-dep",
+			Team:     "platform",
+			Instance: "manager",
+			Agent:    "manager",
+			Job:      "gh155-over-parent-budget",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SpawnTeam: %v", err)
+	}
+	if !result.Accepted || result.State != TeamCharterStateQueued || result.Outcome.Action != "queued" || result.Outcome.Reason != QueueReasonBudgetExhausted {
+		t.Fatalf("spawn result = %+v", result)
+	}
+	if fake.callCount() != 0 {
+		t.Fatalf("spawn calls = %d, want none", fake.callCount())
+	}
+	if result.Charter == nil || result.Charter.Budget.Team != "platform" || result.Charter.Budget.AllocationURI != "" {
+		t.Fatalf("charter budget = %+v", result.Charter)
+	}
 	allocations, err := budget.ListAllocations(teamDir)
 	if err != nil {
 		t.Fatalf("list allocations: %v", err)
 	}
-	if len(allocations) != 1 || allocations[0].Status != budget.AllocationStatusReleased || allocations[0].ReleasedTokens != 60 {
-		t.Fatalf("allocations after reap = %+v", allocations)
+	if len(allocations) != 0 {
+		t.Fatalf("allocations = %+v, want none", allocations)
+	}
+	rows, err := budget.Statuses(teamDir, top, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("budget statuses: %v", err)
+	}
+	parentBudget := budgetStatusByTeam(rows, "platform")
+	childBudget := budgetStatusByTeam(rows, "delivery")
+	if parentBudget == nil || parentBudget.TokensAllocated != 0 || parentBudget.TokensRemaining != 50 {
+		t.Fatalf("parent budget = %+v in rows %+v", parentBudget, rows)
+	}
+	if childBudget == nil || childBudget.TokensAllocated != 0 || childBudget.TokensRemaining != 100 {
+		t.Fatalf("child budget = %+v in rows %+v", childBudget, rows)
+	}
+	items, err := ListQueueItems(m.daemonRoot)
+	if err != nil {
+		t.Fatalf("list queue: %v", err)
+	}
+	if len(items) != 1 || items[0].Reason != QueueReasonBudgetExhausted || items[0].Origin.Team != "platform" || items[0].Origin.Instance != "manager" {
+		t.Fatalf("queue items = %+v", items)
 	}
 }
 
@@ -242,4 +370,13 @@ match.target = "worker"
 	if charter.URI != result.CharterURI || charter.ChildDeploymentURI != result.ChildDeploymentURI {
 		t.Fatalf("charter = %+v, result = %+v", charter, result)
 	}
+}
+
+func budgetStatusByTeam(rows []budget.TeamStatus, team string) *budget.TeamStatus {
+	for i := range rows {
+		if rows[i].Team == team {
+			return &rows[i]
+		}
+	}
+	return nil
 }
