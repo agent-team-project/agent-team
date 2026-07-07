@@ -49,32 +49,39 @@ The repo currently declares five teams.
 
 | Team | What it owns | Running pieces |
 | --- | --- | --- |
-| `delivery` | Normal ticket-to-PR delivery. | `manager`, `ticket-manager`, 3 `worker` replicas, 2 `reviewer` replicas, the `ticket_to_pr` pipeline, and the 12h `feedback-triage` schedule. |
-| `platform` | Framework infrastructure work such as provider seams, provenance, scoping, and resource constraints. | 2 `platform-worker` replicas, 1 `platform-reviewer`, and a separate `platform_ticket_to_pr` pipeline triggered by `platform.ticket`. |
-| `quality` | Proactive architecture, tech-debt, and harness auditing. | Weekly `debt-auditor` and weekly `harness-reviewer` schedules. |
+| `delivery` | Normal ticket-to-PR delivery. | `manager`, `ticket-manager`, 4 `worker` replicas, 3 `reviewer` replicas, the `ticket_to_pr` pipeline, and the 12h `feedback-triage` schedule. |
+| `platform` | Framework infrastructure work such as provider seams, provenance, scoping, and resource constraints. | 3 `platform-worker` replicas, 3 `platform-reviewer` replicas, and a separate `platform_ticket_to_pr` pipeline triggered by `platform.ticket`. |
+| `quality` | Proactive architecture, tech-debt, harness auditing, org review, sentinel checks, and product verification. | Scheduled `debt-auditor`, `harness-reviewer`, `org-review`, `sentinel`, and `product-verifier` loops. |
 | `pr` | Public voice and outward communication. | Daily `comms` digest schedule for shipped-work digests, release announcements, and community intake. |
-| `docs` | Documentation authoring and freshness. | `docs-writer`, a worker instance pinned to the Claude runtime for narrative docs, plus the weekly `docs-freshness` schedule. |
+| `docs` | Documentation authoring and freshness. | `docs-writer`, a worker instance for narrative docs, plus the 24h `docs-freshness` schedule. |
 
-It also declares five schedules:
+It also declares eight schedules:
 
 | Schedule | Cadence | Owning team | What it does |
 | --- | --- | --- | --- |
 | `feedback-triage` | Every 12 hours. | `delivery` | Cluster local `agent-team feedback submit` reports plus system pain signals; file, fold, or dismiss tickets. |
-| `debt-sweep` | Every 168 hours. | `quality` | Audit one subsystem and file at most three evidence-backed tech-debt tickets. |
-| `harness-review` | Every 168 hours. | `quality` | Inspect bounce classes, feedback trends, and failure patterns; propose prompt, skill, or pipeline-instruction tickets. |
+| `debt-sweep` | Every 24 hours. | `quality` | Audit one subsystem and file at most three evidence-backed tech-debt tickets. |
+| `harness-review` | Every 12 hours. | `quality` | Inspect bounce classes, feedback trends, and failure patterns; propose prompt, skill, or pipeline-instruction tickets. |
+| `org-review` | Every 3 days. | `quality` | Read outcomes, spend, concurrency/capacity, cycle-time, bounces, and feedback trends; propose strategic process/topology/prompt/budget tickets. |
+| `sentinel` | Every 6 hours. | `quality` | Check post-merge public surfaces and submit incident feedback when they fail. |
+| `product-verify` | Every 24 hours. | `quality` | Compare daemon UI data with CLI ground truth and file capped product feedback. |
 | `discord-digest` | Every 24 hours. | `pr` | Draft or publish a shipped-work digest through the sanctioned comms path. |
-| `docs-freshness` | Every 168 hours. | `docs` | Audit docs against the shipped binary, latest release, repo identity, and quickstart; file or fix stale-docs findings. |
+| `docs-freshness` | Every 24 hours. | `docs` | Audit docs against the shipped binary, latest release, repo identity, and quickstart; file or fix stale-docs findings. |
 
 The core self-improvement path is mostly carried by the board-driven delivery
-pipeline plus the feedback, debt, harness, and docs-freshness loops:
+pipeline plus the feedback, debt, harness, org-review, sentinel,
+product-verifier, and docs-freshness loops:
 
 | Loop | Trigger or cadence | What it is allowed to do |
 | --- | --- | --- |
 | Board-driven delivery | A Linear ticket enters the configured `Ready for Agent` column. | Run implement -> review -> manual approve. Workers open PRs; reviewers report verdicts; the manual gate decides merge. |
 | Feedback triage | Every 12 hours. | Cluster local `agent-team feedback submit` reports plus system pain signals; file, fold, or dismiss tickets. Filed tickets land in Backlog. |
-| Debt sweep | Every 168 hours. | Audit one subsystem and file at most three evidence-backed tech-debt tickets. Filed tickets land in Backlog. |
-| Harness review | Every 168 hours. | Inspect bounce classes, feedback trends, and failure patterns; propose prompt, skill, or pipeline-instruction tickets. Filed tickets land in Backlog. |
-| Docs freshness | Every 168 hours. | Check docs against the live CLI, release record, repo identity, links, and quickstart; file findings or fix them directly when dispatched. |
+| Debt sweep | Every 24 hours. | Audit one subsystem and file at most three evidence-backed tech-debt tickets. Filed tickets land in Backlog. |
+| Harness review | Every 12 hours. | Inspect bounce classes, feedback trends, and failure patterns; propose prompt, skill, or pipeline-instruction tickets. Filed tickets land in Backlog. |
+| Org review | Every 3 days. | Inspect outcomes, per-epic spend, review quality, capacity utilization, cycle-time, and feedback trends; propose at most a few strategic improvement tickets. Filed tickets land in Backlog. |
+| Sentinel | Every 6 hours. | Check main CI, docs rendering, release assets, and repo metadata; submit incident feedback when public surfaces fail. |
+| Product verifier | Every 24 hours. | Compare daemon UI projections with CLI ground truth and file capped bug, friction, or idea feedback. |
+| Docs freshness | Every 24 hours. | Check docs against the live CLI, release record, repo identity, links, and quickstart; file findings or fix them directly when dispatched. |
 
 The PR team's 24h Discord digest schedule is part of the current topology, but
 it is outward communication rather than the core self-improvement loop.
@@ -151,7 +158,7 @@ acceptance criteria, then a normal PR with tests.
 
 ## Auditors File Debt, Not Fixes
 
-The quality team has a weekly `debt-sweep` schedule. The auditor is read-only
+The quality team has a scheduled `debt-sweep` loop. The auditor is read-only
 with respect to code: it sweeps one subsystem, gathers hard evidence, and files
 at most three Backlog tickets. This keeps the quality loop from becoming an
 unreviewed rewrite loop.
@@ -170,7 +177,7 @@ pipeline.
 
 ## Harness Review Tightens the Harness
 
-The weekly `harness-review` schedule looks at the steering surfaces themselves:
+The scheduled `harness-review` loop looks at the steering surfaces themselves:
 agent prompts, skills, pipeline instructions, repeated bounces, feedback
 clusters, and failure patterns. It files `harness` tickets, again to Backlog.
 
@@ -190,6 +197,22 @@ the instance state dir, where the child process could actually use it.
 
 That is a useful self-improvement result: the harness found a harness bug, and
 the review gate stopped the first plausible-but-wrong repair.
+
+## Org Review Turns Outcomes Into Strategy
+
+The scheduled `org-review` loop is the strategic counterpart to harness review.
+Every three days, an ephemeral manager reads the outcomes ledger, per-epic
+spend, bounce classes, effective versus peak concurrency, capacity utilization,
+cycle time, feedback trends, and failure signals. It proposes at most a few
+evidence-backed tickets for process, topology, prompt, or budget changes.
+
+The loop follows `documentation/metrics-methodology.md`: ground truth over
+proxy counts, quality-inclusive interpretation, difficulty-normalized
+comparisons, and a strict metrics firewall. Agents being measured do not receive
+their own scores or targets in prompts; org review turns observations into
+reviewed tickets, and those tickets still go through the normal delivery path.
+The v1 trigger is scheduled; project or epic completion should become a second
+trigger when that event path is available.
 
 ## The Budget Economy
 

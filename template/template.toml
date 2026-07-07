@@ -249,6 +249,7 @@ exclude = [
   "skills/docs-freshness",
   "skills/product-verify",
   "skills/release",
+  "skills/org-review",
   "skills/review-harness",
   "skills/sentinel",
   "skills/triage-feedback",
