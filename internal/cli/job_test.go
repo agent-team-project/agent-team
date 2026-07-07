@@ -605,6 +605,7 @@ func TestJobCreateListShowClose(t *testing.T) {
 		"job", "create", "SQU-42",
 		"--target", "worker",
 		"--ticket-url", "https://linear.app/squirtlesquad/issue/SQU-42/status-monitor",
+		"--epic", "resource-governance",
 		"--kickoff", "implement the status monitor",
 		"--budget-tokens", "1.5M",
 		"--budget-time", "45m",
@@ -626,6 +627,9 @@ func TestJobCreateListShowClose(t *testing.T) {
 	}
 	if created.TicketURL != "https://linear.app/squirtlesquad/issue/SQU-42/status-monitor" {
 		t.Fatalf("created ticket_url = %q", created.TicketURL)
+	}
+	if created.Epic != "resource-governance" {
+		t.Fatalf("created epic = %q", created.Epic)
 	}
 	if created.TokenBudget != 1500000 || created.TimeBudget != "45m0s" {
 		t.Fatalf("created budgets = token %d time %q", created.TokenBudget, created.TimeBudget)
@@ -707,6 +711,8 @@ func TestJobCreateListShowClose(t *testing.T) {
 	}
 	if !strings.Contains(showOut.String(), "Ticket URL:") ||
 		!strings.Contains(showOut.String(), "https://linear.app/squirtlesquad/issue/SQU-42/status-monitor") ||
+		!strings.Contains(showOut.String(), "Epic:") ||
+		!strings.Contains(showOut.String(), "resource-governance") ||
 		!strings.Contains(showOut.String(), "Kickoff:") ||
 		!strings.Contains(showOut.String(), "implement the status monitor") ||
 		!strings.Contains(showOut.String(), "Actions:") ||
@@ -760,6 +766,9 @@ func TestJobCreateListShowClose(t *testing.T) {
 	}
 	if events[0].Data["ticket_url"] != "https://linear.app/squirtlesquad/issue/SQU-42/status-monitor" {
 		t.Fatalf("created event data = %+v", events[0].Data)
+	}
+	if events[0].Data["epic"] != "resource-governance" {
+		t.Fatalf("created event epic = %+v", events[0].Data)
 	}
 
 	showEvents := NewRootCmd()
@@ -940,6 +949,138 @@ func TestJobCreateListShowClose(t *testing.T) {
 	}
 	if summary.JobID != "squ-42" || summary.Total != 1 || summary.Types["closed"] != 1 || summary.Statuses["done"] != 1 || summary.Actors["cli"] != 1 {
 		t.Fatalf("job events summary json = %+v", summary)
+	}
+}
+
+func TestJobCreatePersistsOriginDerivedEpic(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	projectID, err := origin.ProjectID(teamDir)
+	if err != nil {
+		t.Fatalf("project id: %v", err)
+	}
+	if projectID == "" {
+		t.Fatal("project id is empty")
+	}
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{"job", "create", "SMK-1", "--repo", tmp, "--json"})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("job create: %v\nstderr=%s", err, createErr.String())
+	}
+	var created job.Job
+	if err := json.Unmarshal(createOut.Bytes(), &created); err != nil {
+		t.Fatalf("decode create json: %v\nbody=%s", err, createOut.String())
+	}
+	if created.Epic != projectID {
+		t.Fatalf("created epic = %q, want project id %q", created.Epic, projectID)
+	}
+
+	persisted, err := job.Read(teamDir, "smk-1")
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if persisted.Epic != projectID {
+		t.Fatalf("persisted epic = %q, want project id %q", persisted.Epic, projectID)
+	}
+	events, err := job.ListEvents(teamDir, "smk-1")
+	if err != nil {
+		t.Fatalf("job events: %v", err)
+	}
+	createdEvent, ok := findJobEvent(events, "created")
+	if !ok {
+		t.Fatalf("created event missing: %+v", events)
+	}
+	if createdEvent.Data["epic"] != projectID {
+		t.Fatalf("created event data = %+v, want epic %q", createdEvent.Data, projectID)
+	}
+
+	closeCmd := NewRootCmd()
+	closeOut, closeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	closeCmd.SetOut(closeOut)
+	closeCmd.SetErr(closeErr)
+	closeCmd.SetArgs([]string{"job", "close", "smk-1", "--status", "done", "--repo", tmp, "--json"})
+	if err := closeCmd.Execute(); err != nil {
+		t.Fatalf("job close: %v\nstderr=%s", err, closeErr.String())
+	}
+
+	reportCmd := NewRootCmd()
+	reportOut, reportErr := &bytes.Buffer{}, &bytes.Buffer{}
+	reportCmd.SetOut(reportOut)
+	reportCmd.SetErr(reportErr)
+	reportCmd.SetArgs([]string{"outcomes", "report", "--target", tmp, "--by-epic", "--json"})
+	if err := reportCmd.Execute(); err != nil {
+		t.Fatalf("outcomes report --by-epic: %v\nstderr=%s", err, reportErr.String())
+	}
+	var report struct {
+		Rows []struct {
+			Epic string `json:"epic"`
+			Jobs int    `json:"jobs"`
+			Done int    `json:"done"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(reportOut.Bytes(), &report); err != nil {
+		t.Fatalf("decode outcomes report: %v\nbody=%s", err, reportOut.String())
+	}
+	if len(report.Rows) != 1 || report.Rows[0].Epic != projectID || report.Rows[0].Jobs != 1 || report.Rows[0].Done != 1 {
+		t.Fatalf("outcomes report rows = %+v, want one done job for epic %q", report.Rows, projectID)
+	}
+}
+
+func TestJobUpdateEpicAndClear(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{"job", "create", "SQU-424", "--repo", tmp, "--epic", "resource-governance", "--json"})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("job create: %v\nstderr=%s", err, createErr.String())
+	}
+	var created job.Job
+	if err := json.Unmarshal(createOut.Bytes(), &created); err != nil {
+		t.Fatalf("decode create json: %v\nbody=%s", err, createOut.String())
+	}
+	if created.Epic != "resource-governance" {
+		t.Fatalf("created epic = %q", created.Epic)
+	}
+
+	update := NewRootCmd()
+	updateOut, updateErr := &bytes.Buffer{}, &bytes.Buffer{}
+	update.SetOut(updateOut)
+	update.SetErr(updateErr)
+	update.SetArgs([]string{"job", "update", "squ-424", "--repo", tmp, "--epic", "resource-governance-v2", "--json"})
+	if err := update.Execute(); err != nil {
+		t.Fatalf("job update epic: %v\nstderr=%s", err, updateErr.String())
+	}
+	var updated job.Job
+	if err := json.Unmarshal(updateOut.Bytes(), &updated); err != nil {
+		t.Fatalf("decode update json: %v\nbody=%s", err, updateOut.String())
+	}
+	if updated.Epic != "resource-governance-v2" {
+		t.Fatalf("updated epic = %q", updated.Epic)
+	}
+
+	clearEpic := NewRootCmd()
+	clearEpicOut, clearEpicErr := &bytes.Buffer{}, &bytes.Buffer{}
+	clearEpic.SetOut(clearEpicOut)
+	clearEpic.SetErr(clearEpicErr)
+	clearEpic.SetArgs([]string{"job", "update", "squ-424", "--repo", tmp, "--clear", "epic", "--json"})
+	if err := clearEpic.Execute(); err != nil {
+		t.Fatalf("job clear epic: %v\nstderr=%s", err, clearEpicErr.String())
+	}
+	var cleared job.Job
+	if err := json.Unmarshal(clearEpicOut.Bytes(), &cleared); err != nil {
+		t.Fatalf("decode clear json: %v\nbody=%s", err, clearEpicOut.String())
+	}
+	if cleared.Epic != "" {
+		t.Fatalf("cleared epic = %q", cleared.Epic)
 	}
 }
 
