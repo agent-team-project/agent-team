@@ -192,7 +192,7 @@ func TestClient_PublishEvent_Persistent(t *testing.T) {
 
 func TestClient_PublishEvent_NoMatch(t *testing.T) {
 	env := newTopoTestEnv(t)
-	res, err := env.client.PublishEvent("ticket_webhook", map[string]any{"project": "Mobile"})
+	res, err := env.client.PublishEvent("ticket.created", map[string]any{"project": "Mobile"})
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}

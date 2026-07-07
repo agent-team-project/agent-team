@@ -547,7 +547,7 @@ target = "manager"
 	}
 }
 
-func TestIntakeLinearDryRunPreviewLegacyWebhookTriggers(t *testing.T) {
+func TestIntakeLinearDryRunPreviewNormalizedTriggers(t *testing.T) {
 	target := t.TempDir()
 	teamDir := filepath.Join(target, ".agent_team")
 	if err := os.MkdirAll(teamDir, 0o755); err != nil {
@@ -558,14 +558,12 @@ func TestIntakeLinearDryRunPreviewLegacyWebhookTriggers(t *testing.T) {
 agent = "ticket-manager"
 
 [[instances.ticket-manager.triggers]]
-event = "ticket_webhook"
+event = "ticket.created"
 match.project = "Agent Team"
-match.event = "created"
 
 [pipelines.ticket_triage]
-trigger.event = "ticket_webhook"
+trigger.event = "ticket.created"
 trigger.match.project = "Agent Team"
-trigger.match.event = "created"
 
 [[pipelines.ticket_triage.steps]]
 id = "triage"
@@ -574,30 +572,30 @@ target = "ticket-manager"
 		t.Fatal(err)
 	}
 
-	payload := `{"action":"Issue created","data":{"identifier":"SQU-106","title":"Preview legacy routing","project":{"name":"Agent Team"}}}`
+	payload := `{"action":"Issue created","data":{"identifier":"SQU-106","title":"Preview normalized routing","project":{"name":"Agent Team"}}}`
 	cmd := NewRootCmd()
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
 	cmd.SetArgs([]string{"intake", "linear", "--payload", payload, "--target", target, "--dry-run", "--preview-triggers", "--json"})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("intake linear legacy dry-run preview: %v\nstderr=%s", err, stderr.String())
+		t.Fatalf("intake linear normalized dry-run preview: %v\nstderr=%s", err, stderr.String())
 	}
 	var result intakePublishResult
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
-		t.Fatalf("decode legacy dry-run preview json: %v\nbody=%s", err, out.String())
+		t.Fatalf("decode normalized dry-run preview json: %v\nbody=%s", err, out.String())
 	}
 	if !result.DryRun || result.Event == nil || result.Event.Type != "ticket.created" {
-		t.Fatalf("legacy dry-run preview result = %+v", result)
+		t.Fatalf("normalized dry-run preview result = %+v", result)
 	}
 	if result.Preview == nil || len(result.Preview.Matched) != 1 || result.Preview.Matched[0] != "ticket-manager" {
-		t.Fatalf("legacy trigger preview = %+v", result.Preview)
+		t.Fatalf("normalized trigger preview = %+v", result.Preview)
 	}
 	if len(result.Preview.Pipelines) != 1 || result.Preview.Pipelines[0] != "ticket_triage" {
-		t.Fatalf("legacy pipeline preview = %+v", result.Preview)
+		t.Fatalf("normalized pipeline preview = %+v", result.Preview)
 	}
 	if len(result.Preview.PipelineJobs) != 1 || result.Preview.PipelineJobs[0].JobID != "squ-106" {
-		t.Fatalf("legacy pipeline job preview = %+v", result.Preview.PipelineJobs)
+		t.Fatalf("normalized pipeline job preview = %+v", result.Preview.PipelineJobs)
 	}
 }
 

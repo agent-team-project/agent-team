@@ -43,7 +43,7 @@ This package owns the data model and pure matching behavior.
 - `trace.go` explains why an event matched or missed each declared instance
   and pipeline trigger.
 - `topology_test.go` is the main regression suite for parsing, validation,
-  alias compatibility, match behavior, and trace output.
+  exact normalized event matching, match behavior, and trace output.
 
 Keep this package side-effect-free. It should not know about daemon sockets,
 processes, inboxes, worktrees, PM providers, or GitHub/Linear APIs.
@@ -129,9 +129,9 @@ New topology declarations and docs should use normalized event names:
 | `schedule` | Daemon scheduler. |
 | `channel.message` | Channel publish events. |
 
-The parser still accepts the older webhook alias names for existing vendored
-topologies. Do not use those aliases in new examples or public docs; use the
-normalized `ticket.*` and `pr.*` families instead.
+Topology declarations match event names exactly. Use the normalized `ticket.*`
+and `pr.*` families from the table above, and declare one trigger per normalized
+event a consumer should handle.
 
 ## Trigger Matching
 

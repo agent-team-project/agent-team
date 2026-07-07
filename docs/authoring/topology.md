@@ -112,9 +112,9 @@ The match DSL is intentionally simple:
 
 Intake emits normalized event names. Linear ticket webhooks become `ticket.*`
 events such as `ticket.created`, and GitHub pull-request webhooks become
-`pr.*` events such as `pr.merged`. Legacy trigger names `ticket_webhook` and
-`pr_webhook` are still accepted as aliases; when they match normalized intake,
-`match.event` receives the suffix (`created`, `merged`, and so on).
+`pr.*` events such as `pr.merged`. Triggers match those event names exactly;
+declare separate triggers when one instance or pipeline should handle multiple
+normalized events.
 
 ## Schedules
 

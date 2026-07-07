@@ -53,17 +53,14 @@ const (
 	BudgetAllocationReserve       = "reserve"
 )
 
-// Event types recognised by the daemon's resolver. Webhook aliases
-// (`ticket_webhook`, `pr_webhook`) remain supported for older topology files;
-// normalized intake events (`ticket.created`, `pr.merged`, etc.) match those
-// aliases with the event suffix exposed to trigger matchers as `event`.
+// Event types recognised by the daemon's resolver. Intake publishes normalized
+// event names such as `ticket.created` and `pr.merged`; topology triggers match
+// those names exactly.
 const (
 	EventUserInvocation = "user_invocation"
 	EventAgentDispatch  = "agent.dispatch"
 	EventSchedule       = "schedule"
 	EventChannelMessage = "channel.message"
-	EventTicketWebhook  = "ticket_webhook"
-	EventPRWebhook      = "pr_webhook"
 )
 
 // Topology is the parsed + merged set of declared instances for a repo.
@@ -465,37 +462,7 @@ func triggerMatchesEvent(trigger *Trigger, eventType string, payload map[string]
 	if trigger.Event == eventType {
 		return true, payload
 	}
-	switch trigger.Event {
-	case EventTicketWebhook:
-		if suffix, ok := normalizedEventSuffix(eventType, "ticket."); ok {
-			return true, payloadWithEventSuffix(payload, suffix)
-		}
-	case EventPRWebhook:
-		if suffix, ok := normalizedEventSuffix(eventType, "pr."); ok {
-			return true, payloadWithEventSuffix(payload, suffix)
-		}
-	}
 	return false, payload
-}
-
-func normalizedEventSuffix(eventType, prefix string) (string, bool) {
-	if !strings.HasPrefix(eventType, prefix) {
-		return "", false
-	}
-	suffix := strings.TrimPrefix(eventType, prefix)
-	return suffix, suffix != ""
-}
-
-func payloadWithEventSuffix(payload map[string]any, suffix string) map[string]any {
-	if _, ok := payload["event"]; ok {
-		return payload
-	}
-	out := make(map[string]any, len(payload)+1)
-	for key, value := range payload {
-		out[key] = value
-	}
-	out["event"] = suffix
-	return out
 }
 
 // SortedInstances returns the instances ordered by name for deterministic
