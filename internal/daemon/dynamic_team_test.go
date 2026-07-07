@@ -440,6 +440,165 @@ func TestDynamicTeamAuthorityGrantPreservesOwnScope(t *testing.T) {
 	assertCharteredChildShimDenies(t, teamDir, charter.Instance, "job.merge")
 }
 
+func TestDynamicTeamNestedSpawnUsesCreatorEffectiveGrant(t *testing.T) {
+	teamDir := fixtureTeamDir(t)
+	writeFixtureAgent(t, teamDir, "manager")
+	installFakeAgentTeamCLI(t)
+	if err := os.WriteFile(filepath.Join(teamDir, "config.toml"), []byte("[project]\nid = \"parent-dep\"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	top := mustParseCustomTopo(t, `
+	[instances.manager]
+	agent = "manager"
+	ephemeral = false
+
+	[instances.worker]
+	agent = "worker"
+	ephemeral = true
+	replicas = 4
+
+	[[instances.worker.triggers]]
+	event = "agent.dispatch"
+	match.target = "worker"
+
+	[teams.platform]
+	instances = ["manager"]
+
+	[teams.delivery]
+	instances = ["worker"]
+
+	[budgets.platform]
+	tokens_per_day = 100
+	allocation = "reserve"
+
+	[budgets.delivery]
+	tokens_per_day = 100
+	allocation = "reserve"
+
+	[authority]
+	enforcement = "enforce"
+
+	[authority.agents.manager]
+	allow = ["team.spawn", "job.show", "job.merge"]
+
+	[authority.teams.delivery]
+	allow = ["team.spawn", "job.*"]
+	`)
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(DaemonRoot(teamDir), fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+	parentJob := resource.JobURI("parent-dep", "gh155-nested-parent")
+	forbiddenJob := resource.JobURI("parent-dep", "gh155-forbidden")
+
+	parent, err := resolver.SpawnTeam(TeamSpawnRequest{
+		Name:   "Nested Parent GH155",
+		Target: "worker",
+		Budget: TeamSpawnBudget{Tokens: 20},
+		Authority: TeamSpawnAuthority{
+			Verbs:     []string{"team.spawn", "job.show"},
+			Resources: []string{parentJob},
+		},
+		Payload: map[string]any{
+			"job_id":  "gh155-nested-parent",
+			"ticket":  "GH155-dynteams-impl",
+			"kickoff": "run the nested parent child team",
+		},
+		Origin: origin.Envelope{
+			Project:  "parent-dep",
+			Team:     "platform",
+			Instance: "manager",
+			Agent:    "manager",
+			Job:      "gh155-nested-parent",
+		},
+	})
+	if err != nil {
+		t.Fatalf("parent SpawnTeam: %v", err)
+	}
+	if parent.Charter == nil || parent.Charter.State != TeamCharterStateRunning {
+		t.Fatalf("parent charter = %+v", parent.Charter)
+	}
+	if !grantContains(parent.Charter.Authority.Grants, "job.show", parentJob) || grantContains(parent.Charter.Authority.Grants, "job.merge", parentJob) {
+		t.Fatalf("parent grants = %+v", parent.Charter.Authority.Grants)
+	}
+
+	grandchild, err := resolver.SpawnTeam(TeamSpawnRequest{
+		Name:   "Nested Grandchild GH155",
+		Target: "worker",
+		Budget: TeamSpawnBudget{Tokens: 10},
+		Authority: TeamSpawnAuthority{
+			Verbs:     []string{"job.show", "job.merge"},
+			Resources: []string{parentJob, forbiddenJob},
+		},
+		Payload: map[string]any{
+			"job_id":  "gh155-nested-parent",
+			"ticket":  "GH155-dynteams-impl",
+			"kickoff": "run the nested grandchild team",
+		},
+		Origin: origin.Envelope{
+			Project:  "parent-dep",
+			Team:     "delivery",
+			Instance: parent.Charter.Instance,
+			Agent:    "worker",
+			Job:      "gh155-nested-parent",
+		},
+	})
+	if err != nil {
+		t.Fatalf("grandchild SpawnTeam: %v", err)
+	}
+	if grandchild.Charter == nil || grandchild.Charter.State != TeamCharterStateRunning {
+		t.Fatalf("grandchild charter = %+v", grandchild.Charter)
+	}
+	if !grantContains(grandchild.Charter.Authority.Grants, "job.show", parentJob) {
+		t.Fatalf("grandchild missing inherited job.show grant: %+v", grandchild.Charter.Authority.Grants)
+	}
+	if grantContains(grandchild.Charter.Authority.Grants, "job.show", forbiddenJob) {
+		t.Fatalf("grandchild widened job.show resources: %+v", grandchild.Charter.Authority.Grants)
+	}
+	if grantContains(grandchild.Charter.Authority.Grants, "job.merge", parentJob) || !deniedGrantContains(grandchild.Charter.Authority.Denied, "job.merge", "not present in parent capability") {
+		t.Fatalf("grandchild job.merge attenuation = grants %+v denied %+v", grandchild.Charter.Authority.Grants, grandchild.Charter.Authority.Denied)
+	}
+	grandchildActor := origin.Envelope{
+		Project:  "parent-dep",
+		Team:     "delivery",
+		Instance: grandchild.Charter.Instance,
+		Agent:    "worker",
+		Job:      "gh155-nested-parent",
+	}
+	assertCharteredAuditAllowsTarget(t, teamDir, top, grandchildActor, "job.show", "job:gh155-nested-parent", "gh155-nested-parent")
+	assertCharteredAuditDeniesTarget(t, teamDir, top, grandchildActor, "job.show", "job:gh155-forbidden", "gh155-forbidden")
+	assertCharteredAuditDeniesTarget(t, teamDir, top, grandchildActor, "job.merge", "job:gh155-nested-parent", "gh155-nested-parent")
+	assertCharteredChildShimAllows(t, teamDir, grandchild.Charter.Instance, "job.show")
+	assertCharteredChildShimDenies(t, teamDir, grandchild.Charter.Instance, "job.merge")
+
+	topLevel, err := resolver.SpawnTeam(TeamSpawnRequest{
+		Name:   "Top Level Merge GH155",
+		Target: "worker",
+		Budget: TeamSpawnBudget{Tokens: 5},
+		Authority: TeamSpawnAuthority{
+			Verbs:     []string{"job.merge"},
+			Resources: []string{parentJob},
+		},
+		Payload: map[string]any{
+			"job_id":  "gh155-top-merge",
+			"ticket":  "GH155-dynteams-impl",
+			"kickoff": "run the top-level child team",
+		},
+		Origin: origin.Envelope{
+			Project:  "parent-dep",
+			Team:     "platform",
+			Instance: "manager",
+			Agent:    "manager",
+			Job:      "gh155-top-merge",
+		},
+	})
+	if err != nil {
+		t.Fatalf("top-level SpawnTeam: %v", err)
+	}
+	if topLevel.Charter == nil || !grantContains(topLevel.Charter.Authority.Grants, "job.merge", parentJob) {
+		t.Fatalf("top-level manager grant changed: %+v", topLevel.Charter)
+	}
+}
+
 func TestDynamicTeamSpawnOverParentBudgetQueuesWithoutChargingChildTeam(t *testing.T) {
 	teamDir := fixtureTeamDir(t)
 	writeFixtureAgent(t, teamDir, "manager")

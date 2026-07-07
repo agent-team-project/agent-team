@@ -372,10 +372,12 @@ func (r *EventResolver) attenuateTeamAuthority(charter *TeamCharter, req TeamSpa
 	}
 	parentAllow := []string{}
 	childAllow := []string{}
+	parentCharterGrants := []TeamCharterGrant{}
+	parentChartered := false
 	authorityConfigured := false
 	if r != nil && r.topo != nil && r.topo.Authority != nil && r.topo.Authority.Configured() && charter != nil {
 		authorityConfigured = true
-		parentAllow = r.topo.AuthorityAllowlistForInstance(charter.Creator.Instance, charter.Creator.Agent)
+		parentAllow, parentCharterGrants, parentChartered = r.effectiveAuthorityAllowlistForCharterCreator(charter)
 		childAgent := ""
 		if inst := r.topo.FindRuntimeInstance(charter.Instance, ""); inst != nil {
 			childAgent = inst.Agent
@@ -399,11 +401,49 @@ func (r *EventResolver) attenuateTeamAuthority(charter *TeamCharter, req TeamSpa
 	out.Denied = append(out.Denied, deniedResources...)
 	for _, pattern := range grantedPatterns {
 		resources := authorityGrantResources(pattern, validResources, charter)
+		if parentChartered {
+			resources = authorityGrantResourcesWithinParentGrant(pattern, resources, validResources, parentCharterGrants)
+			if authorityGrantVerbResourceKind(pattern) != "" && len(resources) == 0 {
+				continue
+			}
+		}
 		out.Grants = append(out.Grants, TeamCharterGrant{Verb: pattern, Resources: resources})
 	}
 	out.Grants = cleanTeamCharterGrants(out.Grants)
 	out.GrantedVerbs = grantedVerbsFromAuthority(out)
 	out.GrantedResources = grantedResourcesFromAuthority(out)
+	return out
+}
+
+func (r *EventResolver) effectiveAuthorityAllowlistForCharterCreator(charter *TeamCharter) ([]string, []TeamCharterGrant, bool) {
+	if r == nil || charter == nil {
+		return nil, nil, false
+	}
+	if r.mgr != nil && strings.TrimSpace(charter.Creator.Instance) != "" {
+		parentCharter, err := ReadTeamCharterByInstance(r.mgr.daemonRoot, charter.Creator.Instance)
+		if err == nil && parentCharter != nil {
+			grants := effectiveTeamCharterGrants(parentCharter.Authority)
+			return authorityPatternsFromCharterGrants(grants), grants, true
+		}
+	}
+	if r.topo == nil {
+		return nil, nil, false
+	}
+	return r.topo.AuthorityAllowlistForInstance(charter.Creator.Instance, charter.Creator.Agent), nil, false
+}
+
+func authorityPatternsFromCharterGrants(grants []TeamCharterGrant) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, grant := range cleanTeamCharterGrants(grants) {
+		verb := strings.TrimSpace(grant.Verb)
+		if verb == "" || seen[verb] {
+			continue
+		}
+		seen[verb] = true
+		out = append(out, verb)
+	}
+	sort.Strings(out)
 	return out
 }
 
@@ -594,6 +634,40 @@ func authorityGrantResources(grant string, requested []string, charter *TeamChar
 		}
 	}
 	return cleanStringSet(resources)
+}
+
+func authorityGrantResourcesWithinParentGrant(grant string, resources, requested []string, parentGrants []TeamCharterGrant) []string {
+	kind := authorityGrantVerbResourceKind(grant)
+	if kind == "" || len(parentGrants) == 0 {
+		return cleanStringSet(resources)
+	}
+	var out []string
+	for _, parentGrant := range cleanTeamCharterGrants(parentGrants) {
+		if _, ok := intersectAuthorityAllow(parentGrant.Verb, grant); !ok {
+			continue
+		}
+		candidates := resources
+		if len(requested) == 0 {
+			candidates = cleanStringSet(parentGrant.Resources)
+		}
+		for _, candidate := range candidates {
+			if authorityGrantResourceKind(candidate) != kind {
+				continue
+			}
+			if charteredResourceAllowedByGrant(parentGrant, candidate) {
+				out = append(out, candidate)
+			}
+		}
+	}
+	return cleanStringSet(out)
+}
+
+func authorityGrantResourceKind(value string) string {
+	parsed, err := resource.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	return parsed.Kind
 }
 
 func defaultResourcesForAuthorityGrant(grant string, charter *TeamCharter) []string {
