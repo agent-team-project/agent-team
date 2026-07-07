@@ -115,7 +115,9 @@ repo = "widgets"
 	}))
 	defer server.Close()
 	t.Setenv("AGENT_TEAM_GITHUB_REST_URL", server.URL)
+	t.Setenv("AGENT_TEAM_GITHUB_TOKEN", "")
 	t.Setenv("GITHUB_TOKEN", "github-token")
+	t.Setenv("GH_TOKEN", "")
 
 	out, stderr, err := runRootResolverCommand("--repo", root, "ticket", "create", "--title", "GitHub title", "--body", "GitHub body", "--label", "harness", "--json")
 	if err != nil {
@@ -143,6 +145,90 @@ repo = "widgets"
 	}
 }
 
+func TestTicketCreateRoutesToGitHubProviderWithGhKeyringToken(t *testing.T) {
+	clearTicketOriginEnv(t)
+	root := writeTicketCommandConfig(t, `[pm]
+provider = "github"
+
+[github]
+owner = "acme"
+repo = "widgets"
+`)
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"number":42,"html_url":"https://github.com/acme/widgets/issues/42","title":"GitHub title","state":"open"}`)
+	}))
+	defer server.Close()
+	t.Setenv("AGENT_TEAM_GITHUB_REST_URL", server.URL)
+	t.Setenv("AGENT_TEAM_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("AGENT_TEAM_GITHUB_LOGIN", "")
+	installFakeGhAuthToken(t, "acme", "gh-keyring-token")
+
+	out, stderr, err := runRootResolverCommand("--repo", root, "ticket", "create", "--title", "GitHub title", "--json")
+	if err != nil {
+		t.Fatalf("ticket create github with gh keyring token: %v\nstderr=%s", err, stderr)
+	}
+	var result pmprovider.TicketResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("decode result: %v\nbody=%s", err, out)
+	}
+	if result.Provider != pmprovider.ProviderGitHub || result.Issue != "acme/widgets#42" {
+		t.Fatalf("result = %+v, want github issue 42", result)
+	}
+	if gotAuth != "Bearer gh-keyring-token" {
+		t.Fatalf("Authorization = %q, want bearer keyring token", gotAuth)
+	}
+}
+
+func TestTicketCreateGitHubTokenEnvOverridesGhKeyring(t *testing.T) {
+	clearTicketOriginEnv(t)
+	root := writeTicketCommandConfig(t, `[pm]
+provider = "github"
+
+[github]
+owner = "acme"
+repo = "widgets"
+`)
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"number":42,"html_url":"https://github.com/acme/widgets/issues/42","title":"GitHub title","state":"open"}`)
+	}))
+	defer server.Close()
+	t.Setenv("AGENT_TEAM_GITHUB_REST_URL", server.URL)
+	t.Setenv("AGENT_TEAM_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "github-env-token")
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("AGENT_TEAM_GITHUB_LOGIN", "")
+	installFakeGhAuthToken(t, "acme", "gh-keyring-token")
+
+	out, stderr, err := runRootResolverCommand("--repo", root, "ticket", "create", "--title", "GitHub title", "--json")
+	if err != nil {
+		t.Fatalf("ticket create github with GITHUB_TOKEN override: %v\nstderr=%s", err, stderr)
+	}
+	var result pmprovider.TicketResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("decode result: %v\nbody=%s", err, out)
+	}
+	if result.Provider != pmprovider.ProviderGitHub || result.Issue != "acme/widgets#42" {
+		t.Fatalf("result = %+v, want github issue 42", result)
+	}
+	if gotAuth != "Bearer github-env-token" {
+		t.Fatalf("Authorization = %q, want bearer env token", gotAuth)
+	}
+}
+
 func writeTicketCommandConfig(t *testing.T, body string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -154,6 +240,34 @@ func writeTicketCommandConfig(t *testing.T, body string) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return root
+}
+
+func installFakeGhAuthToken(t *testing.T, wantUser, token string) {
+	t.Helper()
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "gh.args")
+	script := `#!/bin/sh
+printf '%s\n' "$*" > "$GH_STUB_ARGS"
+if [ "$1" = "auth" ] && [ "$2" = "token" ] && [ "$3" = "--hostname" ] && [ "$4" = "github.com" ] && [ "$5" = "--user" ] && [ "$6" = "$GH_STUB_USER" ]; then
+    if [ -n "${AGENT_TEAM_GITHUB_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ] || [ -n "${GH_TOKEN:-}" ]; then
+        echo "token env leaked into gh auth token" >&2
+        exit 70
+    fi
+    printf '%s\n' "$GH_STUB_TOKEN"
+    exit 0
+fi
+echo "unexpected gh args: $*" >&2
+exit 64
+`
+	path := filepath.Join(dir, "gh")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake gh: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("AGENT_TEAM_GITHUB_HOST", "")
+	t.Setenv("GH_STUB_ARGS", argsPath)
+	t.Setenv("GH_STUB_USER", wantUser)
+	t.Setenv("GH_STUB_TOKEN", token)
 }
 
 func clearTicketOriginEnv(t *testing.T) {

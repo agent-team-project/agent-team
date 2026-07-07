@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -374,12 +375,19 @@ func githubSuccessMessage(result Result) string {
 	return "github write-back " + strings.Join(parts, " and ")
 }
 
+var githubTokenEnvNames = []string{"AGENT_TEAM_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"}
+
 func (c *GitHubClient) resolveToken(teamDir string) (string, error) {
 	if token := strings.TrimSpace(c.Token); token != "" {
 		return token, nil
 	}
-	for _, name := range []string{"AGENT_TEAM_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"} {
+	for _, name := range githubTokenEnvNames {
 		if token := strings.TrimSpace(os.Getenv(name)); token != "" {
+			return token, nil
+		}
+	}
+	if login := githubTokenLogin(teamDir); login != "" {
+		if token := githubTokenFromKeyring(login); token != "" {
 			return token, nil
 		}
 	}
@@ -391,13 +399,69 @@ func (c *GitHubClient) resolveToken(teamDir string) (string, error) {
 			}
 			return "", err
 		}
-		for _, name := range []string{"AGENT_TEAM_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"} {
+		for _, name := range githubTokenEnvNames {
 			if token := strings.TrimSpace(values[name]); token != "" {
 				return token, nil
 			}
 		}
 	}
 	return "", errNoGitHubToken
+}
+
+func githubTokenLogin(teamDir string) string {
+	if login := strings.TrimSpace(os.Getenv("AGENT_TEAM_GITHUB_LOGIN")); login != "" {
+		return login
+	}
+	cfg, err := decodeProviderConfig(teamDir)
+	if err != nil {
+		return ""
+	}
+	if login := strings.TrimSpace(cfg.GitHub.AgentLogin); login != "" {
+		return login
+	}
+	return strings.TrimSpace(cfg.GitHub.Owner)
+}
+
+func githubTokenFromKeyring(login string) string {
+	login = strings.TrimSpace(login)
+	if login == "" {
+		return ""
+	}
+	if _, err := exec.LookPath("gh"); err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "auth", "token", "--hostname", githubAuthHost(), "--user", login)
+	cmd.Env = withoutEnvKeys(os.Environ(), githubTokenEnvNames...)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func githubAuthHost() string {
+	if host := strings.TrimSpace(os.Getenv("AGENT_TEAM_GITHUB_HOST")); host != "" {
+		return host
+	}
+	return "github.com"
+}
+
+func withoutEnvKeys(env []string, names ...string) []string {
+	skip := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		skip[name] = struct{}{}
+	}
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, ok := skip[key]; ok {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func (c *GitHubClient) updateIssueState(ctx context.Context, token string, issue githubIssueRef, state string) error {
