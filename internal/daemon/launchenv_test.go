@@ -125,6 +125,39 @@ func TestInstanceLaunchEnvWriteReadRoundTripStripsDeniedKeys(t *testing.T) {
 	}
 }
 
+func TestInstanceLaunchEnvResourceURIRoundTrip(t *testing.T) {
+	teamDir := filepath.Join(t.TempDir(), ".agent_team")
+	root := DaemonRoot(teamDir)
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "config.toml"), []byte("[project]\nid = \"dep\"\nparent_uri = \"agt://parent/project/parent\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	le := &LaunchEnv{
+		Bin:        "codex",
+		Dir:        "/repo/.claude/worktrees/worker-squ-156-b347bce8",
+		Env:        []string{"AGENT_TEAM_BRANCH=squ-156-b347bce8", "AGENT_TEAM_JOB_ID=squ-156"},
+		RecordedAt: time.Now().UTC(),
+		Version:    1,
+	}
+	if err := WriteInstanceLaunchEnv(root, "worker-squ-156", le); err != nil {
+		t.Fatalf("WriteInstanceLaunchEnv: %v", err)
+	}
+	got, err := ReadInstanceLaunchEnv(root, "worker-squ-156")
+	if err != nil {
+		t.Fatalf("ReadInstanceLaunchEnv: %v", err)
+	}
+	if got.URI != "agt://dep/state/worker-squ-156#launch-env" ||
+		got.DeploymentURI != "agt://dep/project/dep" ||
+		got.DeploymentParentURI != "agt://parent/project/parent" ||
+		got.InstanceURI != "agt://dep/instance/worker-squ-156" ||
+		got.StateURI != "agt://dep/state/worker-squ-156" ||
+		got.WorkspaceURI != "agt://dep/workspace/branch:squ-156-b347bce8" {
+		t.Fatalf("launch env URIs = %+v", got)
+	}
+}
+
 func TestStripEnvRemovesOnlyExactKeys(t *testing.T) {
 	got := stripEnv([]string{
 		"KEY=value",

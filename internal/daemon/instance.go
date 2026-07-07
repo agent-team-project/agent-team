@@ -128,17 +128,25 @@ func openSpawnerStdin(content string) (*os.File, func(), error) {
 // Stdin, if set, is piped to the spawned process. Codex one-shot runs use this
 // with `codex exec -` so large agent prompts do not live in argv.
 type DispatchInput struct {
-	Agent         string
-	Name          string
-	Job           string
-	Ticket        string
-	Branch        string
-	PR            string
-	Origin        origin.Envelope
-	Prompt        string
-	Workspace     string
-	Runtime       string
-	RuntimeBinary string
+	Agent               string
+	Name                string
+	URI                 string
+	SpecURI             string
+	DeploymentURI       string
+	DeploymentParentURI string
+	Job                 string
+	JobURI              string
+	Ticket              string
+	Branch              string
+	PR                  string
+	Origin              origin.Envelope
+	Prompt              string
+	Workspace           string
+	WorkspaceURI        string
+	StateURI            string
+	LogURI              string
+	Runtime             string
+	RuntimeBinary       string
 	// EffectiveRuntime identifies the delegated runtime whose log format should
 	// be used for usage and budget accounting. Empty defaults to Runtime.
 	EffectiveRuntime string
@@ -318,22 +326,30 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 
 	now := time.Now().UTC()
 	meta := &Metadata{
-		Instance:         in.Name,
-		Agent:            in.Agent,
-		Job:              in.Job,
-		Ticket:           in.Ticket,
-		Branch:           in.Branch,
-		PR:               in.PR,
-		Origin:           in.Origin,
-		Runtime:          string(rt.Kind),
-		RuntimeBinary:    rt.Binary,
-		EffectiveRuntime: dispatchEffectiveRuntime(rt.Kind, in.EffectiveRuntime),
-		Workspace:        in.Workspace,
-		PID:              proc.Pid,
-		SessionID:        sessionID,
-		StartedAt:        now,
-		Status:           StatusRunning,
-		LogPath:          logPath,
+		Instance:            in.Name,
+		URI:                 in.URI,
+		SpecURI:             in.SpecURI,
+		DeploymentURI:       in.DeploymentURI,
+		DeploymentParentURI: in.DeploymentParentURI,
+		Agent:               in.Agent,
+		Job:                 in.Job,
+		JobURI:              in.JobURI,
+		Ticket:              in.Ticket,
+		Branch:              in.Branch,
+		PR:                  in.PR,
+		Origin:              in.Origin,
+		Runtime:             string(rt.Kind),
+		RuntimeBinary:       rt.Binary,
+		EffectiveRuntime:    dispatchEffectiveRuntime(rt.Kind, in.EffectiveRuntime),
+		Workspace:           in.Workspace,
+		WorkspaceURI:        in.WorkspaceURI,
+		StateURI:            in.StateURI,
+		PID:                 proc.Pid,
+		SessionID:           sessionID,
+		StartedAt:           now,
+		Status:              StatusRunning,
+		LogPath:             logPath,
+		LogURI:              in.LogURI,
 	}
 	applyRuntimeBudgetMetadata(meta, now, in.Budget)
 	if err := m.writeInstanceLaunchEnv(in.Name, args, env, in.Workspace, proc.Pid, now); err != nil {
@@ -1540,22 +1556,30 @@ func (m *InstanceManager) launchPrepared(in DispatchInput, expected *Metadata) (
 	}
 	now := time.Now().UTC()
 	meta := &Metadata{
-		Instance:         in.Name,
-		Agent:            in.Agent,
-		Job:              in.Job,
-		Ticket:           in.Ticket,
-		Branch:           in.Branch,
-		PR:               in.PR,
-		Origin:           in.Origin,
-		Runtime:          string(rt.Kind),
-		RuntimeBinary:    rt.Binary,
-		EffectiveRuntime: dispatchEffectiveRuntime(rt.Kind, in.EffectiveRuntime),
-		Workspace:        in.Workspace,
-		PID:              proc.Pid,
-		SessionID:        sessionID,
-		StartedAt:        now,
-		Status:           StatusRunning,
-		LogPath:          logPath,
+		Instance:            in.Name,
+		URI:                 in.URI,
+		SpecURI:             in.SpecURI,
+		DeploymentURI:       in.DeploymentURI,
+		DeploymentParentURI: in.DeploymentParentURI,
+		Agent:               in.Agent,
+		Job:                 in.Job,
+		JobURI:              in.JobURI,
+		Ticket:              in.Ticket,
+		Branch:              in.Branch,
+		PR:                  in.PR,
+		Origin:              in.Origin,
+		Runtime:             string(rt.Kind),
+		RuntimeBinary:       rt.Binary,
+		EffectiveRuntime:    dispatchEffectiveRuntime(rt.Kind, in.EffectiveRuntime),
+		Workspace:           in.Workspace,
+		WorkspaceURI:        in.WorkspaceURI,
+		StateURI:            in.StateURI,
+		PID:                 proc.Pid,
+		SessionID:           sessionID,
+		StartedAt:           now,
+		Status:              StatusRunning,
+		LogPath:             logPath,
+		LogURI:              in.LogURI,
 	}
 	applyRuntimeBudgetMetadata(meta, now, in.Budget)
 	if err := m.writeInstanceLaunchEnv(in.Name, args, env, in.Workspace, proc.Pid, now); err != nil {

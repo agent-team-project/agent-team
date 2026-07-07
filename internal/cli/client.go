@@ -164,23 +164,38 @@ func daemonOriginHeaderFromEnv(build buildinfo.Info) string {
 
 // dispatchPayload mirrors POST /v1/dispatch's body.
 type dispatchPayload struct {
-	Agent         string   `json:"agent"`
-	Name          string   `json:"name"`
-	Prompt        string   `json:"prompt,omitempty"`
-	Workspace     string   `json:"workspace"`
-	Runtime       string   `json:"runtime,omitempty"`
-	RuntimeBinary string   `json:"runtime_binary,omitempty"`
-	Args          []string `json:"args,omitempty"`
-	Env           []string `json:"env,omitempty"`
-	Stdin         string   `json:"stdin,omitempty"`
+	Agent               string   `json:"agent"`
+	Name                string   `json:"name"`
+	URI                 string   `json:"uri,omitempty"`
+	SpecURI             string   `json:"spec_uri,omitempty"`
+	DeploymentURI       string   `json:"deployment_uri,omitempty"`
+	DeploymentParentURI string   `json:"deployment_parent_uri,omitempty"`
+	JobURI              string   `json:"job_uri,omitempty"`
+	Prompt              string   `json:"prompt,omitempty"`
+	Workspace           string   `json:"workspace"`
+	WorkspaceURI        string   `json:"workspace_uri,omitempty"`
+	StateURI            string   `json:"state_uri,omitempty"`
+	Runtime             string   `json:"runtime,omitempty"`
+	RuntimeBinary       string   `json:"runtime_binary,omitempty"`
+	Args                []string `json:"args,omitempty"`
+	Env                 []string `json:"env,omitempty"`
+	Stdin               string   `json:"stdin,omitempty"`
 }
 
 type dispatchResponse struct {
-	InstanceID string    `json:"instance_id"`
-	StartedAt  time.Time `json:"started_at"`
-	PID        int       `json:"pid"`
-	Runtime    string    `json:"runtime,omitempty"`
-	SessionID  string    `json:"session_id,omitempty"`
+	InstanceID          string    `json:"instance_id"`
+	URI                 string    `json:"uri,omitempty"`
+	SpecURI             string    `json:"spec_uri,omitempty"`
+	DeploymentURI       string    `json:"deployment_uri,omitempty"`
+	DeploymentParentURI string    `json:"deployment_parent_uri,omitempty"`
+	JobURI              string    `json:"job_uri,omitempty"`
+	WorkspaceURI        string    `json:"workspace_uri,omitempty"`
+	StateURI            string    `json:"state_uri,omitempty"`
+	LogURI              string    `json:"log_uri,omitempty"`
+	StartedAt           time.Time `json:"started_at"`
+	PID                 int       `json:"pid"`
+	Runtime             string    `json:"runtime,omitempty"`
+	SessionID           string    `json:"session_id,omitempty"`
 }
 
 type messageResponse struct {

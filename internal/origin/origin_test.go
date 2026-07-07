@@ -66,3 +66,26 @@ func TestAppendFooter(t *testing.T) {
 		t.Fatalf("AppendFooter duplicated footer:\n%s", got)
 	}
 }
+
+func TestHeaderValueBackfillsResourceURIs(t *testing.T) {
+	value := HeaderValue(Envelope{Project: "dep", Instance: "worker-squ-1", Job: "squ-1"})
+	for _, want := range []string{
+		"project=dep",
+		"deployment_uri=agt://dep/project/dep",
+		"instance_uri=agt://dep/instance/worker-squ-1",
+		"job_uri=agt://dep/job/squ-1",
+	} {
+		if !strings.Contains(value, want) {
+			t.Fatalf("HeaderValue missing %q in %q", want, value)
+		}
+	}
+	parsed, err := ParseHeaderValue(value)
+	if err != nil {
+		t.Fatalf("ParseHeaderValue: %v", err)
+	}
+	if parsed.DeploymentURI != "agt://dep/project/dep" ||
+		parsed.InstanceURI != "agt://dep/instance/worker-squ-1" ||
+		parsed.JobURI != "agt://dep/job/squ-1" {
+		t.Fatalf("parsed URIs = %+v", parsed)
+	}
+}

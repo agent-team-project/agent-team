@@ -15,6 +15,7 @@ import (
 	"github.com/agent-team-project/agent-team/internal/allowance"
 	"github.com/agent-team-project/agent-team/internal/mergepolicy"
 	"github.com/agent-team-project/agent-team/internal/origin"
+	"github.com/agent-team-project/agent-team/internal/resource"
 	"github.com/agent-team-project/agent-team/internal/usage"
 	"github.com/agent-team-project/agent-team/internal/worktreepolicy"
 )
@@ -50,6 +51,9 @@ const (
 // Job is one durable work unit under `.agent_team/jobs/<id>.toml`.
 type Job struct {
 	ID                     string          `toml:"id"`
+	URI                    string          `toml:"uri,omitempty"`
+	DeploymentURI          string          `toml:"deployment_uri,omitempty"`
+	DeploymentParentURI    string          `toml:"deployment_parent_uri,omitempty"`
 	Ticket                 string          `toml:"ticket"`
 	TicketURL              string          `toml:"ticket_url,omitempty"`
 	Target                 string          `toml:"target"`
@@ -64,6 +68,8 @@ type Job struct {
 	HoldUntil              time.Time       `toml:"hold_until,omitempty"`
 	Branch                 string          `toml:"branch,omitempty"`
 	Worktree               string          `toml:"worktree,omitempty"`
+	InstanceURI            string          `toml:"instance_uri,omitempty"`
+	WorkspaceURI           string          `toml:"workspace_uri,omitempty"`
 	DeliveryContract       string          `toml:"delivery_contract,omitempty"`
 	ReapWorktree           string          `toml:"reap_worktree,omitempty"`
 	PR                     string          `toml:"pr,omitempty"`
@@ -107,6 +113,8 @@ type Drift struct {
 // Step is a pipeline step snapshot recorded on a job.
 type Step struct {
 	ID                 string         `toml:"id"`
+	URI                string         `toml:"uri,omitempty"`
+	JobURI             string         `toml:"job_uri,omitempty"`
 	Label              string         `toml:"label,omitempty"`
 	Description        string         `toml:"description,omitempty"`
 	Instructions       string         `toml:"instructions,omitempty"`
@@ -116,6 +124,8 @@ type Step struct {
 	RuntimeBin         string         `toml:"runtime_bin,omitempty"`
 	Status             Status         `toml:"status"`
 	Instance           string         `toml:"instance,omitempty"`
+	InstanceURI        string         `toml:"instance_uri,omitempty"`
+	WorkspaceURI       string         `toml:"workspace_uri,omitempty"`
 	After              []string       `toml:"after,omitempty"`
 	Gate               string         `toml:"gate,omitempty"`
 	ApprovalRequired   bool           `toml:"approval_required,omitempty"`
@@ -546,6 +556,7 @@ func Read(teamDir, rawID string) (*Job, error) {
 	if j.ID == "" {
 		j.ID = id
 	}
+	BackfillResourceURIs(teamDir, &j)
 	if err := Validate(&j); err != nil {
 		return nil, fmt.Errorf("job %s: %w", id, err)
 	}
@@ -554,6 +565,7 @@ func Read(teamDir, rawID string) (*Job, error) {
 
 // Write stores a job atomically.
 func Write(teamDir string, j *Job) error {
+	BackfillResourceURIs(teamDir, j)
 	if err := Validate(j); err != nil {
 		return err
 	}
@@ -583,6 +595,108 @@ func Write(teamDir string, j *Job) error {
 		return fmt.Errorf("job: rename: %w", err)
 	}
 	return nil
+}
+
+// BackfillResourceURIs populates additive agt:// resource identity fields from
+// the stable ids and local materialization hints already present on a job.
+func BackfillResourceURIs(teamDir string, j *Job) {
+	if j == nil {
+		return
+	}
+	deployment, _ := resource.DeploymentFromTeamDir(teamDir)
+	deploymentID := strings.TrimSpace(deployment.ID)
+	if deploymentID == "" {
+		return
+	}
+	if j.DeploymentURI == "" {
+		j.DeploymentURI = deployment.URI
+	}
+	if j.DeploymentParentURI == "" {
+		j.DeploymentParentURI = deployment.ParentURI
+	}
+	if j.URI == "" {
+		j.URI = resource.JobURI(deploymentID, j.ID)
+	}
+	if j.Instance != "" && j.InstanceURI == "" {
+		j.InstanceURI = resource.InstanceURI(deploymentID, j.Instance)
+	}
+	if j.WorkspaceURI == "" {
+		j.WorkspaceURI = resource.WorkspaceURIFor(deploymentID, j.Worktree, j.Branch, j.ID, j.Instance)
+	}
+	j.Origin = j.Origin.WithResourceURIs()
+	backfillJobUsageResourceURIs(deployment, j)
+	for i := range j.Steps {
+		backfillStepResourceURIs(deployment, j, &j.Steps[i])
+	}
+}
+
+func backfillStepResourceURIs(deployment resource.Deployment, j *Job, step *Step) {
+	if step == nil || strings.TrimSpace(deployment.ID) == "" || j == nil {
+		return
+	}
+	if step.JobURI == "" {
+		step.JobURI = j.URI
+	}
+	if step.URI == "" {
+		step.URI = resource.StepURI(deployment.ID, j.ID, step.ID)
+	}
+	if step.Instance != "" && step.InstanceURI == "" {
+		step.InstanceURI = resource.InstanceURI(deployment.ID, step.Instance)
+	}
+	if step.WorkspaceURI == "" {
+		step.WorkspaceURI = stepWorkspaceURI(deployment.ID, j, step)
+	}
+}
+
+func stepWorkspaceURI(deploymentID string, j *Job, step *Step) string {
+	if strings.TrimSpace(step.Workspace) == "repo" {
+		return resource.WorkspaceURI(deploymentID, "repo")
+	}
+	if j.WorkspaceURI != "" {
+		return j.WorkspaceURI
+	}
+	return resource.WorkspaceURIFor(deploymentID, j.Worktree, j.Branch, j.ID, firstNonEmpty(step.Instance, j.Instance))
+}
+
+func backfillJobUsageResourceURIs(deployment resource.Deployment, j *Job) {
+	if j == nil || j.Usage == nil || strings.TrimSpace(deployment.ID) == "" {
+		return
+	}
+	for i := range j.Usage.Records {
+		rec := &j.Usage.Records[i]
+		if rec.DeploymentURI == "" {
+			rec.DeploymentURI = deployment.URI
+		}
+		if rec.DeploymentParentURI == "" {
+			rec.DeploymentParentURI = deployment.ParentURI
+		}
+		if rec.JobURI == "" {
+			rec.JobURI = j.URI
+		}
+		if rec.InstanceURI == "" && rec.Instance != "" {
+			rec.InstanceURI = resource.InstanceURI(deployment.ID, rec.Instance)
+		}
+		if rec.WorkspaceURI == "" {
+			rec.WorkspaceURI = j.WorkspaceURI
+		}
+		if rec.SourceURI == "" && rec.Instance != "" {
+			rec.SourceURI = resource.LogURI(deployment.ID, rec.Instance)
+		}
+		if rec.URI == "" && rec.Instance != "" {
+			rec.URI = resource.UsageURI(deployment.ID, rec.Instance, rec.StartedAt)
+		}
+		rec.Origin = rec.Origin.WithResourceURIs()
+	}
+	j.Usage.Summary = usage.Summarize(j.Usage.Records)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // List loads all valid job files in deterministic id order.

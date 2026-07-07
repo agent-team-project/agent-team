@@ -12,11 +12,18 @@ import (
 	"time"
 
 	"github.com/agent-team-project/agent-team/internal/origin"
+	"github.com/agent-team-project/agent-team/internal/resource"
 )
 
 // Record is one finalized runtime run captured from daemon metadata.
 type Record struct {
 	Instance              string          `json:"instance,omitempty" toml:"instance,omitempty"`
+	URI                   string          `json:"uri,omitempty" toml:"uri,omitempty"`
+	DeploymentURI         string          `json:"deployment_uri,omitempty" toml:"deployment_uri,omitempty"`
+	DeploymentParentURI   string          `json:"deployment_parent_uri,omitempty" toml:"deployment_parent_uri,omitempty"`
+	InstanceURI           string          `json:"instance_uri,omitempty" toml:"instance_uri,omitempty"`
+	JobURI                string          `json:"job_uri,omitempty" toml:"job_uri,omitempty"`
+	WorkspaceURI          string          `json:"workspace_uri,omitempty" toml:"workspace_uri,omitempty"`
 	Agent                 string          `json:"agent,omitempty" toml:"agent,omitempty"`
 	Runtime               string          `json:"runtime,omitempty" toml:"runtime,omitempty"`
 	TokensAvailable       bool            `json:"tokens_available" toml:"tokens_available"`
@@ -30,6 +37,7 @@ type Record struct {
 	EndedAt               time.Time       `json:"ended_at,omitempty" toml:"ended_at,omitempty"`
 	CapturedAt            time.Time       `json:"captured_at,omitempty" toml:"captured_at,omitempty"`
 	Source                string          `json:"source,omitempty" toml:"source,omitempty"`
+	SourceURI             string          `json:"source_uri,omitempty" toml:"source_uri,omitempty"`
 	Origin                origin.Envelope `json:"origin,omitempty" toml:"origin,omitempty"`
 }
 
@@ -56,13 +64,20 @@ type JobUsage struct {
 // CaptureInput describes the daemon metadata needed to capture a runtime's
 // final usage before its log can be cleaned up.
 type CaptureInput struct {
-	Instance  string
-	Agent     string
-	Runtime   string
-	LogPath   string
-	StartedAt time.Time
-	EndedAt   time.Time
-	Now       time.Time
+	Instance            string
+	URI                 string
+	DeploymentURI       string
+	DeploymentParentURI string
+	InstanceURI         string
+	JobURI              string
+	WorkspaceURI        string
+	Agent               string
+	Runtime             string
+	LogPath             string
+	SourceURI           string
+	StartedAt           time.Time
+	EndedAt             time.Time
+	Now                 time.Time
 }
 
 // Capture reads the runtime log, when useful, and returns a usage record for a
@@ -74,13 +89,25 @@ func Capture(in CaptureInput) (*Record, error) {
 		now = time.Now().UTC()
 	}
 	rec := &Record{
-		Instance:   strings.TrimSpace(in.Instance),
-		Agent:      strings.TrimSpace(in.Agent),
-		Runtime:    strings.TrimSpace(in.Runtime),
-		StartedAt:  utcOrZero(in.StartedAt),
-		EndedAt:    utcOrZero(in.EndedAt),
-		CapturedAt: now.UTC(),
-		Source:     strings.TrimSpace(in.LogPath),
+		Instance:            strings.TrimSpace(in.Instance),
+		URI:                 strings.TrimSpace(in.URI),
+		DeploymentURI:       strings.TrimSpace(in.DeploymentURI),
+		DeploymentParentURI: strings.TrimSpace(in.DeploymentParentURI),
+		InstanceURI:         strings.TrimSpace(in.InstanceURI),
+		JobURI:              strings.TrimSpace(in.JobURI),
+		WorkspaceURI:        strings.TrimSpace(in.WorkspaceURI),
+		Agent:               strings.TrimSpace(in.Agent),
+		Runtime:             strings.TrimSpace(in.Runtime),
+		StartedAt:           utcOrZero(in.StartedAt),
+		EndedAt:             utcOrZero(in.EndedAt),
+		CapturedAt:          now.UTC(),
+		Source:              strings.TrimSpace(in.LogPath),
+		SourceURI:           strings.TrimSpace(in.SourceURI),
+	}
+	if rec.URI == "" && rec.DeploymentURI != "" && rec.Instance != "" {
+		if parsed, err := resource.Parse(rec.DeploymentURI); err == nil {
+			rec.URI = resource.UsageURI(parsed.DeploymentID, rec.Instance, rec.StartedAt)
+		}
 	}
 	if rec.Runtime == "" {
 		rec.Runtime = "claude"

@@ -67,15 +67,22 @@ func HandlerWithLog(m *InstanceManager, channels *ChannelStore, events *EventRes
 			return
 		}
 		var body struct {
-			Agent         string   `json:"agent"`
-			Name          string   `json:"name"`
-			Prompt        string   `json:"prompt"`
-			Workspace     string   `json:"workspace"`
-			Runtime       string   `json:"runtime"`
-			RuntimeBinary string   `json:"runtime_binary"`
-			Args          []string `json:"args"`
-			Env           []string `json:"env"`
-			Stdin         string   `json:"stdin"`
+			Agent               string   `json:"agent"`
+			Name                string   `json:"name"`
+			URI                 string   `json:"uri"`
+			SpecURI             string   `json:"spec_uri"`
+			DeploymentURI       string   `json:"deployment_uri"`
+			DeploymentParentURI string   `json:"deployment_parent_uri"`
+			JobURI              string   `json:"job_uri"`
+			Prompt              string   `json:"prompt"`
+			Workspace           string   `json:"workspace"`
+			WorkspaceURI        string   `json:"workspace_uri"`
+			StateURI            string   `json:"state_uri"`
+			Runtime             string   `json:"runtime"`
+			RuntimeBinary       string   `json:"runtime_binary"`
+			Args                []string `json:"args"`
+			Env                 []string `json:"env"`
+			Stdin               string   `json:"stdin"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -91,27 +98,42 @@ func HandlerWithLog(m *InstanceManager, channels *ChannelStore, events *EventRes
 		}
 		auditor.audit(r, "instance.dispatch", "instance:"+body.Name, origin.Envelope{})
 		meta, err := m.Dispatch(DispatchInput{
-			Agent:         body.Agent,
-			Name:          body.Name,
-			Prompt:        body.Prompt,
-			Workspace:     body.Workspace,
-			StripOTelEnv:  stripOTelForTeamDir(teamDir),
-			Runtime:       body.Runtime,
-			RuntimeBinary: body.RuntimeBinary,
-			Args:          body.Args,
-			Env:           body.Env,
-			Stdin:         body.Stdin,
+			Agent:               body.Agent,
+			Name:                body.Name,
+			URI:                 body.URI,
+			SpecURI:             body.SpecURI,
+			DeploymentURI:       body.DeploymentURI,
+			DeploymentParentURI: body.DeploymentParentURI,
+			JobURI:              body.JobURI,
+			Prompt:              body.Prompt,
+			Workspace:           body.Workspace,
+			WorkspaceURI:        body.WorkspaceURI,
+			StateURI:            body.StateURI,
+			StripOTelEnv:        stripOTelForTeamDir(teamDir),
+			Runtime:             body.Runtime,
+			RuntimeBinary:       body.RuntimeBinary,
+			Args:                body.Args,
+			Env:                 body.Env,
+			Stdin:               body.Stdin,
 		})
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"instance_id": meta.Instance,
-			"started_at":  meta.StartedAt,
-			"pid":         meta.PID,
-			"runtime":     meta.Runtime,
-			"session_id":  meta.SessionID,
+			"instance_id":           meta.Instance,
+			"uri":                   meta.URI,
+			"spec_uri":              meta.SpecURI,
+			"deployment_uri":        meta.DeploymentURI,
+			"deployment_parent_uri": meta.DeploymentParentURI,
+			"job_uri":               meta.JobURI,
+			"workspace_uri":         meta.WorkspaceURI,
+			"state_uri":             meta.StateURI,
+			"log_uri":               meta.LogURI,
+			"started_at":            meta.StartedAt,
+			"pid":                   meta.PID,
+			"runtime":               meta.Runtime,
+			"session_id":            meta.SessionID,
 		})
 	})
 

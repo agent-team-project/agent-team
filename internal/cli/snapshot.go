@@ -17,6 +17,7 @@ import (
 
 	"github.com/agent-team-project/agent-team/internal/daemon"
 	"github.com/agent-team-project/agent-team/internal/job"
+	"github.com/agent-team-project/agent-team/internal/resource"
 	"github.com/agent-team-project/agent-team/internal/topology"
 	"github.com/spf13/cobra"
 )
@@ -146,6 +147,8 @@ type snapshotOptions struct {
 type snapshotResult struct {
 	Version                 string                     `json:"version"`
 	CapturedAt              string                     `json:"captured_at"`
+	DeploymentURI           string                     `json:"deployment_uri,omitempty"`
+	DeploymentParentURI     string                     `json:"deployment_parent_uri,omitempty"`
 	Repo                    string                     `json:"repo"`
 	TeamDir                 string                     `json:"team_dir"`
 	Provenance              *snapshotProvenance        `json:"provenance,omitempty"`
@@ -187,10 +190,11 @@ type snapshotResult struct {
 }
 
 type snapshotProvenance struct {
-	Command string                    `json:"command"`
-	Scope   string                    `json:"scope"`
-	Subject string                    `json:"subject,omitempty"`
-	Options snapshotProvenanceOptions `json:"options"`
+	Command    string                    `json:"command"`
+	Scope      string                    `json:"scope"`
+	Subject    string                    `json:"subject,omitempty"`
+	SubjectURI string                    `json:"subject_uri,omitempty"`
+	Options    snapshotProvenanceOptions `json:"options"`
 }
 
 type snapshotProvenanceOptions struct {
@@ -225,6 +229,7 @@ func collectSnapshot(teamDir, repoRoot string, opts snapshotOptions) *snapshotRe
 		Repo:       filepath.ToSlash(repoRoot),
 		TeamDir:    filepath.ToSlash(teamDir),
 	}
+	applySnapshotDeployment(out, teamDir)
 	out.Git = collectSnapshotGitInfo(repoRoot)
 
 	if runtime, err := collectRuntimeInfoForTeam(teamDir); err != nil {
@@ -368,6 +373,7 @@ func collectTeamSnapshot(teamDir, repoRoot, name string, opts snapshotOptions) (
 		TeamDir:    filepath.ToSlash(teamDir),
 		Team:       &info,
 	}
+	applySnapshotDeployment(out, teamDir)
 	out.Git = collectSnapshotGitInfo(repoRoot)
 
 	if runtime, err := collectRuntimeInfoForTeam(teamDir); err != nil {
@@ -509,6 +515,7 @@ func setSnapshotProvenance(snapshot *snapshotResult, command, scope, subject str
 		return
 	}
 	snapshot.Provenance = newSnapshotProvenance(command, scope, subject, opts)
+	snapshot.Provenance.SubjectURI = snapshotSubjectURI(snapshot.DeploymentURI, scope, subject)
 }
 
 func newSnapshotProvenance(command, scope, subject string, opts snapshotProvenanceOptions) *snapshotProvenance {
@@ -517,6 +524,40 @@ func newSnapshotProvenance(command, scope, subject string, opts snapshotProvenan
 		Scope:   strings.TrimSpace(scope),
 		Subject: strings.TrimSpace(subject),
 		Options: opts,
+	}
+}
+
+func applySnapshotDeployment(snapshot *snapshotResult, teamDir string) {
+	if snapshot == nil {
+		return
+	}
+	deployment, _ := resource.DeploymentFromTeamDir(teamDir)
+	snapshot.DeploymentURI = deployment.URI
+	snapshot.DeploymentParentURI = deployment.ParentURI
+}
+
+func snapshotSubjectURI(deploymentURI, scope, subject string) string {
+	parsed, err := resource.Parse(deploymentURI)
+	if err != nil {
+		return ""
+	}
+	switch strings.TrimSpace(scope) {
+	case "global":
+		return resource.ProjectURI(parsed.DeploymentID)
+	case "team":
+		if strings.TrimSpace(subject) == "" {
+			return ""
+		}
+		return resource.URI(parsed.DeploymentID, "team", subject)
+	case "job":
+		return resource.JobURI(parsed.DeploymentID, subject)
+	case "pipeline":
+		if strings.TrimSpace(subject) == "" {
+			return ""
+		}
+		return resource.URI(parsed.DeploymentID, "pipeline", subject)
+	default:
+		return ""
 	}
 }
 

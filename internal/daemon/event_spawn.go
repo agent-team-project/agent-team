@@ -16,6 +16,7 @@ import (
 	jobstore "github.com/agent-team-project/agent-team/internal/job"
 	"github.com/agent-team-project/agent-team/internal/loader"
 	"github.com/agent-team-project/agent-team/internal/origin"
+	"github.com/agent-team-project/agent-team/internal/resource"
 	"github.com/agent-team-project/agent-team/internal/runtimebin"
 	"github.com/agent-team-project/agent-team/internal/runtimehooks"
 	"github.com/agent-team-project/agent-team/internal/runtimeotel"
@@ -77,6 +78,7 @@ func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, p
 		}
 		worktreePath = workspace
 	}
+	r.backfillDispatchPayloadResourceURIs(inst, name, payload, branch, workspace)
 	prompt, err = r.appendUnreadMailboxToPrompt(name, inst.Agent, prompt, payload, branch)
 	if err != nil {
 		cleanupWorkspace()
@@ -111,22 +113,29 @@ func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, p
 		return nil, err
 	}
 	meta, err := r.mgr.Dispatch(DispatchInput{
-		Agent:         inst.Agent,
-		Name:          name,
-		Job:           eventJobID(payload),
-		Ticket:        payloadString(payload, "ticket"),
-		Branch:        branch,
-		PR:            firstPayloadString(payload, "pr_url", "pr"),
-		Origin:        eventOrigin,
-		Workspace:     workspace,
-		Runtime:       string(rt.Kind),
-		RuntimeBinary: rt.Binary,
-		Args:          args,
-		Env:           env,
-		EnvAllow:      inst.EnvAllow,
-		StripOTelEnv:  runtime.otelConfig.Configured(),
-		Stdin:         stdin,
-		Budget:        ephemeralRuntimeBudget(payload),
+		Agent:               inst.Agent,
+		Name:                name,
+		URI:                 payloadString(payload, "instance_uri"),
+		SpecURI:             payloadString(payload, "spec_uri"),
+		DeploymentURI:       payloadString(payload, "deployment_uri"),
+		DeploymentParentURI: payloadString(payload, "deployment_parent_uri"),
+		Job:                 eventJobID(payload),
+		JobURI:              payloadString(payload, "job_uri"),
+		Ticket:              payloadString(payload, "ticket"),
+		Branch:              branch,
+		PR:                  firstPayloadString(payload, "pr_url", "pr"),
+		Origin:              eventOrigin,
+		Workspace:           workspace,
+		WorkspaceURI:        payloadString(payload, "workspace_uri"),
+		StateURI:            payloadString(payload, "state_uri"),
+		Runtime:             string(rt.Kind),
+		RuntimeBinary:       rt.Binary,
+		Args:                args,
+		Env:                 env,
+		EnvAllow:            inst.EnvAllow,
+		StripOTelEnv:        runtime.otelConfig.Configured(),
+		Stdin:               stdin,
+		Budget:              ephemeralRuntimeBudget(payload),
 	})
 	if err != nil {
 		cleanupWorkspace()
@@ -292,6 +301,27 @@ func (r *EventResolver) attachSpawnOwnership(meta *Metadata, payload map[string]
 		dst.Branch = branch
 		dst.PR = firstPayloadString(payload, "pr_url", "pr")
 		dst.Origin = origin.Merge(dst.Origin, r.originForPayload(dst.Instance, payload))
+		if uri := payloadString(payload, "deployment_uri"); uri != "" {
+			dst.DeploymentURI = uri
+		}
+		if uri := payloadString(payload, "deployment_parent_uri"); uri != "" {
+			dst.DeploymentParentURI = uri
+		}
+		if uri := payloadString(payload, "instance_uri"); uri != "" {
+			dst.URI = uri
+		}
+		if uri := payloadString(payload, "spec_uri"); uri != "" {
+			dst.SpecURI = uri
+		}
+		if uri := payloadString(payload, "job_uri"); uri != "" {
+			dst.JobURI = uri
+		}
+		if uri := payloadString(payload, "workspace_uri"); uri != "" {
+			dst.WorkspaceURI = uri
+		}
+		if uri := payloadString(payload, "state_uri"); uri != "" {
+			dst.StateURI = uri
+		}
 	}
 	current := *meta
 	if latest, err := ReadMetadata(r.mgr.daemonRoot, meta.Instance); err == nil && latest.PID == meta.PID {
@@ -369,6 +399,18 @@ func (r *EventResolver) upsertDispatchJob(payload map[string]any, instance strin
 	if instance != "" {
 		j.Instance = instance
 	}
+	if uri := payloadString(payload, "job_uri"); uri != "" {
+		j.URI = uri
+	}
+	if uri := payloadString(payload, "deployment_uri"); uri != "" {
+		j.DeploymentURI = uri
+	}
+	if uri := payloadString(payload, "deployment_parent_uri"); uri != "" {
+		j.DeploymentParentURI = uri
+	}
+	if uri := payloadString(payload, "instance_uri"); uri != "" {
+		j.InstanceURI = uri
+	}
 	if ticket != "" {
 		j.Ticket = ticket
 	}
@@ -396,6 +438,9 @@ func (r *EventResolver) upsertDispatchJob(payload map[string]any, instance strin
 	}
 	if worktreePath != "" {
 		j.Worktree = worktreePath
+	}
+	if uri := payloadString(payload, "workspace_uri"); uri != "" {
+		j.WorkspaceURI = uri
 	}
 	if pr := firstPayloadString(payload, "pr_url", "pr"); pr != "" {
 		j.PR = pr
@@ -430,7 +475,7 @@ func (r *EventResolver) upsertDispatchJob(payload map[string]any, instance strin
 
 func dispatchJobEventData(payload map[string]any, branch, worktreePath string) map[string]string {
 	data := map[string]string{}
-	for _, key := range []string{"target", "agent", "pipeline", "pipeline_step", "ticket", "ticket_url", "kind", "profile", "team", "runtime", "runtime_binary"} {
+	for _, key := range []string{"target", "agent", "pipeline", "pipeline_step", "ticket", "ticket_url", "kind", "profile", "team", "runtime", "runtime_binary", "deployment_uri", "deployment_parent_uri", "instance_uri", "spec_uri", "job_uri", "workspace_uri", "state_uri"} {
 		if value := payloadString(payload, key); value != "" {
 			data[key] = value
 		}
@@ -448,6 +493,41 @@ func dispatchJobEventData(payload map[string]any, branch, worktreePath string) m
 		return nil
 	}
 	return data
+}
+
+func (r *EventResolver) backfillDispatchPayloadResourceURIs(inst *topology.Instance, instance string, payload map[string]any, branch, workspace string) {
+	if payload == nil {
+		return
+	}
+	deployment, _ := resource.DeploymentFromTeamDir(r.teamDir)
+	deploymentID := strings.TrimSpace(deployment.ID)
+	if deploymentID == "" {
+		return
+	}
+	payloadSetStringIfEmpty(payload, "deployment_uri", deployment.URI)
+	payloadSetStringIfEmpty(payload, "deployment_parent_uri", deployment.ParentURI)
+	payloadSetStringIfEmpty(payload, "instance_uri", resource.InstanceURI(deploymentID, instance))
+	declared := instance
+	if inst != nil && strings.TrimSpace(inst.Name) != "" {
+		declared = inst.Name
+	}
+	payloadSetStringIfEmpty(payload, "spec_uri", resource.InstanceURI(deploymentID, declared))
+	if jobID := eventJobID(payload); jobID != "" {
+		payloadSetStringIfEmpty(payload, "job_uri", resource.JobURI(deploymentID, jobID))
+	}
+	workspaceURI := resource.WorkspaceURIFor(deploymentID, workspace, branch, eventJobID(payload), instance)
+	if payloadString(payload, "workspace") == "repo" {
+		workspaceURI = resource.WorkspaceURI(deploymentID, "repo")
+	}
+	payloadSetStringIfEmpty(payload, "workspace_uri", workspaceURI)
+	payloadSetStringIfEmpty(payload, "state_uri", resource.StateURI(deploymentID, instance))
+}
+
+func payloadSetStringIfEmpty(payload map[string]any, key, value string) {
+	if strings.TrimSpace(value) == "" || strings.TrimSpace(payloadString(payload, key)) != "" {
+		return
+	}
+	payload[key] = value
 }
 
 func eventJobID(payload map[string]any) string {
@@ -545,7 +625,7 @@ func (r *EventResolver) originForEvent(inst *topology.Instance, instance, eventT
 		Job:      eventJobID(payload),
 		Trigger:  origin.TriggerFromEvent(eventType, payload),
 		Build:    buildinfo.Current("").Display(),
-	}
+	}.WithResourceURIs()
 }
 
 func (r *EventResolver) originForPayload(instance string, payload map[string]any) origin.Envelope {
@@ -561,7 +641,7 @@ func (r *EventResolver) originForPayload(instance string, payload map[string]any
 		Job:      eventJobID(payload),
 		Trigger:  trigger,
 		Build:    buildinfo.Current("").Display(),
-	}
+	}.WithResourceURIs()
 }
 
 func projectIDForTeamDir(teamDir string) string {
@@ -575,8 +655,17 @@ func originContextEnv(env origin.Envelope) []string {
 	if env.Project != "" {
 		out = append(out, "AGENT_TEAM_PROJECT="+env.Project)
 	}
+	if env.DeploymentURI != "" {
+		out = append(out, "AGENT_TEAM_DEPLOYMENT_URI="+env.DeploymentURI)
+	}
 	if env.Team != "" {
 		out = append(out, "AGENT_TEAM_TEAM="+env.Team)
+	}
+	if env.InstanceURI != "" {
+		out = append(out, "AGENT_TEAM_ORIGIN_INSTANCE_URI="+env.InstanceURI)
+	}
+	if env.JobURI != "" {
+		out = append(out, "AGENT_TEAM_ORIGIN_JOB_URI="+env.JobURI)
 	}
 	if env.Trigger != "" {
 		out = append(out, "AGENT_TEAM_ORIGIN_TRIGGER="+env.Trigger)
@@ -597,6 +686,9 @@ func dispatchContextEnv(payload map[string]any, branch, worktreePath string) []s
 	env := []string{}
 	if id := eventJobID(payload); id != "" {
 		env = append(env, "AGENT_TEAM_JOB_ID="+id)
+	}
+	if uri := payloadString(payload, "job_uri"); uri != "" {
+		env = append(env, "AGENT_TEAM_JOB_URI="+uri)
 	}
 	if kind := payloadJobKind(payload); kind != "" {
 		env = append(env, "AGENT_TEAM_JOB_KIND="+kind)
@@ -627,6 +719,21 @@ func dispatchContextEnv(payload map[string]any, branch, worktreePath string) []s
 	}
 	if worktreePath != "" {
 		env = append(env, "AGENT_TEAM_WORKTREE="+worktreePath)
+	}
+	for _, item := range []struct {
+		key string
+		env string
+	}{
+		{"deployment_uri", "AGENT_TEAM_DEPLOYMENT_URI"},
+		{"deployment_parent_uri", "AGENT_TEAM_DEPLOYMENT_PARENT_URI"},
+		{"instance_uri", "AGENT_TEAM_INSTANCE_URI"},
+		{"spec_uri", "AGENT_TEAM_SPEC_URI"},
+		{"workspace_uri", "AGENT_TEAM_WORKSPACE_URI"},
+		{"state_uri", "AGENT_TEAM_STATE_URI"},
+	} {
+		if value := payloadString(payload, item.key); value != "" {
+			env = append(env, item.env+"="+value)
+		}
 	}
 	return env
 }

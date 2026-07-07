@@ -10,11 +10,21 @@ import (
 )
 
 func TestMetadata_RoundTrip(t *testing.T) {
-	root := t.TempDir()
+	teamDir := filepath.Join(t.TempDir(), ".agent_team")
+	root := DaemonRoot(teamDir)
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "config.toml"), []byte("[project]\nid = \"dep\"\nparent_uri = \"agt://parent/project/parent\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	m := &Metadata{
 		Instance:  "manager",
 		Agent:     "manager",
+		Job:       "squ-156",
+		Branch:    "squ-156-b347bce8",
 		Workspace: "/repo",
+		LogPath:   filepath.Join(root, "manager", "child.log"),
 		PID:       1234,
 		SessionID: "abc",
 		StartedAt: time.Date(2026, 4, 27, 10, 0, 0, 0, time.UTC),
@@ -35,6 +45,16 @@ func TestMetadata_RoundTrip(t *testing.T) {
 	}
 	if got.Status != StatusRunning {
 		t.Errorf("Status: got %s want %s", got.Status, StatusRunning)
+	}
+	if got.URI != "agt://dep/instance/manager" ||
+		got.SpecURI != got.URI ||
+		got.DeploymentURI != "agt://dep/project/dep" ||
+		got.DeploymentParentURI != "agt://parent/project/parent" ||
+		got.JobURI != "agt://dep/job/squ-156" ||
+		got.WorkspaceURI != "agt://dep/workspace/branch:squ-156-b347bce8" ||
+		got.StateURI != "agt://dep/state/manager" ||
+		got.LogURI != "agt://dep/log/manager" {
+		t.Fatalf("resource URIs = %+v", got)
 	}
 }
 

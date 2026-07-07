@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/agent-team-project/agent-team/internal/resource"
 )
 
 // HeaderName carries the actor origin on daemon HTTP requests.
@@ -20,33 +21,61 @@ const HeaderName = "Agent-Team-Origin"
 
 // Envelope identifies where a resource came from and who owns it.
 type Envelope struct {
-	Project  string `json:"project,omitempty" toml:"project,omitempty"`
-	Team     string `json:"team,omitempty" toml:"team,omitempty"`
-	Instance string `json:"instance,omitempty" toml:"instance,omitempty"`
-	Agent    string `json:"agent,omitempty" toml:"agent,omitempty"`
-	Job      string `json:"job,omitempty" toml:"job,omitempty"`
-	Trigger  string `json:"trigger,omitempty" toml:"trigger,omitempty"`
-	Build    string `json:"build,omitempty" toml:"build,omitempty"`
+	Project       string `json:"project,omitempty" toml:"project,omitempty"`
+	DeploymentURI string `json:"deployment_uri,omitempty" toml:"deployment_uri,omitempty"`
+	Team          string `json:"team,omitempty" toml:"team,omitempty"`
+	Instance      string `json:"instance,omitempty" toml:"instance,omitempty"`
+	InstanceURI   string `json:"instance_uri,omitempty" toml:"instance_uri,omitempty"`
+	Agent         string `json:"agent,omitempty" toml:"agent,omitempty"`
+	Job           string `json:"job,omitempty" toml:"job,omitempty"`
+	JobURI        string `json:"job_uri,omitempty" toml:"job_uri,omitempty"`
+	Trigger       string `json:"trigger,omitempty" toml:"trigger,omitempty"`
+	Build         string `json:"build,omitempty" toml:"build,omitempty"`
 }
 
 // Clean trims whitespace from every field.
 func (e Envelope) Clean() Envelope {
 	return Envelope{
-		Project:  strings.TrimSpace(e.Project),
-		Team:     strings.TrimSpace(e.Team),
-		Instance: strings.TrimSpace(e.Instance),
-		Agent:    strings.TrimSpace(e.Agent),
-		Job:      strings.TrimSpace(e.Job),
-		Trigger:  strings.TrimSpace(e.Trigger),
-		Build:    strings.TrimSpace(e.Build),
+		Project:       strings.TrimSpace(e.Project),
+		DeploymentURI: strings.TrimSpace(e.DeploymentURI),
+		Team:          strings.TrimSpace(e.Team),
+		Instance:      strings.TrimSpace(e.Instance),
+		InstanceURI:   strings.TrimSpace(e.InstanceURI),
+		Agent:         strings.TrimSpace(e.Agent),
+		Job:           strings.TrimSpace(e.Job),
+		JobURI:        strings.TrimSpace(e.JobURI),
+		Trigger:       strings.TrimSpace(e.Trigger),
+		Build:         strings.TrimSpace(e.Build),
 	}
 }
 
 // Empty reports whether no origin fields are populated.
 func (e Envelope) Empty() bool {
 	e = e.Clean()
-	return e.Project == "" && e.Team == "" && e.Instance == "" &&
-		e.Agent == "" && e.Job == "" && e.Trigger == "" && e.Build == ""
+	return e.Project == "" && e.DeploymentURI == "" && e.Team == "" &&
+		e.Instance == "" && e.InstanceURI == "" && e.Agent == "" &&
+		e.Job == "" && e.JobURI == "" && e.Trigger == "" && e.Build == ""
+}
+
+// WithResourceURIs backfills canonical agt:// resource URIs from the stable
+// ids already present in the envelope. It is intentionally additive: callers
+// can keep using the scalar fields while cross-deployment consumers join on
+// the URI fields.
+func (e Envelope) WithResourceURIs() Envelope {
+	e = e.Clean()
+	if e.Project == "" {
+		return e
+	}
+	if e.DeploymentURI == "" {
+		e.DeploymentURI = resource.ProjectURI(e.Project)
+	}
+	if e.Instance != "" && e.InstanceURI == "" {
+		e.InstanceURI = resource.InstanceURI(e.Project, e.Instance)
+	}
+	if e.Job != "" && e.JobURI == "" {
+		e.JobURI = resource.JobURI(e.Project, e.Job)
+	}
+	return e
 }
 
 // Merge fills blank fields in primary from fallback.
@@ -59,8 +88,14 @@ func Merge(primary, fallback Envelope) Envelope {
 	if primary.Team == "" {
 		primary.Team = fallback.Team
 	}
+	if primary.DeploymentURI == "" {
+		primary.DeploymentURI = fallback.DeploymentURI
+	}
 	if primary.Instance == "" {
 		primary.Instance = fallback.Instance
+	}
+	if primary.InstanceURI == "" {
+		primary.InstanceURI = fallback.InstanceURI
 	}
 	if primary.Agent == "" {
 		primary.Agent = fallback.Agent
@@ -68,13 +103,16 @@ func Merge(primary, fallback Envelope) Envelope {
 	if primary.Job == "" {
 		primary.Job = fallback.Job
 	}
+	if primary.JobURI == "" {
+		primary.JobURI = fallback.JobURI
+	}
 	if primary.Trigger == "" {
 		primary.Trigger = fallback.Trigger
 	}
 	if primary.Build == "" {
 		primary.Build = fallback.Build
 	}
-	return primary
+	return primary.WithResourceURIs()
 }
 
 // Footer renders the machine-parseable footer used on external writes.
@@ -88,7 +126,7 @@ func Footer(e Envelope) string {
 
 // HeaderValue renders the machine-parseable origin fields for HeaderName.
 func HeaderValue(e Envelope) string {
-	e = e.Clean()
+	e = e.WithResourceURIs()
 	if e.Empty() {
 		return ""
 	}
@@ -98,10 +136,13 @@ func HeaderValue(e Envelope) string {
 		value string
 	}{
 		{"project", e.Project},
+		{"deployment_uri", e.DeploymentURI},
 		{"team", e.Team},
 		{"instance", e.Instance},
+		{"instance_uri", e.InstanceURI},
 		{"agent", e.Agent},
 		{"job", e.Job},
+		{"job_uri", e.JobURI},
 		{"trigger", e.Trigger},
 		{"build", e.Build},
 	} {
@@ -137,14 +178,20 @@ func ParseHeaderValue(raw string) (Envelope, error) {
 		switch key {
 		case "project":
 			out.Project = value
+		case "deployment_uri":
+			out.DeploymentURI = value
 		case "team":
 			out.Team = value
 		case "instance":
 			out.Instance = value
+		case "instance_uri":
+			out.InstanceURI = value
 		case "agent":
 			out.Agent = value
 		case "job":
 			out.Job = value
+		case "job_uri":
+			out.JobURI = value
 		case "trigger":
 			out.Trigger = value
 		case "build":
@@ -153,7 +200,7 @@ func ParseHeaderValue(raw string) (Envelope, error) {
 			return Envelope{}, fmt.Errorf("origin: unknown field %q", key)
 		}
 	}
-	return out.Clean(), nil
+	return out.WithResourceURIs(), nil
 }
 
 func parseOriginFields(raw string) ([]string, error) {
