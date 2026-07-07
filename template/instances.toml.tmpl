@@ -196,7 +196,7 @@ match.target = "platform-worker"
 [instances.platform-reviewer]
 agent       = "reviewer"
 ephemeral   = true
-replicas    = 1
+replicas    = 3
 token_budget = "10M"
 time_budget  = "30m"
 env_allow   = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TERM_PROGRAM", "LANG", "LC_*", "XDG_*", "CODEX_HOME", "CLAUDE_CODE_*", "SSH_AUTH_SOCK"]
@@ -450,7 +450,7 @@ Never post through worker-owned automation or a user account.
 [instances.docs-writer]
 agent        = "worker"
 ephemeral    = true
-runtime      = "claude"
+runtime      = "codex"
 token_budget = "40M"
 description  = "Documentation writer on the claude runtime (subscription Opus-class prose). Dispatched for README/guide/narrative work."
 
