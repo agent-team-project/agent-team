@@ -9,6 +9,19 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+PYTHON_HELPER="$SCRIPT_DIR/../../../scripts/skills/python.sh"
+if [[ ! -f "$PYTHON_HELPER" && -n "${AGENT_TEAM_ROOT:-}" ]]; then
+    PYTHON_HELPER="$AGENT_TEAM_ROOT/scripts/skills/python.sh"
+fi
+if [[ ! -f "$PYTHON_HELPER" ]]; then
+    echo "github-api.sh: missing Python helper: $PYTHON_HELPER" >&2
+    exit 1
+fi
+# shellcheck source=../../../scripts/skills/python.sh
+# shellcheck disable=SC1091
+source "$PYTHON_HELPER"
+
 usage() {
     sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-1}"
@@ -21,8 +34,10 @@ if [ -z "$MODE" ]; then
 fi
 shift
 
+AGENT_TEAM_PYTHON_BIN="$(agent_team_python311 "github-api.sh")"
+
 check_github_config() {
-    python3 - <<'PY'
+    "$AGENT_TEAM_PYTHON_BIN" - <<'PY'
 import sys
 import tomllib
 from pathlib import Path
@@ -58,7 +73,7 @@ PY
 }
 
 read_env_value() {
-    python3 - "$@" <<'PY'
+    "$AGENT_TEAM_PYTHON_BIN" - "$@" <<'PY'
 import sys
 from pathlib import Path
 

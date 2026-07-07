@@ -19,6 +19,7 @@ import os
 import time
 import json
 import signal
+import shlex
 from pathlib import Path
 
 EXPECTED_AFTER_INIT = [
@@ -37,6 +38,7 @@ EXPECTED_AFTER_INIT = [
     ".agent_team/skills/linear/SKILL.md",
     ".agent_team/skills/linear/scripts/linear-graphql.sh",
     ".agent_team/skills/pull-request/SKILL.md",
+    ".agent_team/scripts/skills/python.sh",
     ".agent_team/skills/status/SKILL.md",
     ".agent_team/skills/status/scripts/status.sh",
     ".agent_team/skills/status/scripts/_status_write.py",
@@ -392,12 +394,35 @@ repo = "smoke-repo"
 
     try:
         env_path.write_text(env_text, encoding="utf-8")
-        with tempfile.TemporaryDirectory(prefix="agt-helper-curl-", dir="/tmp") as fake_dir:
+        with (
+            tempfile.TemporaryDirectory(prefix="agt-helper-old-python-", dir="/tmp") as old_python_dir,
+            tempfile.TemporaryDirectory(prefix="agt-helper-bin-", dir="/tmp") as fake_dir,
+        ):
+            old_python_bin = Path(old_python_dir)
             fake_bin = Path(fake_dir)
+            fake_old_python = old_python_bin / "python3"
+            fake_old_python.write_text(
+                """#!/bin/sh
+if [ "${1:-}" = "-c" ]; then
+    printf '3.9.18\\n'
+    exit 1
+fi
+echo "old python3 should not run helper bodies" >&2
+exit 86
+""",
+                encoding="utf-8",
+            )
+            fake_old_python.chmod(0o755)
+            fake_python311 = fake_bin / "python3.11"
+            fake_python311.write_text(
+                f"#!/bin/sh\nexec {shlex.quote(sys.executable)} \"$@\"\n",
+                encoding="utf-8",
+            )
+            fake_python311.chmod(0o755)
             fake_curl = fake_bin / "curl"
             fake_curl.write_text(
-                """#!/usr/bin/env python3
-import json
+                f"#!/bin/sh\nexec {shlex.quote(sys.executable)} - \"$@\" <<'PY'\n"
+                + """import json
 import os
 import sys
 
@@ -421,6 +446,7 @@ if payload.get("query") != expected_query:
     print(f"unexpected query payload: {payload!r}", file=sys.stderr)
     sys.exit(20)
 print(json.dumps({"ok": True}))
+PY
 """,
                 encoding="utf-8",
             )
@@ -432,7 +458,7 @@ print(json.dumps({"ok": True}))
             env.update({
                 "AGENT_TEAM_ROOT": str(team_dir),
                 "EXPECTED_QUERY": query,
-                "PATH": f"{fake_bin}{os.pathsep}{env.get('PATH', '')}",
+                "PATH": f"{old_python_bin}{os.pathsep}{fake_bin}{os.pathsep}{env.get('PATH', '')}",
             })
 
             run_helper_env_smoke(
@@ -451,6 +477,21 @@ print(json.dumps({"ok": True}))
                 "GitHub",
                 problems,
             )
+            status_state = target / ".agent_team" / "state" / "worker-python-311-smoke"
+            run([
+                str(team_dir / "skills" / "status" / "scripts" / "status.sh"),
+                "set",
+                "planning",
+                "--desc",
+                "python guard smoke",
+            ], env=env | {"AGENT_TEAM_STATE_DIR": str(status_state)})
+            try:
+                status_doc = tomllib.loads((status_state / "status.toml").read_text())
+            except Exception as e:  # noqa: BLE001
+                problems.append(f"status helper did not run with old python3 first on PATH: {e}")
+            else:
+                if status_doc.get("status", {}).get("description") != "python guard smoke":
+                    problems.append(f"status helper wrote unexpected smoke status: {status_doc}")
     finally:
         cfg_path.write_text(original_cfg, encoding="utf-8")
         if original_env is None:
