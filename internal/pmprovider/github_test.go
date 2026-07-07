@@ -16,8 +16,11 @@ import (
 )
 
 func TestGitHubWriteBackMissingTokenAuditsSkip(t *testing.T) {
+	t.Setenv("AGENT_TEAM_GITHUB_TOKEN", "")
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GH_TOKEN", "")
+	t.Setenv("AGENT_TEAM_GITHUB_LOGIN", "")
+	t.Setenv("PATH", t.TempDir())
 	teamDir := testGitHubTeamDir(t, `in_progress_state = "open"`)
 	j := testGitHubJob()
 	client := &GitHubClient{}
