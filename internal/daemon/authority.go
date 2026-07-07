@@ -146,28 +146,55 @@ func charterAuthorityEvaluation(opts AuthorityAuditOptions, actor origin.Envelop
 		},
 		Sources: []string{"charter." + charter.ID},
 	}
-	if !authorityAllowedByPatterns(charter.Authority.GrantedVerbs, eval.Decision, true) {
+	if allowed, source := charterGrantAllows(charter, eval.Decision, auditResource); !allowed {
 		eval.Allowed = false
-		return true, eval, nil
-	}
-	if !charteredResourceAllowed(charter, auditResource) {
-		eval.Allowed = false
-		eval.Sources = []string{"charter." + charter.ID + ".resources"}
+		if source != "" {
+			eval.Sources = []string{source}
+		}
 		return true, eval, nil
 	}
 	return true, eval, nil
 }
 
-func charteredResourceAllowed(charter *TeamCharter, auditResource string) bool {
+func charterGrantAllows(charter *TeamCharter, decision topology.AuthorityDecision, auditResource string) (bool, string) {
+	if charter == nil {
+		return false, "charter"
+	}
+	verbMatched := false
+	for _, grant := range effectiveTeamCharterGrants(charter.Authority) {
+		if !authorityAllowedByPatterns([]string{grant.Verb}, decision, true) {
+			continue
+		}
+		verbMatched = true
+		if strings.TrimSpace(auditResource) == "" || charteredResourceAllowedByGrant(grant, auditResource) {
+			return true, ""
+		}
+	}
+	if verbMatched {
+		return false, "charter." + charter.ID + ".resources"
+	}
+	return false, "charter." + charter.ID
+}
+
+func effectiveTeamCharterGrants(authority TeamCharterAuthority) []TeamCharterGrant {
+	if len(authority.Grants) > 0 {
+		return cleanTeamCharterGrants(authority.Grants)
+	}
+	resources := cleanStringSet(authority.GrantedResources)
+	var grants []TeamCharterGrant
+	for _, verb := range cleanStringSet(authority.GrantedVerbs) {
+		grants = append(grants, TeamCharterGrant{Verb: verb, Resources: resources})
+	}
+	return grants
+}
+
+func charteredResourceAllowedByGrant(grant TeamCharterGrant, auditResource string) bool {
 	auditResource = strings.TrimSpace(auditResource)
 	if auditResource == "" {
 		return true
 	}
-	if charter == nil {
-		return false
-	}
-	for _, grant := range cleanStringSet(charter.Authority.GrantedResources) {
-		if charteredResourceGrantMatches(grant, auditResource) {
+	for _, resource := range cleanStringSet(grant.Resources) {
+		if charteredResourceGrantMatches(resource, auditResource) {
 			return true
 		}
 	}
@@ -199,7 +226,7 @@ func charteredResourceGrantMatches(grant, auditResource string) bool {
 func localAuditResourceMatchesGrant(grant resuri.Parsed, auditResource string) bool {
 	switch grant.Kind {
 	case resuri.KindJob:
-		return auditResource == "job:"+grant.ID
+		return auditResource == "job:"+grant.ID || strings.HasPrefix(auditResource, "job:"+grant.ID+":")
 	case resuri.KindChannel:
 		return auditResource == "channel:"+grant.ID
 	case resuri.KindMailbox:

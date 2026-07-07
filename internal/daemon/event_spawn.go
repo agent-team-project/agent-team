@@ -820,7 +820,7 @@ func (r *EventResolver) charterAuthorityForPayload(instance string, payload map[
 	if deploymentURI := payloadString(payload, "deployment_uri"); deploymentURI != "" && deploymentURI != charter.ChildDeploymentURI {
 		return nil, false
 	}
-	return append([]string(nil), charter.Authority.GrantedVerbs...), true
+	return grantedVerbsFromAuthority(charter.Authority), true
 }
 
 func charterIDFromURI(uri string) string {

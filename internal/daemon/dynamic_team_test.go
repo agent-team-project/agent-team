@@ -165,6 +165,11 @@ match.target = "worker"
 	if !reflect.DeepEqual(charter.Authority.GrantedVerbs, []string{"channel.publish", "inbox.check", "job.show"}) {
 		t.Fatalf("granted verbs = %#v", charter.Authority.GrantedVerbs)
 	}
+	if !grantContains(charter.Authority.Grants, "job.show", resource.JobURI("parent-dep", "gh155-dynteam")) ||
+		!grantContains(charter.Authority.Grants, "channel.publish", resource.ChannelURI("parent-dep", "team-platform-supervisor")) ||
+		!grantContains(charter.Authority.Grants, "inbox.check", "") {
+		t.Fatalf("authority grants = %+v", charter.Authority.Grants)
+	}
 	if !deniedGrantContains(charter.Authority.Denied, "job.merge", "not present in parent capability") ||
 		!deniedGrantContains(charter.Authority.Denied, "inbox.send", "not present in parent capability") ||
 		!deniedGrantContains(charter.Authority.Denied, "channel.delete", "not present in parent capability") {
@@ -297,6 +302,142 @@ match.target = "worker"
 	if len(allocations) != 1 || allocations[0].Team != "platform" || allocations[0].Status != budget.AllocationStatusReleased || allocations[0].ReleasedTokens != 60 {
 		t.Fatalf("allocations after reap = %+v", allocations)
 	}
+	second, err := resolver.SpawnTeam(TeamSpawnRequest{
+		Name:   "Adapter Port GH155",
+		Target: "worker",
+		Budget: TeamSpawnBudget{Tokens: 10},
+		Payload: map[string]any{
+			"job_id":  "gh155-dynteam-second",
+			"ticket":  "GH155-dynteams-impl",
+			"kickoff": "run the replacement child team",
+		},
+		Origin: origin.Envelope{
+			Project:  "parent-dep",
+			Team:     "platform",
+			Instance: "manager",
+			Agent:    "manager",
+			Job:      "gh155-dynteam-second",
+		},
+	})
+	if err != nil {
+		t.Fatalf("second SpawnTeam: %v", err)
+	}
+	if second.Charter == nil || second.Charter.ID == charter.ID || second.Charter.State != TeamCharterStateRunning {
+		t.Fatalf("second charter reused stale state: first=%+v second=%+v", charter, second.Charter)
+	}
+	active, err := ReadTeamCharterByInstance(m.daemonRoot, charter.Instance)
+	if err != nil {
+		t.Fatalf("read active charter after respawn: %v", err)
+	}
+	if active.ID != second.Charter.ID {
+		t.Fatalf("active charter = %s, want fresh %s", active.ID, second.Charter.ID)
+	}
+}
+
+func TestDynamicTeamAuthorityGrantPreservesOwnScope(t *testing.T) {
+	teamDir := fixtureTeamDir(t)
+	writeFixtureAgent(t, teamDir, "manager")
+	installFakeAgentTeamCLI(t)
+	if err := os.WriteFile(filepath.Join(teamDir, "config.toml"), []byte("[project]\nid = \"parent-dep\"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	top := mustParseCustomTopo(t, `
+	[instances.manager]
+	agent = "manager"
+	ephemeral = false
+
+	[instances.worker]
+	agent = "worker"
+	ephemeral = true
+	replicas = 1
+
+	[[instances.worker.triggers]]
+	event = "agent.dispatch"
+	match.target = "worker"
+
+	[teams.platform]
+	instances = ["manager"]
+
+	[teams.delivery]
+	instances = ["worker"]
+
+	[budgets.platform]
+	tokens_per_day = 100
+	allocation = "reserve"
+
+	[authority]
+	enforcement = "enforce"
+
+	[authority.agents.manager]
+	allow = ["team.spawn", "job.gate.*:own", "inbox.send"]
+
+	[authority.teams.delivery]
+	allow = ["job.*", "inbox.*"]
+	`)
+	fake := newFakeSpawner(time.Second)
+	m := NewInstanceManager(DaemonRoot(teamDir), fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+
+	result, err := resolver.SpawnTeam(TeamSpawnRequest{
+		Name:   "Scoped Gate GH155",
+		Target: "worker",
+		Budget: TeamSpawnBudget{Tokens: 10},
+		Authority: TeamSpawnAuthority{
+			Verbs: []string{"job.gate.set", "inbox.send", "job.merge"},
+			Resources: []string{
+				resource.JobURI("parent-dep", "gh155-scope"),
+				resource.JobURI("parent-dep", "other-job"),
+				resource.MailboxURI("parent-dep", "manager"),
+			},
+		},
+		Payload: map[string]any{
+			"job_id":  "gh155-scope",
+			"ticket":  "GH155-dynteams-impl",
+			"kickoff": "run the scoped child team",
+		},
+		Origin: origin.Envelope{
+			Project:  "parent-dep",
+			Team:     "platform",
+			Instance: "manager",
+			Agent:    "manager",
+			Job:      "gh155-scope",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SpawnTeam: %v", err)
+	}
+	charter := result.Charter
+	if charter == nil || charter.State != TeamCharterStateRunning {
+		t.Fatalf("charter = %+v", charter)
+	}
+	if !reflect.DeepEqual(charter.Authority.GrantedVerbs, []string{"inbox.send", "job.gate.set:own"}) {
+		t.Fatalf("granted verbs = %#v", charter.Authority.GrantedVerbs)
+	}
+	if !grantContains(charter.Authority.Grants, "job.gate.set:own", resource.JobURI("parent-dep", "gh155-scope")) {
+		t.Fatalf("scoped job grant missing owner resource: %+v", charter.Authority.Grants)
+	}
+	if grantContains(charter.Authority.Grants, "job.gate.set:own", resource.JobURI("parent-dep", "other-job")) {
+		t.Fatalf("scoped job grant widened to other job: %+v", charter.Authority.Grants)
+	}
+	if !grantContains(charter.Authority.Grants, "inbox.send", resource.MailboxURI("parent-dep", "manager")) {
+		t.Fatalf("inbox grant missing requested mailbox: %+v", charter.Authority.Grants)
+	}
+	if !deniedGrantContains(charter.Authority.Denied, "job.merge", "not present in parent capability") {
+		t.Fatalf("denied grants = %+v", charter.Authority.Denied)
+	}
+	childActor := origin.Envelope{
+		Project:  "parent-dep",
+		Team:     "delivery",
+		Instance: charter.Instance,
+		Agent:    "worker",
+		Job:      "gh155-scope",
+	}
+	assertCharteredAuditAllowsTarget(t, teamDir, top, childActor, "job.gate.set", "job:gh155-scope:gate:tests", "gh155-scope")
+	assertCharteredAuditDeniesTarget(t, teamDir, top, childActor, "job.gate.set", "job:other-job:gate:tests", "other-job")
+	assertCharteredAuditDeniesTarget(t, teamDir, top, childActor, "job.merge", "job:gh155-scope", "gh155-scope")
+	assertCharteredChildShimAllows(t, teamDir, charter.Instance, "job.gate.set")
+	assertCharteredChildShimAllows(t, teamDir, charter.Instance, "inbox.send")
+	assertCharteredChildShimDenies(t, teamDir, charter.Instance, "job.merge")
 }
 
 func TestDynamicTeamSpawnOverParentBudgetQueuesWithoutChargingChildTeam(t *testing.T) {
@@ -366,7 +507,7 @@ func TestDynamicTeamSpawnOverParentBudgetQueuesWithoutChargingChildTeam(t *testi
 	if fake.callCount() != 0 {
 		t.Fatalf("spawn calls = %d, want none", fake.callCount())
 	}
-	if result.Charter == nil || result.Charter.Budget.Team != "platform" || result.Charter.Budget.AllocationURI != "" {
+	if result.Charter == nil || result.Charter.Budget.Team != "platform" || result.Charter.Budget.AllocationURI != "" || result.Charter.Budget.GrantedTokens != 0 {
 		t.Fatalf("charter budget = %+v", result.Charter)
 	}
 	allocations, err := budget.ListAllocations(teamDir)
@@ -394,6 +535,28 @@ func TestDynamicTeamSpawnOverParentBudgetQueuesWithoutChargingChildTeam(t *testi
 	}
 	if len(items) != 1 || items[0].Reason != QueueReasonBudgetExhausted || items[0].Origin.Team != "platform" || items[0].Origin.Instance != "manager" {
 		t.Fatalf("queue items = %+v", items)
+	}
+	top.Budgets["platform"].TokensPerDay = 100
+	outcome, err := resolver.RetryQueueItem(items[0].ID)
+	if err != nil {
+		t.Fatalf("RetryQueueItem: %v", err)
+	}
+	if outcome.Action != "dispatched" || outcome.InstanceID != result.Charter.Instance {
+		t.Fatalf("retry outcome = %+v", outcome)
+	}
+	updated, err := ReadTeamCharter(m.daemonRoot, result.Charter.ID)
+	if err != nil {
+		t.Fatalf("read updated charter: %v", err)
+	}
+	if updated.State != TeamCharterStateRunning || updated.SpawnedAt.IsZero() || updated.InstanceURI == "" || updated.Budget.AllocationURI == "" || updated.Budget.GrantedTokens != 60 {
+		t.Fatalf("updated queued charter = %+v", updated)
+	}
+	allocations, err = budget.ListAllocations(teamDir)
+	if err != nil {
+		t.Fatalf("list allocations after retry: %v", err)
+	}
+	if len(allocations) != 1 || allocations[0].Team != "platform" || allocations[0].Instance != result.Charter.Instance || allocations[0].Tokens != 60 {
+		t.Fatalf("allocations after retry = %+v", allocations)
 	}
 }
 
@@ -453,6 +616,21 @@ match.target = "worker"
 	}
 }
 
+func TestTeamCharterReadRejectsPathSegments(t *testing.T) {
+	teamDir := fixtureTeamDir(t)
+	m := NewInstanceManager(DaemonRoot(teamDir), newFakeSpawner(time.Second).spawn)
+	resolver := NewEventResolver(m, teamDir, mustParseCustomTopo(t, ``))
+
+	for _, id := range []string{"../worker/meta", `..\worker\meta`, "..%2Fworker%2Fmeta"} {
+		if _, err := ReadTeamCharter(m.daemonRoot, id); err == nil {
+			t.Fatalf("ReadTeamCharter(%q) succeeded, want path validation error", id)
+		}
+		if _, err := resolver.ReapTeamCharter(id); err == nil {
+			t.Fatalf("ReapTeamCharter(%q) succeeded, want path validation error", id)
+		}
+	}
+}
+
 func budgetStatusByTeam(rows []budget.TeamStatus, team string) *budget.TeamStatus {
 	for i := range rows {
 		if rows[i].Team == team {
@@ -471,6 +649,23 @@ func deniedGrantContains(denied []TeamCharterDeniedGrant, verb, reason string) b
 	return false
 }
 
+func grantContains(grants []TeamCharterGrant, verb, resource string) bool {
+	for _, grant := range grants {
+		if grant.Verb != verb {
+			continue
+		}
+		if resource == "" {
+			return len(grant.Resources) == 0
+		}
+		for _, item := range grant.Resources {
+			if item == resource {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func installFakeAgentTeamCLI(t *testing.T) {
 	t.Helper()
 	binDir := t.TempDir()
@@ -480,6 +675,7 @@ func installFakeAgentTeamCLI(t *testing.T) {
 		"if [ \"$1\" = \"__resolve-verb\" ]; then\n" +
 		"  shift\n" +
 		"  case \"$1 $2\" in\n" +
+		"    'job gate') [ \"$3\" = set ] && echo job.gate.set && exit 0; exit 1 ;;\n" +
 		"    'job merge') echo job.merge; exit 0 ;;\n" +
 		"    'job show') echo job.show; exit 0 ;;\n" +
 		"    'inbox check') echo inbox.check; exit 0 ;;\n" +
@@ -498,6 +694,11 @@ func installFakeAgentTeamCLI(t *testing.T) {
 
 func assertCharteredAuditAllows(t *testing.T, teamDir string, top *topology.Topology, actor origin.Envelope, verb, auditResource string) {
 	t.Helper()
+	assertCharteredAuditAllowsTarget(t, teamDir, top, actor, verb, auditResource, "gh155-dynteam")
+}
+
+func assertCharteredAuditAllowsTarget(t *testing.T, teamDir string, top *topology.Topology, actor origin.Envelope, verb, auditResource, targetJob string) {
+	t.Helper()
 	if err := AuditAuthority(AuthorityAuditOptions{
 		TeamDir:    teamDir,
 		DaemonRoot: DaemonRoot(teamDir),
@@ -505,8 +706,8 @@ func assertCharteredAuditAllows(t *testing.T, teamDir string, top *topology.Topo
 		Actor:      actor,
 		Verb:       verb,
 		Resource:   auditResource,
-		JobID:      "gh155-dynteam",
-		TargetJob:  "gh155-dynteam",
+		JobID:      targetJob,
+		TargetJob:  targetJob,
 		EventActor: "test",
 	}); err != nil {
 		t.Fatalf("AuditAuthority(%s, %s) denied unexpectedly: %v", verb, auditResource, err)
@@ -515,6 +716,11 @@ func assertCharteredAuditAllows(t *testing.T, teamDir string, top *topology.Topo
 
 func assertCharteredAuditDenies(t *testing.T, teamDir string, top *topology.Topology, actor origin.Envelope, verb, auditResource string) {
 	t.Helper()
+	assertCharteredAuditDeniesTarget(t, teamDir, top, actor, verb, auditResource, "gh155-dynteam")
+}
+
+func assertCharteredAuditDeniesTarget(t *testing.T, teamDir string, top *topology.Topology, actor origin.Envelope, verb, auditResource, targetJob string) {
+	t.Helper()
 	err := AuditAuthority(AuthorityAuditOptions{
 		TeamDir:    teamDir,
 		DaemonRoot: DaemonRoot(teamDir),
@@ -522,8 +728,8 @@ func assertCharteredAuditDenies(t *testing.T, teamDir string, top *topology.Topo
 		Actor:      actor,
 		Verb:       verb,
 		Resource:   auditResource,
-		JobID:      "gh155-dynteam",
-		TargetJob:  "gh155-dynteam",
+		JobID:      targetJob,
+		TargetJob:  targetJob,
 		EventActor: "test",
 	})
 	if err == nil {

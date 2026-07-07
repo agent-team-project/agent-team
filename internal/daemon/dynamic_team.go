@@ -119,7 +119,13 @@ type TeamCharterAuthority struct {
 	GrantedVerbs       []string                 `json:"granted_verbs,omitempty"`
 	RequestedResources []string                 `json:"requested_resources,omitempty"`
 	GrantedResources   []string                 `json:"granted_resources,omitempty"`
+	Grants             []TeamCharterGrant       `json:"grants,omitempty"`
 	Denied             []TeamCharterDeniedGrant `json:"denied,omitempty"`
+}
+
+type TeamCharterGrant struct {
+	Verb      string   `json:"verb"`
+	Resources []string `json:"resources,omitempty"`
 }
 
 type TeamCharterDeniedGrant struct {
@@ -188,7 +194,6 @@ func (r *EventResolver) SpawnTeam(req TeamSpawnRequest) (*TeamSpawnResult, error
 		Creator:             creator,
 		Budget: TeamCharterBudget{
 			RequestedTokens: req.Budget.Tokens,
-			GrantedTokens:   req.Budget.Tokens,
 			Time:            strings.TrimSpace(req.Budget.Time),
 			Team:            creator.Team,
 		},
@@ -230,12 +235,11 @@ func (r *EventResolver) SpawnTeam(req TeamSpawnRequest) (*TeamSpawnResult, error
 	charter.UpdatedAt = time.Now().UTC()
 	switch outcome.Action {
 	case "dispatched":
-		charter.State = TeamCharterStateRunning
-		charter.SpawnedAt = charter.UpdatedAt
-		if meta, err := ReadMetadata(r.mgr.daemonRoot, instanceName); err == nil && meta != nil {
-			charter.InstanceURI = meta.URI
+		if updated, err := r.markTeamCharterSpawned(instanceName, outcome); err != nil {
+			return nil, err
+		} else if updated != nil {
+			charter = updated
 		}
-		r.attachTeamCharterAllocation(charter)
 	case "queued":
 		charter.State = TeamCharterStateQueued
 	case "rejected", "blocked":
@@ -261,16 +265,26 @@ func (r *EventResolver) ReapTeamCharter(id string) (*TeamCharter, error) {
 	if err != nil {
 		return nil, err
 	}
+	if teamCharterTerminal(charter.State) {
+		return charter, nil
+	}
 	if strings.TrimSpace(charter.Instance) != "" {
 		_, _ = r.mgr.StopWithOptions(charter.Instance, StopOptions{Force: true, Timeout: time.Second})
 	}
-	return r.markTeamCharterReaped(charter.Instance, map[string]string{"reason": "manual"})
+	return r.markTeamCharterRecordReaped(charter, map[string]string{"reason": "manual"})
 }
 
 func (r *EventResolver) markTeamCharterReaped(instance string, tombstone map[string]string) (*TeamCharter, error) {
 	charter, err := ReadTeamCharterByInstance(r.mgr.daemonRoot, instance)
 	if err != nil {
 		return nil, err
+	}
+	return r.markTeamCharterRecordReaped(charter, tombstone)
+}
+
+func (r *EventResolver) markTeamCharterRecordReaped(charter *TeamCharter, tombstone map[string]string) (*TeamCharter, error) {
+	if charter == nil {
+		return nil, errors.New("team charter: nil record")
 	}
 	now := time.Now().UTC()
 	charter.State = TeamCharterStateReaped
@@ -279,7 +293,7 @@ func (r *EventResolver) markTeamCharterReaped(instance string, tombstone map[str
 	if len(tombstone) > 0 {
 		charter.Tombstone = copyStringMap(tombstone)
 	}
-	if meta, err := ReadMetadata(r.mgr.daemonRoot, instance); err == nil && meta != nil {
+	if meta, err := ReadMetadata(r.mgr.daemonRoot, charter.Instance); err == nil && meta != nil {
 		if charter.InstanceURI == "" {
 			charter.InstanceURI = meta.URI
 		}
@@ -289,6 +303,31 @@ func (r *EventResolver) markTeamCharterReaped(instance string, tombstone map[str
 			"deployment_uri":  meta.DeploymentURI,
 		})
 	}
+	if err := WriteTeamCharter(r.mgr.daemonRoot, charter); err != nil {
+		return nil, err
+	}
+	return charter, nil
+}
+
+func (r *EventResolver) markTeamCharterSpawned(instance string, outcome EventOutcome) (*TeamCharter, error) {
+	charter, err := ReadTeamCharterByInstance(r.mgr.daemonRoot, instance)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	now := time.Now().UTC()
+	charter.State = TeamCharterStateRunning
+	if charter.SpawnedAt.IsZero() {
+		charter.SpawnedAt = now
+	}
+	charter.UpdatedAt = now
+	charter.Outcome = &outcome
+	if meta, err := ReadMetadata(r.mgr.daemonRoot, instance); err == nil && meta != nil {
+		charter.InstanceURI = meta.URI
+	}
+	r.attachTeamCharterAllocation(charter)
 	if err := WriteTeamCharter(r.mgr.daemonRoot, charter); err != nil {
 		return nil, err
 	}
@@ -343,49 +382,70 @@ func (r *EventResolver) attenuateTeamAuthority(charter *TeamCharter, req TeamSpa
 		}
 		childAllow = r.topo.AuthorityAllowlistForInstance(charter.Instance, childAgent)
 	}
-	if len(requestedVerbs) == 0 {
-		out.GrantedVerbs = intersectAuthorityAllowlists(parentAllow, childAllow, authorityConfigured)
-	} else {
+	grantedPatterns := r.attenuatedAuthorityPatterns(parentAllow, childAllow, requestedVerbs, authorityConfigured)
+	if len(requestedVerbs) > 0 {
 		for _, verb := range requestedVerbs {
-			decision := topology.AuthorityDecision{
-				Instance:  charter.Creator.Instance,
-				Agent:     charter.Creator.Agent,
-				Team:      charter.Creator.Team,
-				Verb:      verb,
-				ActorJob:  charter.Creator.Job,
-				TargetJob: charter.Creator.Job,
+			if authorityPatternCoveredByGrant(verb, grantedPatterns) {
+				continue
 			}
-			if authorityAllowedByPatterns(parentAllow, decision, authorityConfigured) && authorityAllowedByPatterns(childAllow, decision, authorityConfigured) {
-				out.GrantedVerbs = append(out.GrantedVerbs, verb)
-			} else {
-				reason := "not present in parent capability"
-				if authorityAllowedByPatterns(parentAllow, decision, authorityConfigured) {
-					reason = "not present in child capability"
+			reason := "not present in parent capability"
+			if authorityPatternCoveredByGrant(verb, r.attenuatedAuthorityPatterns(parentAllow, []string{verb}, []string{verb}, authorityConfigured)) {
+				reason = "not present in child capability"
+			}
+			out.Denied = append(out.Denied, TeamCharterDeniedGrant{Verb: verb, Reason: reason})
+		}
+	}
+	validResources, deniedResources := validateTeamAuthorityResources(requestedResources, charter)
+	out.Denied = append(out.Denied, deniedResources...)
+	for _, pattern := range grantedPatterns {
+		resources := authorityGrantResources(pattern, validResources, charter)
+		out.Grants = append(out.Grants, TeamCharterGrant{Verb: pattern, Resources: resources})
+	}
+	out.Grants = cleanTeamCharterGrants(out.Grants)
+	out.GrantedVerbs = grantedVerbsFromAuthority(out)
+	out.GrantedResources = grantedResourcesFromAuthority(out)
+	return out
+}
+
+func (r *EventResolver) attenuatedAuthorityPatterns(parentAllow, childAllow, requested []string, configured bool) []string {
+	if !configured {
+		return cleanStringSet(requested)
+	}
+	seen := map[string]bool{}
+	var out []string
+	if len(requested) == 0 {
+		for _, parent := range parentAllow {
+			for _, child := range childAllow {
+				if grant, ok := intersectAuthorityAllow(parent, child); ok && !seen[grant] {
+					seen[grant] = true
+					out = append(out, grant)
 				}
-				out.Denied = append(out.Denied, TeamCharterDeniedGrant{Verb: verb, Reason: reason})
+			}
+		}
+		sort.Strings(out)
+		return out
+	}
+	for _, req := range requested {
+		for _, parent := range parentAllow {
+			parentGrant, ok := intersectAuthorityAllow(parent, req)
+			if !ok {
+				continue
+			}
+			for _, child := range childAllow {
+				childGrant, ok := intersectAuthorityAllow(child, req)
+				if !ok {
+					continue
+				}
+				grant, ok := intersectAuthorityAllow(parentGrant, childGrant)
+				if !ok || seen[grant] {
+					continue
+				}
+				seen[grant] = true
+				out = append(out, grant)
 			}
 		}
 	}
-	if len(requestedResources) == 0 {
-		if charter != nil {
-			out.GrantedResources = []string{charter.ChildDeploymentURI, charter.URI}
-		}
-	} else {
-		for _, requested := range requestedResources {
-			parsed, err := resource.Parse(requested)
-			if err != nil {
-				out.Denied = append(out.Denied, TeamCharterDeniedGrant{Resource: requested, Reason: "invalid resource URI"})
-				continue
-			}
-			if charter != nil && (parsed.DeploymentID == charter.Creator.Project || parsed.DeploymentID == charter.ChildDeploymentID) {
-				out.GrantedResources = append(out.GrantedResources, requested)
-				continue
-			}
-			out.Denied = append(out.Denied, TeamCharterDeniedGrant{Resource: requested, Reason: "outside parent deployment scope"})
-		}
-	}
-	sort.Strings(out.GrantedVerbs)
-	sort.Strings(out.GrantedResources)
+	sort.Strings(out)
 	return out
 }
 
@@ -401,22 +461,17 @@ func authorityAllowedByPatterns(patterns []string, decision topology.AuthorityDe
 	return false
 }
 
-func intersectAuthorityAllowlists(parentAllow, childAllow []string, configured bool) []string {
-	if !configured {
-		return nil
+func authorityPatternCoveredByGrant(requested string, grants []string) bool {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return false
 	}
-	seen := map[string]bool{}
-	var out []string
-	for _, parent := range parentAllow {
-		for _, child := range childAllow {
-			if grant, ok := intersectAuthorityAllow(parent, child); ok && !seen[grant] {
-				seen[grant] = true
-				out = append(out, grant)
-			}
+	for _, grant := range grants {
+		if _, ok := intersectAuthorityAllow(grant, requested); ok {
+			return true
 		}
 	}
-	sort.Strings(out)
-	return out
+	return false
 }
 
 func intersectAuthorityAllow(left, right string) (string, bool) {
@@ -497,6 +552,168 @@ func intersectAuthorityQualifier(left, right string) (string, bool) {
 	}
 }
 
+func validateTeamAuthorityResources(requested []string, charter *TeamCharter) ([]string, []TeamCharterDeniedGrant) {
+	if charter == nil {
+		return nil, nil
+	}
+	if len(requested) == 0 {
+		return nil, nil
+	}
+	var valid []string
+	var denied []TeamCharterDeniedGrant
+	for _, raw := range requested {
+		parsed, err := resource.Parse(raw)
+		if err != nil {
+			denied = append(denied, TeamCharterDeniedGrant{Resource: raw, Reason: "invalid resource URI"})
+			continue
+		}
+		if parsed.DeploymentID != charter.Creator.Project && parsed.DeploymentID != charter.ChildDeploymentID {
+			denied = append(denied, TeamCharterDeniedGrant{Resource: raw, Reason: "outside parent deployment scope"})
+			continue
+		}
+		valid = append(valid, raw)
+	}
+	return cleanStringSet(valid), denied
+}
+
+func authorityGrantResources(grant string, requested []string, charter *TeamCharter) []string {
+	if charter == nil {
+		return nil
+	}
+	if len(requested) == 0 {
+		return defaultResourcesForAuthorityGrant(grant, charter)
+	}
+	var resources []string
+	for _, raw := range requested {
+		parsed, err := resource.Parse(raw)
+		if err != nil {
+			continue
+		}
+		if authorityGrantMatchesResource(grant, parsed, charter) {
+			resources = append(resources, raw)
+		}
+	}
+	return cleanStringSet(resources)
+}
+
+func defaultResourcesForAuthorityGrant(grant string, charter *TeamCharter) []string {
+	if charter == nil {
+		return nil
+	}
+	var resources []string
+	if authorityGrantOwnScoped(grant) && authorityGrantVerbResourceKind(grant) == resource.KindJob && strings.TrimSpace(charter.Creator.Job) != "" {
+		resources = append(resources, resource.JobURI(charter.Creator.Project, charter.Creator.Job))
+	}
+	resources = append(resources, charter.ChildDeploymentURI, charter.URI)
+	return cleanStringSet(resources)
+}
+
+func authorityGrantMatchesResource(grant string, parsed resource.Parsed, charter *TeamCharter) bool {
+	kind := authorityGrantVerbResourceKind(grant)
+	if kind != "" && parsed.Kind != kind {
+		return false
+	}
+	if authorityGrantOwnScoped(grant) {
+		return parsed.Kind == resource.KindJob &&
+			strings.TrimSpace(charter.Creator.Job) != "" &&
+			parsed.DeploymentID == charter.Creator.Project &&
+			parsed.ID == charter.Creator.Job
+	}
+	return true
+}
+
+func authorityGrantOwnScoped(grant string) bool {
+	_, qualifier := splitAuthorityAllowLocal(grant)
+	return qualifier == "own"
+}
+
+func authorityGrantVerbResourceKind(grant string) string {
+	verb, _ := splitAuthorityAllowLocal(grant)
+	verb = strings.TrimSuffix(strings.TrimSpace(verb), ".*")
+	switch {
+	case verb == "job" || strings.HasPrefix(verb, "job."):
+		return resource.KindJob
+	case verb == "channel" || strings.HasPrefix(verb, "channel."):
+		return resource.KindChannel
+	case verb == "inbox" || strings.HasPrefix(verb, "inbox."):
+		return resource.KindMailbox
+	case verb == "instance" || strings.HasPrefix(verb, "instance."):
+		return resource.KindInstance
+	case verb == "queue" || strings.HasPrefix(verb, "queue."):
+		return resource.KindQueue
+	case verb == "outbox" || strings.HasPrefix(verb, "outbox."):
+		return resource.KindOutbox
+	case verb == "lock" || strings.HasPrefix(verb, "lock."):
+		return resource.KindLock
+	}
+	return ""
+}
+
+func cleanTeamCharterGrants(values []TeamCharterGrant) []TeamCharterGrant {
+	seen := map[string]bool{}
+	out := make([]TeamCharterGrant, 0, len(values))
+	for _, grant := range values {
+		verb := strings.TrimSpace(grant.Verb)
+		if verb == "" {
+			continue
+		}
+		resources := cleanStringSet(grant.Resources)
+		key := verb + "\x00" + strings.Join(resources, "\x00")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, TeamCharterGrant{Verb: verb, Resources: resources})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Verb == out[j].Verb {
+			return strings.Join(out[i].Resources, "\x00") < strings.Join(out[j].Resources, "\x00")
+		}
+		return out[i].Verb < out[j].Verb
+	})
+	return out
+}
+
+func grantedVerbsFromAuthority(authority TeamCharterAuthority) []string {
+	seen := map[string]bool{}
+	var verbs []string
+	grants := authority.Grants
+	if len(grants) == 0 {
+		return cleanStringSet(authority.GrantedVerbs)
+	}
+	for _, grant := range grants {
+		verb := strings.TrimSpace(grant.Verb)
+		if verb == "" || seen[verb] {
+			continue
+		}
+		seen[verb] = true
+		verbs = append(verbs, verb)
+	}
+	sort.Strings(verbs)
+	return verbs
+}
+
+func grantedResourcesFromAuthority(authority TeamCharterAuthority) []string {
+	seen := map[string]bool{}
+	var resources []string
+	grants := authority.Grants
+	if len(grants) == 0 {
+		return cleanStringSet(authority.GrantedResources)
+	}
+	for _, grant := range grants {
+		for _, resource := range grant.Resources {
+			resource = strings.TrimSpace(resource)
+			if resource == "" || seen[resource] {
+				continue
+			}
+			seen[resource] = true
+			resources = append(resources, resource)
+		}
+	}
+	sort.Strings(resources)
+	return resources
+}
+
 func (r *EventResolver) attachTeamCharterAllocation(charter *TeamCharter) {
 	if charter == nil || strings.TrimSpace(r.teamDir) == "" || strings.TrimSpace(charter.Instance) == "" {
 		return
@@ -525,8 +742,8 @@ func WriteTeamCharter(daemonRoot string, charter *TeamCharter) error {
 	if strings.TrimSpace(charter.ID) == "" {
 		return errors.New("team charter: id is required")
 	}
-	if strings.ContainsAny(charter.ID, `/\`) || charter.ID == "." || charter.ID == ".." || strings.Contains(charter.ID, "..") {
-		return errors.New("team charter: id must not contain path segments")
+	if err := validateTeamCharterID(charter.ID); err != nil {
+		return err
 	}
 	dir := teamCharterRoot(daemonRoot)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -560,7 +777,11 @@ func WriteTeamCharter(daemonRoot string, charter *TeamCharter) error {
 }
 
 func ReadTeamCharter(daemonRoot, id string) (*TeamCharter, error) {
-	body, err := os.ReadFile(teamCharterPath(daemonRoot, strings.TrimSpace(id)))
+	id = strings.TrimSpace(id)
+	if err := validateTeamCharterID(id); err != nil {
+		return nil, err
+	}
+	body, err := os.ReadFile(teamCharterPath(daemonRoot, id))
 	if err != nil {
 		return nil, err
 	}
@@ -581,7 +802,7 @@ func ReadTeamCharterByInstance(daemonRoot, instance string) (*TeamCharter, error
 		return nil, err
 	}
 	for _, charter := range charters {
-		if charter != nil && charter.Instance == instance {
+		if charter != nil && charter.Instance == instance && !teamCharterTerminal(charter.State) {
 			return charter, nil
 		}
 	}
@@ -617,6 +838,26 @@ func teamCharterRoot(daemonRoot string) string {
 
 func teamCharterPath(daemonRoot, id string) string {
 	return filepath.Join(teamCharterRoot(daemonRoot), id+".json")
+}
+
+func validateTeamCharterID(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("team charter: id is required")
+	}
+	if strings.ContainsAny(id, `/\`) || id == "." || id == ".." || strings.Contains(id, "..") {
+		return errors.New("team charter: id must not contain path segments")
+	}
+	return nil
+}
+
+func teamCharterTerminal(state string) bool {
+	switch strings.TrimSpace(state) {
+	case TeamCharterStateFailed, TeamCharterStateReaped:
+		return true
+	default:
+		return false
+	}
 }
 
 func childTeamInstanceName(target, name, requested string) (string, error) {

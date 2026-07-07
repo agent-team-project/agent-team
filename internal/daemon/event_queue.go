@@ -64,9 +64,11 @@ func (r *EventResolver) onReap(spawned string) {
 		r.mu.Unlock()
 		return
 	}
+	outcome := EventOutcome{Instance: declared.Name, Action: "dispatched", InstanceID: next.uniqueName}
 	if meta, err := ReadMetadata(r.mgr.daemonRoot, next.uniqueName); err == nil {
 		r.updateLockLeasePID(meta.Instance, meta.PID)
 	}
+	_, _ = r.markTeamCharterSpawned(next.uniqueName, outcome)
 	_ = RemoveQueueItem(r.mgr.daemonRoot, next.id)
 }
 
@@ -538,9 +540,11 @@ func (r *EventResolver) drainQueuesWithResult(ids map[string]bool) (*QueueDrainR
 			continue
 		}
 		r.updateLockLeasePID(meta.Instance, meta.PID)
+		outcome := EventOutcome{Instance: declared.Name, Action: "dispatched", InstanceID: ev.uniqueName}
+		_, _ = r.markTeamCharterSpawned(ev.uniqueName, outcome)
 		_ = RemoveQueueItem(r.mgr.daemonRoot, ev.id)
 		result.Dispatched++
-		result.Outcomes = append(result.Outcomes, EventOutcome{Instance: declared.Name, Action: "dispatched", InstanceID: ev.uniqueName})
+		result.Outcomes = append(result.Outcomes, outcome)
 	}
 	items, err := ListQueueItems(r.mgr.daemonRoot)
 	if err != nil {
@@ -790,8 +794,10 @@ func (r *EventResolver) RetryQueueItem(id string) (EventOutcome, error) {
 		return EventOutcome{Instance: inst.Name, Action: "rejected", InstanceID: ev.uniqueName, Reason: err.Error()}, nil
 	}
 	r.updateLockLeasePID(meta.Instance, meta.PID)
+	outcome := EventOutcome{Instance: inst.Name, Action: "dispatched", InstanceID: ev.uniqueName}
+	_, _ = r.markTeamCharterSpawned(ev.uniqueName, outcome)
 	_ = RemoveQueueItem(r.mgr.daemonRoot, ev.id)
-	return EventOutcome{Instance: inst.Name, Action: "dispatched", InstanceID: ev.uniqueName}, nil
+	return outcome, nil
 }
 
 func removeQueuedEventByID(queue []*queuedEvent, id string) []*queuedEvent {
