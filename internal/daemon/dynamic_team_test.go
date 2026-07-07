@@ -130,6 +130,15 @@ match.target = "worker"
 	if charter.Budget.RequestedTokens != 60 || charter.Budget.GrantedTokens != 60 || charter.Budget.AllocationURI == "" || charter.Budget.Team != "platform" {
 		t.Fatalf("charter budget = %+v", charter.Budget)
 	}
+	childDeploymentID := charter.ChildDeploymentID
+	wantInstanceURI := resource.InstanceURI(childDeploymentID, charter.Instance)
+	wantSpecURI := resource.InstanceURI(childDeploymentID, "worker")
+	wantJobURI := resource.JobURI(childDeploymentID, "gh155-dynteam")
+	wantWorkspaceURI := resource.WorkspaceURI(childDeploymentID, "repo")
+	wantStateURI := resource.StateURI(childDeploymentID, charter.Instance)
+	if charter.InstanceURI != wantInstanceURI {
+		t.Fatalf("charter instance URI = %q, want %q", charter.InstanceURI, wantInstanceURI)
+	}
 	allocations, err := budget.ListAllocations(teamDir)
 	if err != nil {
 		t.Fatalf("list allocations: %v", err)
@@ -169,6 +178,26 @@ match.target = "worker"
 	if meta.DeploymentURI != charter.ChildDeploymentURI || meta.DeploymentParentURI != charter.ParentDeploymentURI || meta.Job != "gh155-dynteam" {
 		t.Fatalf("metadata deployment/provenance = %+v", meta)
 	}
+	childURIs := map[string]string{
+		"metadata uri":       meta.URI,
+		"metadata spec_uri":  meta.SpecURI,
+		"metadata job_uri":   meta.JobURI,
+		"metadata workspace": meta.WorkspaceURI,
+		"metadata state":     meta.StateURI,
+		"charter instance":   charter.InstanceURI,
+	}
+	for label, uri := range childURIs {
+		if strings.HasPrefix(uri, "agt://parent-dep/") {
+			t.Fatalf("%s = %q, want child deployment URI", label, uri)
+		}
+	}
+	if meta.URI != wantInstanceURI ||
+		meta.SpecURI != wantSpecURI ||
+		meta.JobURI != wantJobURI ||
+		meta.WorkspaceURI != wantWorkspaceURI ||
+		meta.StateURI != wantStateURI {
+		t.Fatalf("metadata child URIs = %+v, want instance=%s spec=%s job=%s workspace=%s state=%s", meta, wantInstanceURI, wantSpecURI, wantJobURI, wantWorkspaceURI, wantStateURI)
+	}
 	env := fake.lastEnv()
 	for _, want := range []string{
 		"AGENT_TEAM_DEPLOYMENT_URI=" + charter.ChildDeploymentURI,
@@ -176,6 +205,11 @@ match.target = "worker"
 		"AGENT_TEAM_CHARTER_URI=" + charter.URI,
 		"AGENT_TEAM_CHILD_DEPLOYMENT_URI=" + charter.ChildDeploymentURI,
 		"AGENT_TEAM_CAPABILITY_URI=" + charter.Authority.CapabilityURI,
+		"AGENT_TEAM_INSTANCE_URI=" + wantInstanceURI,
+		"AGENT_TEAM_SPEC_URI=" + wantSpecURI,
+		"AGENT_TEAM_JOB_URI=" + wantJobURI,
+		"AGENT_TEAM_WORKSPACE_URI=" + wantWorkspaceURI,
+		"AGENT_TEAM_STATE_URI=" + wantStateURI,
 	} {
 		if !containsString(env, want) {
 			t.Fatalf("env missing %q: %#v", want, env)
@@ -190,6 +224,11 @@ match.target = "worker"
 		`"capability_uri":"` + charter.Authority.CapabilityURI + `"`,
 		`"deployment_uri":"` + charter.ChildDeploymentURI + `"`,
 		`"deployment_parent_uri":"` + charter.ParentDeploymentURI + `"`,
+		`"instance_uri":"` + wantInstanceURI + `"`,
+		`"spec_uri":"` + wantSpecURI + `"`,
+		`"job_uri":"` + wantJobURI + `"`,
+		`"workspace_uri":"` + wantWorkspaceURI + `"`,
+		`"state_uri":"` + wantStateURI + `"`,
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)

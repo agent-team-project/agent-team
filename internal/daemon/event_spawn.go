@@ -503,12 +503,12 @@ func (r *EventResolver) backfillDispatchPayloadResourceURIs(inst *topology.Insta
 		return
 	}
 	deployment, _ := resource.DeploymentFromTeamDir(r.teamDir)
-	deploymentID := strings.TrimSpace(deployment.ID)
+	deploymentID := deploymentIDForDispatchPayload(payload, deployment)
 	if deploymentID == "" {
 		return
 	}
-	payloadSetStringIfEmpty(payload, "deployment_uri", deployment.URI)
-	payloadSetStringIfEmpty(payload, "deployment_parent_uri", deployment.ParentURI)
+	payloadSetStringIfEmpty(payload, "deployment_uri", resource.DeploymentURI(deploymentID))
+	payloadSetStringIfEmpty(payload, "deployment_parent_uri", deploymentParentURIForDispatchPayload(deploymentID, deployment))
 	payloadSetStringIfEmpty(payload, "instance_uri", resource.InstanceURI(deploymentID, instance))
 	declared := instance
 	if inst != nil && strings.TrimSpace(inst.Name) != "" {
@@ -528,6 +528,21 @@ func (r *EventResolver) backfillDispatchPayloadResourceURIs(inst *topology.Insta
 	}
 	payloadSetStringIfEmpty(payload, "workspace_uri", workspaceURI)
 	payloadSetStringIfEmpty(payload, "state_uri", resource.StateURI(deploymentID, instance))
+}
+
+func deploymentIDForDispatchPayload(payload map[string]any, fallback resource.Deployment) string {
+	if parsed, err := resource.Parse(payloadString(payload, "deployment_uri")); err == nil {
+		return strings.TrimSpace(parsed.DeploymentID)
+	}
+	return strings.TrimSpace(fallback.ID)
+}
+
+func deploymentParentURIForDispatchPayload(deploymentID string, fallback resource.Deployment) string {
+	fallbackID := strings.TrimSpace(fallback.ID)
+	if deploymentID == "" || deploymentID == fallbackID {
+		return strings.TrimSpace(fallback.ParentURI)
+	}
+	return strings.TrimSpace(fallback.URI)
 }
 
 func payloadSetStringIfEmpty(payload map[string]any, key, value string) {
