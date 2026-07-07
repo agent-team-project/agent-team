@@ -20,10 +20,8 @@ class ProductVerifyDiffTest(unittest.TestCase):
                 "instance": "docs-writer-squ-109",
                 "agent": "worker",
                 "status": "done",
-                "branch": "squ-109-docs",
                 "job": "squ-109",
                 "runtime": "codex",
-                "workspace": "/repo/.claude/worktrees/docs-writer-squ-109",
             }
         ]
         cli_instances = [
@@ -31,10 +29,8 @@ class ProductVerifyDiffTest(unittest.TestCase):
                 "instance": "docs-writer-squ-109",
                 "agent": "worker",
                 "status": "done",
-                "branch": "squ-109-docs",
                 "job": "squ-109",
                 "runtime": "codex",
-                "workspace": "/repo/.claude/worktrees/docs-writer-squ-109",
                 "pr": "https://github.com/agent-team-project/kensho/pull/107",
                 "pid": 12345,
                 "runtime_binary": "codex",
@@ -42,9 +38,67 @@ class ProductVerifyDiffTest(unittest.TestCase):
             }
         ]
 
-        result = verifier.compare_records(
-            "instances", ui_instances, cli_instances, verifier.normalize_instances
-        )
+        result = verifier.compare_instances(ui_instances, cli_instances)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["diffs"], [])
+
+    def test_instance_projection_ignores_ps_only_declared_row(self) -> None:
+        ui_instances = [
+            {
+                "instance": "platform-worker-squ-187",
+                "agent": "worker",
+                "status": "running",
+                "job": "squ-187",
+                "runtime": "codex",
+            }
+        ]
+        cli_instances = [
+            {
+                "instance": "platform-worker-squ-187",
+                "agent": "worker",
+                "status": "running",
+                "job": "squ-187",
+                "runtime": "codex",
+            },
+            {
+                "instance": "harness-reviewer",
+                "agent": "reviewer",
+                "status": "declared",
+                "job": "",
+                "runtime": "",
+                "branch": "status-file-only",
+            },
+        ]
+
+        result = verifier.compare_instances(ui_instances, cli_instances)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["diffs"], [])
+
+    def test_instance_projection_ignores_stale_status_branch(self) -> None:
+        ui_instances = [
+            {
+                "instance": "platform-reviewer-squ-101-review",
+                "agent": "reviewer",
+                "status": "done",
+                "branch": "",
+                "job": "squ-101",
+                "runtime": "codex",
+            }
+        ]
+        cli_instances = [
+            {
+                "instance": "platform-reviewer-squ-101-review",
+                "agent": "reviewer",
+                "status": "done",
+                "branch": "squ-101-ef91baa8",
+                "job": "squ-101",
+                "runtime": "codex",
+            }
+        ]
+
+        result = verifier.compare_instances(ui_instances, cli_instances)
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["diffs"], [])
@@ -55,10 +109,8 @@ class ProductVerifyDiffTest(unittest.TestCase):
                 "instance": "platform-worker-squ-187",
                 "agent": "worker",
                 "status": "running",
-                "branch": "squ-187",
                 "job": "squ-187",
                 "runtime": "codex",
-                "workspace": "/repo/.claude/worktrees/platform-worker-squ-187",
             }
         ]
         cli_instances = [
@@ -66,17 +118,13 @@ class ProductVerifyDiffTest(unittest.TestCase):
                 "instance": "platform-worker-squ-187",
                 "agent": "worker",
                 "status": "done",
-                "branch": "squ-187",
                 "job": "squ-187",
                 "runtime": "codex",
-                "workspace": "/repo/.claude/worktrees/platform-worker-squ-187",
                 "pr": "https://github.com/agent-team-project/kensho/pull/190",
             }
         ]
 
-        result = verifier.compare_records(
-            "instances", ui_instances, cli_instances, verifier.normalize_instances
-        )
+        result = verifier.compare_instances(ui_instances, cli_instances)
 
         self.assertFalse(result["ok"])
         self.assertEqual(

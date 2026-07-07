@@ -11,10 +11,13 @@ diffs explicit equivalence projections. Any mismatch is filed as `agent-team
 feedback submit --category bug`.
 
 For instance rows, the projection is intentionally limited to daemon/CLI shared
-state: `instance`, `agent`, `status`, `branch`, `job`, `runtime`, and
-`workspace`. CLI-only enrichment such as PR links, process IDs, runtime
-binaries, and resume counters is excluded so the loop reports only mismatches in
-the same underlying product state.
+daemon metadata: `instance`, `agent`, `status`, `runtime`, and `job`. The
+comparison only considers instance names present in both `/v1/instances` and
+`agent-team ps --json`. `ps` may include declared/status-only rows that the
+daemon endpoint does not list, and may prefer status-file or topology values for
+fields such as `branch` and `workspace`; those are intentionally excluded along
+with CLI-only enrichment such as PR links, process IDs, runtime binaries, and
+resume counters.
 
 The mechanical helper is shipped with the bundled skill at
 `.agent_team/skills/product-verify/scripts/product_verify_diff.py`.

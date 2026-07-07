@@ -22,14 +22,19 @@ FieldSpec = tuple[str, tuple[str, ...], Any]
 
 
 # Equivalence projections define the state both the daemon endpoint and CLI
-# expose for the same underlying resource. CLI-only enrichment such as PR links,
-# process IDs, runtime binaries, or resume counters is intentionally excluded.
-INSTANCE_EQUIVALENCE_FIELDS: tuple[FieldSpec, ...] = (
+# expose for the same underlying resource.
+#
+# Instances are limited to daemon metadata fields that /v1/instances and
+# `agent-team ps --json` both expose for the same daemon row. `ps` also merges
+# declared/status-only rows and CLI/job-store enrichment; those are not daemon
+# metadata and must not create product-verifier bugs. Exclusions: `pr` is
+# job-store enrichment, `branch`/`workspace` may be sourced or preferred from
+# status files/topology instead of daemon metadata, and process/runtime details
+# such as pid, runtime_binary, or resume_count are computed by the CLI.
+INSTANCE_DAEMON_METADATA_FIELDS: tuple[FieldSpec, ...] = (
     ("instance", ("instance",), ""),
     ("agent", ("agent",), ""),
     ("job", ("job",), ""),
-    ("branch", ("branch",), ""),
-    ("workspace", ("workspace",), ""),
     ("status", ("status",), ""),
     ("runtime", ("runtime",), ""),
 )
@@ -163,7 +168,7 @@ def normalize_record_list(
 
 
 def normalize_instances(records: Any) -> dict[str, dict[str, Any]]:
-    return normalize_record_list(records, "instance", INSTANCE_EQUIVALENCE_FIELDS)
+    return normalize_record_list(records, "instance", INSTANCE_DAEMON_METADATA_FIELDS)
 
 
 def normalize_jobs(records: Any) -> dict[str, dict[str, Any]]:
@@ -230,6 +235,24 @@ def compare_records(
     }
 
 
+def compare_instances(ui_records: Any, cli_records: Any) -> dict[str, Any]:
+    ui_normalized = normalize_instances(ui_records)
+    cli_normalized = normalize_instances(cli_records)
+    shared_names = set(ui_normalized) & set(cli_normalized)
+    diffs = diff_record_maps(
+        "instances",
+        {name: ui_normalized[name] for name in shared_names},
+        {name: cli_normalized[name] for name in shared_names},
+    )
+    return {
+        "name": "instances",
+        "ok": not diffs,
+        "ui_count": len(ui_normalized),
+        "cli_count": len(cli_normalized),
+        "diffs": diffs,
+    }
+
+
 def compare_topology(ui_payload: Any, cli_payload: Any) -> dict[str, Any]:
     ui_topology = normalize_topology(ui_payload)
     cli_topology = normalize_topology(cli_payload)
@@ -277,7 +300,7 @@ def finding_for_diff(diff: dict[str, Any]) -> dict[str, str]:
 
 def build_report(ui_data: dict[str, Any], cli_data: dict[str, Any], max_findings: int) -> dict[str, Any]:
     comparisons = [
-        compare_records("instances", ui_data.get("instances", []), cli_data.get("instances", []), normalize_instances),
+        compare_instances(ui_data.get("instances", []), cli_data.get("instances", [])),
         compare_records("jobs", ui_data.get("jobs", []), cli_data.get("jobs", []), normalize_jobs),
         compare_topology(ui_data.get("topology", {}), cli_data.get("topology", {})),
     ]

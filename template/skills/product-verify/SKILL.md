@@ -60,9 +60,12 @@ The helper:
 
 The instance equivalence projection is limited to fields both `/v1/instances`
 and `agent-team ps --json` faithfully expose for the same daemon-owned state:
-`instance`, `agent`, `status`, `branch`, `job`, `runtime`, and `workspace`.
-CLI-only enrichment such as PR links, process IDs, runtime binaries, and resume
-counters is intentionally excluded from this diff.
+`instance`, `agent`, `status`, `runtime`, and `job`. The diff compares only
+instance names present in both sources because `ps` can include declared or
+status-only rows that are not daemon metadata. CLI-only enrichment such as PR
+links, process IDs, runtime binaries, and resume counters is intentionally
+excluded, as are `branch` and `workspace` values that `ps` may source from
+status files or topology instead of daemon metadata.
 
 Exit codes:
 
