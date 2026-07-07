@@ -68,6 +68,12 @@ func ProjectURI(deploymentID string) string {
 	return URI(deploymentID, KindProject, deploymentID)
 }
 
+// DeploymentURI renders the deployment self resource URI. The deployment self
+// is currently modeled as the project resource for that deployment.
+func DeploymentURI(deploymentID string) string {
+	return ProjectURI(deploymentID)
+}
+
 func InstanceURI(deploymentID, instance string) string {
 	return URI(deploymentID, KindInstance, instance)
 }
@@ -159,7 +165,7 @@ func DeploymentFromTeamDir(teamDir string) (Deployment, error) {
 		ID:        strings.TrimSpace(id),
 		ParentURI: strings.TrimSpace(parentURI),
 	}
-	deployment.URI = ProjectURI(deployment.ID)
+	deployment.URI = DeploymentURI(deployment.ID)
 	return deployment, nil
 }
 

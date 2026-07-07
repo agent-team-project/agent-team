@@ -22,6 +22,13 @@ func TestURIParseRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDeploymentURIUsesProjectSelfResource(t *testing.T) {
+	const dep = "dep"
+	if got, want := DeploymentURI(dep), "agt://dep/project/dep"; got != want {
+		t.Fatalf("DeploymentURI = %q, want %q", got, want)
+	}
+}
+
 func TestURIEscapesPathSegments(t *testing.T) {
 	const dep = "dep"
 	got := URI(dep, KindWorkspace, "channel/#blocked")

@@ -36,6 +36,7 @@ Subcommands:
 - `agent-team channels` - List all pub/sub channels (alias for `channel ls`).
 - `agent-team completion` - Generate the autocompletion script for the specified shell
 - `agent-team daemon` - Manage the agent-teamd orchestrator daemon for this repo.
+- `agent-team deployments` - Read the deployment address registry view.
 - `agent-team dispatch` - Dispatch an agent through daemon topology.
 - `agent-team docs` - Generate developer documentation from the command tree.
 - `agent-team doctor` - Sanity-check the vendored team.
@@ -967,6 +968,81 @@ Flags:
   -q, --quiet              Suppress output and use only the exit code.
       --target string      Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
       --timeout duration   Grace period before SIGKILL escalation (0 = force immediately). (default 5s)
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team deployments`
+
+Read the deployment address registry view.
+
+Read the deployment address registry view projected from existing repo state. This command does not create or update a registry file.
+
+```text
+agent-team deployments [flags]
+```
+
+Aliases: `deployment`
+
+Flags:
+
+```text
+      --format string   Render each deployment with a Go template, e.g. '{{.Name}} {{.URI}}'.
+      --json            Emit machine-readable JSON.
+      --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+Subcommands:
+
+- `agent-team deployments ls` - List deployment names and their canonical resource URIs.
+- `agent-team deployments resolve` - Resolve a deployment name to its canonical resource URI.
+
+## `agent-team deployments ls`
+
+List deployment names and their canonical resource URIs.
+
+```text
+agent-team deployments ls [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render each deployment with a Go template, e.g. '{{.Name}} {{.URI}}'.
+      --json            Emit machine-readable JSON.
+      --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team deployments resolve`
+
+Resolve a deployment name to its canonical resource URI.
+
+```text
+agent-team deployments resolve <name-or-uri> [flags]
+```
+
+Flags:
+
+```text
+      --format string   Render the resolved deployment with a Go template, e.g. '{{.URI}}'.
+      --json            Emit machine-readable JSON.
+      --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 
 Inherited Flags:
