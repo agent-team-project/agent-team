@@ -5,7 +5,7 @@
 # live in .env.
 
 [pm]
-provider = "linear"
+provider = "github"
 
 [team]
 pm_tool = "linear"   # only "linear" supported in v1
