@@ -136,7 +136,7 @@ kickoff — do not amend the branch yourself.
 # tickets, folds evidence into existing ones, or dismisses with a reason.
 # Filed tickets land in Backlog — never the agent-dispatch column.
 [schedules.feedback-triage]
-every = "12h"
+every = "6h"
 
 [schedules.feedback-triage.payload]
 kind = "feedback_triage"
@@ -271,7 +271,7 @@ pipelines   = ["platform_ticket_to_pr"]
 # patterns. Proposes improvement tickets (label `harness`, Backlog only);
 # never edits prompts directly. See the review-harness skill.
 [schedules.harness-review]
-every = "12h" # daily while the fleet + prompts evolve fast; revisit at stability
+every = "8h" # daily while the fleet + prompts evolve fast; revisit at stability
 
 [schedules.harness-review.payload]
 kind = "harness_review"
