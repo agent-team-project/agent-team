@@ -243,6 +243,7 @@ kind = "codex"
 func TestFeedbackSubmitUnreachableLocalRouteRetainsAndFlushDelivers(t *testing.T) {
 	sourceRoot, sourceTeamDir := feedbackTestRepo(t)
 	targetRoot, targetTeamDir := feedbackTestRepo(t)
+	_, envTeamDir := feedbackTestRepo(t)
 	if err := os.WriteFile(filepath.Join(sourceTeamDir, "config.toml"), []byte(`
 [project]
 id = "source-project"
@@ -262,7 +263,20 @@ agent = "manager"
 `), 0o644); err != nil {
 		t.Fatalf("write target instances: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(envTeamDir, "instances.toml"), []byte(`
+[instances.manager]
+agent = "manager"
+`), 0o644); err != nil {
+		t.Fatalf("write env instances: %v", err)
+	}
+	startFeedbackTestDaemon(t, envTeamDir)
+	envHTTPAddr, err := daemon.ReadHTTPAddr(envTeamDir)
+	if err != nil {
+		t.Fatalf("read env daemon http addr: %v", err)
+	}
 	chdirForFeedbackTest(t, sourceRoot)
+	t.Setenv("AGENT_TEAM_DAEMON_URL", daemon.DaemonHTTPURL(envHTTPAddr))
+	t.Setenv(daemon.DaemonTokenFileEnv, daemon.OperatorTokenPath(envTeamDir))
 	t.Setenv("AGENT_TEAM_ROOT", sourceTeamDir)
 	t.Setenv("AGENT_TEAM_INSTANCE", "worker-squ-189")
 	t.Setenv("AGENT_TEAM_ORIGIN_AGENT", "worker")
@@ -289,6 +303,16 @@ agent = "manager"
 		sourceItems[0].Retention.Route != "receiver" ||
 		!strings.Contains(sourceItems[0].Retention.Reason, "daemon unavailable") {
 		t.Fatalf("retention = %+v", sourceItems[0].Retention)
+	}
+	if targetItems, err := feedback.List(targetTeamDir); err != nil {
+		t.Fatalf("list target feedback before flush: %v", err)
+	} else if len(targetItems) != 0 {
+		t.Fatalf("target items before flush = %+v, want none", targetItems)
+	}
+	if envItems, err := feedback.List(envTeamDir); err != nil {
+		t.Fatalf("list env feedback before flush: %v", err)
+	} else if len(envItems) != 0 {
+		t.Fatalf("env daemon items before flush = %+v, want none", envItems)
 	}
 	listOut, stderr, err := runFeedbackCommand("feedback", "ls")
 	if err != nil {
@@ -336,6 +360,11 @@ agent = "manager"
 	}
 	if targetItems[0].Origin == nil || targetItems[0].Origin.Project != "source-project" || targetItems[0].Origin.Agent != "worker" {
 		t.Fatalf("target origin = %+v", targetItems[0].Origin)
+	}
+	if envItems, err := feedback.List(envTeamDir); err != nil {
+		t.Fatalf("list env feedback after flush: %v", err)
+	} else if len(envItems) != 0 {
+		t.Fatalf("env daemon items after flush = %+v, want none", envItems)
 	}
 }
 
@@ -418,7 +447,7 @@ func startFeedbackTestDaemon(t *testing.T, teamDir string) *daemon.Daemon {
 	go func() { _ = d.Run(ctx) }()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		client, err := newDaemonClient(teamDir)
+		client, err := newDaemonClientForTargetTeamDirWithTimeout(teamDir, time.Second)
 		if err == nil {
 			if _, err := client.Status(); err == nil {
 				return d

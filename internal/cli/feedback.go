@@ -110,7 +110,7 @@ func deliverFeedbackRoute(teamDir, routeName string, input feedback.DeliverInput
 		return nil, fmt.Errorf("route %q has unsupported type %q for daemon delivery", route.Name, route.Type)
 	}
 	targetTeamDir := filepath.Join(route.Root, teamDirName)
-	client, err := newDaemonClientWithTimeout(targetTeamDir, 5*time.Second)
+	client, err := newDaemonClientForTargetTeamDirWithTimeout(targetTeamDir, 5*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("route %q daemon unavailable (%v)", route.Name, err)
 	}
