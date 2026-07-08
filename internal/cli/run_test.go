@@ -458,9 +458,30 @@ func TestRun_ExportsAuthorityAllowlistFromTopology(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 
-	want := "budget.status,channel.*,feedback.*,inbox.*,job.events,job.gate.*:own,job.show,job.step:own,status.*"
+	want := "budget.status,channel.*,event.publish,feedback.*,inbox.*,job.events,job.gate.*:own,job.show,job.step:own,status.*"
 	if got := envValue(cap.env, runtimeshim.EnvAuthorityAllowlist); got != want {
 		t.Fatalf("%s = %q, want topology allowlist", runtimeshim.EnvAuthorityAllowlist, got)
+	}
+}
+
+func TestRun_ExportsVerifierAdvanceAuthorityAllowlistFromTopology(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "verifier", "--target", tmp, "--name", "verifier-squ-123-verify", "--prompt", "kickoff message", "--no-daemon"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	want := "budget.status,channel.*,event.publish,feedback.*,inbox.*,job.events,job.gate.*:own,job.show,job.step:own,status.*"
+	if got := envValue(cap.env, runtimeshim.EnvAuthorityAllowlist); got != want {
+		t.Fatalf("%s = %q, want verifier advance allowlist", runtimeshim.EnvAuthorityAllowlist, got)
 	}
 }
 

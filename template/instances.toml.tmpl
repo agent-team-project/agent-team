@@ -656,10 +656,10 @@ enforcement = "audit"
 allow = ["*"]
 
 [authority.agents.worker]
-allow = ["budget.status", "channel.*", "feedback.*", "inbox.*", "job.events", "job.gate.*:own", "job.show", "job.step:own", "status.*"]
+allow = ["budget.status", "channel.*", "event.publish", "feedback.*", "inbox.*", "job.events", "job.gate.*:own", "job.show", "job.step:own", "status.*"]
 
 [authority.agents.verifier]
-allow = ["budget.status", "channel.*", "feedback.*", "inbox.*", "job.events", "job.gate.*:own", "job.show", "job.step:own", "status.*"]
+allow = ["budget.status", "channel.*", "event.publish", "feedback.*", "inbox.*", "job.events", "job.gate.*:own", "job.show", "job.step:own", "status.*"]
 
 [authority.agents.reviewer]
 allow = ["budget.status", "channel.*", "feedback.*", "inbox.*", "job.events", "job.gate.*:own", "job.show", "status.*"]
