@@ -51,6 +51,7 @@ Supported intake command groups include:
 
 - `intake linear`
 - `intake github`
+- `intake community`
 - `intake schedule`
 - `intake serve`
 - delivery history commands
@@ -61,6 +62,11 @@ Linear intake emits normalized `ticket.*` events such as `ticket.created`.
 GitHub Projects status edits emit `ticket.status_changed`; GitHub PR intake
 emits normalized `pr.*` events such as `pr.opened` and `pr.merged`. Topology
 triggers match the normalized event name exactly.
+
+Community intake is different: it reads open public GitHub issues and PRs,
+classifies their untrusted text into capped fixed-schema summaries, and can
+submit vetted non-spam summaries to the local feedback store. It does not
+publish topology events or create jobs.
 
 ## Linear Intake
 
@@ -88,6 +94,20 @@ agent-team intake github --payload-file github-webhook.json --reconcile-job --cl
 ```
 
 GitHub intake can reconcile PR metadata back to jobs, including PR-gate pipeline advancement and merged PR cleanup flows when requested. Add `--advance` to dispatch the next ready pipeline step after a PR URL or branch is reconciled. Add `--wait --wait-status running` for foreground scripts that should block until the advanced step has a live owner. Add `--verify-pr` when cleanup should confirm the recorded PR is merged with `gh` before removing job-owned worktrees or branches.
+
+## Community Intake
+
+```sh
+agent-team intake community --limit 50
+agent-team intake community --limit 50 --json
+agent-team intake community --limit 50 --submit-feedback
+agent-team intake community --limit 50 --submit-feedback --source-label "community/{classification}"
+```
+
+Community intake defaults to preview-only output. `--submit-feedback` writes
+non-spam summaries into `.agent_team/feedback/items/` for the `triage-feedback`
+loop. `--source-label` is the only GitHub write path, is explicit per label, and
+is skipped for spam-classified items. None of these modes dispatch workers.
 
 ## Intake Server
 

@@ -100,6 +100,74 @@ func TestGitHubWriteBackBounceComments(t *testing.T) {
 	}
 }
 
+func TestGitHubListOpenCommunityItemsAllowsTokenlessPublicRead(t *testing.T) {
+	t.Setenv("AGENT_TEAM_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("PATH", t.TempDir())
+	teamDir := testGitHubTeamDir(t, ``)
+	var gotAuth string
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		if r.URL.Query().Get("state") != "open" {
+			t.Fatalf("query = %s, want state=open", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"number":42,"html_url":"https://github.com/acme/widgets/issues/42","title":"Crash","body":"Steps to reproduce: panic","state":"open","user":{"login":"alice"},"labels":[{"name":"bug"}]},
+			{"number":43,"html_url":"https://github.com/acme/widgets/pull/43","title":"Add feature","body":"feature request","state":"open","user":{"login":"bob"},"pull_request":{"html_url":"https://github.com/acme/widgets/pull/43"}}
+		]`))
+	}))
+	defer server.Close()
+	client := &GitHubClient{RESTEndpoint: server.URL, HTTPClient: server.Client()}
+
+	items, err := client.ListOpenCommunityItems(context.Background(), teamDir, GitHubCommunityListOptions{Limit: 10, IncludeIssues: true, IncludePullRequests: true})
+	if err != nil {
+		t.Fatalf("ListOpenCommunityItems: %v", err)
+	}
+	if gotAuth != "" {
+		t.Fatalf("Authorization = %q, want empty for tokenless public read", gotAuth)
+	}
+	if gotPath != "/repos/acme/widgets/issues" {
+		t.Fatalf("path = %q, want issues list", gotPath)
+	}
+	if len(items) != 2 || items[0].Kind != "issue" || items[1].Kind != "pull_request" || items[1].Author != "bob" {
+		t.Fatalf("items = %+v", items)
+	}
+}
+
+func TestGitHubAddCommunityItemLabelsRequiresToken(t *testing.T) {
+	teamDir := testGitHubTeamDir(t, ``)
+	var gotAuth string
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if r.Method != http.MethodPost || r.URL.Path != "/repos/acme/widgets/issues/42/labels" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	client := &GitHubClient{RESTEndpoint: server.URL, Token: "gh-key", HTTPClient: server.Client()}
+
+	if err := client.AddCommunityItemLabels(context.Background(), teamDir, "", "", 42, []string{"community-intake", "bug"}); err != nil {
+		t.Fatalf("AddCommunityItemLabels: %v", err)
+	}
+	if gotAuth != "Bearer gh-key" {
+		t.Fatalf("Authorization = %q, want bearer token", gotAuth)
+	}
+	rawLabels, _ := gotPayload["labels"].([]any)
+	if len(rawLabels) != 2 || rawLabels[0] != "community-intake" || rawLabels[1] != "bug" {
+		t.Fatalf("payload = %+v, want labels", gotPayload)
+	}
+}
+
 func testGitHubTeamDir(t *testing.T, extra string) string {
 	t.Helper()
 	return testTeamDir(t, `[pm]
