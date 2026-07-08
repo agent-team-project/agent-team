@@ -13,6 +13,12 @@ from pathlib import Path
 ISSUE_REF = (
     r"(?:#\d+|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/\d+)"
 )
+ISSUE_REF_RE = re.compile(
+    r"#(?P<local>\d+)"
+    r"|https://github\.com/(?P<owner>[A-Za-z0-9_.-]+)/"
+    r"(?P<repo>[A-Za-z0-9_.-]+)/issues/(?P<url_number>\d+)",
+    re.IGNORECASE,
+)
 CLOSING_TRAILER_RE = re.compile(
     r"^\s*(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+"
     rf"{ISSUE_REF}(?:[,\s]+{ISSUE_REF})*\s*\.?\s*$",
@@ -22,6 +28,8 @@ ADVANCES_TRAILER_RE = re.compile(
     rf"^\s*(?:advances|refs)\s+{ISSUE_REF}(?:[,\s]+{ISSUE_REF})*\s*\.?\s*$",
     re.IGNORECASE,
 )
+CONTEXT_EXAMPLE_RE = re.compile(r"\b(?:example|simulated)\b", re.IGNORECASE)
+FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
 
 FAILURE_MESSAGE = """PR body is missing a standalone work-item trailer.
 
@@ -37,11 +45,49 @@ non-epic issue. Use `Advances` or `Refs` for design/slice PRs or epic work.
 """
 
 
-def has_work_item_trailer(body: str) -> bool:
+def work_item_trailer_lines(body: str) -> list[str]:
+    lines: list[str] = []
+    in_fence = False
+    previous_non_empty = ""
     for line in body.splitlines():
-        if CLOSING_TRAILER_RE.match(line) or ADVANCES_TRAILER_RE.match(line):
-            return True
-    return False
+        stripped = line.strip()
+        if FENCE_RE.match(stripped):
+            in_fence = not in_fence
+            previous_non_empty = ""
+            continue
+        if not stripped:
+            previous_non_empty = ""
+            continue
+        if not in_fence and not CONTEXT_EXAMPLE_RE.search(previous_non_empty):
+            if CLOSING_TRAILER_RE.match(line) or ADVANCES_TRAILER_RE.match(line):
+                lines.append(line)
+        previous_non_empty = stripped
+    return lines
+
+
+def has_work_item_trailer(body: str) -> bool:
+    return bool(work_item_trailer_lines(body))
+
+
+def closing_issue_numbers(body: str, owner: str, repo: str) -> list[int]:
+    numbers: set[int] = set()
+    for line in work_item_trailer_lines(body):
+        if not CLOSING_TRAILER_RE.match(line):
+            continue
+        for ref in ISSUE_REF_RE.finditer(line):
+            local_number = ref.group("local")
+            url_owner = ref.group("owner")
+            url_repo = ref.group("repo")
+            url_number = ref.group("url_number")
+            if local_number:
+                numbers.add(int(local_number))
+            elif (
+                url_number
+                and (url_owner or "").lower() == owner.lower()
+                and (url_repo or "").lower() == repo.lower()
+            ):
+                numbers.add(int(url_number))
+    return sorted(numbers)
 
 
 def body_from_event(path: Path) -> tuple[str, bool]:
@@ -95,6 +141,18 @@ def run_self_test() -> bool:
         "Closes https://github.com/agent-team-project/kensho/pull/216",
         "Advances https://gitlab.com/agent-team-project/kensho/issues/216",
         "Closes the issue",
+        "```text\nCloses #123\n```",
+        "Example:\nCloses #123",
+        "Simulated event:\nCloses #123",
+    ]
+    closing_cases = [
+        ("Closes #216", [216]),
+        ("Fixes #123, https://github.com/agent-team-project/kensho/issues/124", [123, 124]),
+        ("Closes https://github.com/other/repo/issues/216", []),
+        ("## Test plan\n- [x] simulated pull_request_target Closes #216 event\n\nAdvances #216\n", []),
+        ("```text\nCloses #216\n```", []),
+        ("Example:\nCloses #216", []),
+        ("Simulated event:\nCloses #216", []),
     ]
 
     failures: list[str] = []
@@ -104,6 +162,10 @@ def run_self_test() -> bool:
     for body in invalid:
         if has_work_item_trailer(body):
             failures.append(f"expected invalid body to fail: {body!r}")
+    for body, expected in closing_cases:
+        actual = closing_issue_numbers(body, "agent-team-project", "kensho")
+        if actual != expected:
+            failures.append(f"expected closing issues {expected!r}, got {actual!r}: {body!r}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         edited_event = Path(tmpdir) / "edited-pr-event.json"

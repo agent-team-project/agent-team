@@ -10,26 +10,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 GRAPHQL_URL = "https://api.github.com/graphql"
 REST_URL = "https://api.github.com"
 
-CLOSING_BLOCK_RE = re.compile(
-    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+([^\n]+)",
-    re.IGNORECASE,
-)
-ISSUE_REF_RE = re.compile(
-    r"(?:https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/(\d+))"
-    r"|(?:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#(\d+))"
-    r"|(?:#(\d+))"
-)
+CI_SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "ci"
+if str(CI_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(CI_SCRIPTS_DIR))
+
+from validate_pr_work_item_trailer import closing_issue_numbers as trailer_closing_issue_numbers
 
 
 class GitHubError(RuntimeError):
@@ -284,20 +280,7 @@ def fetch_issue_timeline(token: str, repo: Repo, number: int) -> list[dict[str, 
 
 
 def closing_issue_numbers(body: str, repo: Repo) -> list[int]:
-    numbers: set[int] = set()
-    for block in CLOSING_BLOCK_RE.finditer(body or ""):
-        tail = block.group(1)
-        for ref in ISSUE_REF_RE.finditer(tail):
-            url_owner, url_repo, url_number = ref.group(1), ref.group(2), ref.group(3)
-            short_owner, short_repo, short_number = ref.group(4), ref.group(5), ref.group(6)
-            local_number = ref.group(7)
-            if url_number and repo.matches(url_owner, url_repo):
-                numbers.add(int(url_number))
-            elif short_number and repo.matches(short_owner, short_repo):
-                numbers.add(int(short_number))
-            elif local_number:
-                numbers.add(int(local_number))
-    return sorted(numbers)
+    return trailer_closing_issue_numbers(body or "", repo.owner, repo.name)
 
 
 def body_closes_issue(body: str, repo: Repo, number: int) -> bool:
@@ -328,7 +311,8 @@ def status_from_issue_state(
             continue
         pull_ref = source_issue.get("pull_request") or {}
         if pull_ref.get("merged_at"):
-            return status_names.done
+            # Current open issue state wins over historical closing links.
+            continue
         if source_issue.get("state") == "open":
             has_open_closing_pr = True
 
@@ -639,12 +623,23 @@ def run_self_test() -> bool:
     ## Summary
 
     Closes #12
-    Fixes agent-team-project/kensho#13, https://github.com/agent-team-project/kensho/issues/14
+    Fixes #13, https://github.com/agent-team-project/kensho/issues/14
     Advances #216
-    Closes other/repo#99
+    Closes https://github.com/other/repo/issues/99
     """
     if closing_issue_numbers(body, repo) != [12, 13, 14]:
         failures.append("closing_issue_numbers did not filter refs correctly")
+
+    bounced_body = """
+    ## Test plan
+    - [x] simulated pull_request_target Closes #216 event
+
+    Advances #216
+    """
+    if closing_issue_numbers(bounced_body, repo) != []:
+        failures.append("closing_issue_numbers treated prose/test-plan text as a close")
+    if closing_issue_numbers("Closes #216", repo) != [216]:
+        failures.append("closing_issue_numbers did not recognize a real closing trailer")
 
     open_issue = {"number": 12, "state": "open"}
     closed_issue = {"number": 12, "state": "closed"}
@@ -689,7 +684,8 @@ def run_self_test() -> bool:
         (open_issue, [], "Todo"),
         (closed_issue, [], "Done"),
         (open_issue, [open_pr_event], "In Progress"),
-        (open_issue, [merged_pr_event], "Done"),
+        (open_issue, [merged_pr_event], "Todo"),
+        (open_issue, [merged_pr_event, open_pr_event], "In Progress"),
         (open_issue, [advances_event], "Todo"),
     ]
     for issue, timeline, expected in cases:
