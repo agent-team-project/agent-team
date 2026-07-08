@@ -169,10 +169,29 @@ Recommended per-slice shape:
 ]
 ```
 
+Each completed per-slice record's `id` must be the planned slice id for that
+arm. The harness treats the quality floor as failed when completed records are
+missing a planned slice id, duplicate a planned slice id, or include an unknown
+slice id outside the plan.
+
 Fields aligned with the outcomes ledger are also accepted: `tokens_consumed`,
 `review_rounds`, `bounce_count`, `post_merge_defect_backlinks`, `work_units`,
 `merged_at`, `finalized_at`, and `usage.input_tokens` plus
 `usage.output_tokens`.
+
+Summary-style result JSON must include completed-slice evidence, not just a
+passing quality flag. Use `completed_slice_ids` or `merged_slice_ids` with the
+same planned slice ids:
+
+```json
+{
+  "completed_slice_ids": ["board-primitives", "fen", "search", "uci"],
+  "quality": {
+    "status": "pass",
+    "required_gates_passed": true
+  }
+}
+```
 
 ## Metrics
 
@@ -180,7 +199,7 @@ The report compares these metrics:
 
 | Metric | Definition | Direction |
 | --- | --- | --- |
-| Quality floor | Required gates passed, all planned slices merged, no escaped defects. | Must pass |
+| Quality floor | Required gates passed, every planned slice completed exactly once, no unknown completed slices, no escaped defects. | Must pass |
 | Effective concurrency | Sum of runtime work-unit duration divided by wall-clock duration. | Higher |
 | Wall-clock / difficulty point | Arm wall-clock minutes divided by canonical difficulty points. | Lower |
 | Tokens / merged slice | Tokens consumed divided by merged slices. | Lower |

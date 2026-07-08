@@ -14,6 +14,7 @@ import json
 import math
 import sys
 import tomllib
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,6 +89,7 @@ class ArmMetrics:
     label: str
     source: str
     expected_slices: int
+    expected_slice_ids: tuple[str, ...] = ()
     merged_slices: int | None = None
     wall_clock_seconds: float | None = None
     effective_concurrency: float | None = None
@@ -420,20 +422,30 @@ def load_metrics(arm: Arm, total_difficulty: float) -> ArmMetrics | None:
     if arm.result_path is None:
         return None
     raw = load_json(arm.result_path)
-    metrics = metrics_from_result(raw, arm.label, arm.result_path, len(arm.slices))
+    metrics = metrics_from_result(
+        raw,
+        arm.label,
+        arm.result_path,
+        tuple(work_slice.id for work_slice in arm.slices),
+    )
     if total_difficulty <= 0:
         metrics.quality_notes.append("total difficulty is zero; normalized metrics are unavailable")
     return metrics
 
 
-def metrics_from_result(raw: Any, label: str, path: Path, expected_slices: int) -> ArmMetrics:
+def metrics_from_result(raw: Any, label: str, path: Path, expected_slice_ids: tuple[str, ...]) -> ArmMetrics:
     if isinstance(raw, dict) and "summary" in raw and isinstance(raw["summary"], dict):
-        return metrics_from_summary(raw["summary"], label, path, expected_slices)
+        return metrics_from_summary(raw["summary"], label, path, expected_slice_ids)
     records = result_records(raw)
     if records is not None:
-        return metrics_from_records(records, label, path, expected_slices)
+        return metrics_from_records(records, label, path, expected_slice_ids)
     if isinstance(raw, dict):
-        return metrics_from_summary(raw.get("metrics") if isinstance(raw.get("metrics"), dict) else raw, label, path, expected_slices)
+        return metrics_from_summary(
+            raw.get("metrics") if isinstance(raw.get("metrics"), dict) else raw,
+            label,
+            path,
+            expected_slice_ids,
+        )
     raise HarnessError(f"{path}: result JSON must be an object, object with records/jobs/slices, or an array")
 
 
@@ -451,9 +463,17 @@ def result_records(raw: Any) -> list[dict[str, Any]] | None:
     return None
 
 
-def metrics_from_summary(raw: dict[str, Any], label: str, path: Path, expected_slices: int) -> ArmMetrics:
-    metrics = ArmMetrics(label=label, source=str(path), expected_slices=expected_slices)
+def metrics_from_summary(raw: dict[str, Any], label: str, path: Path, expected_slice_ids: tuple[str, ...]) -> ArmMetrics:
+    completed_slice_ids = completed_slice_ids_from_summary(raw)
+    metrics = ArmMetrics(
+        label=label,
+        source=str(path),
+        expected_slices=len(expected_slice_ids),
+        expected_slice_ids=expected_slice_ids,
+    )
     metrics.merged_slices = int_or_none(pick_number(raw, "merged_slices", "merged", "done", "completed_slices"))
+    if completed_slice_ids is not None:
+        metrics.merged_slices = len(set(completed_slice_ids) & set(expected_slice_ids))
     metrics.wall_clock_seconds = duration_seconds(raw, "wall_clock")
     metrics.effective_concurrency = pick_number(raw, "effective_concurrency")
     metrics.tokens_consumed = pick_number(raw, "tokens_consumed", "tokens", "total_tokens")
@@ -463,11 +483,17 @@ def metrics_from_summary(raw: dict[str, Any], label: str, path: Path, expected_s
     metrics.escaped_defects = pick_number(raw, "escaped_defects")
     metrics.failed_required_gates = pick_number(raw, "failed_required_gates", "failed_quality_checks")
     attach_quality(metrics, raw)
+    attach_slice_coverage(metrics, completed_slice_ids)
     return metrics
 
 
-def metrics_from_records(records: list[dict[str, Any]], label: str, path: Path, expected_slices: int) -> ArmMetrics:
-    metrics = ArmMetrics(label=label, source=str(path), expected_slices=expected_slices)
+def metrics_from_records(records: list[dict[str, Any]], label: str, path: Path, expected_slice_ids: tuple[str, ...]) -> ArmMetrics:
+    metrics = ArmMetrics(
+        label=label,
+        source=str(path),
+        expected_slices=len(expected_slice_ids),
+        expected_slice_ids=expected_slice_ids,
+    )
     starts: list[datetime] = []
     ends: list[datetime] = []
     work_seconds = 0.0
@@ -477,13 +503,18 @@ def metrics_from_records(records: list[dict[str, Any]], label: str, path: Path, 
     human = 0.0
     escaped = 0.0
     failed_required = 0.0
-    merged = 0
+    completed_slice_ids: list[str] = []
+    completed_records_missing_id = 0
     quality_payloads: list[dict[str, Any]] = []
     for record in records:
         status = str(record.get("status") or "").lower()
         has_pr = bool(record.get("pr") or record.get("pr_url"))
         if status in {"done", "merged", "passed", "complete", "completed"} or has_pr:
-            merged += 1
+            slice_id = record_slice_id(record)
+            if slice_id:
+                completed_slice_ids.append(slice_id)
+            else:
+                completed_records_missing_id += 1
         for key in ("created_at", "started_at", "dispatched_at", "start"):
             ts = parse_timestamp(record.get(key))
             if ts is not None:
@@ -510,7 +541,7 @@ def metrics_from_records(records: list[dict[str, Any]], label: str, path: Path, 
             end = parse_timestamp(unit.get("finished_at") or unit.get("ended_at") or unit.get("end"))
             if start and end and end > start:
                 work_seconds += (end - start).total_seconds()
-    metrics.merged_slices = merged
+    metrics.merged_slices = len(set(completed_slice_ids) & set(expected_slice_ids))
     metrics.tokens_consumed = tokens
     metrics.bounce_rounds = bounces
     metrics.review_rounds = reviews or None
@@ -522,6 +553,7 @@ def metrics_from_records(records: list[dict[str, Any]], label: str, path: Path, 
     if metrics.wall_clock_seconds and work_seconds > 0:
         metrics.effective_concurrency = round(work_seconds / metrics.wall_clock_seconds, 2)
     attach_quality(metrics, {"quality": combine_quality(quality_payloads)})
+    attach_slice_coverage(metrics, completed_slice_ids, missing_id_records=completed_records_missing_id)
     return metrics
 
 
@@ -550,6 +582,41 @@ def attach_quality(metrics: ArmMetrics, raw: dict[str, Any]) -> None:
         metrics.quality_notes.append(f"merged {metrics.merged_slices}/{metrics.expected_slices} planned slices")
     if metrics.quality_pass is None:
         metrics.quality_notes.append("quality floor unknown; provide quality.status or required_gates_passed")
+
+
+def attach_slice_coverage(
+    metrics: ArmMetrics,
+    completed_slice_ids: list[str] | None,
+    *,
+    missing_id_records: int = 0,
+) -> None:
+    expected = set(metrics.expected_slice_ids)
+    if not expected:
+        return
+    if completed_slice_ids is None:
+        metrics.quality_pass = False
+        metrics.quality_notes.append("completed slice ids missing; cannot prove planned slice coverage")
+        return
+
+    counts = Counter(completed_slice_ids)
+    missing_id_records += counts.pop("", 0)
+    completed = set(counts)
+    missing = sorted(expected - completed, key=str.lower)
+    unknown = sorted(completed - expected, key=str.lower)
+    duplicated = sorted((slice_id for slice_id, count in counts.items() if count > 1), key=str.lower)
+
+    if missing_id_records:
+        metrics.quality_pass = False
+        metrics.quality_notes.append(f"completed records without slice id: {missing_id_records}")
+    if missing:
+        metrics.quality_pass = False
+        metrics.quality_notes.append("missing completed slices: " + ", ".join(missing))
+    if duplicated:
+        metrics.quality_pass = False
+        metrics.quality_notes.append("duplicate completed slices: " + ", ".join(duplicated))
+    if unknown:
+        metrics.quality_pass = False
+        metrics.quality_notes.append("unknown completed slices: " + ", ".join(unknown))
 
 
 def combine_quality(payloads: list[dict[str, Any]]) -> dict[str, Any]:
@@ -829,6 +896,30 @@ def int_or_none(value: float | None) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def completed_slice_ids_from_summary(raw: dict[str, Any]) -> list[str] | None:
+    for key in ("completed_slice_ids", "merged_slice_ids"):
+        value = raw.get(key)
+        if isinstance(value, list):
+            return clean_ids(value)
+    for key in ("completed_slices", "merged_slices"):
+        value = raw.get(key)
+        if isinstance(value, list):
+            return clean_ids(value)
+    return None
+
+
+def clean_ids(values: list[Any]) -> list[str]:
+    return [clean_id(value) for value in values]
+
+
+def record_slice_id(record: dict[str, Any]) -> str:
+    for key in ("id", "slice_id", "work_slice_id"):
+        value = clean_id(record.get(key))
+        if value:
+            return value
+    return ""
 
 
 def duration_seconds(raw: dict[str, Any], prefix: str) -> float | None:

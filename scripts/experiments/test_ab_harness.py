@@ -125,6 +125,85 @@ class ABHarnessTests(unittest.TestCase):
             self.assertIn("Quality floor", body)
             self.assertIn("Compare normalized speed and cost", body)
 
+    def test_completed_records_must_match_planned_slice_ids(self) -> None:
+        exact = metrics_from_completed_ids(["a", "b"])
+        self.assertTrue(exact.quality_pass)
+
+        duplicated = metrics_from_completed_ids(["a", "a"])
+        self.assertFalse(duplicated.quality_pass)
+        self.assertIn("missing completed slices: b", duplicated.quality_notes)
+        self.assertIn("duplicate completed slices: a", duplicated.quality_notes)
+
+        unknown = metrics_from_completed_ids(["a", "b", "c"])
+        self.assertFalse(unknown.quality_pass)
+        self.assertIn("unknown completed slices: c", unknown.quality_notes)
+
+    def test_report_fails_quality_for_duplicate_completed_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backlog = root / "backlog.json"
+            baseline_topology = root / "baseline.instances.toml"
+            candidate_topology = root / "candidate.instances.toml"
+            baseline_results = root / "baseline-results.json"
+            candidate_results = root / "candidate-results.json"
+            report = root / "report.md"
+            write_two_slice_backlog(backlog)
+            write_baseline_topology(baseline_topology)
+            write_candidate_topology(candidate_topology)
+            baseline_results.write_text(
+                json.dumps([minimal_result_record("a"), minimal_result_record("a")])
+            )
+            candidate_results.write_text(
+                json.dumps([minimal_result_record("a"), minimal_result_record("b")])
+            )
+
+            rc = ab_harness.main(
+                [
+                    "--backlog",
+                    str(backlog),
+                    "--baseline-topology",
+                    str(baseline_topology),
+                    "--candidate-topology",
+                    str(candidate_topology),
+                    "--baseline-results",
+                    str(baseline_results),
+                    "--candidate-results",
+                    str(candidate_results),
+                    "--output",
+                    str(report),
+                ]
+            )
+
+            self.assertEqual(rc, 0)
+            body = report.read_text()
+            self.assertIn("| Quality floor | FAIL | PASS |", body)
+            self.assertIn("missing completed slices: b", body)
+            self.assertIn("duplicate completed slices: a", body)
+
+    def test_summary_quality_pass_requires_completed_slice_evidence(self) -> None:
+        without_ids = ab_harness.metrics_from_summary(
+            {"quality": {"status": "pass", "required_gates_passed": True}},
+            "arm",
+            Path("results.json"),
+            ("a", "b"),
+        )
+        self.assertFalse(without_ids.quality_pass)
+        self.assertIn(
+            "completed slice ids missing; cannot prove planned slice coverage",
+            without_ids.quality_notes,
+        )
+
+        with_ids = ab_harness.metrics_from_summary(
+            {
+                "completed_slice_ids": ["a", "b"],
+                "quality": {"status": "pass", "required_gates_passed": True},
+            },
+            "arm",
+            Path("results.json"),
+            ("a", "b"),
+        )
+        self.assertTrue(with_ids.quality_pass)
+
     def test_missing_arm_coverage_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -247,6 +326,27 @@ target = "reviewer"
     )
 
 
+def write_two_slice_backlog(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"id": "a", "difficulty": 1},
+                    {"id": "b", "difficulty": 1},
+                ],
+                "arms": {
+                    "baseline": {
+                        "slices": [{"id": "a", "items": ["a"]}, {"id": "b", "items": ["b"]}]
+                    },
+                    "slim-verifier-first": {
+                        "slices": [{"id": "a", "items": ["a"]}, {"id": "b", "items": ["b"]}]
+                    },
+                },
+            }
+        )
+    )
+
+
 def result_record(slice_id: str, start: str, end: str, tokens: int) -> dict[str, object]:
     return {
         "id": slice_id,
@@ -259,6 +359,26 @@ def result_record(slice_id: str, start: str, end: str, tokens: int) -> dict[str,
         "quality": {"status": "pass", "required_gates_passed": True},
         "work_units": [{"started_at": start, "finished_at": end}],
     }
+
+
+def minimal_result_record(slice_id: str) -> dict[str, object]:
+    return {
+        "id": slice_id,
+        "status": "done",
+        "quality": {"status": "pass", "required_gates_passed": True},
+    }
+
+
+def metrics_from_completed_ids(slice_ids: list[str]) -> ab_harness.ArmMetrics:
+    return ab_harness.metrics_from_records(
+        [
+            result_record(slice_id, "2026-07-07T10:00:00Z", "2026-07-07T10:10:00Z", 100)
+            for slice_id in slice_ids
+        ],
+        "arm",
+        Path("results.json"),
+        ("a", "b"),
+    )
 
 
 if __name__ == "__main__":
