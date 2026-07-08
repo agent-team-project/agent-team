@@ -640,6 +640,22 @@ allow = ["budget.status", "channel.*", "feedback.*", "inbox.*", "job.show", "sta
 # every = "24h"
 # payload.workspace = "repo"
 
+# Live adaptive concurrency governor (GH #202 dogfood): start from the stable
+# hand-tuned ceiling found during the 2026-07-08 maximize run, then let daemon
+# admission back off on crash bursts and queue while shared machine load is high.
+[concurrency]
+enabled = true
+min_ceiling = 3
+max_ceiling = 20
+initial_ceiling = 7
+target_load_per_core = 0.85
+load_per_dispatch = 1.0
+crash_window = "10m"
+crash_threshold = 3
+decrease_factor = 0.5
+stable_window = "20m"
+increase_step = 1
+
 # Live budgets (SQU-103 dogfood): generous caps that only bite on runaways.
 [budgets.delivery]
 tokens_per_day = 10_000_000_000

@@ -637,6 +637,23 @@ pipelines   = ["ticket_to_pr"]
 # jobs_in_flight = 6
 # allocation = "oversubscribe" # default; "reserve" debits outstanding grants
 
+# Optional daemon-wide adaptive concurrency governor. When enabled, ephemeral
+# dispatches queue once daemon-wide running instances reach the lower of the
+# AIMD ceiling and the current machine-load ceiling. The load ceiling uses
+# total system load, so external builds sharing the box reduce headroom too.
+# [concurrency]
+# enabled = true
+# min_ceiling = 1
+# max_ceiling = 8
+# initial_ceiling = 4
+# target_load_per_core = 0.85
+# load_per_dispatch = 1.0
+# crash_window = "10m"
+# crash_threshold = 3
+# decrease_factor = 0.5
+# stable_window = "20m"
+# increase_step = 1
+
 # Optional resource scoping. Omitted scope defaults to "machine", preserving
 # today's flat namespace. Use "team" when each owning team needs an isolated
 # channel/schedule/lock key, and "job" for per-job state.

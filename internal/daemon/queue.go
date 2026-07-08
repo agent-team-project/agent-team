@@ -18,9 +18,10 @@ const (
 	QueueStatePending = "pending"
 	QueueStateDead    = "dead"
 
-	QueueReasonReplicaCapacity = "replica_capacity"
-	QueueReasonLockHeld        = "lock_held"
-	QueueReasonBudgetExhausted = "budget_exhausted"
+	QueueReasonReplicaCapacity    = "replica_capacity"
+	QueueReasonLockHeld           = "lock_held"
+	QueueReasonBudgetExhausted    = "budget_exhausted"
+	QueueReasonConcurrencyCeiling = "concurrency_ceiling"
 )
 
 // QueueItem is one persisted topology dispatch waiting for capacity or manual retry.

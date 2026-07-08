@@ -71,6 +71,7 @@ func LoadLayered(templatePath, repoPath string) (*Topology, error) {
 		for name, budget := range templateLayer.Budgets {
 			merged.Budgets[name] = budget
 		}
+		merged.Concurrency = templateLayer.Concurrency
 		merged.Authority = templateLayer.Authority
 	}
 	if repoLayer != nil {
@@ -94,6 +95,9 @@ func LoadLayered(templatePath, repoPath string) (*Topology, error) {
 		}
 		for name, budget := range repoLayer.Budgets {
 			merged.Budgets[name] = budget
+		}
+		if repoLayer.Concurrency != nil {
+			merged.Concurrency = repoLayer.Concurrency
 		}
 		if repoLayer.Authority != nil {
 			merged.Authority = repoLayer.Authority
