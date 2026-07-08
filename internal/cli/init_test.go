@@ -82,6 +82,7 @@ func TestInit_DefaultTemplate(t *testing.T) {
 		".agent_team/skills/linear/scripts/linear-graphql.sh",
 		".agent_team/skills/pull-request/SKILL.md",
 		".agent_team/skills/verify/SKILL.md",
+		".agent_team/skills/verify/scripts/validate_gate_tiers.py",
 		".agent_team/skills/verify/scripts/verify.sh",
 	}
 	for _, rel := range expected {
@@ -135,6 +136,17 @@ func TestInit_DefaultTemplate(t *testing.T) {
 	}
 	if !strings.Contains(body, `provider = "linear"`) {
 		t.Errorf("config.toml should set pm.provider when linear.* is set: %s", body)
+	}
+	verifySkill, err := os.ReadFile(filepath.Join(tmp, ".agent_team", "skills", "verify", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifySkillBody := string(verifySkill)
+	if strings.Contains(verifySkillBody, "scripts/ci/validate_gate_tiers.py") {
+		t.Errorf("verify skill points at unshipped CI validator path:\n%s", verifySkillBody)
+	}
+	if !strings.Contains(verifySkillBody, "${AGENT_TEAM_ROOT:-.agent_team}/skills/verify/scripts/validate_gate_tiers.py") {
+		t.Errorf("verify skill missing rendered validator path:\n%s", verifySkillBody)
 	}
 	gates, err := os.ReadFile(filepath.Join(tmp, ".agent_team", "gates.toml"))
 	if err != nil {
@@ -261,6 +273,17 @@ func TestInit_FullProfilePreservesSelfDogfoodTemplate(t *testing.T) {
 	}
 	if !strings.Contains(string(cfg), `profile = "full"`) {
 		t.Fatalf("full profile config missing template.profile:\n%s", string(cfg))
+	}
+	releaseSkill, err := os.ReadFile(filepath.Join(tmp, ".agent_team", "skills", "release", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseSkillBody := string(releaseSkill)
+	if strings.Contains(releaseSkillBody, "scripts/ci/validate_gate_tiers.py") {
+		t.Errorf("release skill points at unshipped CI validator path:\n%s", releaseSkillBody)
+	}
+	if !strings.Contains(releaseSkillBody, "${AGENT_TEAM_ROOT:-.agent_team}/skills/verify/scripts/validate_gate_tiers.py") {
+		t.Errorf("release skill missing rendered validator path:\n%s", releaseSkillBody)
 	}
 	instances, err := os.ReadFile(filepath.Join(tmp, ".agent_team", "instances.toml"))
 	if err != nil {

@@ -47,7 +47,7 @@ prove acceptance or release readiness. Acceptance and release claims must be
 checked against the tier config with explicit evidence, for example:
 
 ```sh
-python3 scripts/ci/validate_gate_tiers.py --claim release \
+python3 "${AGENT_TEAM_ROOT:-.agent_team}/skills/verify/scripts/validate_gate_tiers.py" --claim release \
   --evidence target/agent-evidence/<job>.release.json
 ```
 

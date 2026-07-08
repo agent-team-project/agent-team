@@ -119,7 +119,7 @@ listed for `release`, including acceptance and release-tier evidence. The
 validator enforces that absence as a failure:
 
 ```sh
-python3 scripts/ci/validate_gate_tiers.py --claim release \
+python3 "${AGENT_TEAM_ROOT:-.agent_team}/skills/verify/scripts/validate_gate_tiers.py" --claim release \
   --evidence target/agent-evidence/<job>.release.json
 ```
 
@@ -127,7 +127,7 @@ If the evidence file is missing release evidence or contains only smoke results,
 the command exits non-zero. Schema-only validation is:
 
 ```sh
-python3 scripts/ci/validate_gate_tiers.py
+python3 "${AGENT_TEAM_ROOT:-.agent_team}/skills/verify/scripts/validate_gate_tiers.py"
 ```
 
 ## `.agent_team/.template.lock`

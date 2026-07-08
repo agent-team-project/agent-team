@@ -269,9 +269,9 @@ The bundled template declares three tiers:
 Use the validator to keep claims honest:
 
 ```sh
-python3 scripts/ci/validate_gate_tiers.py --claim smoke \
+python3 "${AGENT_TEAM_ROOT:-.agent_team}/skills/verify/scripts/validate_gate_tiers.py" --claim smoke \
   --evidence target/agent-evidence/<job>.json
-python3 scripts/ci/validate_gate_tiers.py --claim release \
+python3 "${AGENT_TEAM_ROOT:-.agent_team}/skills/verify/scripts/validate_gate_tiers.py" --claim release \
   --evidence target/agent-evidence/<job>.release.json
 ```
 

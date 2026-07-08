@@ -69,8 +69,8 @@ goreleaser release --snapshot --clean --skip=publish
 python3 scripts/ci/validate_toml.py
 python3 scripts/ci/validate_frontmatter.py
 python3 scripts/ci/validate_template_tree.py
-python3 scripts/ci/validate_gate_tiers.py --self-test
-python3 scripts/ci/validate_gate_tiers.py
+python3 "${AGENT_TEAM_ROOT:-.agent_team}/skills/verify/scripts/validate_gate_tiers.py" --self-test
+python3 "${AGENT_TEAM_ROOT:-.agent_team}/skills/verify/scripts/validate_gate_tiers.py"
 go vet ./...
 go test ./...
 go build -o bin/agent-team ./cmd/agent-team
@@ -98,7 +98,7 @@ Before making any release-readiness claim, validate the release evidence bundle
 against the tiered gate config:
 
 ```sh
-python3 scripts/ci/validate_gate_tiers.py --claim release \
+python3 "${AGENT_TEAM_ROOT:-.agent_team}/skills/verify/scripts/validate_gate_tiers.py" --claim release \
   --evidence target/agent-evidence/<job>.release.json
 ```
 
