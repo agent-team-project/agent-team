@@ -682,21 +682,64 @@ function renderTeams(result, teams, jobs) {
   }
 }
 
-function addDeadlineRow(rows, seen, label, source, sourceLabel) {
+function deadlineValue(source) {
   if (!source || typeof source !== "object") {
-    return;
+    return "";
   }
   const durable = field(source, "deadline", "Deadline");
   const runtime = field(source, "runtime_deadline", "RuntimeDeadline");
-  const value = durable || runtime;
+  return durable || runtime;
+}
+
+function deadlineIdentity(kind, source, fallbackURI, fallbackID) {
+  const uri = field(source, "uri", "URI", "job_uri", "JobURI", "instance_uri", "InstanceURI") || fallbackURI;
+  if (uri) {
+    return uri;
+  }
+  const id = field(source, "id", "ID", "instance", "Instance", "name", "Name") || fallbackID;
+  return id ? `${kind}:${id}` : "";
+}
+
+function rememberDeadlineResource(seen, envelope, fallbackURI) {
+  if (fallbackURI) {
+    seen.add(fallbackURI);
+  }
+  if (!envelope) {
+    return;
+  }
+  if (envelope.uri) {
+    seen.add(envelope.uri);
+  }
+  const data = envelope.data && typeof envelope.data === "object" ? envelope.data : {};
+  const dataURI = field(data, "uri", "URI", "job_uri", "JobURI", "instance_uri", "InstanceURI");
+  if (dataURI) {
+    seen.add(dataURI);
+  }
+}
+
+function deadlineResourceSeen(seen, envelope) {
+  if (!envelope) {
+    return false;
+  }
+  if (envelope.uri && seen.has(envelope.uri)) {
+    return true;
+  }
+  const data = envelope.data && typeof envelope.data === "object" ? envelope.data : {};
+  const dataURI = field(data, "uri", "URI", "job_uri", "JobURI", "instance_uri", "InstanceURI");
+  return Boolean(dataURI && seen.has(dataURI));
+}
+
+function addDeadlineRow(rows, seen, identity, label, source, sourceLabel) {
+  const value = deadlineValue(source);
   if (!value) {
     return;
   }
-  const key = `${label}:${value}:${sourceLabel}`;
+  const key = text(identity, "") || `${sourceLabel}:${text(label, "")}`;
   if (seen.has(key)) {
     return;
   }
   seen.add(key);
+  const runtime = field(source, "runtime_deadline", "RuntimeDeadline");
   rows.push({
     label,
     deadline: value,
@@ -708,20 +751,36 @@ function addDeadlineRow(rows, seen, label, source, sourceLabel) {
 function deadlineRows(instances, jobs, resources) {
   const rows = [];
   const seen = new Set();
+  const representedResources = new Set();
   for (const job of jobs) {
     const label = field(job, "id", "ID");
-    addDeadlineRow(rows, seen, label, job, "job");
-    addDeadlineRow(rows, seen, label, resourceData(resources, field(job, "uri", "URI", "job_uri", "JobURI")), "job resource");
+    const uri = field(job, "uri", "URI", "job_uri", "JobURI");
+    const envelope = resourceEnvelope(resources, uri);
+    const data = envelope && envelope.data && typeof envelope.data === "object" ? envelope.data : {};
+    rememberDeadlineResource(representedResources, envelope, uri);
+    const source = deadlineValue(data) ? data : job;
+    const sourceLabel = source === data ? "job resource" : "job";
+    addDeadlineRow(rows, seen, deadlineIdentity("job", source, uri, label), label, source, sourceLabel);
   }
   for (const instance of instances) {
     const label = field(instance, "instance", "Instance");
-    addDeadlineRow(rows, seen, label, instance, "runtime watchdog");
-    addDeadlineRow(rows, seen, label, resourceData(resources, field(instance, "uri", "URI")), "instance resource");
+    const uri = field(instance, "uri", "URI");
+    const envelope = resourceEnvelope(resources, uri);
+    const data = envelope && envelope.data && typeof envelope.data === "object" ? envelope.data : {};
+    rememberDeadlineResource(representedResources, envelope, uri);
+    const source = deadlineValue(data) ? data : instance;
+    const sourceLabel = source === data ? "instance resource" : "runtime watchdog";
+    addDeadlineRow(rows, seen, deadlineIdentity("instance", source, uri, label), label, source, sourceLabel);
   }
   if (resources && resources.data) {
     for (const envelope of resources.data.values()) {
+      if (deadlineResourceSeen(representedResources, envelope)) {
+        continue;
+      }
       const data = envelope && envelope.data;
-      addDeadlineRow(rows, seen, shortURI(envelope && envelope.uri), data, `${envelope && envelope.kind} resource`);
+      const label = shortURI(envelope && envelope.uri);
+      const kind = envelope && envelope.kind ? envelope.kind : "resource";
+      addDeadlineRow(rows, seen, deadlineIdentity(kind, data, envelope && envelope.uri, envelope && envelope.id), label, data, `${kind} resource`);
     }
   }
   return rows.sort((a, b) => a.label.localeCompare(b.label));
