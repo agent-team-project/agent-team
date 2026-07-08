@@ -160,6 +160,12 @@ func runDoctor(cmd *cobra.Command, target string, strictDaemon, strictRuntime, s
 		if _, err := toml.DecodeFile(cfgPath, &cfg); err != nil {
 			problems = append(problems, fmt.Sprintf("%s is not valid TOML: %v", cfgPath, err))
 		} else {
+			if findings := configSecretFindings(cfg); len(findings) > 0 {
+				for _, finding := range findings {
+					problems = append(problems, fmt.Sprintf("%s contains a likely secret at %s: %s. Move secret values to .env or a runtime secret broker; keep config.toml to non-secret IDs, handles, and env-var names.", cfgPath, finding.Path, finding.Reason))
+				}
+				actions = appendDoctorActions(actions, "echo "+shellQuote(fmt.Sprintf("Remove secret-looking values from %s; put credentials in .env or a runtime secret broker instead.", cfgPath)))
+			}
 			pm, _ := cfg["pm"].(map[string]any)
 			team, _ := cfg["team"].(map[string]any)
 			pmProvider, _ := pm["provider"].(string)
