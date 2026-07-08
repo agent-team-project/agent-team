@@ -1,0 +1,97 @@
+name: Project status automation
+
+on:
+  issues:
+    types: [opened, reopened, closed]
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize, ready_for_review, closed]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to sync
+        required: false
+      pull_request_number:
+        description: Pull request number whose closing issue refs should sync
+        required: false
+      all_project_items:
+        description: Reconcile every issue item already on the project
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: Print planned changes without mutating the project
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  sync:
+    if: github.repository == 'agent-team-project/kensho'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PROJECTS_TOKEN: ${{ secrets.PROJECTS_TOKEN }}
+      PROJECT_OWNER: agent-team-project
+      PROJECT_OWNER_KIND: user
+      PROJECT_NUMBER: "1"
+      PROJECT_STATUS_FIELD: Status
+      PROJECT_TODO_STATUS: Todo
+      PROJECT_IN_PROGRESS_STATUS: In Progress
+      PROJECT_DONE_STATUS: Done
+      PROJECT_AGENT_COLUMN: Ready for Agent
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check project token
+        run: |
+          if [ -z "$PROJECTS_TOKEN" ]; then
+            echo "::error::Set the PROJECTS_TOKEN secret with repo + project scope."
+            exit 1
+          fi
+
+      - name: Self-test
+        run: python3 scripts/github/sync_project_status.py --self-test
+
+      - name: Sync event target
+        if: github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
+        run: python3 scripts/github/sync_project_status.py --event-path "$GITHUB_EVENT_PATH"
+
+      - name: Sync scheduled project items
+        if: github.event_name == 'schedule'
+        run: python3 scripts/github/sync_project_status.py --all-project-items
+
+      - name: Sync manual target
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
+          ALL_PROJECT_ITEMS: ${{ inputs.all_project_items }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=()
+          if [ -n "$ISSUE_NUMBER" ]; then
+            args+=(--issue-number "$ISSUE_NUMBER")
+          fi
+          if [ -n "$PULL_REQUEST_NUMBER" ]; then
+            args+=(--pull-request-number "$PULL_REQUEST_NUMBER")
+          fi
+          if [ "$ALL_PROJECT_ITEMS" = "true" ]; then
+            args+=(--all-project-items)
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          python3 scripts/github/sync_project_status.py "${args[@]}"

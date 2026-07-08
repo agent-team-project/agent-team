@@ -53,6 +53,79 @@ attention_state = "open"
 When `github.project_number` is configured, write-back can update that Projects
 v2 item status as well as issue state, labels, and comments.
 
+## GitHub Project Status Automation
+
+This repo wires GitHub Project #1 through
+`.github/workflows/project-status.yml` and
+`scripts/github/sync_project_status.py`. The workflow treats the issue card as
+the board item and derives its `Status` field from GitHub issue and PR state:
+
+| Observed state | Project status |
+| --- | --- |
+| Issue opened, reopened, or first added to the project | `Todo` |
+| A PR with a GitHub closing keyword references the issue | `In Progress` |
+| The PR merges or the issue closes | `Done` |
+
+`Ready for Agent` remains the dispatch gesture used by topology. The scheduled
+reconciler preserves an issue already in `Ready for Agent` when the derived
+status would otherwise be `Todo`, then takes over when a linked PR opens or the
+issue closes. This prevents hourly reconciliation from racing the daemon's
+board-column dispatch while still correcting blank, stale, in-progress, and done
+statuses.
+
+GitHub's repository `GITHUB_TOKEN` cannot mutate user or organization Projects
+v2 fields. Configure a repository secret named `PROJECTS_TOKEN` with repo read
+access and GitHub Projects write scope, then set the project coordinates in the
+workflow environment:
+
+```yaml
+PROJECT_OWNER: agent-team-project
+PROJECT_OWNER_KIND: user
+PROJECT_NUMBER: "1"
+PROJECT_STATUS_FIELD: Status
+PROJECT_TODO_STATUS: Todo
+PROJECT_IN_PROGRESS_STATUS: In Progress
+PROJECT_DONE_STATUS: Done
+PROJECT_AGENT_COLUMN: Ready for Agent
+```
+
+The workflow runs on:
+
+- `issues` opened, reopened, and closed events;
+- `pull_request_target` opened, reopened, edited, synchronized,
+  ready-for-review, and closed events;
+- an hourly reconciliation of existing project issue cards;
+- manual `workflow_dispatch` for a specific issue, PR, or all project items.
+
+`pull_request_target` is intentional: the workflow needs the project secret, so
+it checks out the trusted base branch and does not run code from the PR head.
+The script only treats GitHub closing keywords (`Closes`, `Fixes`, `Resolves`)
+as implementation links. `Advances #<epic>` and `Refs #<epic>` keep epics open
+and do not drive `In Progress`/`Done` status.
+
+Local operator examples:
+
+```sh
+PROJECTS_TOKEN=... \
+  python3 scripts/github/sync_project_status.py \
+  --repo agent-team-project/kensho \
+  --project-owner agent-team-project \
+  --project-owner-kind user \
+  --project-number 1 \
+  --issue-number 216 \
+  --dry-run
+```
+
+```sh
+PROJECTS_TOKEN=... \
+  python3 scripts/github/sync_project_status.py \
+  --repo agent-team-project/kensho \
+  --project-owner agent-team-project \
+  --project-owner-kind user \
+  --project-number 1 \
+  --all-project-items
+```
+
 ## Column Dispatch
 
 The bundled topology declares:
