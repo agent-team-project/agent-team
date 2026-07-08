@@ -453,6 +453,8 @@ func HandlerWithLog(m *InstanceManager, channels *ChannelStore, events *EventRes
 			return
 		}
 		actor := auditor.originForRequest(r, body.Origin)
+		// V1 admits top-level creators here. Chartered-child nested spawns are
+		// deferred until #223 reconciles this local team resource with agt:// grants.
 		if !authorize(w, r, "team.spawn", "team:"+body.Name, actor) {
 			return
 		}

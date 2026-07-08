@@ -440,7 +440,7 @@ func TestDynamicTeamAuthorityGrantPreservesOwnScope(t *testing.T) {
 	assertCharteredChildShimDenies(t, teamDir, charter.Instance, "job.merge")
 }
 
-func TestDynamicTeamNestedSpawnUsesCreatorEffectiveGrant(t *testing.T) {
+func TestHTTPDynamicTeamCharteredChildSpawnRejectedPendingResourceReconciliation(t *testing.T) {
 	teamDir := fixtureTeamDir(t)
 	writeFixtureAgent(t, teamDir, "manager")
 	installFakeAgentTeamCLI(t)
@@ -517,85 +517,49 @@ func TestDynamicTeamNestedSpawnUsesCreatorEffectiveGrant(t *testing.T) {
 	if parent.Charter == nil || parent.Charter.State != TeamCharterStateRunning {
 		t.Fatalf("parent charter = %+v", parent.Charter)
 	}
-	if !grantContains(parent.Charter.Authority.Grants, "job.show", parentJob) || grantContains(parent.Charter.Authority.Grants, "job.merge", parentJob) {
+	if !grantContains(parent.Charter.Authority.Grants, "team.spawn", parentJob) ||
+		!grantContains(parent.Charter.Authority.Grants, "job.show", parentJob) ||
+		grantContains(parent.Charter.Authority.Grants, "job.merge", parentJob) {
 		t.Fatalf("parent grants = %+v", parent.Charter.Authority.Grants)
 	}
 
-	grandchild, err := resolver.SpawnTeam(TeamSpawnRequest{
-		Name:   "Nested Grandchild GH155",
-		Target: "worker",
-		Budget: TeamSpawnBudget{Tokens: 10},
-		Authority: TeamSpawnAuthority{
-			Verbs:     []string{"job.show", "job.merge"},
-			Resources: []string{parentJob, forbiddenJob},
+	srv := httptest.NewServer(Handler(m, nil, resolver, teamDir))
+	defer srv.Close()
+	resp := postJSONWithOrigin(t, srv.URL+"/v1/team/spawn", `{
+		"name": "Nested Grandchild GH155",
+		"target": "worker",
+		"budget": {"tokens": 10},
+		"authority": {
+			"verbs": ["job.show", "job.merge"],
+			"resources": ["`+parentJob+`", "`+forbiddenJob+`"]
 		},
-		Payload: map[string]any{
-			"job_id":  "gh155-nested-parent",
-			"ticket":  "GH155-dynteams-impl",
-			"kickoff": "run the nested grandchild team",
-		},
-		Origin: origin.Envelope{
-			Project:  "parent-dep",
-			Team:     "delivery",
-			Instance: parent.Charter.Instance,
-			Agent:    "worker",
-			Job:      "gh155-nested-parent",
-		},
-	})
-	if err != nil {
-		t.Fatalf("grandchild SpawnTeam: %v", err)
-	}
-	if grandchild.Charter == nil || grandchild.Charter.State != TeamCharterStateRunning {
-		t.Fatalf("grandchild charter = %+v", grandchild.Charter)
-	}
-	if !grantContains(grandchild.Charter.Authority.Grants, "job.show", parentJob) {
-		t.Fatalf("grandchild missing inherited job.show grant: %+v", grandchild.Charter.Authority.Grants)
-	}
-	if grantContains(grandchild.Charter.Authority.Grants, "job.show", forbiddenJob) {
-		t.Fatalf("grandchild widened job.show resources: %+v", grandchild.Charter.Authority.Grants)
-	}
-	if grantContains(grandchild.Charter.Authority.Grants, "job.merge", parentJob) || !deniedGrantContains(grandchild.Charter.Authority.Denied, "job.merge", "not present in parent capability") {
-		t.Fatalf("grandchild job.merge attenuation = grants %+v denied %+v", grandchild.Charter.Authority.Grants, grandchild.Charter.Authority.Denied)
-	}
-	grandchildActor := origin.Envelope{
+		"payload": {
+			"job_id": "gh155-nested-parent",
+			"ticket": "GH155-dynteams-impl",
+			"kickoff": "run the nested grandchild team"
+		}
+	}`, origin.Envelope{
 		Project:  "parent-dep",
 		Team:     "delivery",
-		Instance: grandchild.Charter.Instance,
+		Instance: parent.Charter.Instance,
 		Agent:    "worker",
 		Job:      "gh155-nested-parent",
-	}
-	assertCharteredAuditAllowsTarget(t, teamDir, top, grandchildActor, "job.show", "job:gh155-nested-parent", "gh155-nested-parent")
-	assertCharteredAuditDeniesTarget(t, teamDir, top, grandchildActor, "job.show", "job:gh155-forbidden", "gh155-forbidden")
-	assertCharteredAuditDeniesTarget(t, teamDir, top, grandchildActor, "job.merge", "job:gh155-nested-parent", "gh155-nested-parent")
-	assertCharteredChildShimAllows(t, teamDir, grandchild.Charter.Instance, "job.show")
-	assertCharteredChildShimDenies(t, teamDir, grandchild.Charter.Instance, "job.merge")
-
-	topLevel, err := resolver.SpawnTeam(TeamSpawnRequest{
-		Name:   "Top Level Merge GH155",
-		Target: "worker",
-		Budget: TeamSpawnBudget{Tokens: 5},
-		Authority: TeamSpawnAuthority{
-			Verbs:     []string{"job.merge"},
-			Resources: []string{parentJob},
-		},
-		Payload: map[string]any{
-			"job_id":  "gh155-top-merge",
-			"ticket":  "GH155-dynteams-impl",
-			"kickoff": "run the top-level child team",
-		},
-		Origin: origin.Envelope{
-			Project:  "parent-dep",
-			Team:     "platform",
-			Instance: "manager",
-			Agent:    "manager",
-			Job:      "gh155-top-merge",
-		},
 	})
-	if err != nil {
-		t.Fatalf("top-level SpawnTeam: %v", err)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("nested HTTP spawn status = %d body=%s", resp.StatusCode, readBody(t, resp))
 	}
-	if topLevel.Charter == nil || !grantContains(topLevel.Charter.Authority.Grants, "job.merge", parentJob) {
-		t.Fatalf("top-level manager grant changed: %+v", topLevel.Charter)
+	if body := readBody(t, resp); !strings.Contains(body, "authority violation") || !strings.Contains(body, "team.spawn") {
+		t.Fatalf("nested HTTP spawn body = %s", body)
+	}
+	if fake.callCount() != 1 {
+		t.Fatalf("spawn calls = %d, want only the parent child", fake.callCount())
+	}
+	charters, err := ListTeamCharters(m.daemonRoot)
+	if err != nil {
+		t.Fatalf("list charters: %v", err)
+	}
+	if len(charters) != 1 || charters[0].ID != parent.Charter.ID {
+		t.Fatalf("charters after rejected nested spawn = %+v", charters)
 	}
 }
 
@@ -725,6 +689,10 @@ func TestHTTPTeamSpawnCreatesReadableCharter(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	top := mustParseCustomTopo(t, `
+[instances.manager]
+agent = "manager"
+ephemeral = false
+
 [instances.worker]
 agent = "worker"
 ephemeral = true
@@ -732,6 +700,26 @@ ephemeral = true
 [[instances.worker.triggers]]
 event = "agent.dispatch"
 match.target = "worker"
+
+[teams.platform]
+instances = ["manager"]
+
+[teams.delivery]
+instances = ["worker"]
+
+[budgets.platform]
+tokens_per_day = 100
+allocation = "reserve"
+
+[budgets.delivery]
+tokens_per_day = 100
+allocation = "reserve"
+
+[authority]
+enforcement = "enforce"
+
+[authority.agents.manager]
+allow = ["*"]
 `)
 	fake := newFakeSpawner(time.Second)
 	m := NewInstanceManager(DaemonRoot(teamDir), fake.spawn)
@@ -739,12 +727,18 @@ match.target = "worker"
 	srv := httptest.NewServer(Handler(m, nil, resolver, teamDir))
 	defer srv.Close()
 
-	resp := mustPost(t, srv.URL+"/v1/team/spawn", `{
+	resp := postJSONWithOrigin(t, srv.URL+"/v1/team/spawn", `{
 		"name": "HTTP Child",
 		"target": "worker",
 		"budget": {"tokens": 10},
 		"payload": {"job_id": "gh155-http-child", "ticket": "GH155"}
-	}`)
+	}`, origin.Envelope{
+		Project:  "parent-dep",
+		Team:     "platform",
+		Instance: "manager",
+		Agent:    "manager",
+		Job:      "gh155-http-child",
+	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("team spawn: %d %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -754,6 +748,12 @@ match.target = "worker"
 	}
 	if !result.Accepted || result.CharterURI == "" || result.ChildDeploymentURI == "" {
 		t.Fatalf("result = %+v", result)
+	}
+	if result.Charter == nil || result.Charter.State != TeamCharterStateRunning || result.Charter.Creator.Team != "platform" {
+		t.Fatalf("charter result = %+v", result.Charter)
+	}
+	if fake.callCount() != 1 {
+		t.Fatalf("spawn calls = %d, want one HTTP-authorized child", fake.callCount())
 	}
 	t.Cleanup(func() {
 		if result.Charter != nil {
@@ -773,6 +773,15 @@ match.target = "worker"
 	if charter.URI != result.CharterURI || charter.ChildDeploymentURI != result.ChildDeploymentURI {
 		t.Fatalf("charter = %+v, result = %+v", charter, result)
 	}
+	events, err := ListLifecycleEvents(m.daemonRoot)
+	if err != nil {
+		t.Fatalf("list lifecycle events: %v", err)
+	}
+	for _, ev := range events {
+		if ev.Action == authorityViolationAction {
+			t.Fatalf("unexpected authority violation: %+v", ev)
+		}
+	}
 }
 
 func TestTeamCharterReadRejectsPathSegments(t *testing.T) {
@@ -788,6 +797,21 @@ func TestTeamCharterReadRejectsPathSegments(t *testing.T) {
 			t.Fatalf("ReapTeamCharter(%q) succeeded, want path validation error", id)
 		}
 	}
+}
+
+func postJSONWithOrigin(t *testing.T, url, body string, actor origin.Envelope) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST %s: %v", url, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(origin.HeaderName, origin.HeaderValue(actor))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", url, err)
+	}
+	return resp
 }
 
 func budgetStatusByTeam(rows []budget.TeamStatus, team string) *budget.TeamStatus {
