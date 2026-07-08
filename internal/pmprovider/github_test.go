@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -138,6 +140,83 @@ func TestGitHubListOpenCommunityItemsAllowsTokenlessPublicRead(t *testing.T) {
 	}
 }
 
+func TestGitHubListOpenCommunityItemsUsesStableRawPaginationForFilteredIssues(t *testing.T) {
+	t.Setenv("AGENT_TEAM_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("PATH", t.TempDir())
+	teamDir := testGitHubTeamDir(t, ``)
+	records := githubCommunityRecords(10, 50)
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/widgets/issues" {
+			t.Fatalf("path = %q, want issues list", r.URL.Path)
+		}
+		perPage, err := strconv.Atoi(r.URL.Query().Get("per_page"))
+		if err != nil {
+			t.Fatalf("per_page = %q, want integer", r.URL.Query().Get("per_page"))
+		}
+		page, err := strconv.Atoi(r.URL.Query().Get("page"))
+		if err != nil {
+			t.Fatalf("page = %q, want integer", r.URL.Query().Get("page"))
+		}
+		requests = append(requests, fmt.Sprintf("%d:%d", page, perPage))
+		start := (page - 1) * perPage
+		if start > len(records) {
+			start = len(records)
+		}
+		end := start + perPage
+		if end > len(records) {
+			end = len(records)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("[" + strings.Join(records[start:end], ",") + "]"))
+	}))
+	defer server.Close()
+	client := &GitHubClient{RESTEndpoint: server.URL, HTTPClient: server.Client()}
+
+	items, err := client.ListOpenCommunityItems(context.Background(), teamDir, GitHubCommunityListOptions{Limit: 20, IncludeIssues: true})
+	if err != nil {
+		t.Fatalf("ListOpenCommunityItems limit 20: %v", err)
+	}
+	if len(items) != 20 {
+		t.Fatalf("len(items) = %d, want 20", len(items))
+	}
+	for i, item := range items {
+		if want := 11 + i; item.Number != want {
+			t.Fatalf("items[%d].Number = %d, want %d; items = %+v", i, item.Number, want, items)
+		}
+	}
+	if got := strings.Join(requests, ","); got != "1:20,2:20" {
+		t.Fatalf("requests = %s, want stable 20-item raw pages", got)
+	}
+
+	requests = nil
+	items, err = client.ListOpenCommunityItems(context.Background(), teamDir, GitHubCommunityListOptions{Limit: 60, IncludeIssues: true})
+	if err != nil {
+		t.Fatalf("ListOpenCommunityItems limit 60: %v", err)
+	}
+	if len(items) != 50 {
+		t.Fatalf("len(items) = %d, want all 50 matching issues", len(items))
+	}
+	seen := map[int]bool{}
+	for _, item := range items {
+		if item.Kind != "issue" {
+			t.Fatalf("item.Kind = %q, want issue", item.Kind)
+		}
+		if seen[item.Number] {
+			t.Fatalf("duplicate issue number %d in %+v", item.Number, items)
+		}
+		seen[item.Number] = true
+	}
+	if len(seen) != 50 || !seen[11] || !seen[60] {
+		t.Fatalf("seen issue numbers = %+v, want 11 through 60", seen)
+	}
+	if got := strings.Join(requests, ","); got != "1:60,2:60" {
+		t.Fatalf("requests = %s, want stable 60-item raw pages", got)
+	}
+}
+
 func TestGitHubAddCommunityItemLabelsRequiresToken(t *testing.T) {
 	teamDir := testGitHubTeamDir(t, ``)
 	var gotAuth string
@@ -166,6 +245,28 @@ func TestGitHubAddCommunityItemLabelsRequiresToken(t *testing.T) {
 	if len(rawLabels) != 2 || rawLabels[0] != "community-intake" || rawLabels[1] != "bug" {
 		t.Fatalf("payload = %+v, want labels", gotPayload)
 	}
+}
+
+func githubCommunityRecords(prs, issues int) []string {
+	records := make([]string, 0, prs+issues)
+	for i := 1; i <= prs; i++ {
+		records = append(records, githubCommunityRecord(i, true))
+	}
+	for i := prs + 1; i <= prs+issues; i++ {
+		records = append(records, githubCommunityRecord(i, false))
+	}
+	return records
+}
+
+func githubCommunityRecord(number int, pullRequest bool) string {
+	kindPath := "issues"
+	pullRequestJSON := ""
+	if pullRequest {
+		kindPath = "pull"
+		pullRequestJSON = fmt.Sprintf(`,"pull_request":{"html_url":"https://github.com/acme/widgets/pull/%d"}`, number)
+	}
+	return fmt.Sprintf(`{"number":%d,"html_url":"https://github.com/acme/widgets/%s/%d","title":"Item %d","body":"body","state":"open","user":{"login":"user%d"}%s}`,
+		number, kindPath, number, number, number, pullRequestJSON)
 }
 
 func testGitHubTeamDir(t *testing.T, extra string) string {

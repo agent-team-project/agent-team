@@ -254,12 +254,12 @@ func (c *GitHubClient) ListOpenCommunityItems(ctx context.Context, teamDir strin
 	ctx, cancel := contextWithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	out := make([]intake.CommunityItem, 0, limit)
+	perPage := limit
+	if perPage > 100 {
+		perPage = 100
+	}
 	page := 1
-	for len(out) < limit {
-		perPage := limit - len(out)
-		if perPage > 100 {
-			perPage = 100
-		}
+	for {
 		apiPath := fmt.Sprintf("repos/%s/%s/issues?state=open&sort=created&direction=desc&per_page=%d&page=%d", url.PathEscape(owner), url.PathEscape(repo), perPage, page)
 		var records []githubCommunityIssueRecord
 		if err := c.rest(ctx, token, http.MethodGet, apiPath, nil, &records); err != nil {
@@ -284,10 +284,13 @@ func (c *GitHubClient) ListOpenCommunityItems(ctx context.Context, teamDir strin
 				break
 			}
 		}
-		if len(records) < perPage {
+		if len(out) >= limit || len(records) < perPage {
 			break
 		}
 		page++
+	}
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }
