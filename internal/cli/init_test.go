@@ -172,6 +172,7 @@ func TestInit_DefaultTemplate(t *testing.T) {
 		".agent_team/skills/release",
 		".agent_team/skills/sentinel",
 		".agent_team/skills/docs-freshness",
+		".agent_team/topology",
 	} {
 		if _, err := os.Stat(filepath.Join(tmp, rel)); !os.IsNotExist(err) {
 			t.Errorf("slim init should not render %s (stat err=%v)", rel, err)
@@ -284,6 +285,9 @@ func TestInit_FullProfilePreservesSelfDogfoodTemplate(t *testing.T) {
 	}
 	if !strings.Contains(releaseSkillBody, "${AGENT_TEAM_ROOT:-.agent_team}/skills/verify/scripts/validate_gate_tiers.py") {
 		t.Errorf("release skill missing rendered validator path:\n%s", releaseSkillBody)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".agent_team", "topology")); !os.IsNotExist(err) {
+		t.Errorf("full init should not render topology source fragments (stat err=%v)", err)
 	}
 	instances, err := os.ReadFile(filepath.Join(tmp, ".agent_team", "instances.toml"))
 	if err != nil {

@@ -254,8 +254,11 @@ exclude = [
   "skills/review-harness",
   "skills/sentinel",
   "skills/triage-feedback",
+  "topology",
 ]
 
 [profiles.full]
 description = "Full self-dogfood topology with platform, quality, release, docs, comms, and sentinel loops."
-exclude = []
+exclude = [
+  "topology",
+]

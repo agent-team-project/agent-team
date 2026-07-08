@@ -1,0 +1,98 @@
+# The harness-review loop: a weekly sweep of the team's own steering surfaces
+# (agent prompts, skills, pipeline instructions) driven by operational
+# evidence — bounce-finding classes, attention events, feedback, failure
+# patterns. Proposes improvement tickets (label `harness`, Backlog only);
+# never edits prompts directly. See the review-harness skill.
+[schedules.harness-review]
+every = "8h" # daily while the fleet + prompts evolve fast; revisit at stability
+
+[schedules.harness-review.payload]
+kind = "harness_review"
+
+[instances.harness-reviewer]
+agent       = "manager"
+ephemeral   = true
+env_allow   = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TERM_PROGRAM", "LANG", "LC_*", "XDG_*", "CODEX_HOME", "CLAUDE_CODE_*", "SSH_AUTH_SOCK"]
+description = "Scheduled harness review: bounce/feedback/failure trends -> prompt and instruction improvement tickets."
+
+[[instances.harness-reviewer.triggers]]
+event      = "schedule"
+match.name = "harness-review"
+match.kind = "harness_review"
+
+
+# The org-review loop: every few days, turn the outcomes ledger, spend,
+# concurrency/capacity, bounce classes, cycle-time, and feedback trends into at
+# most a few evidence-backed process/topology/prompt/budget tickets. It is the
+# strategic complement to harness-review and never edits the system directly.
+# See the org-review skill and documentation/metrics-methodology.md.
+[schedules.org-review]
+every = "72h" # 3d; schedule durations use Go duration syntax
+
+[schedules.org-review.payload]
+kind = "org_review"
+task = "Run the org-review skill: analyze outcomes, spend, capacity, feedback, and review-loop health; file capped strategic improvement tickets."
+
+[instances.org-review]
+agent        = "manager"
+ephemeral    = true
+token_budget = "15M"
+time_budget  = "45m"
+env_allow    = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TERM_PROGRAM", "LANG", "LC_*", "XDG_*", "CODEX_HOME", "CLAUDE_CODE_*", "SSH_AUTH_SOCK"]
+description  = "Scheduled org review: outcomes/spend/capacity/feedback -> strategic improvement tickets."
+
+[[instances.org-review.triggers]]
+event      = "schedule"
+match.name = "org-review"
+match.kind = "org_review"
+
+
+# The sentinel loop: every six hours, check the post-merge public surface that
+# reviewers cannot see from a green PR alone — main CI, Read the Docs build and
+# rendered pages, release assets, and repo metadata. Failures are submitted as
+# incident feedback immediately. See the sentinel skill.
+[schedules.sentinel]
+every = "6h"
+run_on_start = true
+
+[schedules.sentinel.payload]
+kind = "sentinel"
+
+[instances.sentinel]
+agent        = "manager"
+ephemeral    = true
+token_budget = "10M"
+time_budget  = "15m"
+env_allow    = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TERM_PROGRAM", "LANG", "LC_*", "XDG_*", "CODEX_HOME", "CLAUDE_CODE_*", "SSH_AUTH_SOCK", "AGENT_TEAM_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"]
+description  = "Scheduled production sentinel: main CI, RTD rendering, release assets, and repo metadata."
+
+[[instances.sentinel.triggers]]
+event      = "schedule"
+match.name = "sentinel"
+match.kind = "sentinel"
+
+
+# The product-verifier loop: a headless synthetic user checks daemon UI data
+# against CLI ground truth, then files capped feedback for bugs, friction, and
+# ideas. See template/skills/product-verify/SKILL.md.
+[schedules.product-verify]
+every = "24h"
+
+[schedules.product-verify.payload]
+kind = "product_verify"
+task = "Run the product-verify skill: compare daemon UI endpoints with CLI ground truth and file capped feedback findings."
+
+[instances.product-verifier]
+agent        = "manager"
+ephemeral    = true
+token_budget = "10M"
+time_budget  = "30m"
+env_allow    = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TERM_PROGRAM", "LANG", "LC_*", "XDG_*", "CODEX_HOME", "CLAUDE_CODE_*", "SSH_AUTH_SOCK", "AGENT_TEAM_ROOT", "AGENT_TEAM_DAEMON_URL", "AGENT_TEAM_BIN", "PYTHONPATH"]
+description  = "Scheduled product verifier: headless UI-vs-CLI correctness plus UX feedback."
+
+[[instances.product-verifier.triggers]]
+event      = "schedule"
+match.name = "product-verify"
+match.kind = "product_verify"
+
+

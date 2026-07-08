@@ -716,6 +716,9 @@ func renderInto(rt *template.ResolvedTemplate, teamDir string, resolved template
 		if templateAuxFiles[name] {
 			continue
 		}
+		if topLevelEntryExcluded(name, excludes) {
+			continue
+		}
 		dstName := strings.TrimSuffix(name, template.TmplSuffix)
 		dstPath := filepath.Join(teamDir, dstName)
 		if !force {
@@ -745,6 +748,25 @@ func renderInto(rt *template.ResolvedTemplate, teamDir string, resolved template
 		}
 	}
 	return results, nil
+}
+
+func topLevelEntryExcluded(entry string, excludes []string) bool {
+	if len(excludes) == 0 {
+		return false
+	}
+	entry = filepath.ToSlash(filepath.Clean(entry))
+	dstEntry := strings.TrimSuffix(entry, template.TmplSuffix)
+	for _, exclude := range excludes {
+		exclude = strings.TrimPrefix(filepath.ToSlash(exclude), "./")
+		exclude = filepath.ToSlash(filepath.Clean(exclude))
+		if exclude == "." {
+			continue
+		}
+		if exclude == entry || exclude == dstEntry {
+			return true
+		}
+	}
+	return false
 }
 
 // renderEntry routes a single top-level entry (file or directory) into the

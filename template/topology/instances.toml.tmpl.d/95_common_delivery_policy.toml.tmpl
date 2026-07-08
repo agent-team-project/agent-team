@@ -1,0 +1,85 @@
+[teams.delivery]
+description = "Default software-delivery team for ticket intake, implementation, review, and merge."
+{{ if eq .template.profile `full` -}}
+instances   = ["manager", "ticket-manager", "worker", "verifier", "reviewer", "feedback-triage"]
+pipelines   = ["ticket_to_pr"]
+schedules   = ["feedback-triage"]
+{{ else -}}
+instances   = ["manager", "worker", "verifier", "reviewer"]
+pipelines   = ["ticket_to_pr"]
+{{ end }}
+
+# Optional per-team admission budgets. When omitted, dispatch behavior is
+# unchanged. Token spend is computed from finalized usage records over the last
+# 24 hours; in-flight jobs are counted by the job origin team.
+# [budgets.delivery]
+# tokens_per_day = 200_000_000
+# jobs_in_flight = 6
+# allocation = "oversubscribe" # default; "reserve" debits outstanding grants
+# load_weight = 1.0          # default; higher values consume more concurrency headroom per dispatch
+
+# Optional daemon-wide adaptive concurrency governor. When enabled, ephemeral
+# dispatches queue once daemon-wide running instances reach the lower of the
+# AIMD ceiling and the current machine-load ceiling. The load ceiling uses
+# total system load, so external builds sharing the box reduce headroom too.
+# [concurrency]
+# enabled = true
+# min_ceiling = 1
+# max_ceiling = 8
+# initial_ceiling = 4
+# target_load_per_core = 0.85
+# load_per_dispatch = 1.0
+# crash_window = "10m"
+# crash_threshold = 3
+# decrease_factor = 0.5
+# stable_window = "20m"
+# increase_step = 1
+
+# Optional resource scoping. Omitted scope defaults to "machine", preserving
+# today's flat namespace. Use "team" when each owning team needs an isolated
+# channel/schedule/lock key, and "job" for per-job state.
+#
+# [locks.build]
+# slots = 1
+# scope = "machine"
+#
+# [channels.supervisor]
+# scope = "team"
+# # Add "supervisor" to [teams.<name>].channels to declare ownership.
+#
+[authority]
+enforcement = "audit"
+
+[authority.instances.manager]
+allow = ["*"]
+
+[authority.agents.worker]
+allow = ["budget.status", "channel.*", "event.publish", "feedback.*", "inbox.*", "job.events", "job.gate.*:own", "job.show", "job.step:own", "status.*"]
+
+[authority.agents.verifier]
+allow = ["budget.status", "channel.*", "event.publish", "feedback.*", "inbox.*", "job.events", "job.gate.*:own", "job.show", "job.step:own", "status.*"]
+
+[authority.agents.reviewer]
+allow = ["budget.status", "channel.*", "feedback.*", "inbox.*", "job.events", "job.gate.*:own", "job.show", "status.*"]
+
+[authority.agents.manager]
+allow = ["budget.status", "channel.*", "feedback.*", "inbox.*", "job.show", "status.*"]
+
+{{ if eq .template.profile `full` }}
+[authority.agents.ticket-manager]
+allow = ["budget.status", "channel.*", "feedback.*", "inbox.*", "job.show", "status.*"]
+
+[authority.agents.auditor]
+allow = ["budget.status", "channel.*", "feedback.*", "inbox.*", "job.show", "status.*"]
+
+[authority.agents.comms]
+allow = ["budget.status", "channel.*", "feedback.*", "inbox.*", "job.show", "status.*"]
+{{ end }}
+
+# Optional fixed-interval schedule. Uncomment and adapt to publish a `schedule`
+# event with name = "nightly" every 24 hours.
+#
+# [schedules.nightly]
+# every = "24h"
+# scope = "team"
+# payload.workspace = "repo"

@@ -1,0 +1,22 @@
+[teams.pr]
+description = "Public relations: community digests, announcements, discussions, outward feedback intake."
+instances   = ["comms"]
+schedules   = ["discord-digest"]
+
+[teams.release]
+description = "Manual release train: prepare, verify, approve, tag, asset-check, and announce."
+instances   = ["release-worker", "manager", "comms"]
+pipelines   = ["release"]
+
+[teams.docs]
+description = "Documentation: README/guide/narrative authoring on the claude runtime, plus a weekly freshness audit against the shipped binary and latest release."
+instances   = ["docs-writer"]
+schedules   = ["docs-freshness"]
+
+[teams.quality]
+description = "Proactive architecture, tech-debt, harness auditing, production sentinel checks, and product verification."
+instances   = ["debt-auditor", "harness-reviewer", "org-review", "sentinel", "product-verifier"]
+schedules   = ["debt-sweep", "harness-review", "org-review", "sentinel", "product-verify"]
+
+{{ end }}
+
