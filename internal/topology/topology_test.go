@@ -1120,6 +1120,91 @@ token_budget = "40M"
 	}
 }
 
+func TestParse_Concurrency(t *testing.T) {
+	top, err := Parse([]byte(`
+[concurrency]
+enabled = true
+min_ceiling = 3
+max_ceiling = 20
+initial_ceiling = 7
+target_load_per_core = 0.85
+load_per_dispatch = 1.25
+crash_window = "10m"
+crash_threshold = 3
+decrease_factor = 0.5
+stable_window = "20m"
+increase_step = 2
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cfg := top.Concurrency
+	if cfg == nil || !cfg.Enabled {
+		t.Fatalf("concurrency = %+v, want enabled config", cfg)
+	}
+	if cfg.MinCeiling != 3 || cfg.MaxCeiling != 20 || cfg.InitialCeiling != 7 || cfg.TargetLoadPerCore != 0.85 || cfg.LoadPerDispatch != 1.25 || cfg.CrashWindow != 10*time.Minute || cfg.CrashThreshold != 3 || cfg.DecreaseFactor != 0.5 || cfg.StableWindow != 20*time.Minute || cfg.IncreaseStep != 2 {
+		t.Fatalf("concurrency = %+v", cfg)
+	}
+}
+
+func TestParse_ConcurrencyValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "initial above max",
+			body: `
+[concurrency]
+enabled = true
+max_ceiling = 5
+initial_ceiling = 6
+`,
+			want: "initial_ceiling must be <= max_ceiling",
+		},
+		{
+			name: "bad load target",
+			body: `
+[concurrency]
+enabled = true
+target_load_per_core = 0
+`,
+			want: "target_load_per_core must be > 0",
+		},
+		{
+			name: "bad decrease factor",
+			body: `
+[concurrency]
+enabled = true
+decrease_factor = 1.0
+`,
+			want: "decrease_factor must be > 0 and < 1",
+		},
+		{
+			name: "bad stable window",
+			body: `
+[concurrency]
+enabled = true
+stable_window = "0s"
+`,
+			want: "stable_window must be greater than zero",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.body))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Parse err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestParse_BudgetValidation(t *testing.T) {
 	tests := []struct {
 		name string

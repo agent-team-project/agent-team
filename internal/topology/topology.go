@@ -87,6 +87,9 @@ type Topology struct {
 	Teams map[string]*Team
 	// Budgets is keyed by the declared team name (`[budgets.<team>]`).
 	Budgets map[string]*Budget
+	// Concurrency optionally enables daemon-wide adaptive admission control for
+	// ephemeral dispatches. Nil preserves existing static replica/budget behavior.
+	Concurrency *Concurrency
 
 	// ReminderLevels are the default soft budget notice percentage thresholds
 	// declared under `[budgets].reminder_levels`.
@@ -253,6 +256,22 @@ type Budget struct {
 	TokensPerDay int64
 	JobsInFlight int
 	Allocation   string
+}
+
+// Concurrency declares daemon-wide adaptive admission settings. Zero values
+// for numeric and duration fields mean "use the daemon default" when Enabled.
+type Concurrency struct {
+	Enabled           bool
+	MinCeiling        int
+	MaxCeiling        int
+	InitialCeiling    int
+	TargetLoadPerCore float64
+	LoadPerDispatch   float64
+	CrashWindow       time.Duration
+	CrashThreshold    int
+	DecreaseFactor    float64
+	StableWindow      time.Duration
+	IncreaseStep      int
 }
 
 // Authority is the audit/enforcement policy declared in topology.
@@ -799,14 +818,15 @@ func (t *Topology) TeamForChannel(name string) string {
 // so the public Topology can carry validated, normalised values regardless of
 // how lenient toml.Decode is.
 type rawTopology struct {
-	Instances map[string]*rawInstance `toml:"instances"`
-	Locks     map[string]*rawLock     `toml:"locks"`
-	Channels  map[string]*rawChannel  `toml:"channels"`
-	Pipelines map[string]*rawPipeline `toml:"pipelines"`
-	Schedules map[string]*rawSchedule `toml:"schedules"`
-	Teams     map[string]*rawTeam     `toml:"teams"`
-	Budgets   map[string]any          `toml:"budgets"`
-	Authority *rawAuthority           `toml:"authority"`
+	Instances   map[string]*rawInstance `toml:"instances"`
+	Locks       map[string]*rawLock     `toml:"locks"`
+	Channels    map[string]*rawChannel  `toml:"channels"`
+	Pipelines   map[string]*rawPipeline `toml:"pipelines"`
+	Schedules   map[string]*rawSchedule `toml:"schedules"`
+	Teams       map[string]*rawTeam     `toml:"teams"`
+	Budgets     map[string]any          `toml:"budgets"`
+	Concurrency *rawConcurrency         `toml:"concurrency"`
+	Authority   *rawAuthority           `toml:"authority"`
 }
 
 type rawInstance struct {
@@ -879,6 +899,20 @@ type rawBudget struct {
 	Allocation   string `toml:"allocation"`
 }
 
+type rawConcurrency struct {
+	Enabled           bool     `toml:"enabled"`
+	MinCeiling        *int     `toml:"min_ceiling"`
+	MaxCeiling        *int     `toml:"max_ceiling"`
+	InitialCeiling    *int     `toml:"initial_ceiling"`
+	TargetLoadPerCore *float64 `toml:"target_load_per_core"`
+	LoadPerDispatch   *float64 `toml:"load_per_dispatch"`
+	CrashWindow       string   `toml:"crash_window"`
+	CrashThreshold    *int     `toml:"crash_threshold"`
+	DecreaseFactor    *float64 `toml:"decrease_factor"`
+	StableWindow      string   `toml:"stable_window"`
+	IncreaseStep      *int     `toml:"increase_step"`
+}
+
 type rawAuthority struct {
 	Enforcement string                       `toml:"enforcement"`
 	Instances   map[string]*rawAuthorityRule `toml:"instances"`
@@ -909,6 +943,10 @@ func finalise(raw *rawTopology, validateTeamRefs bool) (*Topology, error) {
 	if err != nil {
 		return nil, err
 	}
+	concurrency, err := finaliseConcurrency(raw.Concurrency)
+	if err != nil {
+		return nil, err
+	}
 	t := &Topology{
 		Instances:      make(map[string]*Instance, len(raw.Instances)),
 		Locks:          make(map[string]*Lock, len(raw.Locks)),
@@ -917,6 +955,7 @@ func finalise(raw *rawTopology, validateTeamRefs bool) (*Topology, error) {
 		Schedules:      make(map[string]*Schedule, len(raw.Schedules)),
 		Teams:          make(map[string]*Team, len(raw.Teams)),
 		Budgets:        budgets,
+		Concurrency:    concurrency,
 		ReminderLevels: reminderLevels,
 	}
 	for name, rl := range raw.Locks {
@@ -1470,6 +1509,85 @@ func rawInt(raw any, field string) (int, error) {
 		return 0, fmt.Errorf("%s is too large", field)
 	}
 	return out, nil
+}
+
+func finaliseConcurrency(raw *rawConcurrency) (*Concurrency, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	cfg := &Concurrency{Enabled: raw.Enabled}
+	if raw.MinCeiling != nil {
+		if *raw.MinCeiling < 0 {
+			return nil, fmt.Errorf("concurrency.min_ceiling must be >= 0")
+		}
+		cfg.MinCeiling = *raw.MinCeiling
+	}
+	if raw.MaxCeiling != nil {
+		if *raw.MaxCeiling < 0 {
+			return nil, fmt.Errorf("concurrency.max_ceiling must be >= 0")
+		}
+		cfg.MaxCeiling = *raw.MaxCeiling
+	}
+	if raw.InitialCeiling != nil {
+		if *raw.InitialCeiling < 0 {
+			return nil, fmt.Errorf("concurrency.initial_ceiling must be >= 0")
+		}
+		cfg.InitialCeiling = *raw.InitialCeiling
+	}
+	if raw.TargetLoadPerCore != nil {
+		if *raw.TargetLoadPerCore <= 0 {
+			return nil, fmt.Errorf("concurrency.target_load_per_core must be > 0")
+		}
+		cfg.TargetLoadPerCore = *raw.TargetLoadPerCore
+	}
+	if raw.LoadPerDispatch != nil {
+		if *raw.LoadPerDispatch <= 0 {
+			return nil, fmt.Errorf("concurrency.load_per_dispatch must be > 0")
+		}
+		cfg.LoadPerDispatch = *raw.LoadPerDispatch
+	}
+	if raw.CrashWindow != "" {
+		window, err := parseOptionalDurationString(raw.CrashWindow, "concurrency.crash_window")
+		if err != nil {
+			return nil, err
+		}
+		cfg.CrashWindow = window
+	}
+	if raw.CrashThreshold != nil {
+		if *raw.CrashThreshold < 0 {
+			return nil, fmt.Errorf("concurrency.crash_threshold must be >= 0")
+		}
+		cfg.CrashThreshold = *raw.CrashThreshold
+	}
+	if raw.DecreaseFactor != nil {
+		if *raw.DecreaseFactor <= 0 || *raw.DecreaseFactor >= 1 {
+			return nil, fmt.Errorf("concurrency.decrease_factor must be > 0 and < 1")
+		}
+		cfg.DecreaseFactor = *raw.DecreaseFactor
+	}
+	if raw.StableWindow != "" {
+		window, err := parseOptionalDurationString(raw.StableWindow, "concurrency.stable_window")
+		if err != nil {
+			return nil, err
+		}
+		cfg.StableWindow = window
+	}
+	if raw.IncreaseStep != nil {
+		if *raw.IncreaseStep < 0 {
+			return nil, fmt.Errorf("concurrency.increase_step must be >= 0")
+		}
+		cfg.IncreaseStep = *raw.IncreaseStep
+	}
+	if cfg.MaxCeiling > 0 && cfg.MinCeiling > cfg.MaxCeiling {
+		return nil, fmt.Errorf("concurrency.min_ceiling must be <= max_ceiling")
+	}
+	if cfg.MaxCeiling > 0 && cfg.InitialCeiling > cfg.MaxCeiling {
+		return nil, fmt.Errorf("concurrency.initial_ceiling must be <= max_ceiling")
+	}
+	if cfg.InitialCeiling > 0 && cfg.MinCeiling > cfg.InitialCeiling {
+		return nil, fmt.Errorf("concurrency.min_ceiling must be <= initial_ceiling")
+	}
+	return cfg, nil
 }
 
 func finaliseBudget(name string, rb *rawBudget) (*Budget, error) {

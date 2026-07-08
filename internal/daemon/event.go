@@ -76,10 +76,11 @@ type EventResolver struct {
 	logOut   io.Writer
 	otel     *orchestrationTracer
 
-	mu       sync.Mutex
-	topo     *topology.Topology
-	tracking map[string]*ephTracker // declared-name → tracker
-	locks    map[string]*dispatchLockTracker
+	mu          sync.Mutex
+	topo        *topology.Topology
+	tracking    map[string]*ephTracker // declared-name → tracker
+	locks       map[string]*dispatchLockTracker
+	concurrency *concurrencyController
 }
 
 type ephTracker struct {
@@ -116,13 +117,14 @@ type dispatchLockTracker struct {
 // workspace for spawned instances).
 func NewEventResolver(mgr *InstanceManager, teamDir string, topo *topology.Topology) *EventResolver {
 	r := &EventResolver{
-		mgr:      mgr,
-		teamDir:  teamDir,
-		queueCap: DefaultQueueCap,
-		topo:     topo,
-		tracking: map[string]*ephTracker{},
-		locks:    map[string]*dispatchLockTracker{},
-		otel:     loadOrchestrationTracer(teamDir, mgr.daemonRoot),
+		mgr:         mgr,
+		teamDir:     teamDir,
+		queueCap:    DefaultQueueCap,
+		topo:        topo,
+		tracking:    map[string]*ephTracker{},
+		locks:       map[string]*dispatchLockTracker{},
+		concurrency: newConcurrencyController(concurrencyConfigForTopology(topo)),
+		otel:        loadOrchestrationTracer(teamDir, mgr.daemonRoot),
 	}
 	mgr.SetReapHook(r.onReap)
 	mgr.SetTerminalHook(r.onTerminalMetadata)
@@ -140,7 +142,26 @@ func (r *EventResolver) SetTopology(t *topology.Topology) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.topo = t
+	r.setConcurrencyConfigLocked(t)
 	r.recoverLockStateLocked(time.Now().UTC())
+}
+
+func concurrencyConfigForTopology(t *topology.Topology) *topology.Concurrency {
+	if t == nil {
+		return nil
+	}
+	return t.Concurrency
+}
+
+func (r *EventResolver) setConcurrencyConfigLocked(t *topology.Topology) {
+	raw := concurrencyConfigForTopology(t)
+	if r.concurrency == nil {
+		r.concurrency = newConcurrencyController(raw)
+		return
+	}
+	if !r.concurrency.updateConfig(raw) {
+		r.concurrency = nil
+	}
 }
 
 // Topology returns the current topology pointer (for /v1/topology).
@@ -256,6 +277,66 @@ func (r *EventResolver) logZeroMatch(trace *topology.EventTrace) {
 	}
 	payload, _ := json.Marshal(trace.Payload)
 	fmt.Fprintf(out, "%s WARNING event %q matched 0 rules payload=%s\n", time.Now().UTC().Format(time.RFC3339), trace.Type, string(payload))
+}
+
+func (r *EventResolver) concurrencyAdmissionLocked(now time.Time) concurrencyAdmission {
+	if r.concurrency == nil {
+		return concurrencyAdmission{Allowed: true, Running: r.runningEphemeralLocked()}
+	}
+	running := r.runningEphemeralLocked()
+	admission, ev := r.concurrency.admit(now, running)
+	r.appendConcurrencyLifecycleEventLocked(ev)
+	return admission
+}
+
+func (r *EventResolver) concurrencyAdmissionPreviewLocked(now time.Time, running int) concurrencyAdmission {
+	if r.concurrency == nil {
+		return concurrencyAdmission{Allowed: true, Running: running}
+	}
+	return r.concurrency.preview(now, running)
+}
+
+func (r *EventResolver) concurrencyConfiguredLocked() bool {
+	return r.concurrency != nil
+}
+
+func (r *EventResolver) runningEphemeralLocked() int {
+	running := 0
+	for _, tr := range r.tracking {
+		if tr == nil {
+			continue
+		}
+		running += tr.running
+	}
+	return running
+}
+
+func (r *EventResolver) observeConcurrencyTerminal(meta *Metadata) {
+	if meta == nil || meta.Status != StatusCrashed {
+		return
+	}
+	r.mu.Lock()
+	if r.concurrency == nil {
+		r.mu.Unlock()
+		return
+	}
+	ev := r.concurrency.observeCrash(time.Now().UTC(), r.runningEphemeralLocked())
+	r.mu.Unlock()
+	r.appendConcurrencyLifecycleEvent(ev)
+}
+
+func (r *EventResolver) appendConcurrencyLifecycleEventLocked(ev *LifecycleEvent) {
+	if ev == nil || r == nil || r.mgr == nil {
+		return
+	}
+	_ = AppendLifecycleEvent(r.mgr.daemonRoot, ev)
+}
+
+func (r *EventResolver) appendConcurrencyLifecycleEvent(ev *LifecycleEvent) {
+	if ev == nil || r == nil || r.mgr == nil {
+		return
+	}
+	_ = AppendLifecycleEvent(r.mgr.daemonRoot, ev)
 }
 
 func (r *EventResolver) reconcilePRJob(eventType string, payload map[string]any) *jobstore.ReconcileResult {
@@ -377,6 +458,34 @@ func (r *EventResolver) actuateEphemeralWithBudgetOrigin(inst *topology.Instance
 		r.mu.Unlock()
 		r.upsertDispatchJob(payload, childName, jobstore.StatusQueued, QueueReasonBudgetExhausted, QueueReasonBudgetExhausted, "", "")
 		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: childName, Reason: QueueReasonBudgetExhausted}
+	}
+	concurrencyAdmission := r.concurrencyAdmissionLocked(now)
+	if !concurrencyAdmission.Allowed {
+		if len(tr.queue) >= r.queueCap {
+			r.mu.Unlock()
+			reason := fmt.Sprintf("concurrency ceiling reached and queue is full (%d)", r.queueCap)
+			r.upsertDispatchJob(payload, childName, jobstore.StatusFailed, "queue_full", reason, "", "")
+			return EventOutcome{Instance: inst.Name, Action: "rejected", InstanceID: childName, Reason: reason}
+		}
+		ev := &queuedEvent{
+			id:         newSessionID(),
+			eventType:  eventType,
+			payload:    payload,
+			queuedAt:   now,
+			uniqueName: childName,
+			reason:     QueueReasonConcurrencyCeiling,
+			locks:      r.dispatchLocksLocked(inst, payload),
+			origin:     eventOrigin,
+		}
+		if err := WriteQueueItem(r.mgr.daemonRoot, queueItemFromEvent(inst.Name, ev, QueueStatePending)); err != nil {
+			r.mu.Unlock()
+			return EventOutcome{Instance: inst.Name, Action: "rejected", InstanceID: childName, Reason: err.Error()}
+		}
+		tr.queue = append(tr.queue, ev)
+		r.mu.Unlock()
+		reason := concurrencyQueueMessage(concurrencyAdmission)
+		r.upsertDispatchJob(payload, childName, jobstore.StatusQueued, QueueReasonConcurrencyCeiling, reason, "", "")
+		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: childName, Reason: QueueReasonConcurrencyCeiling}
 	}
 	if tr.running >= inst.Replicas {
 		if len(tr.queue) >= r.queueCap {
@@ -529,6 +638,14 @@ func queuedEventID(queue []*queuedEvent, id string) bool {
 		}
 	}
 	return false
+}
+
+func concurrencyQueueMessage(admission concurrencyAdmission) string {
+	reason := strings.TrimSpace(admission.Reason)
+	if reason == "" {
+		reason = "adaptive admission"
+	}
+	return fmt.Sprintf("concurrency ceiling %d reached (%s; running=%d)", admission.Ceiling, reason, admission.Running)
 }
 
 func payloadString(payload map[string]any, key string) string {

@@ -32,19 +32,28 @@ func (r *EventResolver) onReap(spawned string) {
 		tr.running--
 	}
 	freedLocks := r.releaseLocksForInstanceLocked(spawned)
-	var next *queuedEvent
-	if len(tr.queue) > 0 {
-		next = r.popReadyQueuedEventLocked(declared, tr, time.Now().UTC(), nil)
-	}
 	r.mu.Unlock()
 	if meta, err := ReadMetadata(r.mgr.daemonRoot, spawned); err == nil {
+		r.observeConcurrencyTerminal(meta)
 		r.reconcileEphemeralJobExit(meta)
 	}
 	_, _ = r.markTeamCharterReaped(spawned, map[string]string{"reason": "instance_reaped"})
+	var next *queuedEvent
+	r.mu.Lock()
+	tr = r.tracking[declared.Name]
+	if tr != nil && tr.running < declared.Replicas && len(tr.queue) > 0 {
+		next = r.popReadyQueuedEventLocked(declared, tr, time.Now().UTC(), nil)
+	}
+	r.mu.Unlock()
 	drainQueues := freedLocks > 0
 	if r.budgetsConfigured() {
 		drainQueues = true
 	}
+	r.mu.Lock()
+	if r.concurrencyConfiguredLocked() {
+		drainQueues = true
+	}
+	r.mu.Unlock()
 	// Freed lock slots may unblock lock_held waiters queued under other
 	// declared instances; the same-instance pop above cannot reach them, so
 	// run the shared drain pass (the same path as `agent-team queue drain`).
@@ -210,6 +219,7 @@ func (r *EventResolver) onTerminalMetadata(meta *Metadata) {
 		return
 	}
 	r.recoverQueueStateNoDrain()
+	r.observeConcurrencyTerminal(meta)
 	r.mu.Lock()
 	r.releaseLocksForInstanceLocked(meta.Instance)
 	r.mu.Unlock()
@@ -334,6 +344,16 @@ func (r *EventResolver) popReadyQueuedEventLocked(inst *topology.Instance, tr *e
 		}
 		if ev.reason == QueueReasonBudgetExhausted {
 			ev.nextRetry = time.Time{}
+		}
+		concurrencyAdmission := r.concurrencyAdmissionLocked(now)
+		if !concurrencyAdmission.Allowed {
+			ev.reason = QueueReasonConcurrencyCeiling
+			ev.lastError = concurrencyQueueMessage(concurrencyAdmission)
+			_ = WriteQueueItem(r.mgr.daemonRoot, queueItemFromEvent(inst.Name, ev, QueueStatePending))
+			continue
+		}
+		if ev.reason == QueueReasonConcurrencyCeiling {
+			ev.lastError = ""
 		}
 		if len(ev.locks) == 0 {
 			ev.locks = r.dispatchLocksLocked(inst, ev.payload)
@@ -473,8 +493,35 @@ func (r *EventResolver) RunBudgetQueueDrains(ctx context.Context) {
 	}
 }
 
+// RunConcurrencyQueueDrains retries concurrency-held queue items periodically.
+// Unlike replica capacity, machine load can drop because external non-daemon
+// work finishes, so no daemon reap event may arrive to kick the queue.
+func (r *EventResolver) RunConcurrencyQueueDrains(ctx context.Context) {
+	if r == nil {
+		return
+	}
+	r.drainConcurrencyQueues()
+	ticker := time.NewTicker(concurrencyDrainPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.drainConcurrencyQueues()
+		}
+	}
+}
+
 func (r *EventResolver) drainReadyBudgetQueues(now time.Time) {
 	if r == nil || r.mgr == nil || !r.budgetsConfigured() || !r.hasReadyBudgetQueueItem(now) {
+		return
+	}
+	r.DrainQueues()
+}
+
+func (r *EventResolver) drainConcurrencyQueues() {
+	if r == nil || r.mgr == nil || !r.concurrencyConfigured() || !r.hasConcurrencyQueueItem() {
 		return
 	}
 	r.DrainQueues()
@@ -493,6 +540,25 @@ func (r *EventResolver) hasReadyBudgetQueueItem(now time.Time) bool {
 			continue
 		}
 		if !item.NextRetry.After(now) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *EventResolver) concurrencyConfigured() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.concurrencyConfiguredLocked()
+}
+
+func (r *EventResolver) hasConcurrencyQueueItem() bool {
+	items, err := ListQueueItems(r.mgr.daemonRoot)
+	if err != nil {
+		return false
+	}
+	for _, item := range items {
+		if item != nil && item.State == QueueStatePending && item.Reason == QueueReasonConcurrencyCeiling {
 			return true
 		}
 	}
@@ -576,6 +642,7 @@ func (r *EventResolver) previewDrainQueuesWithResult(ids map[string]bool) (*Queu
 	r.recoverLockStateLocked(time.Now().UTC())
 	if r.topo != nil {
 		now := time.Now().UTC()
+		globalRunning := r.runningEphemeralLocked()
 		lockUsage, lockSlots := r.previewLockCountsLocked()
 		for _, inst := range r.topo.SortedInstances() {
 			if !inst.Ephemeral {
@@ -606,6 +673,9 @@ func (r *EventResolver) previewDrainQueuesWithResult(ids map[string]bool) (*Queu
 				if err != nil || !admission.Allowed {
 					continue
 				}
+				if concurrencyAdmission := r.concurrencyAdmissionPreviewLocked(now, globalRunning); !concurrencyAdmission.Allowed {
+					continue
+				}
 				locks := ev.locks
 				if len(locks) == 0 {
 					locks = r.dispatchLocksLocked(inst, ev.payload)
@@ -619,6 +689,7 @@ func (r *EventResolver) previewDrainQueuesWithResult(ids map[string]bool) (*Queu
 				result.WouldDispatch++
 				result.Outcomes = append(result.Outcomes, EventOutcome{Instance: inst.Name, Action: "would_dispatch", InstanceID: ev.uniqueName})
 				capacity--
+				globalRunning++
 			}
 		}
 	}
@@ -733,53 +804,13 @@ func (r *EventResolver) RetryQueueItem(id string) (EventOutcome, error) {
 		r.mu.Unlock()
 		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: ev.uniqueName, Reason: ev.reason}, nil
 	}
-	admission, err := r.budgetAdmissionLocked(ev.origin.Team, ev.payload, time.Now().UTC())
-	if err != nil {
+	queued := ev
+	tr.queue = append(tr.queue, ev)
+	ev = r.popReadyQueuedEventLocked(inst, tr, time.Now().UTC(), map[string]bool{id: true})
+	if ev == nil {
 		r.mu.Unlock()
-		return EventOutcome{}, err
+		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: item.InstanceID, Reason: queued.reason}, nil
 	}
-	if !admission.Allowed {
-		ev.reason = QueueReasonBudgetExhausted
-		ev.nextRetry = admission.NextTokenRetry
-		tr.queue = append(tr.queue, ev)
-		_ = WriteQueueItem(r.mgr.daemonRoot, queueItemFromEvent(inst.Name, ev, QueueStatePending))
-		r.mu.Unlock()
-		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: ev.uniqueName, Reason: QueueReasonBudgetExhausted}, nil
-	}
-	if ev.reason == QueueReasonBudgetExhausted {
-		ev.nextRetry = time.Time{}
-	}
-	if len(ev.locks) == 0 {
-		ev.locks = r.dispatchLocksLocked(inst, ev.payload)
-	}
-	acquired, err := r.acquireLocksLocked(ev.locks, ev.uniqueName, ev.origin, time.Now().UTC())
-	if err != nil {
-		r.mu.Unlock()
-		return EventOutcome{}, err
-	}
-	if !acquired {
-		ev.reason = QueueReasonLockHeld
-		tr.queue = append(tr.queue, ev)
-		_ = WriteQueueItem(r.mgr.daemonRoot, queueItemFromEvent(inst.Name, ev, QueueStatePending))
-		r.mu.Unlock()
-		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: ev.uniqueName, Reason: QueueReasonLockHeld}, nil
-	}
-	grant, err := r.grantPayloadBudgetLocked(ev.payload, ev.origin, ev.uniqueName, time.Now().UTC())
-	if err != nil {
-		r.releaseLocksForInstanceLocked(ev.uniqueName)
-		r.mu.Unlock()
-		return EventOutcome{}, err
-	}
-	if !grant.Allowed {
-		r.releaseLocksForInstanceLocked(ev.uniqueName)
-		ev.reason = QueueReasonBudgetExhausted
-		ev.nextRetry = grant.NextTokenRetry
-		tr.queue = append(tr.queue, ev)
-		_ = WriteQueueItem(r.mgr.daemonRoot, queueItemFromEvent(inst.Name, ev, QueueStatePending))
-		r.mu.Unlock()
-		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: ev.uniqueName, Reason: QueueReasonBudgetExhausted}, nil
-	}
-	tr.running++
 	r.mu.Unlock()
 
 	meta, err := r.spawn(inst, ev.uniqueName, ev.eventType, ev.payload)
