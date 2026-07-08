@@ -65,6 +65,7 @@ func TestInit_DefaultTemplate(t *testing.T) {
 
 	expected := []string{
 		".agent_team/config.toml",
+		".agent_team/gates.toml",
 		".agent_team/.template.lock",
 		".agent_team/agents/manager/agent.md",
 		".agent_team/agents/manager/config.toml",
@@ -134,6 +135,23 @@ func TestInit_DefaultTemplate(t *testing.T) {
 	}
 	if !strings.Contains(body, `provider = "linear"`) {
 		t.Errorf("config.toml should set pm.provider when linear.* is set: %s", body)
+	}
+	gates, err := os.ReadFile(filepath.Join(tmp, ".agent_team", "gates.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gatesBody := string(gates)
+	for _, want := range []string{
+		`[tiers.smoke]`,
+		`[tiers.acceptance]`,
+		`[tiers.release]`,
+		`[claims.release]`,
+		`missing_evidence = "fail"`,
+		`id = "local-only-dependency-audit"`,
+	} {
+		if !strings.Contains(gatesBody, want) {
+			t.Errorf("gates.toml missing %q:\n%s", want, gatesBody)
+		}
 	}
 	for _, rel := range []string{
 		".agent_team/agents/ticket-manager",
