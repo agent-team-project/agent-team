@@ -796,6 +796,9 @@ func (r *EventResolver) runtimeAuthorityForInstance(agentName, instance string, 
 	if allow, ok := r.charterAuthorityForPayload(instance, payload); ok {
 		return allow, true, true
 	}
+	if r.payloadRequiresCharterAuthority(instance, payload) {
+		return nil, true, true
+	}
 	return r.authorityForInstance(agentName, instance)
 }
 
@@ -821,6 +824,33 @@ func (r *EventResolver) charterAuthorityForPayload(instance string, payload map[
 		return nil, false
 	}
 	return grantedVerbsFromAuthority(charter.Authority), true
+}
+
+func (r *EventResolver) payloadRequiresCharterAuthority(instance string, payload map[string]any) bool {
+	if payloadReferencesTeamCharter(payload) {
+		return true
+	}
+	if r == nil || r.mgr == nil || strings.TrimSpace(instance) == "" {
+		return false
+	}
+	if _, err := ReadTeamCharterByInstance(r.mgr.daemonRoot, instance); err == nil {
+		return true
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	return false
+}
+
+func payloadReferencesTeamCharter(payload map[string]any) bool {
+	if payload == nil {
+		return false
+	}
+	if payloadString(payload, "charter_uri") != "" ||
+		payloadString(payload, "capability_uri") != "" ||
+		payloadString(payload, "child_deployment_uri") != "" {
+		return true
+	}
+	return payloadString(payload, "relationship") == childDeploymentRelationshipEphemeralTeam
 }
 
 func charterIDFromURI(uri string) string {

@@ -97,9 +97,15 @@ match.target = "worker"
 		},
 		Lifecycle: TeamSpawnLifecycle{TTL: "2h", Reap: "on_goal_complete"},
 		Payload: map[string]any{
-			"job_id":  "gh155-dynteam",
-			"ticket":  "GH155-dynteams-impl",
-			"kickoff": "run the child team",
+			"job_id":                "gh155-dynteam",
+			"ticket":                "GH155-dynteams-impl",
+			"kickoff":               "run the child team",
+			"deployment_uri":        "agt://spoofed-dep/project/spoofed-dep",
+			"deployment_parent_uri": "agt://spoofed-parent/project/spoofed-parent",
+			"charter_uri":           "agt://spoofed-dep/charter/spoofed-charter",
+			"child_deployment_uri":  "agt://spoofed-dep/project/spoofed-dep",
+			"capability_uri":        "agt://spoofed-dep/capability/spoofed-capability",
+			"relationship":          "spoofed",
 		},
 		Origin: origin.Envelope{
 			Project:  "parent-dep",
@@ -284,6 +290,24 @@ match.target = "worker"
 	assertCharteredChildShimDenies(t, teamDir, charter.Instance, "job.merge")
 	assertCharteredChildShimDenies(t, teamDir, charter.Instance, "inbox.send")
 	assertCharteredChildShimDenies(t, teamDir, charter.Instance, "channel.delete")
+	if declaredAllow, enforce, strict := resolver.authorityForInstance("worker", charter.Instance); !enforce || strict || !containsString(declaredAllow, "job.*") {
+		t.Fatalf("declared worker authority = allow=%#v enforce=%v strict=%v", declaredAllow, enforce, strict)
+	}
+	if allow, enforce, strict := resolver.runtimeAuthorityForInstance("worker", charter.Instance, map[string]any{
+		"charter_uri":    charter.URI,
+		"capability_uri": "agt://spoofed-dep/capability/spoofed-capability",
+		"deployment_uri": charter.ChildDeploymentURI,
+	}); !enforce || !strict || len(allow) != 0 {
+		t.Fatalf("spoofed charter authority = allow=%#v enforce=%v strict=%v, want strict empty", allow, enforce, strict)
+	}
+	if allow, enforce, strict := resolver.runtimeAuthorityForInstance("worker", charter.Instance, map[string]any{
+		"charter_uri": "not-a-charter-uri",
+	}); !enforce || !strict || len(allow) != 0 {
+		t.Fatalf("corrupt charter authority = allow=%#v enforce=%v strict=%v, want strict empty", allow, enforce, strict)
+	}
+	if allow, enforce, strict := resolver.runtimeAuthorityForInstance("worker", charter.Instance, map[string]any{}); !enforce || !strict || len(allow) != 0 {
+		t.Fatalf("missing charter authority = allow=%#v enforce=%v strict=%v, want strict empty", allow, enforce, strict)
+	}
 
 	if err := m.WaitForReaper(charter.Instance, 5*time.Second); err != nil {
 		t.Fatalf("wait reaper: %v", err)
@@ -331,6 +355,22 @@ match.target = "worker"
 	}
 	if active.ID != second.Charter.ID {
 		t.Fatalf("active charter = %s, want fresh %s", active.ID, second.Charter.ID)
+	}
+	read, err = ResolveResourceRead(teamDir, m, nil, resolver, second.Charter.ChildDeploymentURI)
+	if err != nil {
+		t.Fatalf("read second child deployment resource: %v", err)
+	}
+	child, ok = read.Data.(*projectResource)
+	if !ok || child.CharterURI != second.Charter.URI || child.State != TeamCharterStateRunning {
+		t.Fatalf("second child deployment resource = %#v, want fresh charter %s", read.Data, second.Charter.URI)
+	}
+	read, err = ResolveResourceRead(teamDir, m, nil, resolver, second.Charter.Authority.CapabilityURI)
+	if err != nil {
+		t.Fatalf("read second capability resource: %v", err)
+	}
+	capability, ok = read.Data.(*capabilityResource)
+	if !ok || capability.CharterURI != second.Charter.URI {
+		t.Fatalf("second capability resource = %#v, want fresh charter %s", read.Data, second.Charter.URI)
 	}
 }
 

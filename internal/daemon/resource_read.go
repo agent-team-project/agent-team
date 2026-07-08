@@ -289,14 +289,11 @@ func resolveChildDeploymentRead(daemonRoot, canonical string, parsed resource.Pa
 	if err != nil {
 		return nil, true, err
 	}
-	var charter *TeamCharter
-	for _, item := range charters {
-		if item != nil && item.ChildDeploymentID == parsed.DeploymentID {
-			charter = item
-			break
-		}
-	}
+	charter := childDeploymentReadCharter(charters, canonical, parsed)
 	if charter == nil {
+		if childDeploymentReadKnown(charters, parsed.DeploymentID) {
+			return nil, true, ErrResourceNotFound
+		}
 		return nil, false, nil
 	}
 	switch parsed.Kind {
@@ -328,6 +325,44 @@ func resolveChildDeploymentRead(daemonRoot, canonical string, parsed resource.Pa
 	default:
 		return nil, true, fmt.Errorf("%w: %s", ErrResourceUnsupported, parsed.Kind)
 	}
+}
+
+func childDeploymentReadCharter(charters []*TeamCharter, canonical string, parsed resource.Parsed) *TeamCharter {
+	if parsed.Kind == resource.KindCapability {
+		for i := len(charters) - 1; i >= 0; i-- {
+			charter := charters[i]
+			if charter != nil &&
+				charter.ChildDeploymentID == parsed.DeploymentID &&
+				charter.Authority.CapabilityURI == canonical {
+				return charter
+			}
+		}
+		return nil
+	}
+	for i := len(charters) - 1; i >= 0; i-- {
+		charter := charters[i]
+		if charter != nil &&
+			charter.ChildDeploymentID == parsed.DeploymentID &&
+			!teamCharterTerminal(charter.State) {
+			return charter
+		}
+	}
+	for i := len(charters) - 1; i >= 0; i-- {
+		charter := charters[i]
+		if charter != nil && charter.ChildDeploymentID == parsed.DeploymentID {
+			return charter
+		}
+	}
+	return nil
+}
+
+func childDeploymentReadKnown(charters []*TeamCharter, deploymentID string) bool {
+	for _, charter := range charters {
+		if charter != nil && charter.ChildDeploymentID == deploymentID {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveAllocationResource(teamDir, id string) (*budget.AllocationRecord, error) {

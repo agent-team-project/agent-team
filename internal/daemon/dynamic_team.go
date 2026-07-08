@@ -209,12 +209,12 @@ func (r *EventResolver) SpawnTeam(req TeamSpawnRequest) (*TeamSpawnResult, error
 	payload := copyPayload(req.Payload)
 	payload["target"] = target
 	payload["name"] = instanceName
-	payloadSetStringIfEmpty(payload, "deployment_uri", charter.ChildDeploymentURI)
-	payloadSetStringIfEmpty(payload, "deployment_parent_uri", charter.ParentDeploymentURI)
-	payloadSetStringIfEmpty(payload, "charter_uri", charter.URI)
-	payloadSetStringIfEmpty(payload, "child_deployment_uri", charter.ChildDeploymentURI)
-	payloadSetStringIfEmpty(payload, "capability_uri", charter.Authority.CapabilityURI)
-	payloadSetStringIfEmpty(payload, "relationship", charter.Relationship)
+	payload["deployment_uri"] = charter.ChildDeploymentURI
+	payload["deployment_parent_uri"] = charter.ParentDeploymentURI
+	payload["charter_uri"] = charter.URI
+	payload["child_deployment_uri"] = charter.ChildDeploymentURI
+	payload["capability_uri"] = charter.Authority.CapabilityURI
+	payload["relationship"] = charter.Relationship
 	if req.Budget.Tokens > 0 {
 		payload["budget_tokens"] = req.Budget.Tokens
 	}
