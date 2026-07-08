@@ -457,7 +457,7 @@ function absorbCharter(row, source) {
     return;
   }
   row.charterURI ||= field(source, "charter_uri", "CharterURI");
-  row.charterStatus ||= field(source, "charter_status", "CharterStatus", "charter_state", "CharterState");
+  row.charterStatus ||= field(source, "state", "State", "charter_status", "CharterStatus", "charter_state", "CharterState");
   row.relationship ||= field(source, "relationship", "Relationship");
 }
 
