@@ -41,7 +41,7 @@ func (r *EventResolver) onReap(spawned string) {
 	var next *queuedEvent
 	r.mu.Lock()
 	tr = r.tracking[declared.Name]
-	if tr != nil && len(tr.queue) > 0 {
+	if tr != nil && tr.running < declared.Replicas && len(tr.queue) > 0 {
 		next = r.popReadyQueuedEventLocked(declared, tr, time.Now().UTC(), nil)
 	}
 	r.mu.Unlock()

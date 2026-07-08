@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -205,5 +207,82 @@ match.target = "worker"
 	if fake.callCount() > 1 {
 		_, _ = m.Stop("worker-gh202-retry")
 		_ = m.WaitForReaper("worker-gh202-retry", 5*time.Second)
+	}
+}
+
+func TestEventReapConcurrentDispatchDoesNotExceedReplicas(t *testing.T) {
+	for i := 0; i < 32; i++ {
+		root := t.TempDir()
+		fake := newFakeSpawner(30 * time.Second)
+		m := NewInstanceManager(root, fake.spawn)
+		top := mustParseCustomTopo(t, `
+	[instances.worker]
+	agent = "worker"
+	ephemeral = true
+	replicas = 1
+
+	[[instances.worker.triggers]]
+	event = "agent.dispatch"
+	match.target = "worker"
+	`)
+		resolver := NewEventResolver(m, fixtureTeamDir(t), top)
+		queuedName := fmt.Sprintf("worker-gh202-reap-queued-%d", i)
+		freshName := fmt.Sprintf("worker-gh202-reap-fresh-%d", i)
+		queued := &queuedEvent{
+			id:         fmt.Sprintf("queued-gh202-reap-%d", i),
+			eventType:  topology.EventAgentDispatch,
+			payload:    map[string]any{"target": "worker", "name": queuedName},
+			queuedAt:   time.Now().UTC(),
+			uniqueName: queuedName,
+			reason:     QueueReasonReplicaCapacity,
+		}
+		if err := WriteQueueItem(root, queueItemFromEvent("worker", queued, QueueStatePending)); err != nil {
+			t.Fatalf("WriteQueueItem: %v", err)
+		}
+		resolver.mu.Lock()
+		resolver.tracking["worker"] = &ephTracker{
+			running: 1,
+			queue:   []*queuedEvent{queued},
+		}
+		resolver.mu.Unlock()
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		var dispatchErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			resolver.onReap("worker-gh202-reap-running")
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, dispatchErr = resolver.EventWithResult(topology.EventAgentDispatch, map[string]any{
+				"target": "worker",
+				"name":   freshName,
+			})
+		}()
+		close(start)
+		wg.Wait()
+		if dispatchErr != nil {
+			t.Fatalf("EventWithResult: %v", dispatchErr)
+		}
+
+		running, queuedDepth := resolver.QueueDepth("worker")
+		if running > 1 {
+			t.Fatalf("iteration %d: running=%d queued=%d, want running <= replicas", i, running, queuedDepth)
+		}
+		if calls := fake.callCount(); calls > 1 {
+			t.Fatalf("iteration %d: spawn calls=%d, concurrent reap+dispatch exceeded replicas", i, calls)
+		}
+
+		for pass := 0; pass < 2; pass++ {
+			for _, name := range []string{freshName, queuedName} {
+				if _, err := m.Stop(name); err == nil {
+					_ = m.WaitForReaper(name, time.Second)
+				}
+			}
+		}
 	}
 }
