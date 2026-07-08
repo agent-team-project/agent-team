@@ -120,3 +120,90 @@ match.target = "worker"
 		t.Fatalf("events = %+v", events)
 	}
 }
+
+func TestRetryQueueItemRespectsConcurrencyCeiling(t *testing.T) {
+	root := t.TempDir()
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	top := mustParseCustomTopo(t, `
+[concurrency]
+enabled = true
+max_ceiling = 1
+initial_ceiling = 1
+target_load_per_core = 100
+load_per_dispatch = 1
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+replicas = 10
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+`)
+	resolver := NewEventResolver(m, fixtureTeamDir(t), top)
+	resolver.concurrency.sampler = func() (machineLoadSample, error) {
+		return machineLoadSample{Load1: 0, Cores: 4}, nil
+	}
+
+	first, err := resolver.EventWithResult(topology.EventAgentDispatch, map[string]any{
+		"target": "worker",
+		"name":   "worker-gh202-running",
+	})
+	if err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	if len(first.Outcomes) != 1 || first.Outcomes[0].Action != "dispatched" {
+		t.Fatalf("first outcomes = %+v, want dispatched", first.Outcomes)
+	}
+	second, err := resolver.EventWithResult(topology.EventAgentDispatch, map[string]any{
+		"target": "worker",
+		"name":   "worker-gh202-retry",
+	})
+	if err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+	if len(second.Outcomes) != 1 || second.Outcomes[0].Action != "queued" || second.Outcomes[0].Reason != QueueReasonConcurrencyCeiling {
+		t.Fatalf("second outcomes = %+v, want concurrency queued", second.Outcomes)
+	}
+	if fake.callCount() != 1 {
+		t.Fatalf("spawn calls=%d, want only the running instance", fake.callCount())
+	}
+	items, err := ListQueueItems(root)
+	if err != nil {
+		t.Fatalf("ListQueueItems: %v", err)
+	}
+	if len(items) != 1 || items[0].Reason != QueueReasonConcurrencyCeiling || items[0].InstanceID != "worker-gh202-retry" {
+		t.Fatalf("queue items = %+v, want one concurrency-held retry candidate", items)
+	}
+
+	outcome, err := resolver.RetryQueueItem(items[0].ID)
+	if err != nil {
+		t.Fatalf("RetryQueueItem: %v", err)
+	}
+	if outcome.Action != "queued" || outcome.InstanceID != "worker-gh202-retry" || outcome.Reason != QueueReasonConcurrencyCeiling {
+		t.Fatalf("retry outcome = %+v, want still queued by concurrency ceiling", outcome)
+	}
+	if fake.callCount() != 1 {
+		t.Fatalf("spawn calls=%d, retry should not exceed ceiling", fake.callCount())
+	}
+	running, queued := resolver.QueueDepth("worker")
+	if running != 1 || queued != 1 {
+		t.Fatalf("queue depth = running:%d queued:%d, want 1/1", running, queued)
+	}
+	retried, err := ReadQueueItem(root, items[0].ID)
+	if err != nil {
+		t.Fatalf("ReadQueueItem: %v", err)
+	}
+	if retried.Reason != QueueReasonConcurrencyCeiling || !strings.Contains(retried.LastError, "concurrency ceiling 1 reached") {
+		t.Fatalf("retried queue item = %+v, want concurrency-held pending item", retried)
+	}
+
+	_, _ = m.Stop("worker-gh202-running")
+	_ = m.WaitForReaper("worker-gh202-running", 5*time.Second)
+	if fake.callCount() > 1 {
+		_, _ = m.Stop("worker-gh202-retry")
+		_ = m.WaitForReaper("worker-gh202-retry", 5*time.Second)
+	}
+}

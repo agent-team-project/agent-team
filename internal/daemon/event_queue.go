@@ -804,53 +804,13 @@ func (r *EventResolver) RetryQueueItem(id string) (EventOutcome, error) {
 		r.mu.Unlock()
 		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: ev.uniqueName, Reason: ev.reason}, nil
 	}
-	admission, err := r.budgetAdmissionLocked(ev.origin.Team, ev.payload, time.Now().UTC())
-	if err != nil {
+	queued := ev
+	tr.queue = append(tr.queue, ev)
+	ev = r.popReadyQueuedEventLocked(inst, tr, time.Now().UTC(), map[string]bool{id: true})
+	if ev == nil {
 		r.mu.Unlock()
-		return EventOutcome{}, err
+		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: item.InstanceID, Reason: queued.reason}, nil
 	}
-	if !admission.Allowed {
-		ev.reason = QueueReasonBudgetExhausted
-		ev.nextRetry = admission.NextTokenRetry
-		tr.queue = append(tr.queue, ev)
-		_ = WriteQueueItem(r.mgr.daemonRoot, queueItemFromEvent(inst.Name, ev, QueueStatePending))
-		r.mu.Unlock()
-		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: ev.uniqueName, Reason: QueueReasonBudgetExhausted}, nil
-	}
-	if ev.reason == QueueReasonBudgetExhausted {
-		ev.nextRetry = time.Time{}
-	}
-	if len(ev.locks) == 0 {
-		ev.locks = r.dispatchLocksLocked(inst, ev.payload)
-	}
-	acquired, err := r.acquireLocksLocked(ev.locks, ev.uniqueName, ev.origin, time.Now().UTC())
-	if err != nil {
-		r.mu.Unlock()
-		return EventOutcome{}, err
-	}
-	if !acquired {
-		ev.reason = QueueReasonLockHeld
-		tr.queue = append(tr.queue, ev)
-		_ = WriteQueueItem(r.mgr.daemonRoot, queueItemFromEvent(inst.Name, ev, QueueStatePending))
-		r.mu.Unlock()
-		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: ev.uniqueName, Reason: QueueReasonLockHeld}, nil
-	}
-	grant, err := r.grantPayloadBudgetLocked(ev.payload, ev.origin, ev.uniqueName, time.Now().UTC())
-	if err != nil {
-		r.releaseLocksForInstanceLocked(ev.uniqueName)
-		r.mu.Unlock()
-		return EventOutcome{}, err
-	}
-	if !grant.Allowed {
-		r.releaseLocksForInstanceLocked(ev.uniqueName)
-		ev.reason = QueueReasonBudgetExhausted
-		ev.nextRetry = grant.NextTokenRetry
-		tr.queue = append(tr.queue, ev)
-		_ = WriteQueueItem(r.mgr.daemonRoot, queueItemFromEvent(inst.Name, ev, QueueStatePending))
-		r.mu.Unlock()
-		return EventOutcome{Instance: inst.Name, Action: "queued", InstanceID: ev.uniqueName, Reason: QueueReasonBudgetExhausted}, nil
-	}
-	tr.running++
 	r.mu.Unlock()
 
 	meta, err := r.spawn(inst, ev.uniqueName, ev.eventType, ev.payload)
