@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/agent-team-project/agent-team/internal/daemon"
+	"github.com/agent-team-project/agent-team/internal/feedback"
 	"github.com/agent-team-project/agent-team/internal/intake"
 	"github.com/agent-team-project/agent-team/internal/job"
 	"github.com/agent-team-project/agent-team/internal/jobwrite"
@@ -40,6 +41,7 @@ func newIntakeCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newIntakeLinearCmd())
 	cmd.AddCommand(newIntakeGitHubCmd())
+	cmd.AddCommand(newIntakeCommunityCmd())
 	cmd.AddCommand(newIntakeScheduleCmd())
 	cmd.AddCommand(newIntakeServiceCmd())
 	cmd.AddCommand(newIntakeServeCmd())
@@ -60,6 +62,209 @@ func newIntakeLinearCmd() *cobra.Command {
 
 func newIntakeGitHubCmd() *cobra.Command {
 	return newWebhookIntakeCmd("github", intake.NormalizeGitHub)
+}
+
+func newIntakeCommunityCmd() *cobra.Command {
+	var (
+		target         string
+		githubOwner    string
+		githubRepo     string
+		kind           string
+		limit          int
+		submitFeedback bool
+		includeSpam    bool
+		sourceLabels   []string
+		dryRun         bool
+		jsonOut        bool
+	)
+	cwd, _ := os.Getwd()
+	cmd := &cobra.Command{
+		Use:   "community",
+		Short: "Classify open public GitHub issues and PRs without dispatching work.",
+		Long: "Classify open public GitHub issues and PRs as untrusted community intake. " +
+			"By default this command previews fixed-schema summaries only. Use --submit-feedback " +
+			"to write vetted summaries to the local feedback store, or --source-label to apply explicit labels to source issues.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if limit < 1 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake community: --limit must be >= 1.")
+				return exitErr(2)
+			}
+			if limit > 100 {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team intake community: --limit must be <= 100.")
+				return exitErr(2)
+			}
+			includeIssues, includePRs, err := parseCommunityKind(kind)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake community: %v\n", err)
+				return exitErr(2)
+			}
+			teamDir, err := resolveTeamDir(cmd, target)
+			if err != nil {
+				return err
+			}
+			client := pmprovider.DefaultGitHubClient()
+			items, err := client.ListOpenCommunityItems(cmd.Context(), teamDir, pmprovider.GitHubCommunityListOptions{
+				Owner:               githubOwner,
+				Repo:                githubRepo,
+				Limit:               limit,
+				IncludeIssues:       includeIssues,
+				IncludePullRequests: includePRs,
+			})
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake community: %v\n", err)
+				return exitErr(1)
+			}
+			result := communityIntakeResult{
+				DryRun:       dryRun || (!submitFeedback && len(sourceLabels) == 0),
+				SubmittedIDs: []string{},
+				Labeled:      []string{},
+			}
+			for _, item := range items {
+				classification := intake.ClassifyCommunityItem(item, intake.CommunityOptions{})
+				result.Items = append(result.Items, classification)
+				if dryRun {
+					continue
+				}
+				if submitFeedback && (classification.Vetted || includeSpam) {
+					feedbackItem, err := feedback.Submit(teamDir, feedback.SubmitInput{
+						Body:     intake.CommunityFeedbackBody(classification),
+						Category: communityFeedbackCategory(classification.Classification),
+						Context:  feedback.CaptureContext(teamDir, BuildInfo()),
+						Origin:   feedback.CaptureOrigin(teamDir, BuildInfo()),
+					})
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake community: submit feedback for #%d: %v\n", classification.Number, err)
+						return exitErr(1)
+					}
+					result.SubmittedIDs = append(result.SubmittedIDs, feedbackItem.ID)
+				}
+				if len(sourceLabels) > 0 && classification.Vetted {
+					labels := renderCommunitySourceLabels(sourceLabels, classification)
+					if len(labels) == 0 {
+						continue
+					}
+					if err := client.AddCommunityItemLabels(cmd.Context(), teamDir, githubOwner, githubRepo, classification.Number, labels); err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "agent-team intake community: label source #%d: %v\n", classification.Number, err)
+						return exitErr(1)
+					}
+					result.Labeled = append(result.Labeled, fmt.Sprintf("#%d:%s", classification.Number, strings.Join(labels, ",")))
+				}
+			}
+			if jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			}
+			return renderCommunityIntakeResult(cmd.OutOrStdout(), result)
+		},
+	}
+	cmd.Flags().StringVar(&target, "target", cwd, legacyRepoTargetFlagHelp)
+	cmd.Flags().StringVar(&githubOwner, "github-owner", "", "GitHub owner or organization to read. Defaults to [github].owner.")
+	cmd.Flags().StringVar(&githubRepo, "github-repo", "", "GitHub repository name to read. Defaults to [github].repo.")
+	cmd.Flags().StringVar(&kind, "kind", "all", "Community items to read: all, issues, or prs.")
+	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum number of open GitHub issues/PRs to classify, up to 100.")
+	cmd.Flags().BoolVar(&submitFeedback, "submit-feedback", false, "Write non-spam fixed-schema summaries to the local feedback store.")
+	cmd.Flags().BoolVar(&includeSpam, "include-spam", false, "With --submit-feedback, also write spam-classified summaries.")
+	cmd.Flags().StringSliceVar(&sourceLabels, "source-label", nil, "Explicit GitHub label to apply to vetted source issues/PRs. Supports {classification} and {kind}; can repeat.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview classifications without writing feedback or source labels.")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit community classifications as JSON.")
+	return cmd
+}
+
+type communityIntakeResult struct {
+	Items        []intake.CommunityClassification `json:"items"`
+	SubmittedIDs []string                         `json:"submitted_ids,omitempty"`
+	Labeled      []string                         `json:"labeled,omitempty"`
+	DryRun       bool                             `json:"dry_run"`
+}
+
+func parseCommunityKind(raw string) (includeIssues, includePRs bool, err error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "all":
+		return true, true, nil
+	case "issue", "issues":
+		return true, false, nil
+	case "pr", "prs", "pull", "pulls", "pull-request", "pull-requests":
+		return false, true, nil
+	default:
+		return false, false, fmt.Errorf("--kind must be all, issues, or prs")
+	}
+}
+
+func communityFeedbackCategory(classification string) feedback.Category {
+	switch classification {
+	case intake.CommunityClassBug:
+		return feedback.CategoryBug
+	case intake.CommunityClassFeature:
+		return feedback.CategoryIdea
+	case intake.CommunityClassNeedsInfo:
+		return feedback.CategoryFriction
+	default:
+		return feedback.CategoryFriction
+	}
+}
+
+func renderCommunitySourceLabels(raw []string, c intake.CommunityClassification) []string {
+	labels := make([]string, 0, len(raw))
+	for _, label := range raw {
+		label = strings.ReplaceAll(label, "{classification}", c.Classification)
+		label = strings.ReplaceAll(label, "{kind}", strings.ReplaceAll(c.Kind, "_", "-"))
+		if label = strings.TrimSpace(label); label != "" {
+			labels = append(labels, label)
+		}
+	}
+	return uniqueStrings(labels)
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func renderCommunityIntakeResult(w io.Writer, result communityIntakeResult) error {
+	if len(result.Items) == 0 {
+		_, err := fmt.Fprintln(w, "(no community items)")
+		return err
+	}
+	fmt.Fprintf(w, "Community items: %d\n", len(result.Items))
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SOURCE\tKIND\tCLASS\tVETTED\tLABELS\tTITLE")
+	for _, item := range result.Items {
+		fmt.Fprintf(tw, "%s#%d\t%s\t%s\t%t\t%s\t%s\n",
+			item.Repository,
+			item.Number,
+			item.Kind,
+			item.Classification,
+			item.Vetted,
+			strings.Join(item.SuggestedLabels, ","),
+			item.Title,
+		)
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if len(result.SubmittedIDs) > 0 {
+		fmt.Fprintf(w, "Submitted feedback: %s\n", strings.Join(result.SubmittedIDs, ", "))
+	}
+	if len(result.Labeled) > 0 {
+		fmt.Fprintf(w, "Labeled sources: %s\n", strings.Join(result.Labeled, ", "))
+	}
+	if result.DryRun {
+		fmt.Fprintln(w, "Dry run: no feedback or source labels were written")
+	}
+	return nil
 }
 
 func newWebhookIntakeCmd(provider string, normalize func([]byte) (*intake.Event, error)) *cobra.Command {

@@ -36,11 +36,40 @@ type GitHubClient struct {
 	HTTPClient      *http.Client
 }
 
+type GitHubCommunityListOptions struct {
+	Owner               string
+	Repo                string
+	Limit               int
+	IncludeIssues       bool
+	IncludePullRequests bool
+}
+
 type githubIssueRef struct {
 	Owner  string
 	Repo   string
 	Number int
 	URL    string
+}
+
+type githubCommunityIssueRecord struct {
+	Number      int        `json:"number"`
+	HTMLURL     string     `json:"html_url"`
+	Title       string     `json:"title"`
+	Body        string     `json:"body"`
+	State       string     `json:"state"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	User        githubUser `json:"user"`
+	PullRequest *struct {
+		HTMLURL string `json:"html_url"`
+	} `json:"pull_request,omitempty"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+}
+
+type githubUser struct {
+	Login string `json:"login"`
 }
 
 func DefaultGitHubClient() *GitHubClient {
@@ -198,6 +227,139 @@ func (c *GitHubClient) WriteBack(ctx context.Context, teamDir string, req Reques
 	}
 	result.Message = githubSuccessMessage(result)
 	return finish(result)
+}
+
+func (c *GitHubClient) ListOpenCommunityItems(ctx context.Context, teamDir string, opts GitHubCommunityListOptions) ([]intake.CommunityItem, error) {
+	owner, repo, err := configuredGitHubRepository(teamDir, opts.Owner, opts.Repo)
+	if err != nil {
+		return nil, err
+	}
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if !opts.IncludeIssues && !opts.IncludePullRequests {
+		opts.IncludeIssues = true
+		opts.IncludePullRequests = true
+	}
+	token, err := c.resolveToken(teamDir)
+	if errors.Is(err, errNoGitHubToken) {
+		token = ""
+	} else if err != nil {
+		return nil, err
+	}
+	ctx, cancel := contextWithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out := make([]intake.CommunityItem, 0, limit)
+	perPage := limit
+	if perPage > 100 {
+		perPage = 100
+	}
+	page := 1
+	for {
+		apiPath := fmt.Sprintf("repos/%s/%s/issues?state=open&sort=created&direction=desc&per_page=%d&page=%d", url.PathEscape(owner), url.PathEscape(repo), perPage, page)
+		var records []githubCommunityIssueRecord
+		if err := c.rest(ctx, token, http.MethodGet, apiPath, nil, &records); err != nil {
+			return nil, err
+		}
+		if len(records) == 0 {
+			break
+		}
+		for _, record := range records {
+			kind := intake.CommunityKindIssue
+			if record.PullRequest != nil {
+				kind = intake.CommunityKindPullRequest
+			}
+			if kind == intake.CommunityKindIssue && !opts.IncludeIssues {
+				continue
+			}
+			if kind == intake.CommunityKindPullRequest && !opts.IncludePullRequests {
+				continue
+			}
+			out = append(out, githubCommunityItem(owner, repo, kind, record))
+			if len(out) >= limit {
+				break
+			}
+		}
+		if len(out) >= limit || len(records) < perPage {
+			break
+		}
+		page++
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (c *GitHubClient) AddCommunityItemLabels(ctx context.Context, teamDir, owner, repo string, number int, labels []string) error {
+	owner, repo, err := configuredGitHubRepository(teamDir, owner, repo)
+	if err != nil {
+		return err
+	}
+	if number <= 0 {
+		return errors.New("GitHub issue number is required")
+	}
+	token, err := c.resolveToken(teamDir)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := contextWithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return c.addIssueLabels(ctx, token, githubIssueRef{Owner: owner, Repo: repo, Number: number}, labels)
+}
+
+func configuredGitHubRepository(teamDir, owner, repo string) (string, string, error) {
+	owner = strings.TrimSpace(owner)
+	repo = strings.TrimSpace(repo)
+	if owner != "" && repo != "" {
+		return owner, repo, nil
+	}
+	cfg, err := decodeProviderConfig(teamDir)
+	if err == nil {
+		if owner == "" {
+			owner = strings.TrimSpace(cfg.GitHub.Owner)
+		}
+		if repo == "" {
+			repo = strings.TrimSpace(cfg.GitHub.Repo)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", "", err
+	}
+	if owner == "" || repo == "" {
+		return "", "", errors.New("GitHub repository is required; set [github].owner/[github].repo or pass --github-owner and --github-repo")
+	}
+	return owner, repo, nil
+}
+
+func githubCommunityItem(owner, repo, kind string, record githubCommunityIssueRecord) intake.CommunityItem {
+	labels := make([]string, 0, len(record.Labels))
+	for _, label := range record.Labels {
+		if name := strings.TrimSpace(label.Name); name != "" {
+			labels = append(labels, name)
+		}
+	}
+	url := strings.TrimSpace(record.HTMLURL)
+	if url == "" && kind == intake.CommunityKindPullRequest && record.PullRequest != nil {
+		url = strings.TrimSpace(record.PullRequest.HTMLURL)
+	}
+	return intake.CommunityItem{
+		Provider:   "github",
+		Repository: owner + "/" + repo,
+		Kind:       kind,
+		Number:     record.Number,
+		URL:        url,
+		Title:      record.Title,
+		Body:       record.Body,
+		Author:     record.User.Login,
+		State:      record.State,
+		Labels:     labels,
+		CreatedAt:  record.CreatedAt,
+		UpdatedAt:  record.UpdatedAt,
+	}
 }
 
 func loadGitHubConfig(teamDir string) (config, string, error) {
@@ -515,7 +677,9 @@ func (c *GitHubClient) rest(ctx context.Context, token, method, apiPath string, 
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	if token = strings.TrimSpace(token); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	if payload != nil {

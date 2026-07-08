@@ -245,6 +245,7 @@ exclude = [
   "agents/auditor",
   "agents/comms",
   "agents/ticket-manager",
+  "skills/community-intake",
   "skills/comms",
   "skills/docs-freshness",
   "skills/product-verify",

@@ -2075,6 +2075,7 @@ Inherited Flags:
 
 Subcommands:
 
+- `agent-team intake community` - Classify open public GitHub issues and PRs without dispatching work.
 - `agent-team intake deliveries` - List recent intake server deliveries.
 - `agent-team intake doctor` - Validate the recorded intake delivery ledger.
 - `agent-team intake duplicates` - List duplicate provider request ids in the delivery ledger.
@@ -2086,6 +2087,37 @@ Subcommands:
 - `agent-team intake serve` - Run a local HTTP listener for external webhook intake.
 - `agent-team intake service` - Print service or deployment config for intake serve.
 - `agent-team intake summary` - Summarize recorded intake deliveries.
+
+## `agent-team intake community`
+
+Classify open public GitHub issues and PRs without dispatching work.
+
+Classify open public GitHub issues and PRs as untrusted community intake. By default this command previews fixed-schema summaries only. Use --submit-feedback to write vetted summaries to the local feedback store, or --source-label to apply explicit labels to source issues.
+
+```text
+agent-team intake community [flags]
+```
+
+Flags:
+
+```text
+      --dry-run                Preview classifications without writing feedback or source labels.
+      --github-owner string    GitHub owner or organization to read. Defaults to [github].owner.
+      --github-repo string     GitHub repository name to read. Defaults to [github].repo.
+      --include-spam           With --submit-feedback, also write spam-classified summaries.
+      --json                   Emit community classifications as JSON.
+      --kind string            Community items to read: all, issues, or prs. (default "all")
+      --limit int              Maximum number of open GitHub issues/PRs to classify, up to 100. (default 20)
+      --source-label strings   Explicit GitHub label to apply to vetted source issues/PRs. Supports {classification} and {kind}; can repeat.
+      --submit-feedback        Write non-spam fixed-schema summaries to the local feedback store.
+      --target string          Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
 
 ## `agent-team intake deliveries`
 

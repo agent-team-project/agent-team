@@ -369,6 +369,7 @@ Run `agent-team shortcuts` for the live top-level alias list, or `agent-team sho
 | `agent-team schedule run <name>` | Publish one schedule event; add `--commands` to dry-run previews and `--wait-next-state`/`--wait-step` for schedule-created pipeline jobs |
 | `agent-team intake linear` | Normalize Linear payload; add `--commands` to dry-run previews to print the apply command only |
 | `agent-team intake github` | Normalize GitHub payload, reconcile jobs, advance PR-gated work with `--wait-next-state`/`--wait-step`, optionally verify PR cleanup, and add `--commands` to dry-run previews to print the apply command only |
+| `agent-team intake community` | Classify open public GitHub issues/PRs as untrusted community intake, optionally submitting vetted summaries to feedback or applying explicit source labels without dispatching jobs |
 | `agent-team intake schedule` | Normalize schedule payload; add `--commands` to dry-run previews and `--wait-next-state`/`--wait-step` for schedule-created pipeline jobs |
 | `agent-team intake serve` | Run local intake server with optional GitHub job reconciliation; add `--dry-run --commands` to print the production serve command without binding a port |
 | `agent-team intake service systemd|launchd|compose|kubernetes` | Print a systemd unit, launchd plist, compose service, or Kubernetes manifests for `intake serve` |

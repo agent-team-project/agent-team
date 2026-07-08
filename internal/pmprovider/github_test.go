@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +100,173 @@ func TestGitHubWriteBackBounceComments(t *testing.T) {
 	if !githubRequestSeen(*requests, http.MethodPost, "/repos/acme/widgets/issues/42/comments", "missing project status test") {
 		t.Fatalf("requests = %+v, missing bounce comment", *requests)
 	}
+}
+
+func TestGitHubListOpenCommunityItemsAllowsTokenlessPublicRead(t *testing.T) {
+	t.Setenv("AGENT_TEAM_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("PATH", t.TempDir())
+	teamDir := testGitHubTeamDir(t, ``)
+	var gotAuth string
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		if r.URL.Query().Get("state") != "open" {
+			t.Fatalf("query = %s, want state=open", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"number":42,"html_url":"https://github.com/acme/widgets/issues/42","title":"Crash","body":"Steps to reproduce: panic","state":"open","user":{"login":"alice"},"labels":[{"name":"bug"}]},
+			{"number":43,"html_url":"https://github.com/acme/widgets/pull/43","title":"Add feature","body":"feature request","state":"open","user":{"login":"bob"},"pull_request":{"html_url":"https://github.com/acme/widgets/pull/43"}}
+		]`))
+	}))
+	defer server.Close()
+	client := &GitHubClient{RESTEndpoint: server.URL, HTTPClient: server.Client()}
+
+	items, err := client.ListOpenCommunityItems(context.Background(), teamDir, GitHubCommunityListOptions{Limit: 10, IncludeIssues: true, IncludePullRequests: true})
+	if err != nil {
+		t.Fatalf("ListOpenCommunityItems: %v", err)
+	}
+	if gotAuth != "" {
+		t.Fatalf("Authorization = %q, want empty for tokenless public read", gotAuth)
+	}
+	if gotPath != "/repos/acme/widgets/issues" {
+		t.Fatalf("path = %q, want issues list", gotPath)
+	}
+	if len(items) != 2 || items[0].Kind != "issue" || items[1].Kind != "pull_request" || items[1].Author != "bob" {
+		t.Fatalf("items = %+v", items)
+	}
+}
+
+func TestGitHubListOpenCommunityItemsUsesStableRawPaginationForFilteredIssues(t *testing.T) {
+	t.Setenv("AGENT_TEAM_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("PATH", t.TempDir())
+	teamDir := testGitHubTeamDir(t, ``)
+	records := githubCommunityRecords(10, 50)
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/widgets/issues" {
+			t.Fatalf("path = %q, want issues list", r.URL.Path)
+		}
+		perPage, err := strconv.Atoi(r.URL.Query().Get("per_page"))
+		if err != nil {
+			t.Fatalf("per_page = %q, want integer", r.URL.Query().Get("per_page"))
+		}
+		page, err := strconv.Atoi(r.URL.Query().Get("page"))
+		if err != nil {
+			t.Fatalf("page = %q, want integer", r.URL.Query().Get("page"))
+		}
+		requests = append(requests, fmt.Sprintf("%d:%d", page, perPage))
+		start := (page - 1) * perPage
+		if start > len(records) {
+			start = len(records)
+		}
+		end := start + perPage
+		if end > len(records) {
+			end = len(records)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("[" + strings.Join(records[start:end], ",") + "]"))
+	}))
+	defer server.Close()
+	client := &GitHubClient{RESTEndpoint: server.URL, HTTPClient: server.Client()}
+
+	items, err := client.ListOpenCommunityItems(context.Background(), teamDir, GitHubCommunityListOptions{Limit: 20, IncludeIssues: true})
+	if err != nil {
+		t.Fatalf("ListOpenCommunityItems limit 20: %v", err)
+	}
+	if len(items) != 20 {
+		t.Fatalf("len(items) = %d, want 20", len(items))
+	}
+	for i, item := range items {
+		if want := 11 + i; item.Number != want {
+			t.Fatalf("items[%d].Number = %d, want %d; items = %+v", i, item.Number, want, items)
+		}
+	}
+	if got := strings.Join(requests, ","); got != "1:20,2:20" {
+		t.Fatalf("requests = %s, want stable 20-item raw pages", got)
+	}
+
+	requests = nil
+	items, err = client.ListOpenCommunityItems(context.Background(), teamDir, GitHubCommunityListOptions{Limit: 60, IncludeIssues: true})
+	if err != nil {
+		t.Fatalf("ListOpenCommunityItems limit 60: %v", err)
+	}
+	if len(items) != 50 {
+		t.Fatalf("len(items) = %d, want all 50 matching issues", len(items))
+	}
+	seen := map[int]bool{}
+	for _, item := range items {
+		if item.Kind != "issue" {
+			t.Fatalf("item.Kind = %q, want issue", item.Kind)
+		}
+		if seen[item.Number] {
+			t.Fatalf("duplicate issue number %d in %+v", item.Number, items)
+		}
+		seen[item.Number] = true
+	}
+	if len(seen) != 50 || !seen[11] || !seen[60] {
+		t.Fatalf("seen issue numbers = %+v, want 11 through 60", seen)
+	}
+	if got := strings.Join(requests, ","); got != "1:60,2:60" {
+		t.Fatalf("requests = %s, want stable 60-item raw pages", got)
+	}
+}
+
+func TestGitHubAddCommunityItemLabelsRequiresToken(t *testing.T) {
+	teamDir := testGitHubTeamDir(t, ``)
+	var gotAuth string
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if r.Method != http.MethodPost || r.URL.Path != "/repos/acme/widgets/issues/42/labels" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	client := &GitHubClient{RESTEndpoint: server.URL, Token: "gh-key", HTTPClient: server.Client()}
+
+	if err := client.AddCommunityItemLabels(context.Background(), teamDir, "", "", 42, []string{"community-intake", "bug"}); err != nil {
+		t.Fatalf("AddCommunityItemLabels: %v", err)
+	}
+	if gotAuth != "Bearer gh-key" {
+		t.Fatalf("Authorization = %q, want bearer token", gotAuth)
+	}
+	rawLabels, _ := gotPayload["labels"].([]any)
+	if len(rawLabels) != 2 || rawLabels[0] != "community-intake" || rawLabels[1] != "bug" {
+		t.Fatalf("payload = %+v, want labels", gotPayload)
+	}
+}
+
+func githubCommunityRecords(prs, issues int) []string {
+	records := make([]string, 0, prs+issues)
+	for i := 1; i <= prs; i++ {
+		records = append(records, githubCommunityRecord(i, true))
+	}
+	for i := prs + 1; i <= prs+issues; i++ {
+		records = append(records, githubCommunityRecord(i, false))
+	}
+	return records
+}
+
+func githubCommunityRecord(number int, pullRequest bool) string {
+	kindPath := "issues"
+	pullRequestJSON := ""
+	if pullRequest {
+		kindPath = "pull"
+		pullRequestJSON = fmt.Sprintf(`,"pull_request":{"html_url":"https://github.com/acme/widgets/pull/%d"}`, number)
+	}
+	return fmt.Sprintf(`{"number":%d,"html_url":"https://github.com/acme/widgets/%s/%d","title":"Item %d","body":"body","state":"open","user":{"login":"user%d"}%s}`,
+		number, kindPath, number, number, number, pullRequestJSON)
 }
 
 func testGitHubTeamDir(t *testing.T, extra string) string {
