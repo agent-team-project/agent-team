@@ -32,10 +32,10 @@ event = "user_invocation"
 [instances.worker]
 agent         = "worker"
 ephemeral     = true
-replicas      = 4
+replicas = 10
 reap_worktree = "on_merge"   # reap the job worktree + local branch after its PR merges; `agent-team job keep-worktree <id>` opts one job out
-token_budget  = "40M"
-time_budget   = "45m"
+token_budget = "80M"
+time_budget = "75m"
 description   = "Code-writing agent. Spawned on `agent.dispatch` (see assign-worker skill)."
 
 [[instances.worker.triggers]]
@@ -45,9 +45,9 @@ match.target = "worker"
 [instances.reviewer]
 agent       = "reviewer"
 ephemeral   = true
-replicas    = 3
-token_budget = "15M"
-time_budget  = "30m"
+replicas = 6
+token_budget = "30M"
+time_budget = "45m"
 env_allow   = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TERM_PROGRAM", "LANG", "LC_*", "XDG_*", "CODEX_HOME", "CLAUDE_CODE_*", "SSH_AUTH_SOCK"]
 description = "Adversarial content reviewer for worker PRs. Reads, verifies, reports a verdict; never pushes."
 
@@ -171,10 +171,10 @@ match.target = "debt-auditor"
 [instances.platform-worker]
 agent         = "worker"
 ephemeral     = true
-replicas      = 3
+replicas = 10
 reap_worktree = "on_merge"
-token_budget  = "40M"
-time_budget   = "45m"
+token_budget = "80M"
+time_budget = "75m"
 description   = "Platform-team code writer for framework-infrastructure jobs."
 
 [[instances.platform-worker.triggers]]
@@ -184,9 +184,9 @@ match.target = "platform-worker"
 [instances.platform-reviewer]
 agent       = "reviewer"
 ephemeral   = true
-replicas    = 3
-token_budget = "15M"
-time_budget  = "30m"
+replicas = 6
+token_budget = "30M"
+time_budget = "45m"
 env_allow   = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TERM_PROGRAM", "LANG", "LC_*", "XDG_*", "CODEX_HOME", "CLAUDE_CODE_*", "SSH_AUTH_SOCK"]
 description = "Platform-team adversarial reviewer."
 
@@ -569,15 +569,15 @@ allow = ["budget.status", "channel.*", "feedback.*", "inbox.*", "job.show", "sta
 
 # Live budgets (SQU-103 dogfood): generous caps that only bite on runaways.
 [budgets.delivery]
-tokens_per_day = 900_000_000
-jobs_in_flight = 6
+tokens_per_day = 10_000_000_000
+jobs_in_flight = 20
 
 [budgets.platform]
 # Raised 400M->800M 2026-07-05: platform carries the epic arcs (observed
 # ~400M/day at sustained load); admission correctly queued squ-104's bounce.
-tokens_per_day = 800_000_000
-jobs_in_flight = 4
+tokens_per_day = 10_000_000_000
+jobs_in_flight = 16
 
 [budgets.quality]
-tokens_per_day = 100_000_000
-jobs_in_flight = 2
+tokens_per_day = 3_000_000_000
+jobs_in_flight = 8
