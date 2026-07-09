@@ -1094,6 +1094,38 @@ func appendRuntimeConfigForRunTest(t *testing.T, repo, kind, binary string) {
 	}
 }
 
+func writePromptCheckingClaudeForRunTest(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "claude")
+	body := `#!/bin/sh
+prompt_file=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --append-system-prompt-file)
+      shift
+      prompt_file="${1:-}"
+      ;;
+  esac
+  if [ "$#" -gt 0 ]; then
+    shift
+  fi
+done
+if [ -z "$prompt_file" ] || [ ! -s "$prompt_file" ]; then
+  echo "Append system prompt file not found: $prompt_file" >&2
+  exit 44
+fi
+echo "fake claude running with prompt $prompt_file" >&2
+trap 'exit 0' TERM INT
+while :; do
+  sleep 1
+done
+`
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake claude: %v", err)
+	}
+	return path
+}
+
 func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindCodex))
 	tmp, err := os.MkdirTemp("/tmp", "agent-team-run-codex-detach-")
@@ -1699,6 +1731,350 @@ func TestRunDetachDispatchesThroughDaemonWithoutPrompt(t *testing.T) {
 	}
 	if string(afterReap) != string(promptBody) {
 		t.Fatalf("prompt file changed after reap")
+	}
+}
+
+func TestRunDetachLaunchesClaudeProcessWithPersistentPromptFile(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	t.Setenv("AGENT_TEAM_DAEMON_URL", "")
+	t.Setenv(daemon.DaemonTokenFileEnv, "")
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-run-claude-launch-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	fakeClaude := writePromptCheckingClaudeForRunTest(t, t.TempDir())
+	appendRuntimeConfigForRunTest(t, tmp, string(runtimebin.KindClaude), fakeClaude)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), nil)
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	defer func() {
+		for _, meta := range mgr.List() {
+			if meta.Instance == "manager" && meta.Status == daemon.StatusRunning {
+				stopAndWaitForTest(t, mgr, "manager")
+				return
+			}
+		}
+	}()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--detach", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run --detach --json: %v\nstderr: %s", err, stderr.String())
+	}
+	var body runDispatchJSON
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("json body: %v\nstdout: %s", err, out.String())
+	}
+	if body.Instance != "manager" || body.Agent != "manager" || body.PID == 0 || body.SessionID == "" {
+		t.Fatalf("dispatch body = %+v", body)
+	}
+
+	var meta *daemon.Metadata
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, candidate := range mgr.List() {
+			if candidate.Instance == "manager" {
+				copy := *candidate
+				meta = &copy
+				break
+			}
+		}
+		if meta != nil && meta.Status == daemon.StatusRunning && daemon.PidLiveCheck(meta.PID) {
+			break
+		}
+		if meta != nil && meta.Status == daemon.StatusCrashed {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if meta == nil || meta.Status != daemon.StatusRunning || !daemon.PidLiveCheck(meta.PID) {
+		logBody, _ := os.ReadFile(filepath.Join(daemon.DaemonRoot(teamDir), "manager", "child.log"))
+		t.Fatalf("manager status = %+v, want running live process\nlog:\n%s", meta, string(logBody))
+	}
+
+	promptFile := filepath.Join(teamDir, "state", "manager", "runtime", "system_prompt.md")
+	if body, err := os.ReadFile(promptFile); err != nil {
+		t.Fatalf("persistent prompt file should exist while child runs: %v", err)
+	} else if !strings.Contains(string(body), "You are the `manager` instance of the `manager` agent.") {
+		t.Fatalf("prompt file missing kickoff body:\n%s", string(body))
+	}
+	logPath := filepath.Join(daemon.DaemonRoot(teamDir), "manager", "child.log")
+	var logBody []byte
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		logBody, err = os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("read child log: %v", err)
+		}
+		if strings.Contains(string(logBody), "fake claude running with prompt") ||
+			strings.Contains(string(logBody), "Append system prompt file not found") {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if strings.Contains(string(logBody), "Append system prompt file not found") {
+		t.Fatalf("fake claude reported missing prompt file:\n%s", string(logBody))
+	}
+	if !strings.Contains(string(logBody), "fake claude running with prompt") {
+		t.Fatalf("fake claude did not reach running marker:\n%s", string(logBody))
+	}
+
+	stopAndWaitForTest(t, mgr, "manager")
+}
+
+func TestRunDetachDaemonScratchLaunchRootCleansAfterReap(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindClaude))
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-run-detach-scratch-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	base := fakeSpawnerForTest(t, 2*time.Second)
+	var (
+		mu      sync.Mutex
+		gotArgs []string
+	)
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), func(args []string, env []string, workspace, stdoutPath, stderrPath, stdinContent string) (*os.Process, error) {
+		mu.Lock()
+		gotArgs = append([]string(nil), args...)
+		mu.Unlock()
+		return base(args, env, workspace, stdoutPath, stderrPath, stdinContent)
+	})
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	defer func() {
+		for _, meta := range mgr.List() {
+			if meta.Instance == "worker-ad-hoc" && meta.Status == daemon.StatusRunning {
+				stopAndWaitForTest(t, mgr, "worker-ad-hoc")
+				return
+			}
+		}
+	}()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "worker", "--name", "worker-ad-hoc", "--target", tmp, "--prompt", "scratch task", "--detach", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run worker --detach --json: %v\nstderr: %s", err, stderr.String())
+	}
+	var body runDispatchJSON
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("json body: %v\nstdout: %s", err, out.String())
+	}
+	if body.Instance != "worker-ad-hoc" || body.Agent != "worker" || body.PID == 0 {
+		t.Fatalf("dispatch body = %+v", body)
+	}
+
+	mu.Lock()
+	args := append([]string(nil), gotArgs...)
+	mu.Unlock()
+	addDir, ok := argValue(args, "--add-dir")
+	if !ok {
+		t.Fatalf("daemon dispatch args missing --add-dir value: %v", args)
+	}
+	runtimeDir := filepath.Join(teamDir, "state", "worker-ad-hoc", "runtime")
+	if eval, err := filepath.EvalSymlinks(runtimeDir); err == nil {
+		runtimeDir = eval
+	}
+	rel, err := filepath.Rel(runtimeDir, addDir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		t.Fatalf("add-dir = %q, want cleanup-owned launch dir under %q", addDir, runtimeDir)
+	}
+	if !strings.HasPrefix(filepath.Base(addDir), "launch-") {
+		t.Fatalf("add-dir = %q, want unique launch-* directory", addDir)
+	}
+	promptFile, ok := argValue(args, "--append-system-prompt-file")
+	if !ok {
+		t.Fatalf("daemon dispatch args missing prompt file value: %v", args)
+	}
+	if filepath.Dir(promptFile) != addDir {
+		t.Fatalf("prompt file = %q, want inside add-dir %q", promptFile, addDir)
+	}
+	promptBody, err := os.ReadFile(promptFile)
+	if err != nil {
+		t.Fatalf("prompt file should outlive run command return: %v", err)
+	}
+	if !strings.Contains(string(promptBody), "You are the `worker-ad-hoc` instance of the `worker` agent.") {
+		t.Fatalf("prompt file missing kickoff body:\n%s", string(promptBody))
+	}
+
+	stopAndWaitForTest(t, mgr, "worker-ad-hoc")
+	if _, err := os.Stat(addDir); !os.IsNotExist(err) {
+		t.Fatalf("scratch launch dir should be cleaned after daemon reap, stat err=%v", err)
+	}
+}
+
+func TestRunDetachDaemonScratchLaunchRootCleansWhenDispatchFails(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindClaude))
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-run-detach-scratch-fail-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	base := fakeSpawnerForTest(t, 30*time.Second)
+	var (
+		mu      sync.Mutex
+		gotArgs []string
+	)
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), func(args []string, env []string, workspace, stdoutPath, stderrPath, stdinContent string) (*os.Process, error) {
+		mu.Lock()
+		gotArgs = append([]string(nil), args...)
+		mu.Unlock()
+		return base(args, env, workspace, stdoutPath, stderrPath, stdinContent)
+	})
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	defer func() {
+		for _, meta := range mgr.List() {
+			if meta.Instance == "worker-ad-hoc" && meta.Status == daemon.StatusRunning {
+				stopAndWaitForTest(t, mgr, "worker-ad-hoc")
+				return
+			}
+		}
+	}()
+
+	first := NewRootCmd()
+	firstOut, firstErr := &bytes.Buffer{}, &bytes.Buffer{}
+	first.SetOut(firstOut)
+	first.SetErr(firstErr)
+	first.SetArgs([]string{"run", "worker", "--name", "worker-ad-hoc", "--target", tmp, "--prompt", "first task", "--detach", "--json"})
+	if err := first.Execute(); err != nil {
+		t.Fatalf("first run worker --detach --json: %v\nstderr: %s", err, firstErr.String())
+	}
+
+	mu.Lock()
+	firstArgs := append([]string(nil), gotArgs...)
+	mu.Unlock()
+	firstAddDir, ok := argValue(firstArgs, "--add-dir")
+	if !ok {
+		t.Fatalf("first daemon dispatch args missing --add-dir value: %v", firstArgs)
+	}
+	runtimeDir := filepath.Join(teamDir, "state", "worker-ad-hoc", "runtime")
+	if eval, err := filepath.EvalSymlinks(runtimeDir); err == nil {
+		runtimeDir = eval
+	}
+	firstAddDir = filepath.Clean(firstAddDir)
+
+	second := NewRootCmd()
+	second.SetOut(&bytes.Buffer{})
+	secondErr := &bytes.Buffer{}
+	second.SetErr(secondErr)
+	second.SetArgs([]string{"run", "worker", "--name", "worker-ad-hoc", "--target", tmp, "--prompt", "second task", "--detach", "--json"})
+	if err := second.Execute(); err == nil {
+		t.Fatalf("second run succeeded, want already-running dispatch error")
+	} else if !strings.Contains(err.Error(), "already running") && !strings.Contains(secondErr.String(), "already running") {
+		t.Fatalf("second run error = %v, stderr=%s; want already running", err, secondErr.String())
+	}
+
+	launchDirs, err := filepath.Glob(filepath.Join(runtimeDir, "launch-*"))
+	if err != nil {
+		t.Fatalf("glob launch dirs: %v", err)
+	}
+	for i := range launchDirs {
+		launchDirs[i] = filepath.Clean(launchDirs[i])
+	}
+	sort.Strings(launchDirs)
+	if len(launchDirs) != 1 || launchDirs[0] != firstAddDir {
+		t.Fatalf("launch dirs after rejected dispatch = %v, want only first live launch dir %q", launchDirs, firstAddDir)
+	}
+
+	stopAndWaitForTest(t, mgr, "worker-ad-hoc")
+	if _, err := os.Stat(firstAddDir); !os.IsNotExist(err) {
+		t.Fatalf("first scratch launch dir should be cleaned after daemon reap, stat err=%v", err)
+	}
+}
+
+func TestRunDetachAdHocPersistentPrefixUsesDaemonScratchLaunchRoot(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindClaude))
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-run-detach-manager-adhoc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	base := fakeSpawnerForTest(t, 2*time.Second)
+	var (
+		mu      sync.Mutex
+		gotArgs []string
+	)
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), func(args []string, env []string, workspace, stdoutPath, stderrPath, stdinContent string) (*os.Process, error) {
+		mu.Lock()
+		gotArgs = append([]string(nil), args...)
+		mu.Unlock()
+		return base(args, env, workspace, stdoutPath, stderrPath, stdinContent)
+	})
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	defer func() {
+		for _, meta := range mgr.List() {
+			if meta.Instance == "manager-ad-hoc" && meta.Status == daemon.StatusRunning {
+				stopAndWaitForTest(t, mgr, "manager-ad-hoc")
+				return
+			}
+		}
+	}()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "manager", "--name", "manager-ad-hoc", "--target", tmp, "--prompt", "scratch task", "--detach", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run manager ad-hoc --detach --json: %v\nstderr: %s", err, stderr.String())
+	}
+	var body runDispatchJSON
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("json body: %v\nstdout: %s", err, out.String())
+	}
+	if body.Instance != "manager-ad-hoc" || body.Agent != "manager" || body.PID == 0 {
+		t.Fatalf("dispatch body = %+v", body)
+	}
+
+	mu.Lock()
+	args := append([]string(nil), gotArgs...)
+	mu.Unlock()
+	addDir, ok := argValue(args, "--add-dir")
+	if !ok {
+		t.Fatalf("daemon dispatch args missing --add-dir value: %v", args)
+	}
+	runtimeDir := filepath.Join(teamDir, "state", "manager-ad-hoc", "runtime")
+	if eval, err := filepath.EvalSymlinks(runtimeDir); err == nil {
+		runtimeDir = eval
+	}
+	rel, err := filepath.Rel(runtimeDir, addDir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		t.Fatalf("add-dir = %q, want cleanup-owned launch dir under %q", addDir, runtimeDir)
+	}
+	if !strings.HasPrefix(filepath.Base(addDir), "launch-") {
+		t.Fatalf("add-dir = %q, want unique launch-* directory", addDir)
+	}
+	if promptFile, ok := argValue(args, "--append-system-prompt-file"); !ok {
+		t.Fatalf("daemon dispatch args missing prompt file value: %v", args)
+	} else if filepath.Dir(promptFile) != addDir {
+		t.Fatalf("prompt file = %q, want inside add-dir %q", promptFile, addDir)
+	}
+
+	stopAndWaitForTest(t, mgr, "manager-ad-hoc")
+	if _, err := os.Stat(addDir); !os.IsNotExist(err) {
+		t.Fatalf("ad-hoc manager scratch launch dir should be cleaned after daemon reap, stat err=%v", err)
 	}
 }
 
