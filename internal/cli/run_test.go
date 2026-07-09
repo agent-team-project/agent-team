@@ -1094,6 +1094,38 @@ func appendRuntimeConfigForRunTest(t *testing.T, repo, kind, binary string) {
 	}
 }
 
+func writePromptCheckingClaudeForRunTest(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "claude")
+	body := `#!/bin/sh
+prompt_file=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --append-system-prompt-file)
+      shift
+      prompt_file="${1:-}"
+      ;;
+  esac
+  if [ "$#" -gt 0 ]; then
+    shift
+  fi
+done
+if [ -z "$prompt_file" ] || [ ! -s "$prompt_file" ]; then
+  echo "Append system prompt file not found: $prompt_file" >&2
+  exit 44
+fi
+echo "fake claude running with prompt $prompt_file" >&2
+trap 'exit 0' TERM INT
+while :; do
+  sleep 1
+done
+`
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake claude: %v", err)
+	}
+	return path
+}
+
 func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindCodex))
 	tmp, err := os.MkdirTemp("/tmp", "agent-team-run-codex-detach-")
@@ -1700,6 +1732,102 @@ func TestRunDetachDispatchesThroughDaemonWithoutPrompt(t *testing.T) {
 	if string(afterReap) != string(promptBody) {
 		t.Fatalf("prompt file changed after reap")
 	}
+}
+
+func TestRunDetachLaunchesClaudeProcessWithPersistentPromptFile(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	t.Setenv("AGENT_TEAM_DAEMON_URL", "")
+	t.Setenv(daemon.DaemonTokenFileEnv, "")
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-run-claude-launch-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	fakeClaude := writePromptCheckingClaudeForRunTest(t, t.TempDir())
+	appendRuntimeConfigForRunTest(t, tmp, string(runtimebin.KindClaude), fakeClaude)
+	teamDir := filepath.Join(tmp, ".agent_team")
+
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), nil)
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	defer func() {
+		for _, meta := range mgr.List() {
+			if meta.Instance == "manager" && meta.Status == daemon.StatusRunning {
+				stopAndWaitForTest(t, mgr, "manager")
+				return
+			}
+		}
+	}()
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--detach", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run --detach --json: %v\nstderr: %s", err, stderr.String())
+	}
+	var body runDispatchJSON
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("json body: %v\nstdout: %s", err, out.String())
+	}
+	if body.Instance != "manager" || body.Agent != "manager" || body.PID == 0 || body.SessionID == "" {
+		t.Fatalf("dispatch body = %+v", body)
+	}
+
+	var meta *daemon.Metadata
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, candidate := range mgr.List() {
+			if candidate.Instance == "manager" {
+				copy := *candidate
+				meta = &copy
+				break
+			}
+		}
+		if meta != nil && meta.Status == daemon.StatusRunning && daemon.PidLiveCheck(meta.PID) {
+			break
+		}
+		if meta != nil && meta.Status == daemon.StatusCrashed {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if meta == nil || meta.Status != daemon.StatusRunning || !daemon.PidLiveCheck(meta.PID) {
+		logBody, _ := os.ReadFile(filepath.Join(daemon.DaemonRoot(teamDir), "manager", "child.log"))
+		t.Fatalf("manager status = %+v, want running live process\nlog:\n%s", meta, string(logBody))
+	}
+
+	promptFile := filepath.Join(teamDir, "state", "manager", "runtime", "system_prompt.md")
+	if body, err := os.ReadFile(promptFile); err != nil {
+		t.Fatalf("persistent prompt file should exist while child runs: %v", err)
+	} else if !strings.Contains(string(body), "You are the `manager` instance of the `manager` agent.") {
+		t.Fatalf("prompt file missing kickoff body:\n%s", string(body))
+	}
+	logPath := filepath.Join(daemon.DaemonRoot(teamDir), "manager", "child.log")
+	var logBody []byte
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		logBody, err = os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("read child log: %v", err)
+		}
+		if strings.Contains(string(logBody), "fake claude running with prompt") ||
+			strings.Contains(string(logBody), "Append system prompt file not found") {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if strings.Contains(string(logBody), "Append system prompt file not found") {
+		t.Fatalf("fake claude reported missing prompt file:\n%s", string(logBody))
+	}
+	if !strings.Contains(string(logBody), "fake claude running with prompt") {
+		t.Fatalf("fake claude did not reach running marker:\n%s", string(logBody))
+	}
+
+	stopAndWaitForTest(t, mgr, "manager")
 }
 
 func TestRunDetachDaemonScratchLaunchRootCleansAfterReap(t *testing.T) {
