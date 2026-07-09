@@ -1,0 +1,25 @@
+# The quality team: a scheduled auditor that sweeps one subsystem per run and
+# files evidence-backed tech-debt tickets (at most three, Backlog only). The
+# counterweight to delivery velocity — see template/agents/auditor/agent.md.
+[schedules.debt-sweep]
+every = "24h" # weekly
+
+[schedules.debt-sweep.payload]
+kind = "debt_sweep"
+
+[instances.debt-auditor]
+agent       = "auditor"
+ephemeral   = true
+env_allow   = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TERM_PROGRAM", "LANG", "LC_*", "XDG_*", "CODEX_HOME", "CLAUDE_CODE_*", "SSH_AUTH_SOCK"]
+description = "Scheduled architecture/tech-debt audit: one subsystem per run, evidence-backed tickets."
+
+[[instances.debt-auditor.triggers]]
+event      = "schedule"
+match.name = "debt-sweep"
+match.kind = "debt_sweep"
+
+[[instances.debt-auditor.triggers]]
+event        = "agent.dispatch"
+match.target = "debt-auditor"
+
+

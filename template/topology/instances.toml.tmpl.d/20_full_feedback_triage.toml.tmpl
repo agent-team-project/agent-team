@@ -1,0 +1,25 @@
+{{ if eq .template.profile `full` }}
+
+# The feedback-triage loop: agents submit one-line observations mid-job
+# (`agent-team feedback submit` — see the triage-feedback skill); this weekly
+# schedule spawns an ephemeral manager that clusters new feedback plus system
+# pain signals (repeated bounces, infra-signature repeats) and materializes
+# tickets, folds evidence into existing ones, or dismisses with a reason.
+# Filed tickets land in Backlog — never the agent-dispatch column.
+[schedules.feedback-triage]
+every = "6h"
+
+[schedules.feedback-triage.payload]
+kind = "feedback_triage"
+
+[instances.feedback-triage]
+agent       = "manager"
+ephemeral   = true
+description = "Scheduled feedback triage: local store + system signals -> tickets/folds/dismissals."
+
+[[instances.feedback-triage.triggers]]
+event      = "schedule"
+match.name = "feedback-triage"
+match.kind = "feedback_triage"
+
+

@@ -1,0 +1,10 @@
+{{ if eq .template.profile `full` -}}
+[instances.ticket-manager]
+agent       = "ticket-manager"
+ephemeral   = false
+description = "Reads, files, and triages Linear tickets in scope of this repo."
+
+[[instances.ticket-manager.triggers]]
+event = "user_invocation"
+{{ end }}
+

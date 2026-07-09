@@ -1,0 +1,123 @@
+# The platform team: framework-infrastructure arcs (provider seams, provenance,
+# scoping) run through their own worker/verifier/reviewer pool so product
+# delivery and platform work scale independently.
+[instances.platform-worker]
+agent         = "worker"
+ephemeral     = true
+replicas      = 3
+reap_worktree = "on_merge"
+token_budget  = "40M"
+time_budget   = "45m"
+# Hard cutoffs are off by default. Uncomment only as runaway protection; soft
+# budget_notice levels are the normal pacing mechanism.
+# hard_multiplier = 1.5
+description   = "Platform-team code writer for framework-infrastructure jobs."
+
+[[instances.platform-worker.triggers]]
+event        = "agent.dispatch"
+match.target = "platform-worker"
+
+[instances.platform-verifier]
+agent        = "verifier"
+ephemeral    = true
+replicas     = 2
+token_budget = "5M"
+time_budget  = "20m"
+description  = "Platform-team deterministic verifier."
+
+[[instances.platform-verifier.triggers]]
+event        = "agent.dispatch"
+match.target = "platform-verifier"
+
+[instances.platform-reviewer]
+agent       = "reviewer"
+ephemeral   = true
+replicas    = 3
+token_budget = "10M"
+time_budget  = "30m"
+env_allow   = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TERM_PROGRAM", "LANG", "LC_*", "XDG_*", "CODEX_HOME", "CLAUDE_CODE_*", "SSH_AUTH_SOCK"]
+description = "Platform-team adversarial reviewer."
+
+[[instances.platform-reviewer.triggers]]
+event        = "agent.dispatch"
+match.target = "platform-reviewer"
+
+[pipelines.platform_ticket_to_pr]
+# Distinct trigger event: platform work is dispatched explicitly (`agent-team
+# pipeline run platform_ticket_to_pr ...` or `event publish platform.ticket`),
+# never by the delivery team's board column.
+trigger.event = "platform.ticket"
+auto_advance = true
+
+[[pipelines.platform_ticket_to_pr.steps]]
+id        = "implement"
+target    = "platform-worker"
+workspace = "worktree"
+# Platform-team arcs are the big ones (three consecutive 30-45m+ implements);
+# 60m observed-fit, and `job extend` remains the pressure valve.
+timeout      = "60m"
+token_budget = "40M"
+time_budget  = "45m"
+# Hard cutoffs are off by default. Uncomment only as runaway protection; soft
+# budget_notice levels are the normal pacing mechanism.
+# hard_multiplier = 1.5
+max_attempts = 1
+
+[[pipelines.platform_ticket_to_pr.steps]]
+id           = "verify"
+target       = "platform-verifier"
+after        = ["implement"]
+workspace    = "repo"
+timeout      = "20m"
+token_budget = "5M"
+time_budget  = "20m"
+max_attempts = 1
+retry_on_crash = true
+instructions = """
+Run the verify skill against the platform worker commit before LLM review.
+Stream progress, write `target/agent-evidence/<job>.json`, record each gate
+with `agent-team job gate set`, and advance only if every declared gate passes.
+These declared gates are the smoke tier from `.agent_team/gates.toml`; do not
+claim acceptance or release readiness unless the required tier evidence exists.
+
+```agent-team-verify-gates
+gofmt-check :: test -z "$(gofmt -l .)"
+go-vet :: go vet ./...
+go-test :: go test ./...
+```
+"""
+
+[[pipelines.platform_ticket_to_pr.steps]]
+id           = "review"
+target       = "platform-reviewer"
+after        = ["verify"]
+timeout      = "30m"
+token_budget = "10M"
+time_budget  = "30m"
+retry_on_crash = true
+instructions = """
+Adversarial content review of the platform job PR. Read the verifier evidence
+first, then apply the delivery checklist beyond those scripted gates: verify
+acceptance criteria against the ticket, hand-verify the changed behavior, and
+judge content only (infra state and base drift are not content bounces). Report
+gates with `agent-team job gate set`, then post `REVIEW: APPROVE` or
+`REVIEW: BOUNCE` with findings as a PR comment.
+"""
+
+[[pipelines.platform_ticket_to_pr.steps]]
+id           = "approve"
+target       = "manager"
+after        = ["review"]
+gate         = "manual"
+instructions = """
+Read the reviewer's verdict and the diff. APPROVE + green gates: merge via
+`agent-team job merge <job-id>` (or `gh pr merge`), close the ticket, mark
+the job done. BOUNCE: `agent-team job bounce <job-id> --findings-file <path>
+--advance`. Do not amend the branch yourself.
+"""
+
+[teams.platform]
+description = "Framework infrastructure: provider seams, provenance, scoping, resource constraints."
+instances   = ["platform-worker", "platform-verifier", "platform-reviewer", "manager"]
+pipelines   = ["platform_ticket_to_pr"]
+

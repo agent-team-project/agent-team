@@ -37,7 +37,6 @@ match.target = "manager"
 [[instances.manager.triggers]]
 event        = "deliverable.ready"
 match.target = "manager"
-
 {{ if eq .template.profile `full` -}}
 [instances.ticket-manager]
 agent       = "ticket-manager"
@@ -180,7 +179,6 @@ ticket, and mark the job done. If REVIEW: BOUNCE, run `agent-team job bounce
 <job-id> --findings-file <path> --advance` so the worker gets the findings in
 kickoff — do not amend the branch yourself.
 """
-
 {{ if eq .template.profile `full` }}
 
 # The feedback-triage loop: agents submit one-line observations mid-job
@@ -353,7 +351,6 @@ the job done. BOUNCE: `agent-team job bounce <job-id> --findings-file <path>
 description = "Framework infrastructure: provider seams, provenance, scoping, resource constraints."
 instances   = ["platform-worker", "platform-verifier", "platform-reviewer", "manager"]
 pipelines   = ["platform_ticket_to_pr"]
-
 
 # The harness-review loop: a weekly sweep of the team's own steering surfaces
 # (agent prompts, skills, pipeline instructions) driven by operational

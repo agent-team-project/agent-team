@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Validate that the bundled template tree contains only source artifacts."""
+"""Validate bundled template source artifacts and generated topology output."""
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -55,7 +56,17 @@ def main() -> int:
         return 1
 
     print("OK  template tree contains no generated/cache artifacts")
-    return 0
+    return validate_generated_instances()
+
+
+def validate_generated_instances() -> int:
+    script = REPO_ROOT / "scripts" / "ci" / "generate_instances_template.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--check"],
+        cwd=REPO_ROOT,
+        text=True,
+    )
+    return result.returncode
 
 
 if __name__ == "__main__":
