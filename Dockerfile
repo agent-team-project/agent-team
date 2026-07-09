@@ -19,8 +19,12 @@ RUN set -eux; \
 
 FROM alpine:3.20
 
+ARG CODEX_NPM_VERSION=0.144.1
+
+# Keep Codex pinned rather than following npm latest; the latest tag can move
+# before the referenced tarball has propagated, breaking unchanged image builds.
 RUN apk add --no-cache bash ca-certificates curl git github-cli nodejs npm openssh-client python3 \
-    && npm install -g @openai/codex \
+    && npm install -g "@openai/codex@${CODEX_NPM_VERSION}" \
     && mkdir -p /root/.codex /root/.config/gh
 
 COPY --from=build /out/agent-team /usr/local/bin/agent-team
