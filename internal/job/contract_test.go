@@ -214,3 +214,25 @@ func TestRenderKickoffWithContractReplacesExistingSection(t *testing.T) {
 		t.Fatalf("rendered kickoff kept stale contract section:\n%s", got)
 	}
 }
+
+func TestRenderKickoffWithContractReplacesNestedExistingSection(t *testing.T) {
+	contract := &Contract{
+		Schema:      ContractSchemaV1,
+		WorkItem:    "SQU-999",
+		Deliverable: "pr",
+		Trailer:     "Closes #999",
+		Gates:       "smoke",
+		Criteria:    []ContractCriterion{{ID: "AC1", Text: "Worker kickoff rendering includes a fixed contract section.", Verify: "review"}},
+	}
+	got := RenderKickoffWithContract("Intro\n\n## Contract\n\n### Acceptance criteria\n\nAC9. stale old criterion\n\n## Notes\n\nkeep", contract)
+	for _, want := range []string{"Intro", "## Contract", "- AC1: Worker kickoff rendering includes a fixed contract section.", "## Notes", "keep"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered kickoff missing %q:\n%s", want, got)
+		}
+	}
+	for _, stale := range []string{"### Acceptance criteria", "AC9. stale old criterion"} {
+		if strings.Contains(got, stale) {
+			t.Fatalf("rendered kickoff kept stale nested contract content %q:\n%s", stale, got)
+		}
+	}
+}

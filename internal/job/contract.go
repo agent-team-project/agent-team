@@ -302,8 +302,22 @@ func isCriterionHeading(line string) bool {
 }
 
 func isMarkdownHeading(line string) bool {
+	return markdownHeadingLevel(line) > 0
+}
+
+func markdownHeadingLevel(line string) int {
 	line = strings.TrimSpace(line)
-	return strings.HasPrefix(line, "#")
+	if line == "" || !strings.HasPrefix(line, "#") {
+		return 0
+	}
+	level := 0
+	for _, r := range line {
+		if r != '#' {
+			break
+		}
+		level++
+	}
+	return level
 }
 
 func parseCriteriaLines(section string, allowNumbered bool) []ContractCriterion {
@@ -473,12 +487,15 @@ func isLinearURL(raw string) bool {
 func replaceMarkdownSection(markdown, heading, replacement string) (string, bool) {
 	lines := strings.Split(markdown, "\n")
 	start := -1
+	startLevel := 0
 	for i, line := range lines {
-		if !isMarkdownHeading(line) {
+		level := markdownHeadingLevel(line)
+		if level == 0 {
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#")), heading) {
 			start = i
+			startLevel = level
 			break
 		}
 	}
@@ -487,7 +504,8 @@ func replaceMarkdownSection(markdown, heading, replacement string) (string, bool
 	}
 	end := len(lines)
 	for i := start + 1; i < len(lines); i++ {
-		if isMarkdownHeading(lines[i]) {
+		level := markdownHeadingLevel(lines[i])
+		if level > 0 && level <= startLevel {
 			end = i
 			break
 		}
