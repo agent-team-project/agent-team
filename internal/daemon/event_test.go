@@ -1394,6 +1394,107 @@ func TestEvent_EphemeralDispatchRendersAndPersistsContract(t *testing.T) {
 	}
 }
 
+func TestEvent_AssignWorkerDispatchPersistsPRContract(t *testing.T) {
+	daemonRoot := t.TempDir()
+	repoRoot := t.TempDir()
+	runGit(t, repoRoot, "init")
+	runGit(t, repoRoot, "config", "user.email", "test@example.com")
+	runGit(t, repoRoot, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoRoot, "add", "README.md")
+	runGit(t, repoRoot, "commit", "-m", "init")
+	teamDir := filepath.Join(repoRoot, ".agent_team")
+	writeFixtureAgent(t, teamDir, "worker")
+
+	kickoff := "Required PR trailer: `Closes #14`\n\n## Contract\n\nAC1. Worker opens a PR."
+	script := filepath.Join("..", "..", "template", "agents", "manager", "skills", "assign-worker", "scripts", "assign_worker.sh")
+	cmd := exec.Command("bash", script, "dispatch", "--ticket", "SQU-14", "--kickoff", kickoff)
+	cmd.Env = append(os.Environ(),
+		"AGENT_TEAM_ROOT="+teamDir,
+		"AGENT_TEAM_INSTANCE=manager",
+		"AGENT_TEAM_DAEMON_URL=",
+		"AGENT_TEAM_DAEMON_SOCKET="+filepath.Join(daemonRoot, "missing.sock"),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("assign_worker.sh dispatch: %v\n%s", err, string(out))
+	}
+	matches, err := filepath.Glob(filepath.Join(teamDir, "outbox", "pending", "*.json"))
+	if err != nil {
+		t.Fatalf("glob outbox: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("outbox files = %+v, want one", matches)
+	}
+	body, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("read outbox: %v", err)
+	}
+	var item struct {
+		Type    string         `json:"type"`
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal(body, &item); err != nil {
+		t.Fatalf("decode outbox: %v\n%s", err, string(body))
+	}
+	if item.Type != topology.EventAgentDispatch {
+		t.Fatalf("outbox type = %q, want %q", item.Type, topology.EventAgentDispatch)
+	}
+	if item.Payload["deliverable"] != deliveryContractPR {
+		t.Fatalf("outbox deliverable = %v, want %q", item.Payload["deliverable"], deliveryContractPR)
+	}
+	if item.Payload["workspace"] != "worktree" {
+		t.Fatalf("outbox workspace = %v, want worktree", item.Payload["workspace"])
+	}
+
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(daemonRoot, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
+	result, err := resolver.EventWithResult(topology.EventAgentDispatch, item.Payload)
+	if err != nil {
+		t.Fatalf("EventWithResult: %v", err)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Action != "dispatched" {
+		t.Fatalf("outcomes = %+v, want one dispatched worker", result.Outcomes)
+	}
+	t.Cleanup(func() {
+		_, _ = m.Stop("worker-squ-14")
+		_ = m.WaitForReaper("worker-squ-14", 5*time.Second)
+	})
+
+	prompt, ok := argValue(fake.lastCall(), "-p")
+	if !ok {
+		t.Fatalf("spawn call missing -p prompt: %#v", fake.lastCall())
+	}
+	for _, want := range []string{
+		"## Contract",
+		"Deliverable: pr",
+		"Required PR trailer: Closes #14",
+		"AC1: Worker opens a PR.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	j, err := jobstore.Read(teamDir, "squ-14")
+	if err != nil {
+		t.Fatalf("job read: %v", err)
+	}
+	if j.DeliveryContract != deliveryContractPR {
+		t.Fatalf("delivery contract = %q, want %q", j.DeliveryContract, deliveryContractPR)
+	}
+	if j.Contract == nil {
+		t.Fatalf("persisted job missing contract")
+	}
+	if j.Contract.Deliverable != deliveryContractPR || j.Contract.Trailer != "Closes #14" {
+		t.Fatalf("persisted contract = %+v", j.Contract)
+	}
+	if len(j.Contract.Criteria) != 1 || j.Contract.Criteria[0].ID != "AC1" || j.Contract.Criteria[0].Text != "Worker opens a PR." {
+		t.Fatalf("persisted criteria = %+v", j.Contract.Criteria)
+	}
+}
+
 func TestAgentContractPromptExpectations(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
 	files := map[string][]string{

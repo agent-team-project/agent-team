@@ -30,10 +30,10 @@ The helper prefers `AGENT_TEAM_DAEMON_URL` plus the bearer token in `AGENT_TEAM_
 
 For long kickoff text, write it to a temp file and use `--kickoff-file <path>`.
 
-The helper posts:
+The helper posts a PR-shaped dispatch contract:
 
 ```json
-{"type":"agent.dispatch","payload":{"source":"<manager>","target":"worker","name":"worker-squ-14","job_id":"squ-14","ticket":"SQU-14","kickoff":"...","workspace":"worktree"}}
+{"type":"agent.dispatch","payload":{"source":"<manager>","target":"worker","name":"worker-squ-14","job_id":"squ-14","ticket":"SQU-14","kickoff":"...","deliverable":"pr","workspace":"worktree"}}
 ```
 
 The daemon creates or updates `.agent_team/jobs/squ-14.toml` from this event and records the worker instance, branch, and worktree when the worker starts.
