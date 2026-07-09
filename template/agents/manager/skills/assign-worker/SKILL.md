@@ -14,7 +14,7 @@ Use the daemon topology path when `agent-teamd` is running. If daemon transport 
 
 1. **Ticket identifier present?** You need `<PREFIX>-<n>` (the consumer's prefix from `.agent_team/config.toml` under `linear.ticket_prefix`) or a Linear URL. If you can't infer it, ask.
 2. **Worker name.** Normalize the ticket to lowercase and use `worker-<ticket-lowercase>` (for example `worker-squ-14`). This stable name lets daemon dispatch reject duplicates and lets you forward follow-up messages to the existing worker.
-3. **Kickoff text.** Pass only the ticket identifier and user-supplied direction. Do not restate the worker's operating procedure; its agent prompt handles planning, implementation, validation, and PR creation.
+3. **Kickoff text.** Pass only the ticket identifier, user-supplied direction, observable acceptance criteria when available, and the required PR trailer. Do not restate the worker's operating procedure; its agent prompt handles planning, implementation, validation, and PR creation. The daemon compiles the criteria/trailer into the durable `[contract]` block.
 
 ## Daemon Dispatch (Preferred)
 

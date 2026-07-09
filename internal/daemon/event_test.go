@@ -1330,6 +1330,100 @@ func TestEvent_EphemeralDispatchLeavesKickoffAloneWhenNoUnreadMailbox(t *testing
 	}
 }
 
+func TestEvent_EphemeralDispatchRendersAndPersistsContract(t *testing.T) {
+	root := t.TempDir()
+	teamDir := fixtureTeamDir(t)
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
+
+	result, err := resolver.EventWithResult(topology.EventAgentDispatch, map[string]any{
+		"target":      "worker",
+		"name":        "worker-gh324-agent-contracts",
+		"ticket":      "GH324-agent-contracts",
+		"ticket_url":  "https://github.com/agent-team-project/kensho/issues/324",
+		"epic":        "agent-team-project/kensho#324",
+		"job_id":      "gh324-agent-contracts",
+		"deliverable": "pr",
+		"workspace":   "repo",
+		"kickoff": "Required PR trailer: `Advances #324`\n\n" +
+			"## Contract\n\n" +
+			"AC1. Worker kickoff rendering includes a fixed contract section.\n" +
+			"AC2. Reviewer bounces cite unmet clauses.",
+	})
+	if err != nil {
+		t.Fatalf("EventWithResult: %v", err)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Action != "dispatched" {
+		t.Fatalf("outcomes = %+v, want one dispatched worker", result.Outcomes)
+	}
+	t.Cleanup(func() {
+		_, _ = m.Stop("worker-gh324-agent-contracts")
+		_ = m.WaitForReaper("worker-gh324-agent-contracts", 5*time.Second)
+	})
+
+	prompt, ok := argValue(fake.lastCall(), "-p")
+	if !ok {
+		t.Fatalf("spawn call missing -p prompt: %#v", fake.lastCall())
+	}
+	for _, want := range []string{
+		"## Contract",
+		"Schema: agent-team.contract.v1",
+		"Required PR trailer: Advances #324",
+		"AC1: Worker kickoff rendering includes a fixed contract section.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	j, err := jobstore.Read(teamDir, "gh324-agent-contracts")
+	if err != nil {
+		t.Fatalf("job read: %v", err)
+	}
+	if j.Contract == nil {
+		t.Fatalf("persisted job missing contract")
+	}
+	if j.Contract.Schema != jobstore.ContractSchemaV1 || j.Contract.Deliverable != "pr" || j.Contract.Trailer != "Advances #324" {
+		t.Fatalf("persisted contract = %+v", j.Contract)
+	}
+	if len(j.Contract.Criteria) != 2 || j.Contract.Criteria[0].ID != "AC1" || j.Contract.Criteria[1].ID != "AC2" {
+		t.Fatalf("persisted criteria = %+v", j.Contract.Criteria)
+	}
+}
+
+func TestAgentContractPromptExpectations(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	files := map[string][]string{
+		filepath.Join(root, "template", "agents", "manager", "agent.md"): {
+			"durable `[contract]` block",
+			"observable outcomes, not implementation plans",
+		},
+		filepath.Join(root, "template", "agents", "reviewer", "agent.md"): {
+			"Read the durable job contract first",
+			"`clause=ACn`",
+			"`clause=none`",
+			"clause-keyed ledger",
+		},
+		filepath.Join(root, "template", "instances.toml.tmpl"): {
+			"durable job contract first",
+			"clause-keyed ledger",
+			"`clause=ACn` or `clause=none`",
+		},
+	}
+	for path, wants := range files {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(body)
+		for _, want := range wants {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q", path, want)
+			}
+		}
+	}
+}
+
 func TestEvent_EphemeralDispatchTruncatesUnreadMailboxKickoff(t *testing.T) {
 	root := t.TempDir()
 	teamDir := fixtureTeamDir(t)
