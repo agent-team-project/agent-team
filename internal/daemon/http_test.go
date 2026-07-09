@@ -510,14 +510,17 @@ func TestHTTP_DispatchPassesStdin(t *testing.T) {
 }
 
 func TestHTTP_StartResumesSession(t *testing.T) {
+	claudeConfigDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeConfigDir)
 	root := t.TempDir()
 	fake := newFakeSpawner(30 * time.Second)
 	m := NewInstanceManager(root, fake.spawn)
 	srv := httptest.NewServer(Handler(m, nil, nil, ""))
 	defer srv.Close()
 
+	workspace := t.TempDir()
 	resp := mustPost(t, srv.URL+"/v1/dispatch",
-		`{"agent":"manager","name":"mgr","workspace":"`+t.TempDir()+`"}`)
+		`{"agent":"manager","name":"mgr","workspace":"`+workspace+`"}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("dispatch: %d %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -525,6 +528,7 @@ func TestHTTP_StartResumesSession(t *testing.T) {
 		SessionID string `json:"session_id"`
 	}
 	json.NewDecoder(resp.Body).Decode(&disp)
+	writeClaudeSession(t, claudeConfigDir, workspace, disp.SessionID)
 
 	// Stop and wait for finalisation.
 	mustPost(t, srv.URL+"/v1/stop", `{"instance":"mgr"}`)
@@ -613,14 +617,17 @@ description = "Recoverable Claude manager."
 }
 
 func TestHTTP_RestartResumesSession(t *testing.T) {
+	claudeConfigDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeConfigDir)
 	root := t.TempDir()
 	fake := newFakeSpawner(30 * time.Second)
 	m := NewInstanceManager(root, fake.spawn)
 	srv := httptest.NewServer(Handler(m, nil, nil, ""))
 	defer srv.Close()
 
+	workspace := t.TempDir()
 	resp := mustPost(t, srv.URL+"/v1/dispatch",
-		`{"agent":"manager","name":"mgr","workspace":"`+t.TempDir()+`"}`)
+		`{"agent":"manager","name":"mgr","workspace":"`+workspace+`"}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("dispatch: %d %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -628,6 +635,7 @@ func TestHTTP_RestartResumesSession(t *testing.T) {
 		SessionID string `json:"session_id"`
 	}
 	json.NewDecoder(resp.Body).Decode(&disp)
+	writeClaudeSession(t, claudeConfigDir, workspace, disp.SessionID)
 
 	resp = mustPost(t, srv.URL+"/v1/restart", `{"instance":"mgr","timeout_ms":10000}`)
 	if resp.StatusCode != http.StatusOK {
@@ -654,14 +662,17 @@ func TestHTTP_RestartResumesSession(t *testing.T) {
 }
 
 func TestHTTP_InterruptResumesSession(t *testing.T) {
+	claudeConfigDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeConfigDir)
 	root := t.TempDir()
 	fake := newFakeSpawner(30 * time.Second)
 	m := NewInstanceManager(root, fake.spawn)
 	srv := httptest.NewServer(Handler(m, nil, nil, ""))
 	defer srv.Close()
 
+	workspace := t.TempDir()
 	resp := mustPost(t, srv.URL+"/v1/dispatch",
-		`{"agent":"manager","name":"mgr","workspace":"`+t.TempDir()+`"}`)
+		`{"agent":"manager","name":"mgr","workspace":"`+workspace+`"}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("dispatch: %d %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -669,6 +680,7 @@ func TestHTTP_InterruptResumesSession(t *testing.T) {
 		SessionID string `json:"session_id"`
 	}
 	json.NewDecoder(resp.Body).Decode(&disp)
+	writeClaudeSession(t, claudeConfigDir, workspace, disp.SessionID)
 
 	resp = mustPost(t, srv.URL+"/v1/interrupt", `{"to":"mgr","from":"ops","body":"hard steer"}`)
 	if resp.StatusCode != http.StatusOK {

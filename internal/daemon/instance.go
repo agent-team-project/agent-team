@@ -1231,6 +1231,9 @@ func (m *InstanceManager) start(instance string, expected *Metadata, opts StartO
 	if baseRuntime == runtimebin.KindCodex {
 		stdin = codexManagedResumeStdin(brief, opts.ResumePrompt)
 	}
+	if baseRuntime == runtimebin.KindClaude && strings.TrimSpace(opts.ResumePrompt) == "" {
+		opts.ResumePrompt = codexManagedResumeStdin("", "")
+	}
 
 	logPath := base.LogPath
 	if logPath == "" {
@@ -1432,17 +1435,91 @@ func managedResumePreflight(meta Metadata, env []string) error {
 	if !st.IsDir() {
 		return fmt.Errorf("workspace %s is not a directory", workspace)
 	}
-	if metadataRuntimeKind(&meta) != runtimebin.KindCodex {
-		return nil
-	}
-	ok, root, err := codexSessionRolloutExists(meta.SessionID, env)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("codex session rollout %q not found under %s", meta.SessionID, root)
+	switch metadataRuntimeKind(&meta) {
+	case runtimebin.KindCodex:
+		ok, root, err := codexSessionRolloutExists(meta.SessionID, env)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("codex session rollout %q not found under %s", meta.SessionID, root)
+		}
+	case runtimebin.KindClaude:
+		ok, root, err := claudeSessionExists(meta.SessionID, workspace, env)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("claude session %q not found under %s", meta.SessionID, root)
+		}
 	}
 	return nil
+}
+
+func claudeSessionExists(sessionID, workspace string, env []string) (bool, string, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	root := filepath.Join(claudeConfigDir(env), "projects")
+	if sessionID == "" {
+		return false, root, nil
+	}
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		absWorkspace = filepath.Clean(workspace)
+	}
+	exactPath := filepath.Join(root, claudeProjectDirName(absWorkspace), sessionID+".jsonl")
+	if st, err := os.Stat(exactPath); err == nil {
+		return !st.IsDir(), root, nil
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, root, fmt.Errorf("stat claude session %s: %w", exactPath, err)
+	}
+
+	found := false
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return fs.SkipDir
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		base := filepath.Base(path)
+		if base == sessionID+".jsonl" || strings.Contains(base, sessionID) {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, root, nil
+	}
+	return found, root, err
+}
+
+func claudeConfigDir(env []string) string {
+	if dir := envValue(env, "CLAUDE_CONFIG_DIR"); dir != "" {
+		return dir
+	}
+	if home := envValue(env, "HOME"); home != "" {
+		return filepath.Join(home, ".claude")
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".claude")
+	}
+	return ".claude"
+}
+
+func claudeProjectDirName(workspace string) string {
+	var b strings.Builder
+	for _, r := range workspace {
+		if (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('-')
+	}
+	return b.String()
 }
 
 func codexSessionRolloutExists(sessionID string, env []string) (bool, string, error) {

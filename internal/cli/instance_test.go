@@ -1244,9 +1244,9 @@ func TestInstanceUpLastDryRunSelectsNewestStoppedMetadata(t *testing.T) {
 	root := daemon.DaemonRoot(teamDir)
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	for _, meta := range []*daemon.Metadata{
-		{Instance: "old", Agent: "worker", Status: daemon.StatusStopped, StartedAt: now.Add(-3 * time.Hour)},
-		{Instance: "mid", Agent: "worker", Status: daemon.StatusStopped, StartedAt: now.Add(-2 * time.Hour)},
-		{Instance: "new", Agent: "worker", Status: daemon.StatusStopped, StartedAt: now.Add(-1 * time.Hour)},
+		{Instance: "old", Agent: "worker", Status: daemon.StatusStopped, SessionID: "sid-old", StartedAt: now.Add(-3 * time.Hour)},
+		{Instance: "mid", Agent: "worker", Status: daemon.StatusStopped, SessionID: "sid-mid", StartedAt: now.Add(-2 * time.Hour)},
+		{Instance: "new", Agent: "worker", Status: daemon.StatusStopped, SessionID: "sid-new", StartedAt: now.Add(-1 * time.Hour)},
 		{Instance: "running-newer", Agent: "worker", Status: daemon.StatusRunning, StartedAt: now.Add(-30 * time.Minute)},
 	} {
 		if err := daemon.WriteMetadata(root, meta); err != nil {

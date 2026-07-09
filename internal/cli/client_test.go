@@ -31,6 +31,29 @@ func newTestClient(t *testing.T, h http.Handler) (*daemonClient, func()) {
 	return c, srv.Close
 }
 
+func writeClientClaudeSession(t *testing.T, configDir, workspace, sessionID string) {
+	t.Helper()
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encoded strings.Builder
+	for _, r := range absWorkspace {
+		if (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			encoded.WriteRune(r)
+			continue
+		}
+		encoded.WriteByte('-')
+	}
+	dir := filepath.Join(configDir, "projects", encoded.String())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClient_AttachesBuildHeader(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -281,15 +304,19 @@ func TestClient_Events(t *testing.T) {
 }
 
 func TestClient_StartInstance(t *testing.T) {
+	claudeConfigDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeConfigDir)
 	root := t.TempDir()
 	m := daemon.NewInstanceManager(root, fakeSpawnerForTest(t, time.Second))
 	c, cleanup := newTestClient(t, daemon.Handler(m, nil, nil, ""))
 	defer cleanup()
 
-	_, err := c.Dispatch(dispatchPayload{Agent: "manager", Name: "mgr", Workspace: t.TempDir()})
+	workspace := t.TempDir()
+	disp, err := c.Dispatch(dispatchPayload{Agent: "manager", Name: "mgr", Workspace: workspace})
 	if err != nil {
 		t.Fatal(err)
 	}
+	writeClientClaudeSession(t, claudeConfigDir, workspace, disp.SessionID)
 	if err := c.StopInstance("mgr"); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
@@ -358,15 +385,19 @@ func TestClient_StopInstanceWithOptions(t *testing.T) {
 }
 
 func TestClient_RestartInstance(t *testing.T) {
+	claudeConfigDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeConfigDir)
 	root := t.TempDir()
 	m := daemon.NewInstanceManager(root, fakeSpawnerForTest(t, time.Second))
 	c, cleanup := newTestClient(t, daemon.Handler(m, nil, nil, ""))
 	defer cleanup()
 
-	_, err := c.Dispatch(dispatchPayload{Agent: "manager", Name: "mgr", Workspace: t.TempDir()})
+	workspace := t.TempDir()
+	disp, err := c.Dispatch(dispatchPayload{Agent: "manager", Name: "mgr", Workspace: workspace})
 	if err != nil {
 		t.Fatal(err)
 	}
+	writeClientClaudeSession(t, claudeConfigDir, workspace, disp.SessionID)
 	if err := c.RestartInstance("mgr"); err != nil {
 		t.Fatalf("restart: %v", err)
 	}
@@ -374,15 +405,19 @@ func TestClient_RestartInstance(t *testing.T) {
 }
 
 func TestClient_RestartInstanceWithOptions(t *testing.T) {
+	claudeConfigDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeConfigDir)
 	root := t.TempDir()
 	m := daemon.NewInstanceManager(root, fakeSpawnerForTest(t, time.Second))
 	c, cleanup := newTestClient(t, daemon.Handler(m, nil, nil, ""))
 	defer cleanup()
 
-	_, err := c.Dispatch(dispatchPayload{Agent: "manager", Name: "mgr", Workspace: t.TempDir()})
+	workspace := t.TempDir()
+	disp, err := c.Dispatch(dispatchPayload{Agent: "manager", Name: "mgr", Workspace: workspace})
 	if err != nil {
 		t.Fatal(err)
 	}
+	writeClientClaudeSession(t, claudeConfigDir, workspace, disp.SessionID)
 	if err := c.RestartInstanceWithOptions("mgr", false, time.Second); err != nil {
 		t.Fatalf("restart with options: %v", err)
 	}
