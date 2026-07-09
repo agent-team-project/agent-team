@@ -454,8 +454,7 @@ function instanceLifecycle(instance) {
 }
 
 function activeRuntimeInstance(instance) {
-  const lifecycle = instanceLifecycle(instance);
-  return lifecycle === "running" || lifecycle === "crashed" || lifecycle === "stopped";
+  return instanceLifecycle(instance) === "running";
 }
 
 function runningPhase(phase) {
