@@ -12,6 +12,9 @@ from pathlib import Path
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+# These tests import the shipped template script directly; do not write bytecode
+# into the embedded template tree.
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(REPO_ROOT / "template" / "skills" / "product-verify" / "scripts"))
 import product_verify_browser as verifier
 
