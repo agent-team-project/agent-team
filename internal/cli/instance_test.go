@@ -1289,6 +1289,79 @@ func TestInstanceUpForceRequiresFresh(t *testing.T) {
 	}
 }
 
+func TestInstanceUpFreshRunningRequiresForce(t *testing.T) {
+	t.Setenv("AGENT_TEAM_DAEMON_URL", "")
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-instance-up-fresh-running-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	writeInstanceTestFile(t, filepath.Join(teamDir, "instances.toml"), `
+[instances.manager]
+agent = "manager"
+description = "Persistent manager."
+`)
+
+	base := fakeSpawnerForTest(t, 2*time.Second)
+	var (
+		mu         sync.Mutex
+		spawnCalls int
+	)
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), func(args []string, env []string, workspace, stdoutPath, stderrPath, stdinContent string) (*os.Process, error) {
+		mu.Lock()
+		spawnCalls++
+		mu.Unlock()
+		return base(args, env, workspace, stdoutPath, stderrPath, stdinContent)
+	})
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+	defer func() {
+		for _, meta := range mgr.List() {
+			if meta.Status == daemon.StatusRunning {
+				stopAndWaitForTest(t, mgr, meta.Instance)
+			}
+		}
+	}()
+	if _, err := mgr.Dispatch(daemon.DispatchInput{Agent: "manager", Name: "manager", Workspace: tmp}); err != nil {
+		t.Fatalf("dispatch manager: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"instance", "up", "manager", "--fresh", "--json", "--target", tmp})
+	if err := cmd.Execute(); err == nil || err.Error() != "exit 1" {
+		t.Fatalf("instance up --fresh running err = %v, want exit 1\nstderr=%s", err, stderr.String())
+	}
+	var rows []lifecycleActionResult
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode instance up json: %v\nbody=%s", err, out.String())
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want one error result", rows)
+	}
+	got := rows[0]
+	if got.Action != "error" || got.Status != "error" || got.Instance != "manager" || got.Agent != "manager" {
+		t.Fatalf("result = %+v, want manager error result", got)
+	}
+	if got.Detail != "stop running instance before --fresh or pass --force" {
+		t.Fatalf("detail = %q, want stop-or-force guidance", got.Detail)
+	}
+	if !strings.Contains(got.Error, `instance "manager" is running; stop it before --fresh or pass --force`) {
+		t.Fatalf("error = %q, want stop-or-force guidance", got.Error)
+	}
+
+	mu.Lock()
+	calls := spawnCalls
+	mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("spawn calls = %d, want only initial running instance and no fresh replacement", calls)
+	}
+}
+
 func TestInstanceUpLastDryRunSelectsNewestStoppedMetadata(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
