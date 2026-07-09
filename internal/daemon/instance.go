@@ -1335,20 +1335,34 @@ func (m *InstanceManager) ensureClaudeResumePrompt(instance string, meta Metadat
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("read launch env: %w", err)
 	}
+	stablePromptMissing := false
 	if !hasPromptSnapshot {
 		if _, err := os.Stat(stablePromptFile); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				return nil
+				stablePromptMissing = true
+			} else {
+				return fmt.Errorf("stat prompt file: %w", err)
 			}
-			return fmt.Errorf("stat prompt file: %w", err)
 		}
 	}
 
 	agentName := strings.TrimSpace(meta.Agent)
 	if agentName == "" {
+		if stablePromptMissing && !hasPromptSnapshot {
+			return nil
+		}
 		return errors.New("metadata has no agent recorded")
 	}
-	agent, err := loader.LoadAgent(filepath.Join(teamDir, "agents", agentName), teamDir)
+	agentDir := filepath.Join(teamDir, "agents", agentName)
+	if stablePromptMissing && !hasPromptSnapshot {
+		if _, err := os.Stat(filepath.Join(agentDir, "agent.md")); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return fmt.Errorf("stat agent %q: %w", agentName, err)
+		}
+	}
+	agent, err := loader.LoadAgent(agentDir, teamDir)
 	if err != nil {
 		return fmt.Errorf("load agent %q: %w", agentName, err)
 	}

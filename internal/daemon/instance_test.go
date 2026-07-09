@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -1166,6 +1167,76 @@ description = "Recoverable Claude manager."
 		Version:    1,
 	}); err != nil {
 		t.Fatal(err)
+	}
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+
+	resumed, err := m.Start("mgr")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if resumed.Status != StatusRunning || resumed.SessionID != sessionID {
+		t.Fatalf("resumed metadata = %+v", resumed)
+	}
+	if got, want := fake.lastCall(), []string{"claude", "--resume", sessionID}; !stringSlicesEqual(got, want) {
+		t.Fatalf("resume args = %v, want %v", got, want)
+	}
+	body, err := os.ReadFile(promptFile)
+	if err != nil {
+		t.Fatalf("read regenerated prompt: %v", err)
+	}
+	for _, want := range []string{"# Instance brief: mgr", "--- runtime kickoff ---", "You are the `mgr` instance of the `manager` agent."} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("regenerated prompt missing %q:\n%s", want, string(body))
+		}
+	}
+
+	_, _ = m.Stop("mgr")
+	waitForStatusNot(t, m, "mgr", StatusRunning)
+}
+
+func TestInstance_StartClaudeRegeneratesPromptAfterResumeSnapshot(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "claude")
+	teamDir := fixtureTeamDir(t)
+	writeFixtureAgent(t, teamDir, "manager")
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.mgr]
+agent = "manager"
+description = "Recoverable Claude manager."
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := DaemonRoot(teamDir)
+	workspace := t.TempDir()
+	sessionID := "session-after-first-resume"
+	now := time.Now().UTC()
+	promptFile := filepath.Join(teamDir, "state", "mgr", "runtime", "system_prompt.md")
+	if err := WriteMetadata(root, &Metadata{
+		Instance:      "mgr",
+		Agent:         "manager",
+		Runtime:       string(runtimebin.KindClaude),
+		RuntimeBinary: "claude",
+		Workspace:     workspace,
+		PID:           123,
+		SessionID:     sessionID,
+		StartedAt:     now,
+		StoppedAt:     now,
+		Status:        StatusStopped,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteInstanceLaunchEnv(root, "mgr", &LaunchEnv{
+		Bin:        "claude",
+		Args:       []string{"claude", "--resume", sessionID},
+		Dir:        workspace,
+		Env:        []string{"MARKER=dispatch"},
+		RecordedAt: now,
+		Version:    1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(promptFile); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("prompt precondition err = %v, want missing file", err)
 	}
 	fake := newFakeSpawner(30 * time.Second)
 	m := NewInstanceManager(root, fake.spawn)
