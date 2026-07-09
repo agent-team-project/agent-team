@@ -392,11 +392,19 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		}
 	}
 	daemonDispatch := !cfg.noDaemon && daemonCapable && (cfg.prompt != "" || cfg.detach || cfg.attach) && dispatchClient != nil
-	launchRoot, launchCleanupPaths, err := prepareRunLaunchRoot(stateDir, daemonDispatch)
+	launchMode := runLaunchRootDirect
+	if daemonDispatch {
+		launchMode = runLaunchRootDaemonScratch
+		if runLaunchRootShouldPersist(teamDir, instance, agentName) {
+			launchMode = runLaunchRootDaemonPersistent
+		}
+	}
+	launch, err := prepareRunLaunchRoot(stateDir, launchMode)
 	if err != nil {
 		return err
 	}
-	cleanupLaunchRoot := !daemonDispatch
+	launchRoot := launch.Root
+	cleanupLaunchRoot := launch.CleanupByCLI
 	defer func() {
 		if cleanupLaunchRoot {
 			_ = os.RemoveAll(launchRoot)
@@ -429,7 +437,7 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 	}
 
 	shimRoot := launchRoot
-	if daemonDispatch {
+	if launch.Persistent {
 		shimRoot = stateDir
 	}
 	shimBinDir, err := runtimeshim.InstallWithOptions(shimRoot, skillPaths, runtimeshim.Options{
@@ -475,7 +483,7 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 			Args:                runtimeArgs,
 			Env:                 runtimeArgEnv,
 			Stdin:               runtimeStdin,
-			CleanupPaths:        launchCleanupPaths,
+			CleanupPaths:        launch.CleanupPaths,
 		})
 		if derr != nil {
 			return fmt.Errorf("daemon dispatch: %w", derr)
@@ -576,19 +584,53 @@ func runResourceEnv(payload runResourcePayload) []string {
 	return out
 }
 
-func prepareRunLaunchRoot(stateDir string, daemonDispatch bool) (string, []string, error) {
-	if !daemonDispatch {
+type runLaunchRootMode int
+
+const (
+	runLaunchRootDirect runLaunchRootMode = iota
+	runLaunchRootDaemonPersistent
+	runLaunchRootDaemonScratch
+)
+
+type runLaunchRoot struct {
+	Root         string
+	CleanupPaths []string
+	CleanupByCLI bool
+	Persistent   bool
+}
+
+func runLaunchRootShouldPersist(teamDir, instance, agent string) bool {
+	topo, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil || topo == nil {
+		return false
+	}
+	inst := topo.FindRuntimeInstance(instance, agent)
+	return inst != nil && !inst.Ephemeral
+}
+
+func prepareRunLaunchRoot(stateDir string, mode runLaunchRootMode) (runLaunchRoot, error) {
+	if mode == runLaunchRootDirect {
 		dir, err := os.MkdirTemp("", "agent-team-")
 		if err != nil {
-			return "", nil, fmt.Errorf("create tmpdir: %w", err)
+			return runLaunchRoot{}, fmt.Errorf("create tmpdir: %w", err)
 		}
-		return dir, nil, nil
+		return runLaunchRoot{Root: dir, CleanupByCLI: true}, nil
 	}
-	dir := filepath.Join(stateDir, "runtime")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", nil, fmt.Errorf("create runtime dir: %w", err)
+	runtimeDir := filepath.Join(stateDir, "runtime")
+	if mode == runLaunchRootDaemonPersistent {
+		if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+			return runLaunchRoot{}, fmt.Errorf("create runtime dir: %w", err)
+		}
+		return runLaunchRoot{Root: runtimeDir, Persistent: true}, nil
 	}
-	return dir, nil, nil
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		return runLaunchRoot{}, fmt.Errorf("create runtime dir: %w", err)
+	}
+	dir, err := os.MkdirTemp(runtimeDir, "launch-")
+	if err != nil {
+		return runLaunchRoot{}, fmt.Errorf("create daemon launch dir: %w", err)
+	}
+	return runLaunchRoot{Root: dir, CleanupPaths: []string{dir}}, nil
 }
 
 func buildRuntimeArgs(rt runtimebin.Runtime, target, addDir, agentsJSON, promptFile, kickoff, prompt string, forwarded []string, agents []*loader.Agent, env []string, lastMessagePath string, mailboxHook *runtimehooks.MailboxHook, otelLaunch runtimeotel.Launch) ([]string, string, error) {
