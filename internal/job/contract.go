@@ -45,8 +45,14 @@ type ContractCriterion struct {
 type ContractCompileOptions struct {
 	Text            string
 	RequiredTrailer string
+	ExplicitEpic    string
 	Gates           string
 	Scope           []string
+}
+
+type criterionSection struct {
+	text          string
+	allowNumbered bool
 }
 
 // ValidateContract checks the persisted v1 contract shape. A nil contract is
@@ -103,7 +109,7 @@ func CompileContract(j *Job, opts ContractCompileOptions) *Contract {
 	if deliverable == "" {
 		return nil
 	}
-	trailer := firstNonEmptyString(opts.RequiredTrailer, extractRequiredTrailer(opts.Text), requiredTrailerForJob(j))
+	trailer := firstNonEmptyString(opts.RequiredTrailer, requiredTrailerForEpic(opts.ExplicitEpic), extractRequiredTrailer(opts.Text), requiredTrailerForJob(j))
 	workItem := firstNonEmptyString(j.TicketURL, j.Ticket, j.ID)
 	if workItem == "" {
 		return nil
@@ -240,7 +246,7 @@ func extractContractCriteria(text string) []ContractCriterion {
 	var out []ContractCriterion
 	seen := map[string]bool{}
 	for _, section := range sections {
-		for _, criterion := range parseCriteriaLines(section) {
+		for _, criterion := range parseCriteriaLines(section.text, section.allowNumbered) {
 			if len(out) >= 7 {
 				return out
 			}
@@ -257,13 +263,13 @@ func extractContractCriteria(text string) []ContractCriterion {
 	return nil
 }
 
-func candidateCriterionSections(text string) []string {
+func candidateCriterionSections(text string) []criterionSection {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil
 	}
 	lines := strings.Split(text, "\n")
-	var sections []string
+	var sections []criterionSection
 	for i := 0; i < len(lines); i++ {
 		if !isCriterionHeading(lines[i]) {
 			continue
@@ -277,12 +283,10 @@ func candidateCriterionSections(text string) []string {
 			b.WriteByte('\n')
 		}
 		if strings.TrimSpace(b.String()) != "" {
-			sections = append(sections, b.String())
+			sections = append(sections, criterionSection{text: b.String(), allowNumbered: true})
 		}
 	}
-	if len(sections) == 0 {
-		sections = append(sections, text)
-	}
+	sections = append(sections, criterionSection{text: text, allowNumbered: false})
 	return sections
 }
 
@@ -301,7 +305,7 @@ func isMarkdownHeading(line string) bool {
 	return strings.HasPrefix(line, "#")
 }
 
-func parseCriteriaLines(section string) []ContractCriterion {
+func parseCriteriaLines(section string, allowNumbered bool) []ContractCriterion {
 	var out []ContractCriterion
 	nextID := 1
 	for _, rawLine := range strings.Split(section, "\n") {
@@ -316,6 +320,9 @@ func parseCriteriaLines(section string) []ContractCriterion {
 				continue
 			}
 			out = append(out, ContractCriterion{ID: id, Text: text, Verify: firstNonEmptyString(verify, ContractDefaultVerify)})
+			continue
+		}
+		if !allowNumbered {
 			continue
 		}
 		if m := numberedCriterionLinePattern.FindStringSubmatch(line); len(m) == 2 {
@@ -397,7 +404,7 @@ func requiredTrailerForJob(j *Job) string {
 	if j == nil {
 		return ""
 	}
-	if ref := githubIssueNumber(j.Epic); ref != "" {
+	if ref := githubIssueNumberForExplicitJobEpic(j); ref != "" {
 		return "Advances #" + ref
 	}
 	if strings.TrimSpace(j.TicketURL) != "" {
@@ -412,6 +419,27 @@ func requiredTrailerForJob(j *Job) string {
 		return "Closes #" + ref
 	}
 	return ""
+}
+
+func requiredTrailerForEpic(epic string) string {
+	if ref := githubIssueNumber(epic); ref != "" {
+		return "Advances #" + ref
+	}
+	return ""
+}
+
+func githubIssueNumberForExplicitJobEpic(j *Job) string {
+	if j == nil {
+		return ""
+	}
+	epic := strings.TrimSpace(j.Epic)
+	if epic == "" {
+		return ""
+	}
+	if ticketEpic := EpicFromTicketURL(j.TicketURL); ticketEpic != "" && strings.EqualFold(epic, ticketEpic) {
+		return ""
+	}
+	return githubIssueNumber(epic)
 }
 
 func githubIssueNumber(raw string) string {

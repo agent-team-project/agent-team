@@ -1348,7 +1348,7 @@ func TestEvent_EphemeralDispatchRendersAndPersistsContract(t *testing.T) {
 		"workspace":   "repo",
 		"kickoff": "Required PR trailer: `Advances #324`\n\n" +
 			"## Contract\n\n" +
-			"AC1. Worker kickoff rendering includes a fixed contract section.\n" +
+			"AC1. Worker kickoff rendering includes a fixed contract section. (verify: go test ./internal/job)\n" +
 			"AC2. Reviewer bounces cite unmet clauses.",
 	})
 	if err != nil {
@@ -1388,6 +1388,9 @@ func TestEvent_EphemeralDispatchRendersAndPersistsContract(t *testing.T) {
 	}
 	if len(j.Contract.Criteria) != 2 || j.Contract.Criteria[0].ID != "AC1" || j.Contract.Criteria[1].ID != "AC2" {
 		t.Fatalf("persisted criteria = %+v", j.Contract.Criteria)
+	}
+	if j.Contract.Criteria[0].Verify != "go test ./internal/job" {
+		t.Fatalf("persisted verify hint = %q, want go test ./internal/job", j.Contract.Criteria[0].Verify)
 	}
 }
 

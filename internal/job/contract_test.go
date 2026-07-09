@@ -100,6 +100,7 @@ func TestCompileContractFallbackRecordsDeliverableTrailerFloor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	j.Epic = EpicFromInputs("", j.TicketURL, "")
 	j.DeliveryContract = "ticket_to_pr"
 	contract := CompileContract(j, ContractCompileOptions{Text: "mechanical fix"})
 	if contract == nil {
@@ -110,6 +111,72 @@ func TestCompileContractFallbackRecordsDeliverableTrailerFloor(t *testing.T) {
 	}
 	if len(contract.Criteria) != 0 {
 		t.Fatalf("fallback criteria = %+v, want none", contract.Criteria)
+	}
+}
+
+func TestCompileContractExplicitEpicRequiresAdvances(t *testing.T) {
+	j, err := New("https://github.com/agent-team-project/kensho/issues/324", "worker", "epic slice", time.Now())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	j.Epic = EpicFromInputs("agent-team-project/kensho#324", j.TicketURL, "")
+	j.DeliveryContract = "ticket_to_pr"
+	contract := CompileContract(j, ContractCompileOptions{
+		Text:         "epic slice",
+		ExplicitEpic: "agent-team-project/kensho#324",
+	})
+	if contract == nil {
+		t.Fatalf("CompileContract returned nil")
+	}
+	if contract.Trailer != "Advances #324" {
+		t.Fatalf("contract trailer = %q, want Advances #324", contract.Trailer)
+	}
+}
+
+func TestCompileContractIgnoresNumberedProseOutsideCriteriaHeading(t *testing.T) {
+	j, err := New("https://github.com/agent-team-project/kensho/issues/42", "worker", "mechanical fix", time.Now())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	j.DeliveryContract = "ticket_to_pr"
+	contract := CompileContract(j, ContractCompileOptions{Text: `Implementation notes:
+
+1. Touch internal/daemon.
+2. Run go test ./...
+`})
+	if contract == nil {
+		t.Fatalf("CompileContract returned nil")
+	}
+	if len(contract.Criteria) != 0 {
+		t.Fatalf("criteria = %+v, want no criteria from generic numbered prose", contract.Criteria)
+	}
+}
+
+func TestCompileContractParsesIntentionalCriteriaSources(t *testing.T) {
+	j, err := New("https://github.com/agent-team-project/kensho/issues/42", "worker", "mechanical fix", time.Now())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	j.DeliveryContract = "ticket_to_pr"
+	contract := CompileContract(j, ContractCompileOptions{Text: `Implementation notes:
+
+AC7. The dispatch contract survives durable job round-trip. (verify: go test ./internal/job)
+
+## Acceptance criteria
+
+1. Worker kickoff rendering includes clause ids.
+`})
+	if contract == nil {
+		t.Fatalf("CompileContract returned nil")
+	}
+	if len(contract.Criteria) != 2 {
+		t.Fatalf("criteria len=%d: %+v", len(contract.Criteria), contract.Criteria)
+	}
+	if contract.Criteria[0].ID != "AC1" || contract.Criteria[0].Text != "Worker kickoff rendering includes clause ids." {
+		t.Fatalf("numbered criterion = %+v", contract.Criteria[0])
+	}
+	if contract.Criteria[1].ID != "AC7" || contract.Criteria[1].Verify != "go test ./internal/job" {
+		t.Fatalf("stable criterion = %+v", contract.Criteria[1])
 	}
 }
 
