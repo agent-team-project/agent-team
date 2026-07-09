@@ -422,7 +422,10 @@ func newJobCreateCmd() *cobra.Command {
 			}
 			j.Epic = job.EpicFromInputs(epic, j.TicketURL, j.Origin.Project)
 			if j.Contract == nil {
-				j.Contract = job.CompileContract(j, job.ContractCompileOptions{Text: j.Kickoff})
+				j.Contract = job.CompileContract(j, job.ContractCompileOptions{
+					Text:         j.Kickoff,
+					ExplicitEpic: epic,
+				})
 			}
 			if strings.TrimSpace(instance) != "" {
 				j.Instance = strings.TrimSpace(instance)

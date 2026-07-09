@@ -2581,6 +2581,57 @@ func TestJobDispatchDryRunDoesNotMutate(t *testing.T) {
 	}
 }
 
+func TestJobCreateDryRunContractTrailerDistinguishesExplicitEpic(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "explicit epic advances",
+			args: []string{
+				"job", "create", "https://github.com/agent-team-project/kensho/issues/324",
+				"--repo", tmp,
+				"--pipeline", "ticket_to_pr",
+				"--epic", "agent-team-project/kensho#324",
+				"--kickoff", "Implement epic slice without restating trailer.",
+				"--dry-run",
+				"--format", "{{.Contract.Trailer}}",
+			},
+			want: "Advances #324",
+		},
+		{
+			name: "ordinary issue closes",
+			args: []string{
+				"job", "create", "https://github.com/agent-team-project/kensho/issues/42",
+				"--repo", tmp,
+				"--pipeline", "ticket_to_pr",
+				"--kickoff", "Implement ordinary issue without restating trailer.",
+				"--dry-run",
+				"--format", "{{.Contract.Trailer}}",
+			},
+			want: "Closes #42",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cmd.SetOut(out)
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("job create dry-run: %v\nstderr=%s", err, stderr.String())
+			}
+			if got := strings.TrimSpace(out.String()); got != tc.want {
+				t.Fatalf("contract trailer = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestJobCreateFromTicketURLUsesTicketSlugID(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
