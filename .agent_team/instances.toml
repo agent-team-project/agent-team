@@ -14,7 +14,7 @@
 [model_policy]
 runtime = "codex"
 model   = "gpt-5.6-sol"
-effort  = "high"
+effort  = "xhigh"
 
 [instances.manager]
 agent       = "manager"

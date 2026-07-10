@@ -141,7 +141,7 @@ func TestPrintRuntimeMetadata_PrintsDaemonFields(t *testing.T) {
 		Runtime:         "codex",
 		RuntimeBinary:   "codex-dev",
 		Model:           "gpt-5.6-sol",
-		Effort:          "high",
+		Effort:          "xhigh",
 		PID:             12345,
 		Workspace:       tmp,
 		SessionID:       "session-1",
@@ -164,7 +164,7 @@ func TestPrintRuntimeMetadata_PrintsDaemonFields(t *testing.T) {
 		"runtime:     codex",
 		"binary:      codex-dev",
 		"model:       gpt-5.6-sol",
-		"effort:      high",
+		"effort:      xhigh",
 		"pid:         12345",
 		"workspace:   " + filepath.ToSlash(tmp),
 		"session_id:  session-1",
@@ -1644,7 +1644,7 @@ func TestInstanceUpForwardsInheritedCodexModelAndEffort(t *testing.T) {
 [model_policy]
 runtime = "codex"
 model = "gpt-5.6-sol"
-effort = "high"
+effort = "xhigh"
 
 [instances.manager]
 agent = "manager"
@@ -1691,14 +1691,14 @@ description = "Persistent Codex manager."
 	if got, ok := argValue(args, "--model"); !ok || got != "gpt-5.6-sol" {
 		t.Fatalf("daemon args --model = %q, %v; want gpt-5.6-sol in %v", got, ok, args)
 	}
-	if !containsArgSubstring(args, `model_reasoning_effort="high"`) {
-		t.Fatalf("daemon args missing high effort: %v", args)
+	if !containsArgSubstring(args, `model_reasoning_effort="xhigh"`) {
+		t.Fatalf("daemon args missing xhigh effort: %v", args)
 	}
 	meta, err := daemon.ReadMetadata(daemon.DaemonRoot(teamDir), "manager")
 	if err != nil {
 		t.Fatalf("read metadata: %v", err)
 	}
-	if meta.Model != "gpt-5.6-sol" || meta.Effort != "high" {
+	if meta.Model != "gpt-5.6-sol" || meta.Effort != "xhigh" {
 		t.Fatalf("metadata model/effort = %q/%q", meta.Model, meta.Effort)
 	}
 }

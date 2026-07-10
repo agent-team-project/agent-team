@@ -63,6 +63,12 @@ func TestTemplateRun_TargetUsed(t *testing.T) {
 	if len(cap.args) == 0 || cap.args[0] != "exec" {
 		t.Errorf("expected codex exec in captured args: %v", cap.args)
 	}
+	if got, ok := argValue(cap.args, "--model"); !ok || got != "gpt-5.6-sol" {
+		t.Errorf("template run model = %q, %v; want gpt-5.6-sol in %v", got, ok, cap.args)
+	}
+	if !containsArgSubstring(cap.args, `model_reasoning_effort="xhigh"`) {
+		t.Errorf("template run args missing xhigh effort: %v", cap.args)
+	}
 	if !strings.Contains(cap.stdin, "hello from file") {
 		t.Errorf("kickoff prompt not forwarded in Codex stdin: %q", cap.stdin)
 	}

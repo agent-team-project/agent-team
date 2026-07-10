@@ -1824,7 +1824,7 @@ func TestEvent_EphemeralDispatchForwardsModelForCodexRuntime(t *testing.T) {
 [model_policy]
 runtime = "codex"
 model = "gpt-5.6-sol"
-effort = "high"
+effort = "xhigh"
 
 [instances.worker]
 agent = "worker"
@@ -1852,15 +1852,15 @@ match.target = "worker"
 	if got, ok := argValue(call, "--model"); !ok || got != "gpt-5.6-sol" {
 		t.Fatalf("codex spawn call model = %q, %v; want gpt-5.6-sol in %#v", got, ok, call)
 	}
-	if !containsArgSubstring(call, `model_reasoning_effort="high"`) {
+	if !containsArgSubstring(call, `model_reasoning_effort="xhigh"`) {
 		t.Fatalf("codex spawn call missing effort config: %#v", call)
 	}
 	meta, err := ReadMetadata(root, "worker-squ-44")
 	if err != nil {
 		t.Fatalf("read metadata: %v", err)
 	}
-	if meta.Model != "gpt-5.6-sol" || meta.Effort != "high" {
-		t.Fatalf("metadata model/effort = %q/%q, want gpt-5.6-sol/high", meta.Model, meta.Effort)
+	if meta.Model != "gpt-5.6-sol" || meta.Effort != "xhigh" {
+		t.Fatalf("metadata model/effort = %q/%q, want gpt-5.6-sol/xhigh", meta.Model, meta.Effort)
 	}
 	_, _ = m.Stop("worker-squ-44")
 	_ = waitForEventReaper(t, m, "worker-squ-44")

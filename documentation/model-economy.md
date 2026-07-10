@@ -11,7 +11,7 @@ Claude and Codex launches, and `effort` maps to each runtime's reasoning-effort 
 ## Active binding — 2026-07-10
 
 Every non-Fable Kensho seat runs `runtime = "codex"`, `model = "gpt-5.6-sol"`, and
-`effort = "high"`. This includes named and persistent seats, scheduled and replicated
+`effort = "xhigh"`. This includes named and persistent seats, scheduled and replicated
 instances, delivery/platform/release/docs pipelines, and dynamic dispatches.
 
 Exactly three advisory seats are exceptions: `advisor`, `harness-reviewer`, and

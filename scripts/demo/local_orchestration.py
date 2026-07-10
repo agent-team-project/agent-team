@@ -917,7 +917,7 @@ def configure_demo_model_policy(repo: Path, runtime: str) -> None:
         [model_policy]
         runtime = "codex"
         model   = "gpt-5.6-sol"
-        effort  = "high"
+        effort  = "xhigh"
         """
     )
     claude_demo = textwrap.dedent(

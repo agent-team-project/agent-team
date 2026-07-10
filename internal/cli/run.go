@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	texttemplate "text/template"
@@ -466,6 +467,8 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
 		return exitErr(2)
 	}
+	runModel := declaredRunModel(teamDir, instance, agentName, rt)
+	runEffort := declaredRunEffort(teamDir, instance, agentName)
 
 	if daemonDispatch {
 		// runtimeArgs already starts with --agents/--add-dir/.../-p; the
@@ -486,8 +489,8 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 			StateURI:            runResources.StateURI,
 			Runtime:             string(rt.Kind),
 			RuntimeBinary:       rt.Binary,
-			Model:               declaredRunModel(teamDir, instance, agentName, rt),
-			Effort:              declaredRunEffort(teamDir, instance, agentName),
+			Model:               runModel,
+			Effort:              runEffort,
 			Args:                runtimeArgs,
 			Env:                 runtimeArgEnv,
 			Stdin:               runtimeStdin,
@@ -536,6 +539,7 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		return nil
 	}
 
+	runtimeArgs = directRuntimeArgsWithPolicy(rt, runtimeArgs, runModel, runEffort)
 	if cfg.lastMessage {
 		return execRuntimeAndPrintLastMessage(cmd, rt.Binary, runtimeArgs, env, target, runtimeStdin, lastMessagePath)
 	}
@@ -658,6 +662,40 @@ func declaredRunInstance(teamDir, instance, agent string) *topology.Instance {
 		return nil
 	}
 	return inst
+}
+
+func directRuntimeArgsWithPolicy(rt runtimebin.Runtime, args []string, model, effort string) []string {
+	model = strings.TrimSpace(model)
+	effort = strings.TrimSpace(effort)
+	policyArgs := make([]string, 0, 4)
+	switch rt.Kind {
+	case runtimebin.KindClaude:
+		if model != "" {
+			policyArgs = append(policyArgs, "--model", model)
+		}
+		if effort != "" {
+			policyArgs = append(policyArgs, "--effort", effort)
+		}
+	case runtimebin.KindCodex:
+		if model != "" {
+			policyArgs = append(policyArgs, "--model", model)
+		}
+		if effort != "" {
+			policyArgs = append(policyArgs, "-c", "model_reasoning_effort="+strconv.Quote(effort))
+		}
+	default:
+		return args
+	}
+	if len(policyArgs) == 0 {
+		return args
+	}
+	if rt.Kind == runtimebin.KindCodex && len(args) > 0 && args[0] == "exec" {
+		out := make([]string, 0, len(args)+len(policyArgs))
+		out = append(out, args[0])
+		out = append(out, policyArgs...)
+		return append(out, args[1:]...)
+	}
+	return append(policyArgs, args...)
 }
 
 func prepareRunLaunchRoot(stateDir string, mode runLaunchRootMode) (runLaunchRoot, error) {

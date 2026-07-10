@@ -545,7 +545,7 @@ func TestParse_ModelPolicyResolvesInstancesAndPipelineTargets(t *testing.T) {
 [model_policy]
 runtime = "codex"
 model = "gpt-5.6-sol"
-effort = "high"
+effort = "xhigh"
 
 [instances.worker]
 agent = "worker"
@@ -580,10 +580,10 @@ after = ["consult"]
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if got := top.ModelPolicy; got == nil || got.Runtime != "codex" || got.Model != "gpt-5.6-sol" || got.Effort != "high" {
+	if got := top.ModelPolicy; got == nil || got.Runtime != "codex" || got.Model != "gpt-5.6-sol" || got.Effort != "xhigh" {
 		t.Fatalf("model policy = %+v", got)
 	}
-	if got := top.Instances["worker"]; got.Runtime != "codex" || got.Model != "gpt-5.6-sol" || got.Effort != "high" {
+	if got := top.Instances["worker"]; got.Runtime != "codex" || got.Model != "gpt-5.6-sol" || got.Effort != "xhigh" {
 		t.Fatalf("worker policy = %q/%q/%q", got.Runtime, got.Model, got.Effort)
 	}
 	if got := top.Instances["advisor"]; got.Runtime != "claude" || got.Model != "claude-fable-5" || got.Effort != "max" {
@@ -594,7 +594,7 @@ after = ["consult"]
 		index                  int
 		runtime, model, effort string
 	}{
-		{0, "codex", "gpt-5.6-sol", "high"},
+		{0, "codex", "gpt-5.6-sol", "xhigh"},
 		{1, "claude", "claude-fable-5", "max"},
 		{2, "docker", "special-model", "low"},
 	} {
@@ -712,7 +712,7 @@ func TestParse_FableMaxEffortExamples(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse self-dogfood topology: %v", err)
 	}
-	if got := top.ModelPolicy; got == nil || got.Runtime != "codex" || got.Model != "gpt-5.6-sol" || got.Effort != "high" {
+	if got := top.ModelPolicy; got == nil || got.Runtime != "codex" || got.Model != "gpt-5.6-sol" || got.Effort != "xhigh" {
 		t.Fatalf("self-dogfood model policy = %+v", got)
 	}
 	fable := make([]string, 0, 3)
@@ -724,7 +724,7 @@ func TestParse_FableMaxEffortExamples(t *testing.T) {
 			}
 			continue
 		}
-		if inst.Runtime != "codex" || inst.Model != "gpt-5.6-sol" || inst.Effort != "high" {
+		if inst.Runtime != "codex" || inst.Model != "gpt-5.6-sol" || inst.Effort != "xhigh" {
 			t.Fatalf("self-dogfood non-Fable seat %s = %q/%q/%q", name, inst.Runtime, inst.Model, inst.Effort)
 		}
 	}

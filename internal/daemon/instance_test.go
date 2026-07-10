@@ -643,7 +643,7 @@ func TestInstance_DispatchCodexRuntimeExecArgs(t *testing.T) {
 		Agent:     "worker",
 		Name:      "worker-runtime",
 		Model:     "gpt-5.6-sol",
-		Effort:    "high",
+		Effort:    "xhigh",
 		Workspace: t.TempDir(),
 		Args:      []string{"exec", "-C", t.TempDir(), "hello"},
 	})
@@ -653,8 +653,8 @@ func TestInstance_DispatchCodexRuntimeExecArgs(t *testing.T) {
 	if meta.Runtime != string(runtimebin.KindCodex) || meta.SessionID != "" {
 		t.Fatalf("metadata = %+v, want codex without captured session", meta)
 	}
-	if meta.Model != "gpt-5.6-sol" || meta.Effort != "high" {
-		t.Fatalf("metadata model/effort = %q/%q, want gpt-5.6-sol/high", meta.Model, meta.Effort)
+	if meta.Model != "gpt-5.6-sol" || meta.Effort != "xhigh" {
+		t.Fatalf("metadata model/effort = %q/%q, want gpt-5.6-sol/xhigh", meta.Model, meta.Effort)
 	}
 	args := fake.lastCall()
 	if len(args) < 2 || args[0] != "codex" || args[1] != "exec" {
@@ -666,8 +666,8 @@ func TestInstance_DispatchCodexRuntimeExecArgs(t *testing.T) {
 	if got, ok := argValue(args, "--model"); !ok || got != "gpt-5.6-sol" {
 		t.Fatalf("codex args model = %q, %v; want gpt-5.6-sol in %v", got, ok, args)
 	}
-	if !containsArgSubstring(args, `model_reasoning_effort="high"`) {
-		t.Fatalf("codex args = %v, want model_reasoning_effort high", args)
+	if !containsArgSubstring(args, `model_reasoning_effort="xhigh"`) {
+		t.Fatalf("codex args = %v, want model_reasoning_effort xhigh", args)
 	}
 	if containsString(args, "--session-id") {
 		t.Fatalf("codex args should not include Claude session id: %v", args)

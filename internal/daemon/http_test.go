@@ -559,7 +559,7 @@ func TestHTTP_DispatchPassesStdin(t *testing.T) {
 	srv := httptest.NewServer(Handler(m, nil, nil, ""))
 	defer srv.Close()
 
-	body := `{"agent":"worker","name":"w-stdin","workspace":"` + t.TempDir() + `","runtime":"codex","runtime_binary":"codex","model":"gpt-5.6-sol","effort":"high","args":["exec","-"],"stdin":"hello via http"}`
+	body := `{"agent":"worker","name":"w-stdin","workspace":"` + t.TempDir() + `","runtime":"codex","runtime_binary":"codex","model":"gpt-5.6-sol","effort":"xhigh","args":["exec","-"],"stdin":"hello via http"}`
 	resp := mustPost(t, srv.URL+"/v1/dispatch", body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("dispatch status: got %d, body=%s", resp.StatusCode, readBody(t, resp))
@@ -571,7 +571,7 @@ func TestHTTP_DispatchPassesStdin(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&dispatched); err != nil {
 		t.Fatalf("decode dispatch response: %v", err)
 	}
-	if dispatched.Model != "gpt-5.6-sol" || dispatched.Effort != "high" {
+	if dispatched.Model != "gpt-5.6-sol" || dispatched.Effort != "xhigh" {
 		t.Fatalf("dispatch response model/effort = %q/%q", dispatched.Model, dispatched.Effort)
 	}
 	if got := fake.lastStdin(); got != "hello via http" {

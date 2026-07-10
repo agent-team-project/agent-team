@@ -25,7 +25,7 @@ Use one shared policy when most seats should run on the same runtime/model:
 [model_policy]
 runtime = "codex"
 model = "gpt-5.6-sol"
-effort = "high"
+effort = "xhigh"
 ```
 
 Every instance inherits omitted `runtime`, `model`, and `effort` values from

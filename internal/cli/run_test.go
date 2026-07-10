@@ -315,7 +315,7 @@ func TestInitFullResolvesComprehensiveModelPolicy(t *testing.T) {
 	if top == nil || top.ModelPolicy == nil {
 		t.Fatal("generated topology missing model policy")
 	}
-	if got := top.ModelPolicy; got.Runtime != "codex" || got.Model != "gpt-5.6-sol" || got.Effort != "high" {
+	if got := top.ModelPolicy; got.Runtime != "codex" || got.Model != "gpt-5.6-sol" || got.Effort != "xhigh" {
 		t.Fatalf("generated model policy = %+v", got)
 	}
 
@@ -328,7 +328,7 @@ func TestInitFullResolvesComprehensiveModelPolicy(t *testing.T) {
 			}
 			continue
 		}
-		if inst.Runtime != "codex" || inst.Model != "gpt-5.6-sol" || inst.Effort != "high" {
+		if inst.Runtime != "codex" || inst.Model != "gpt-5.6-sol" || inst.Effort != "xhigh" {
 			t.Fatalf("generated non-Fable seat %s = %q/%q/%q", name, inst.Runtime, inst.Model, inst.Effort)
 		}
 	}
@@ -821,6 +821,77 @@ func TestRun_CodexRuntimeBuildsDirectExecArgs(t *testing.T) {
 	}
 }
 
+func TestRun_DirectCodexForwardsInheritedTopologyPolicy(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeInstanceTestFile(t, filepath.Join(tmp, ".agent_team", "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.manager]
+agent = "manager"
+`)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt", "codex task", "--no-daemon"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if got, ok := argValue(cap.args, "--model"); !ok || got != "gpt-5.6-sol" {
+		t.Fatalf("direct Codex model = %q, %v; want gpt-5.6-sol in %v", got, ok, cap.args)
+	}
+	if !containsArgSubstring(cap.args, `model_reasoning_effort="xhigh"`) {
+		t.Fatalf("direct Codex args missing xhigh effort: %v", cap.args)
+	}
+}
+
+func TestRun_DirectFableForwardsTopologyPolicy(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeInstanceTestFile(t, filepath.Join(tmp, ".agent_team", "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.advisor]
+agent = "advisor"
+runtime = "claude"
+model = "claude-fable-5"
+effort = "max"
+`)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "advisor", "--target", tmp, "--no-daemon"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if got, ok := argValue(cap.args, "--model"); !ok || got != "claude-fable-5" {
+		t.Fatalf("direct Fable model = %q, %v; want claude-fable-5 in %v", got, ok, cap.args)
+	}
+	if got, ok := argValue(cap.args, "--effort"); !ok || got != "max" {
+		t.Fatalf("direct Fable effort = %q, %v; want max in %v", got, ok, cap.args)
+	}
+}
+
 func argsContainSubstring(args []string, want string) bool {
 	for _, arg := range args {
 		if strings.Contains(arg, want) {
@@ -1205,7 +1276,7 @@ func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 [model_policy]
 runtime = "codex"
 model = "gpt-5.6-sol"
-effort = "high"
+effort = "xhigh"
 
 [instances.manager]
 agent       = "manager"
@@ -1256,7 +1327,7 @@ description = "Persistent Codex manager."
 	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
 		t.Fatalf("json body: %v\nstdout: %s", err, out.String())
 	}
-	if body.Instance != "manager" || body.Agent != "manager" || body.Runtime != "codex" || body.Model != "gpt-5.6-sol" || body.Effort != "high" || body.PID == 0 || body.SessionID != "" || body.Follow == "" {
+	if body.Instance != "manager" || body.Agent != "manager" || body.Runtime != "codex" || body.Model != "gpt-5.6-sol" || body.Effort != "xhigh" || body.PID == 0 || body.SessionID != "" || body.Follow == "" {
 		t.Fatalf("dispatch body = %+v", body)
 	}
 
@@ -1278,8 +1349,8 @@ description = "Persistent Codex manager."
 	if got, ok := argValue(args, "--model"); !ok || got != "gpt-5.6-sol" {
 		t.Fatalf("codex daemon args model = %q, %v; want gpt-5.6-sol in %v", got, ok, args)
 	}
-	if !containsArgSubstring(args, `model_reasoning_effort="high"`) {
-		t.Fatalf("codex daemon args missing high effort: %v", args)
+	if !containsArgSubstring(args, `model_reasoning_effort="xhigh"`) {
+		t.Fatalf("codex daemon args missing xhigh effort: %v", args)
 	}
 	if !containsString(args, "--add-dir") || args[len(args)-1] != "-" {
 		t.Fatalf("codex daemon args missing add-dir or stdin marker: %v", args)
