@@ -98,15 +98,15 @@ func Resolve(opts ResolveOptions) (Runtime, error) {
 	}
 
 	// A deliberate runtime env override outranks static topology/agent
-	// defaults. A binary-only env override supplies the executable without
-	// changing a topology-owned runtime kind.
+	// defaults. A binary-only explicit or env override supplies the executable
+	// without changing a topology-owned runtime kind.
 	if strings.TrimSpace(os.Getenv(EnvRuntime)) == "" {
-		if rt, ok, err := fromDeclaredFields(opts.Instance, opts.ConfigPath); err != nil {
+		if rt, ok, err := fromDeclaredFields(opts.Instance, binRaw, opts.ConfigPath); err != nil {
 			return Runtime{}, fmt.Errorf("instance %q runtime: %w", opts.Instance.Name, err)
 		} else if ok {
 			return runtimeWithImage(rt, opts.ConfigPath)
 		}
-		if rt, ok, err := fromDeclaredFields(opts.Agent, opts.ConfigPath); err != nil {
+		if rt, ok, err := fromDeclaredFields(opts.Agent, binRaw, opts.ConfigPath); err != nil {
 			return Runtime{}, fmt.Errorf("agent %q runtime: %w", opts.Agent.Name, err)
 		} else if ok {
 			return runtimeWithImage(rt, opts.ConfigPath)
@@ -131,10 +131,10 @@ func Resolve(opts ResolveOptions) (Runtime, error) {
 }
 
 // fromDeclaredFields keeps a topology/agent-owned runtime kind authoritative
-// while allowing a machine-local binary selection to supply the executable.
-// This lets repos commit `runtime = "codex"` without also committing a
-// developer-specific wrapper path.
-func fromDeclaredFields(fields Fields, configPath string) (Runtime, bool, error) {
+// while allowing an explicit or machine-local binary selection to supply the
+// executable. This lets repos commit `runtime = "codex"` without also
+// committing a developer-specific wrapper path.
+func fromDeclaredFields(fields Fields, explicitBinary, configPath string) (Runtime, bool, error) {
 	kindRaw := strings.TrimSpace(fields.Kind)
 	if kindRaw == "" {
 		return Runtime{}, false, nil
@@ -143,7 +143,10 @@ func fromDeclaredFields(fields Fields, configPath string) (Runtime, bool, error)
 	if err != nil {
 		return Runtime{}, false, err
 	}
-	bin := strings.TrimSpace(fields.Binary)
+	bin := strings.TrimSpace(explicitBinary)
+	if bin == "" {
+		bin = strings.TrimSpace(fields.Binary)
+	}
 	if bin == "" {
 		bin = strings.TrimSpace(os.Getenv(EnvBinary))
 	}

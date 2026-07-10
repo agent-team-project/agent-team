@@ -136,6 +136,22 @@ func TestResolveDeclaredRuntimeUsesMachineLocalBinary(t *testing.T) {
 	}
 }
 
+func TestResolveExplicitBinaryOverridesDeclaredRuntime(t *testing.T) {
+	t.Setenv(EnvRuntime, "")
+	t.Setenv(EnvBinary, "")
+
+	rt, err := Resolve(ResolveOptions{
+		Explicit: Fields{Binary: "codex-dev"},
+		Instance: Fields{Name: "manager", Kind: "codex"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.Kind != KindCodex || rt.Binary != "codex-dev" {
+		t.Fatalf("Resolve() = %+v, want topology codex with explicit codex-dev binary", rt)
+	}
+}
+
 func TestCurrentRejectsUnknownRuntime(t *testing.T) {
 	t.Setenv(EnvRuntime, "llama")
 

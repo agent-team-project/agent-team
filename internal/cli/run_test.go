@@ -855,6 +855,47 @@ agent = "manager"
 	}
 }
 
+func TestRun_DirectNamedCodexForwardsInheritedTopologyPolicy(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeInstanceTestFile(t, filepath.Join(tmp, ".agent_team", "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.manager]
+agent = "manager"
+`)
+
+	for _, name := range []string{"manager-two", "custom-seat"} {
+		t.Run(name, func(t *testing.T) {
+			cap, restore := captureRun(t, nil)
+			defer restore()
+
+			cmd := NewRootCmd()
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs([]string{"run", "manager", "--name", name, "--target", tmp, "--prompt", "codex task", "--no-daemon"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+
+			if cap.bin != "codex" {
+				t.Fatalf("runtime binary = %q, want inherited codex", cap.bin)
+			}
+			if got, ok := argValue(cap.args, "--model"); !ok || got != "gpt-5.6-sol" {
+				t.Fatalf("direct named Codex model = %q, %v; want gpt-5.6-sol in %v", got, ok, cap.args)
+			}
+			if !containsArgSubstring(cap.args, `model_reasoning_effort="xhigh"`) {
+				t.Fatalf("direct named Codex args missing xhigh effort: %v", cap.args)
+			}
+		})
+	}
+}
+
 func TestRun_DirectFableForwardsTopologyPolicy(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "")
 	t.Setenv(runtimebin.EnvBinary, "")
@@ -1115,6 +1156,36 @@ func TestRun_RuntimeBinFlagOverridesSelectedRuntimeBinary(t *testing.T) {
 	}
 	if len(cap.args) == 0 || cap.args[0] != "exec" {
 		t.Fatalf("codex args = %v, want exec subcommand from runtime flag", cap.args)
+	}
+}
+
+func TestRun_RuntimeBinFlagOverridesTopologyRuntimeBinary(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"run", "manager",
+		"--target", tmp,
+		"--runtime-bin", "codex-dev",
+		"--prompt", "codex task",
+		"--no-daemon",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if cap.bin != "codex-dev" {
+		t.Fatalf("runtime binary = %q, want explicit codex-dev", cap.bin)
+	}
+	if len(cap.args) == 0 || cap.args[0] != "exec" {
+		t.Fatalf("codex args = %v, want topology-selected codex runtime", cap.args)
 	}
 }
 
@@ -1761,7 +1832,7 @@ func TestRunAttachDispatchesThroughDaemonAndFollowsLog(t *testing.T) {
 	cmd.SetContext(ctx)
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"run", "manager", "--name", "manager-attach", "--target", tmp, "--attach", "--tail", "all"})
+	cmd.SetArgs([]string{"run", "manager", "--name", "manager-attach", "--target", tmp, "--runtime", "claude", "--attach", "--tail", "all"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("run --attach: %v\nstdout=%s\nstderr=%s", err, out.String(), stderr.String())
 	}
@@ -2333,7 +2404,7 @@ func TestRunDetachFormatPrintsDispatchMetadata(t *testing.T) {
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"run", "manager", "--name", "manager-format", "--target", tmp, "--detach", "--format", "{{.Instance}}:{{.Agent}}:{{.PID}}:{{.Follow}}"})
+	cmd.SetArgs([]string{"run", "manager", "--name", "manager-format", "--target", tmp, "--runtime", "claude", "--detach", "--format", "{{.Instance}}:{{.Agent}}:{{.PID}}:{{.Follow}}"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("run --detach --format: %v\nstderr: %s", err, stderr.String())
 	}

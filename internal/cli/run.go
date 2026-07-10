@@ -653,15 +653,28 @@ func declaredRunInstance(teamDir, instance, agent string) *topology.Instance {
 	if err != nil || topo == nil {
 		return nil
 	}
-	inst := topo.Find(strings.TrimSpace(instance))
-	if inst == nil {
+	instance = strings.TrimSpace(instance)
+	agent = strings.TrimSpace(agent)
+	inst := topo.Find(instance)
+	if inst != nil {
+		declaredAgent := strings.TrimSpace(inst.Agent)
+		if agent != "" && declaredAgent != "" && declaredAgent != agent {
+			return nil
+		}
+		return inst
+	}
+	if topo.ModelPolicy == nil {
 		return nil
 	}
-	declaredAgent := strings.TrimSpace(inst.Agent)
-	if agent = strings.TrimSpace(agent); agent != "" && declaredAgent != "" && declaredAgent != agent {
-		return nil
+	// Ad-hoc names are not declared seats, so they inherit only the shared
+	// policy. This keeps per-instance exceptions scoped to their exact names.
+	return &topology.Instance{
+		Name:    instance,
+		Agent:   agent,
+		Runtime: strings.TrimSpace(topo.ModelPolicy.Runtime),
+		Model:   strings.TrimSpace(topo.ModelPolicy.Model),
+		Effort:  strings.TrimSpace(topo.ModelPolicy.Effort),
 	}
-	return inst
 }
 
 func directRuntimeArgsWithPolicy(rt runtimebin.Runtime, args []string, model, effort string) []string {
