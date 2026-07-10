@@ -50,6 +50,13 @@ func TestNewDiscoveryPrecedence(t *testing.T) {
 		t.Fatalf("environment Authorization = %q", envAuth)
 	}
 
+	unixHits := new(atomic.Int32)
+	stopUnix := startUnixStatusServer(t, daemon.SocketPath(teamDir), unixHits)
+	defer stopUnix()
+	writeFile(t, daemon.PidPath(teamDir), "12345\n", 0o600)
+	restorePIDCheck := daemon.SetPidLiveCheckForTest(func(pid int) bool { return pid == 12345 })
+	defer restorePIDCheck()
+
 	t.Setenv("AGENT_TEAM_DAEMON_URL", "")
 	t.Setenv(daemon.DaemonTokenFileEnv, "")
 	client, err = New(teamDir, Options{})
@@ -62,8 +69,8 @@ func TestNewDiscoveryPrecedence(t *testing.T) {
 	if got := client.Connection(); got.Kind != TransportHTTP || got.Endpoint != persistedServer.URL || got.TokenFile != operatorToken {
 		t.Fatalf("persisted connection = %+v", got)
 	}
-	if persistedHits.Load() != 1 {
-		t.Fatalf("persisted hits = %d, want 1", persistedHits.Load())
+	if persistedHits.Load() != 1 || unixHits.Load() != 0 {
+		t.Fatalf("hits after persisted discovery = persisted %d unix %d", persistedHits.Load(), unixHits.Load())
 	}
 	if persistedAuth != "Bearer operator-token" {
 		t.Fatalf("persisted Authorization = %q", persistedAuth)
@@ -72,12 +79,6 @@ func TestNewDiscoveryPrecedence(t *testing.T) {
 	if err := os.Remove(daemon.HTTPAddrPath(teamDir)); err != nil {
 		t.Fatal(err)
 	}
-	unixHits := new(atomic.Int32)
-	stopUnix := startUnixStatusServer(t, daemon.SocketPath(teamDir), unixHits)
-	defer stopUnix()
-	writeFile(t, daemon.PidPath(teamDir), "12345\n", 0o600)
-	restorePIDCheck := daemon.SetPidLiveCheckForTest(func(pid int) bool { return pid == 12345 })
-	defer restorePIDCheck()
 
 	client, err = New(teamDir, Options{})
 	if err != nil {
@@ -91,6 +92,17 @@ func TestNewDiscoveryPrecedence(t *testing.T) {
 	}
 	if unixHits.Load() != 1 {
 		t.Fatalf("Unix hits = %d, want 1", unixHits.Load())
+	}
+}
+
+func TestCloseIdleConnectionsForwardsToUnderlyingTransport(t *testing.T) {
+	transport := new(closeTrackingRoundTripper)
+	client := NewHTTP("http://daemon", "", Options{RoundTripper: transport})
+
+	client.CloseIdleConnections()
+
+	if got := transport.closeCalls.Load(); got != 1 {
+		t.Fatalf("underlying CloseIdleConnections calls = %d, want 1", got)
 	}
 }
 
@@ -287,4 +299,16 @@ func writeJSON(t *testing.T, w http.ResponseWriter, value any) {
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		t.Fatalf("encode response: %v", err)
 	}
+}
+
+type closeTrackingRoundTripper struct {
+	closeCalls atomic.Int32
+}
+
+func (*closeTrackingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("unexpected RoundTrip")
+}
+
+func (t *closeTrackingRoundTripper) CloseIdleConnections() {
+	t.closeCalls.Add(1)
 }

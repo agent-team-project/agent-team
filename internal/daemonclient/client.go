@@ -204,6 +204,16 @@ func (t daemonBuildHeaderTransport) RoundTrip(req *http.Request) (*http.Response
 	return base.RoundTrip(req)
 }
 
+func (t daemonBuildHeaderTransport) CloseIdleConnections() {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if closer, ok := base.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
+}
+
 // OriginHeaderFromEnv returns the operator-origin header derived from the
 // standard AGENT_TEAM_ORIGIN_* environment variables.
 func OriginHeaderFromEnv(build buildinfo.Info) string {
