@@ -458,6 +458,13 @@ job, confirm the provider state and use `job close` to restore `closed`; do not
 use cleanup's `--merged` confirmation. Once the handled event is restored,
 `job reconcile status` cannot resurrect the stale instance metadata.
 
+This also applies when the stale terminal record contains only a PR URL and no
+branch or worktree. For that shape, `--verify-pr` is required: cleanup verifies
+that GitHub reports the PR as merged, records `cleanup` with `nothing to clean`,
+and leaves the PR URL as delivery history. Open and closed-unmerged PRs are
+refused. Use `--dry-run --verify-pr --commands` to emit the verified apply
+command for scripted repair.
+
 ## Design Requirements for New Diagnostics
 
 When adding diagnostic behavior:

@@ -717,7 +717,7 @@ agent = "manager"
 	stopAndWaitForTest(t, mgr, "manager")
 }
 
-func TestTickManagerWakeStaysSilentForHandledTerminalJobWithStaleStatus(t *testing.T) {
+func TestTickManagerWakeStaysSilentAfterRepairingPullRequestOnlyTerminalJob(t *testing.T) {
 	target, err := os.MkdirTemp("/tmp", "agent-team-manager-wake-terminal-")
 	if err != nil {
 		t.Fatal(err)
@@ -736,14 +736,16 @@ agent = "manager"
 	if err := os.WriteFile(filepath.Join(teamDir, "agents", "manager", "agent.md"), []byte("---\ndescription: test manager\n---\n\nYou are a test manager.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	ghLog := installFakeGHForJobTest(t, `{"state":"MERGED","mergedAt":"2026-07-10T16:00:00Z","mergeCommit":{"oid":"abc393"}}`, 0)
 	now := time.Now().UTC().Truncate(time.Second)
 	j := &job.Job{
 		ID:         "gh-393",
 		Ticket:     "GH-393",
 		Target:     "worker",
 		Status:     job.StatusDone,
-		LastEvent:  "cleanup",
-		LastStatus: "nothing to clean",
+		PR:         "https://github.com/agent-team-project/kensho/pull/393",
+		LastEvent:  "status_reconcile",
+		LastStatus: "stale worker summary",
 		CreatedAt:  now.Add(-2 * time.Hour),
 		UpdatedAt:  now,
 	}
@@ -762,6 +764,63 @@ pr = "https://github.com/agent-team-project/kensho/pull/393"
 branch = "worker-gh-393"
 worktree = "/tmp/stale-worker-gh-393"
 `, now.Add(-time.Hour))
+
+	unsafeCleanup := NewRootCmd()
+	unsafeOut, unsafeErr := &bytes.Buffer{}, &bytes.Buffer{}
+	unsafeCleanup.SetOut(unsafeOut)
+	unsafeCleanup.SetErr(unsafeErr)
+	unsafeCleanup.SetArgs([]string{"job", "cleanup", j.ID, "--repo", target, "--merged", "--json"})
+	if err := unsafeCleanup.Execute(); err == nil {
+		t.Fatalf("unverified PR-only cleanup unexpectedly succeeded: stdout=%s", unsafeOut.String())
+	}
+	stillStale, err := job.Read(teamDir, j.ID)
+	if err != nil {
+		t.Fatalf("read job after unverified cleanup: %v", err)
+	}
+	if stillStale.LastEvent != "status_reconcile" || stillStale.PR != j.PR {
+		t.Fatalf("unverified cleanup mutated job = %+v", stillStale)
+	}
+
+	preview := NewRootCmd()
+	previewOut, previewErr := &bytes.Buffer{}, &bytes.Buffer{}
+	preview.SetOut(previewOut)
+	preview.SetErr(previewErr)
+	preview.SetArgs([]string{"job", "cleanup", j.ID, "--repo", target, "--dry-run", "--verify-pr", "--commands"})
+	if err := preview.Execute(); err != nil {
+		t.Fatalf("preview PR-only repair: %v\nstderr=%s", err, previewErr.String())
+	}
+	wantCommand := strings.Join(shellQuoteArgs([]string{"agent-team", "job", "cleanup", j.ID, "--repo", target, "--merged", "--verify-pr"}), " ") + "\n"
+	if got := previewOut.String(); got != wantCommand {
+		t.Fatalf("PR-only repair command = %q, want %q", got, wantCommand)
+	}
+
+	cleanupCmd := NewRootCmd()
+	cleanupOut, cleanupErr := &bytes.Buffer{}, &bytes.Buffer{}
+	cleanupCmd.SetOut(cleanupOut)
+	cleanupCmd.SetErr(cleanupErr)
+	cleanupCmd.SetArgs([]string{"job", "cleanup", j.ID, "--repo", target, "--merged", "--verify-pr", "--json"})
+	if err := cleanupCmd.Execute(); err != nil {
+		t.Fatalf("repair PR-only job: %v\nstderr=%s", err, cleanupErr.String())
+	}
+	var repaired job.Job
+	if err := json.Unmarshal(cleanupOut.Bytes(), &repaired); err != nil {
+		t.Fatalf("decode repaired job: %v\nbody=%s", err, cleanupOut.String())
+	}
+	if repaired.Status != job.StatusDone || repaired.LastEvent != "cleanup" || repaired.LastStatus != "nothing to clean" || repaired.PR != j.PR || repaired.Branch != "" || repaired.Worktree != "" {
+		t.Fatalf("repaired job = %+v", repaired)
+	}
+	events, err := job.ListEvents(teamDir, j.ID)
+	if err != nil {
+		t.Fatalf("list repair events: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "cleanup" {
+		t.Fatalf("repair events = %+v", events)
+	}
+	assertFakeGHLogForJobTest(t, ghLog, []string{
+		"pr view https://github.com/agent-team-project/kensho/pull/393 --json state,mergedAt,mergeCommit",
+		"pr view https://github.com/agent-team-project/kensho/pull/393 --json state,mergedAt,mergeCommit",
+	})
+
 	jobBefore, err := os.ReadFile(job.Path(teamDir, j.ID))
 	if err != nil {
 		t.Fatalf("read handled job before tick: %v", err)

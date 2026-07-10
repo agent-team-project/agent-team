@@ -11712,6 +11712,68 @@ func TestJobCleanupVerifyPRRejectsClosedUnmergedPullRequest(t *testing.T) {
 	})
 }
 
+func TestJobCleanupVerifyPRRejectsUnmergedPullRequestOnlyTerminalRecord(t *testing.T) {
+	for _, state := range []string{"OPEN", "CLOSED"} {
+		t.Run(strings.ToLower(state), func(t *testing.T) {
+			target := t.TempDir()
+			initInto(t, target)
+			initGitRepoForJobTest(t, target)
+			ghLog := installFakeGHForJobTest(t, fmt.Sprintf(`{"state":%q,"mergedAt":"","mergeCommit":null}`, state), 0)
+
+			teamDir := filepath.Join(target, ".agent_team")
+			now := time.Now().UTC()
+			j := &job.Job{
+				ID:         "gh-393-" + strings.ToLower(state),
+				Ticket:     "GH-393",
+				Target:     "worker",
+				Status:     job.StatusDone,
+				PR:         "https://github.com/acme/repo/pull/393",
+				LastEvent:  "status_reconcile",
+				LastStatus: "stale worker summary",
+				CreatedAt:  now.Add(-time.Hour),
+				UpdatedAt:  now,
+			}
+			if err := job.Write(teamDir, j); err != nil {
+				t.Fatalf("write job: %v", err)
+			}
+
+			cleanup := NewRootCmd()
+			out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+			cleanup.SetOut(out)
+			cleanup.SetErr(stderr)
+			cleanup.SetArgs([]string{"job", "cleanup", j.ID, "--repo", target, "--merged", "--verify-pr", "--json"})
+			err := cleanup.Execute()
+			if err == nil {
+				t.Fatalf("PR-only cleanup with %s PR unexpectedly succeeded: stdout=%s", state, out.String())
+			}
+			var code ExitCode
+			if !errors.As(err, &code) || int(code) != 1 {
+				t.Fatalf("cleanup err = %v, want exit 1", err)
+			}
+			if !strings.Contains(stderr.String(), "PR is not merged") || !strings.Contains(stderr.String(), "state="+state) {
+				t.Fatalf("cleanup stderr = %q", stderr.String())
+			}
+			unchanged, err := job.Read(teamDir, j.ID)
+			if err != nil {
+				t.Fatalf("read job after verify failure: %v", err)
+			}
+			if unchanged.LastEvent != "status_reconcile" || unchanged.LastStatus != j.LastStatus || unchanged.PR != j.PR || unchanged.Branch != "" || unchanged.Worktree != "" {
+				t.Fatalf("verify failure mutated job = %+v", unchanged)
+			}
+			events, err := job.ListEvents(teamDir, j.ID)
+			if err != nil {
+				t.Fatalf("list events: %v", err)
+			}
+			if len(events) != 0 {
+				t.Fatalf("verify failure wrote events = %+v", events)
+			}
+			assertFakeGHLogForJobTest(t, ghLog, []string{
+				"pr view https://github.com/acme/repo/pull/393 --json state,mergedAt,mergeCommit",
+			})
+		})
+	}
+}
+
 func TestJobCleanupVerifyPRRejectsMissingMergeCommit(t *testing.T) {
 	target := t.TempDir()
 	initInto(t, target)
