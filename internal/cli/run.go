@@ -471,8 +471,7 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
 		return exitErr(2)
 	}
-	runModel := declaredRunModel(teamDir, instance, agentName, rt)
-	runEffort := declaredRunEffort(teamDir, instance, agentName)
+	runModel, runEffort := declaredRunPolicy(teamDir, instance, agentName, rt)
 
 	if daemonDispatch {
 		// runtimeArgs already starts with --agents/--add-dir/.../-p; the
@@ -633,23 +632,19 @@ func runLaunchRootShouldPersist(teamDir, instance, agent string) bool {
 	return !inst.Ephemeral
 }
 
-func declaredRunModel(teamDir, instance, agent string, rt runtimebin.Runtime) string {
+func declaredRunPolicy(teamDir, instance, agent string, rt runtimebin.Runtime) (string, string) {
 	if rt.Kind != runtimebin.KindClaude && rt.Kind != runtimebin.KindCodex {
-		return ""
+		return "", ""
 	}
 	inst := declaredRunInstance(teamDir, instance, agent)
 	if inst == nil {
-		return ""
+		return "", ""
 	}
-	return strings.TrimSpace(inst.Model)
-}
-
-func declaredRunEffort(teamDir, instance, agent string) string {
-	inst := declaredRunInstance(teamDir, instance, agent)
-	if inst == nil {
-		return ""
+	policyRuntime, err := runtimebin.ParseKind(strings.TrimSpace(inst.Runtime))
+	if err != nil || policyRuntime != rt.Kind {
+		return "", ""
 	}
-	return strings.TrimSpace(inst.Effort)
+	return strings.TrimSpace(inst.Model), strings.TrimSpace(inst.Effort)
 }
 
 func declaredRunAgentMismatch(teamDir, instance, agent string) (string, bool) {

@@ -855,6 +855,43 @@ agent = "manager"
 	}
 }
 
+func TestRun_DirectClaudeOverrideSuppressesCodexTopologyPolicy(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeInstanceTestFile(t, filepath.Join(tmp, ".agent_team", "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.manager]
+agent = "manager"
+`)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt", "claude task", "--runtime", "claude", "--no-daemon"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if cap.bin != "claude" {
+		t.Fatalf("runtime binary = %q, want explicit claude", cap.bin)
+	}
+	if got, ok := argValue(cap.args, "--model"); ok {
+		t.Fatalf("direct Claude override received Codex model %q: %v", got, cap.args)
+	}
+	if got, ok := argValue(cap.args, "--effort"); ok {
+		t.Fatalf("direct Claude override received Codex effort %q: %v", got, cap.args)
+	}
+}
+
 func TestRun_DirectNamedCodexForwardsInheritedTopologyPolicy(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "")
 	t.Setenv(runtimebin.EnvBinary, "")
@@ -973,6 +1010,46 @@ effort = "max"
 	}
 	if got, ok := argValue(cap.args, "--effort"); !ok || got != "max" {
 		t.Fatalf("direct Fable effort = %q, %v; want max in %v", got, ok, cap.args)
+	}
+}
+
+func TestRun_DirectCodexOverrideSuppressesFableTopologyPolicy(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeInstanceTestFile(t, filepath.Join(tmp, ".agent_team", "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.advisor]
+agent = "advisor"
+runtime = "claude"
+model = "claude-fable-5"
+effort = "max"
+`)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "advisor", "--target", tmp, "--prompt", "codex task", "--runtime", "codex", "--no-daemon"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if cap.bin != "codex" {
+		t.Fatalf("runtime binary = %q, want explicit codex", cap.bin)
+	}
+	if got, ok := argValue(cap.args, "--model"); ok {
+		t.Fatalf("direct Codex override received Fable model %q: %v", got, cap.args)
+	}
+	if containsArgSubstring(cap.args, `model_reasoning_effort="max"`) {
+		t.Fatalf("direct Codex override received Fable effort: %v", cap.args)
 	}
 }
 
