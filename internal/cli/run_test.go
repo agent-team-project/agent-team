@@ -896,6 +896,49 @@ agent = "manager"
 	}
 }
 
+func TestRun_RejectsDeclaredInstanceAgentMismatchBeforeStateCreation(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeInstanceTestFile(t, filepath.Join(tmp, ".agent_team", "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.manager]
+agent = "manager"
+`)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "worker", "--name", "manager", "--target", tmp, "--prompt", "task", "--no-daemon"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected declared instance agent mismatch to fail")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || code != 2 {
+		t.Fatalf("err = %v, want exit 2", err)
+	}
+	if want := `instance "manager" is declared for agent "manager", not "worker"`; !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+	if cap.bin != "" {
+		t.Fatalf("runtime invoked as %q despite instance agent mismatch", cap.bin)
+	}
+	stateDir := filepath.Join(tmp, ".agent_team", "state", "manager")
+	if _, err := os.Stat(stateDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("state dir created despite instance agent mismatch: %v", err)
+	}
+}
+
 func TestRun_DirectFableForwardsTopologyPolicy(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "")
 	t.Setenv(runtimebin.EnvBinary, "")

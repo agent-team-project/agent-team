@@ -208,6 +208,10 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 	if instance == "" {
 		instance = agentName
 	}
+	if declaredAgent, mismatch := declaredRunAgentMismatch(teamDir, instance, agentName); mismatch {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: instance %q is declared for agent %q, not %q; choose a different --name.\n", instance, declaredAgent, agentName)
+		return exitErr(2)
+	}
 	declaredInstance := declaredRunInstance(teamDir, instance, agentName)
 	instanceRuntime := runtimebin.Fields{}
 	if declaredInstance != nil {
@@ -646,6 +650,20 @@ func declaredRunEffort(teamDir, instance, agent string) string {
 		return ""
 	}
 	return strings.TrimSpace(inst.Effort)
+}
+
+func declaredRunAgentMismatch(teamDir, instance, agent string) (string, bool) {
+	topo, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil || topo == nil {
+		return "", false
+	}
+	inst := topo.Find(strings.TrimSpace(instance))
+	if inst == nil {
+		return "", false
+	}
+	declaredAgent := strings.TrimSpace(inst.Agent)
+	agent = strings.TrimSpace(agent)
+	return declaredAgent, agent != "" && declaredAgent != "" && declaredAgent != agent
 }
 
 func declaredRunInstance(teamDir, instance, agent string) *topology.Instance {
