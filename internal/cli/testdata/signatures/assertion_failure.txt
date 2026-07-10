@@ -1,0 +1,2 @@
+--- FAIL: TestWidgetOutcome (0.00s)
+    widget_test.go:42: assertion failed: got 1, want 2

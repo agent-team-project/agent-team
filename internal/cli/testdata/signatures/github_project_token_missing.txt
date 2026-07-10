@@ -1,0 +1,3 @@
+project-status automation failed
+PROJECTS_TOKEN secret missing
+Set the PROJECTS_TOKEN secret to enable repository project automation.

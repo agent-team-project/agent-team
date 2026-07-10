@@ -964,22 +964,25 @@ def enable_demo_schedule(repo: Path) -> None:
     )
     if pipeline_header not in body:
         raise DemoError("bundled topology no longer has the expected ticket_to_pr pipeline header")
-    body = body.replace(
-        pipeline_header,
-        pipeline_header
-        + textwrap.dedent(
-            """\
+    merge_block = textwrap.dedent(
+        """\
 
-            [pipelines.ticket_to_pr.merge]
-            strategy = "squash"
-            owned_paths = ["coverage/baselines"]
-
-            [pipelines.ticket_to_pr.infra_signatures]
-            missing_binary = "missing-binary:.*"
-            """
-        ),
-        1,
+        [pipelines.ticket_to_pr.merge]
+        strategy = "squash"
+        owned_paths = ["coverage/baselines"]
+        """
     )
+    body = body.replace(pipeline_header, pipeline_header + merge_block, 1)
+    signature_header = "[pipelines.ticket_to_pr.infra_signatures]\n"
+    demo_signature = 'missing_binary = "missing-binary:.*"\n'
+    if signature_header in body:
+        body = body.replace(signature_header, signature_header + demo_signature, 1)
+    else:
+        body = body.replace(
+            merge_block,
+            merge_block + "\n" + signature_header + demo_signature,
+            1,
+        )
     approve_gate = 'gate         = "manual"\ninstructions = """'
     if approve_gate not in body:
         raise DemoError("bundled topology no longer has the expected approve gate")

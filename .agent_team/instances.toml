@@ -96,6 +96,10 @@ trigger.match.status = "Ready for Agent"
 auto_advance  = true
 redispatch_on_reentry = false
 
+[pipelines.ticket_to_pr.infra_signatures]
+github_project_token_missing = "(?i)(PROJECTS_TOKEN secret (missing|unset)|Set the PROJECTS_TOKEN secret|set PROJECTS_TOKEN, GH_TOKEN, or GITHUB_TOKEN)"
+github_token_missing = "(?i)no GitHub token found"
+
 [[pipelines.ticket_to_pr.steps]]
 id           = "implement"
 target       = "worker"
@@ -261,6 +265,10 @@ match.target = "platform-reviewer"
 # never by the delivery team's board column.
 trigger.event = "platform.ticket"
 auto_advance = true
+
+[pipelines.platform_ticket_to_pr.infra_signatures]
+github_project_token_missing = "(?i)(PROJECTS_TOKEN secret (missing|unset)|Set the PROJECTS_TOKEN secret|set PROJECTS_TOKEN, GH_TOKEN, or GITHUB_TOKEN)"
+github_token_missing = "(?i)no GitHub token found"
 
 [[pipelines.platform_ticket_to_pr.steps]]
 id        = "implement"
