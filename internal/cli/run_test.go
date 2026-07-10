@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -200,6 +201,15 @@ func containsString(items []string, want string) bool {
 	return false
 }
 
+func containsArgSubstring(items []string, want string) bool {
+	for _, item := range items {
+		if strings.Contains(item, want) {
+			return true
+		}
+	}
+	return false
+}
+
 func argValue(items []string, flag string) (string, bool) {
 	for i := 0; i+1 < len(items); i++ {
 		if items[i] == flag {
@@ -295,6 +305,50 @@ func initInto(t *testing.T, dir string) {
 	}
 }
 
+func TestInitFullResolvesComprehensiveModelPolicy(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	top, err := topology.LoadFromTeamDir(filepath.Join(tmp, ".agent_team"))
+	if err != nil {
+		t.Fatalf("load generated topology: %v", err)
+	}
+	if top == nil || top.ModelPolicy == nil {
+		t.Fatal("generated topology missing model policy")
+	}
+	if got := top.ModelPolicy; got.Runtime != "codex" || got.Model != "gpt-5.6-sol" || got.Effort != "xhigh" {
+		t.Fatalf("generated model policy = %+v", got)
+	}
+
+	fable := make([]string, 0, 3)
+	for name, inst := range top.Instances {
+		if inst.Model == "claude-fable-5" {
+			fable = append(fable, name)
+			if inst.Runtime != "claude" || inst.Effort != "max" {
+				t.Fatalf("generated Fable seat %s = %q/%q/%q", name, inst.Runtime, inst.Model, inst.Effort)
+			}
+			continue
+		}
+		if inst.Runtime != "codex" || inst.Model != "gpt-5.6-sol" || inst.Effort != "xhigh" {
+			t.Fatalf("generated non-Fable seat %s = %q/%q/%q", name, inst.Runtime, inst.Model, inst.Effort)
+		}
+	}
+	sort.Strings(fable)
+	if want := []string{"advisor", "harness-reviewer", "org-review"}; !reflect.DeepEqual(fable, want) {
+		t.Fatalf("generated Fable seats = %v, want %v", fable, want)
+	}
+	for pipelineName, pipeline := range top.Pipelines {
+		for _, step := range pipeline.Steps {
+			target := top.Instances[step.Target]
+			if target == nil {
+				t.Fatalf("generated pipeline %s step %s has unknown target %s", pipelineName, step.ID, step.Target)
+			}
+			if step.Runtime != target.Runtime || step.Model != target.Model || step.Effort != target.Effort {
+				t.Fatalf("generated pipeline %s step %s = %q/%q/%q, target %s = %q/%q/%q", pipelineName, step.ID, step.Runtime, step.Model, step.Effort, step.Target, target.Runtime, target.Model, target.Effort)
+			}
+		}
+	}
+}
+
 func writeOTelRunConfig(t *testing.T, dir string) {
 	t.Helper()
 	body := `[team]
@@ -355,7 +409,7 @@ func TestRun_ExecsClaudeWithExpectedArgs(t *testing.T) {
 	cmd := NewRootCmd()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt", "kickoff message"})
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt", "kickoff message", "--runtime", "claude"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -522,7 +576,7 @@ func TestRun_MailboxHookOptOutSuppressesClaudeSettings(t *testing.T) {
 	cmd := NewRootCmd()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt", "kickoff message", "--set", "runtime.hooks.mailbox_injection=false", "--no-daemon"})
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt", "kickoff message", "--set", "runtime.hooks.mailbox_injection=false", "--no-daemon", "--runtime", "claude"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -542,7 +596,7 @@ func TestRun_ClaudeOTelInjectionFromConfig(t *testing.T) {
 	cmd := NewRootCmd()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt", "kickoff message", "--no-daemon"})
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt", "kickoff message", "--no-daemon", "--runtime", "claude"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -632,7 +686,7 @@ func TestRunPromptFileFromStdin(t *testing.T) {
 	cmd := NewRootCmd()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt-file", "-"})
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt-file", "-", "--runtime", "claude"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("run prompt file stdin: %v", err)
 	}
@@ -764,6 +818,238 @@ func TestRun_CodexRuntimeBuildsDirectExecArgs(t *testing.T) {
 		if !strings.Contains(cap.stdin, want) {
 			t.Fatalf("codex stdin prompt missing %q:\n%s", want, cap.stdin)
 		}
+	}
+}
+
+func TestRun_DirectCodexForwardsInheritedTopologyPolicy(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeInstanceTestFile(t, filepath.Join(tmp, ".agent_team", "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.manager]
+agent = "manager"
+`)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt", "codex task", "--no-daemon"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if got, ok := argValue(cap.args, "--model"); !ok || got != "gpt-5.6-sol" {
+		t.Fatalf("direct Codex model = %q, %v; want gpt-5.6-sol in %v", got, ok, cap.args)
+	}
+	if !containsArgSubstring(cap.args, `model_reasoning_effort="xhigh"`) {
+		t.Fatalf("direct Codex args missing xhigh effort: %v", cap.args)
+	}
+}
+
+func TestRun_DirectClaudeOverrideSuppressesCodexTopologyPolicy(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeInstanceTestFile(t, filepath.Join(tmp, ".agent_team", "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.manager]
+agent = "manager"
+`)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--prompt", "claude task", "--runtime", "claude", "--no-daemon"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if cap.bin != "claude" {
+		t.Fatalf("runtime binary = %q, want explicit claude", cap.bin)
+	}
+	if got, ok := argValue(cap.args, "--model"); ok {
+		t.Fatalf("direct Claude override received Codex model %q: %v", got, cap.args)
+	}
+	if got, ok := argValue(cap.args, "--effort"); ok {
+		t.Fatalf("direct Claude override received Codex effort %q: %v", got, cap.args)
+	}
+}
+
+func TestRun_DirectNamedCodexForwardsInheritedTopologyPolicy(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeInstanceTestFile(t, filepath.Join(tmp, ".agent_team", "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.manager]
+agent = "manager"
+`)
+
+	for _, name := range []string{"manager-two", "custom-seat"} {
+		t.Run(name, func(t *testing.T) {
+			cap, restore := captureRun(t, nil)
+			defer restore()
+
+			cmd := NewRootCmd()
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs([]string{"run", "manager", "--name", name, "--target", tmp, "--prompt", "codex task", "--no-daemon"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+
+			if cap.bin != "codex" {
+				t.Fatalf("runtime binary = %q, want inherited codex", cap.bin)
+			}
+			if got, ok := argValue(cap.args, "--model"); !ok || got != "gpt-5.6-sol" {
+				t.Fatalf("direct named Codex model = %q, %v; want gpt-5.6-sol in %v", got, ok, cap.args)
+			}
+			if !containsArgSubstring(cap.args, `model_reasoning_effort="xhigh"`) {
+				t.Fatalf("direct named Codex args missing xhigh effort: %v", cap.args)
+			}
+		})
+	}
+}
+
+func TestRun_RejectsDeclaredInstanceAgentMismatchBeforeStateCreation(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeInstanceTestFile(t, filepath.Join(tmp, ".agent_team", "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.manager]
+agent = "manager"
+`)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"run", "worker", "--name", "manager", "--target", tmp, "--prompt", "task", "--no-daemon"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected declared instance agent mismatch to fail")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || code != 2 {
+		t.Fatalf("err = %v, want exit 2", err)
+	}
+	if want := `instance "manager" is declared for agent "manager", not "worker"`; !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+	if cap.bin != "" {
+		t.Fatalf("runtime invoked as %q despite instance agent mismatch", cap.bin)
+	}
+	stateDir := filepath.Join(tmp, ".agent_team", "state", "manager")
+	if _, err := os.Stat(stateDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("state dir created despite instance agent mismatch: %v", err)
+	}
+}
+
+func TestRun_DirectFableForwardsTopologyPolicy(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeInstanceTestFile(t, filepath.Join(tmp, ".agent_team", "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.advisor]
+agent = "advisor"
+runtime = "claude"
+model = "claude-fable-5"
+effort = "max"
+`)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "advisor", "--target", tmp, "--no-daemon"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if got, ok := argValue(cap.args, "--model"); !ok || got != "claude-fable-5" {
+		t.Fatalf("direct Fable model = %q, %v; want claude-fable-5 in %v", got, ok, cap.args)
+	}
+	if got, ok := argValue(cap.args, "--effort"); !ok || got != "max" {
+		t.Fatalf("direct Fable effort = %q, %v; want max in %v", got, ok, cap.args)
+	}
+}
+
+func TestRun_DirectCodexOverrideSuppressesFableTopologyPolicy(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	writeInstanceTestFile(t, filepath.Join(tmp, ".agent_team", "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.advisor]
+agent = "advisor"
+runtime = "claude"
+model = "claude-fable-5"
+effort = "max"
+`)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "advisor", "--target", tmp, "--prompt", "codex task", "--runtime", "codex", "--no-daemon"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if cap.bin != "codex" {
+		t.Fatalf("runtime binary = %q, want explicit codex", cap.bin)
+	}
+	if got, ok := argValue(cap.args, "--model"); ok {
+		t.Fatalf("direct Codex override received Fable model %q: %v", got, cap.args)
+	}
+	if containsArgSubstring(cap.args, `model_reasoning_effort="max"`) {
+		t.Fatalf("direct Codex override received Fable effort: %v", cap.args)
 	}
 }
 
@@ -993,6 +1279,36 @@ func TestRun_RuntimeBinFlagOverridesSelectedRuntimeBinary(t *testing.T) {
 	}
 }
 
+func TestRun_RuntimeBinFlagOverridesTopologyRuntimeBinary(t *testing.T) {
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	cap, restore := captureRun(t, nil)
+	defer restore()
+
+	cmd := NewRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"run", "manager",
+		"--target", tmp,
+		"--runtime-bin", "codex-dev",
+		"--prompt", "codex task",
+		"--no-daemon",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if cap.bin != "codex-dev" {
+		t.Fatalf("runtime binary = %q, want explicit codex-dev", cap.bin)
+	}
+	if len(cap.args) == 0 || cap.args[0] != "exec" {
+		t.Fatalf("codex args = %v, want topology-selected codex runtime", cap.args)
+	}
+}
+
 func TestRun_InvalidRuntimeFlagExitsTwo(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
@@ -1138,7 +1454,8 @@ done
 }
 
 func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
-	t.Setenv(runtimebin.EnvRuntime, string(runtimebin.KindCodex))
+	t.Setenv(runtimebin.EnvRuntime, "")
+	t.Setenv(runtimebin.EnvBinary, "")
 	tmp, err := os.MkdirTemp("/tmp", "agent-team-run-codex-detach-")
 	if err != nil {
 		t.Fatal(err)
@@ -1147,10 +1464,13 @@ func TestRun_CodexRuntimeCanDetachWithPrompt(t *testing.T) {
 	initInto(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	writeInstanceTestFile(t, filepath.Join(teamDir, "instances.toml"), `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
 [instances.manager]
 agent       = "manager"
-runtime     = "codex"
-model       = "claude-fable-5"
 description = "Persistent Codex manager."
 `)
 	wantWorkspace, err := filepath.EvalSymlinks(tmp)
@@ -1198,7 +1518,7 @@ description = "Persistent Codex manager."
 	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
 		t.Fatalf("json body: %v\nstdout: %s", err, out.String())
 	}
-	if body.Instance != "manager" || body.Agent != "manager" || body.Runtime != "codex" || body.PID == 0 || body.SessionID != "" || body.Follow == "" {
+	if body.Instance != "manager" || body.Agent != "manager" || body.Runtime != "codex" || body.Model != "gpt-5.6-sol" || body.Effort != "xhigh" || body.PID == 0 || body.SessionID != "" || body.Follow == "" {
 		t.Fatalf("dispatch body = %+v", body)
 	}
 
@@ -1217,8 +1537,11 @@ description = "Persistent Codex manager."
 	if containsString(args, "--session-id") || containsString(args, "--agents") || containsString(args, "--append-system-prompt-file") {
 		t.Fatalf("codex daemon args include Claude-only flags: %v", args)
 	}
-	if _, ok := argValue(args, "--model"); ok {
-		t.Fatalf("codex daemon args include Claude-only --model: %v", args)
+	if got, ok := argValue(args, "--model"); !ok || got != "gpt-5.6-sol" {
+		t.Fatalf("codex daemon args model = %q, %v; want gpt-5.6-sol in %v", got, ok, args)
+	}
+	if !containsArgSubstring(args, `model_reasoning_effort="xhigh"`) {
+		t.Fatalf("codex daemon args missing xhigh effort: %v", args)
 	}
 	if !containsString(args, "--add-dir") || args[len(args)-1] != "-" {
 		t.Fatalf("codex daemon args missing add-dir or stdin marker: %v", args)
@@ -1629,7 +1952,7 @@ func TestRunAttachDispatchesThroughDaemonAndFollowsLog(t *testing.T) {
 	cmd.SetContext(ctx)
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"run", "manager", "--name", "manager-attach", "--target", tmp, "--attach", "--tail", "all"})
+	cmd.SetArgs([]string{"run", "manager", "--name", "manager-attach", "--target", tmp, "--runtime", "claude", "--attach", "--tail", "all"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("run --attach: %v\nstdout=%s\nstderr=%s", err, out.String(), stderr.String())
 	}
@@ -1722,6 +2045,12 @@ func TestRunDetachDispatchesThroughDaemonWithoutPrompt(t *testing.T) {
 		wantWorkspace = eval
 	}
 	teamDir := filepath.Join(tmp, ".agent_team")
+	writeInstanceTestFile(t, filepath.Join(teamDir, "instances.toml"), `
+[instances.manager]
+agent = "manager"
+runtime = "claude"
+description = "Persistent Claude manager."
+`)
 
 	base := fakeSpawnerForTest(t, 2*time.Second)
 	var (
@@ -1858,7 +2187,7 @@ func TestRunDetachLaunchesClaudeProcessWithPersistentPromptFile(t *testing.T) {
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--detach", "--json"})
+	cmd.SetArgs([]string{"run", "manager", "--target", tmp, "--detach", "--json", "--runtime", "claude", "--runtime-bin", fakeClaude})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("run --detach --json: %v\nstderr: %s", err, stderr.String())
 	}
@@ -2195,7 +2524,7 @@ func TestRunDetachFormatPrintsDispatchMetadata(t *testing.T) {
 	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"run", "manager", "--name", "manager-format", "--target", tmp, "--detach", "--format", "{{.Instance}}:{{.Agent}}:{{.PID}}:{{.Follow}}"})
+	cmd.SetArgs([]string{"run", "manager", "--name", "manager-format", "--target", tmp, "--runtime", "claude", "--detach", "--format", "{{.Instance}}:{{.Agent}}:{{.PID}}:{{.Follow}}"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("run --detach --format: %v\nstderr: %s", err, stderr.String())
 	}

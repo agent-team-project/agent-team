@@ -376,6 +376,7 @@ func TestSyncFormatPrintsActionRows(t *testing.T) {
 	}
 	defer os.RemoveAll(tmp)
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	root := daemon.DaemonRoot(teamDir)
 	pid := os.Getpid()
@@ -683,6 +684,7 @@ func TestSyncWaitTimeoutReportsUnhealthyFleet(t *testing.T) {
 	}
 	defer os.RemoveAll(tmp)
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	root := daemon.DaemonRoot(teamDir)
 	for _, spec := range []struct {
@@ -748,6 +750,7 @@ func TestSyncStopExtrasJSONStopsUndeclaredRunningInstances(t *testing.T) {
 	}
 	defer os.RemoveAll(tmp)
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	root := daemon.DaemonRoot(teamDir)
 	sleepers := map[string]*exec.Cmd{}
@@ -823,6 +826,7 @@ func TestSyncStopExtrasSummaryJSONCountsActions(t *testing.T) {
 	}
 	defer os.RemoveAll(tmp)
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	root := daemon.DaemonRoot(teamDir)
 	sleepers := map[string]*exec.Cmd{}
@@ -1081,6 +1085,7 @@ func TestSyncWaitFormatPrintsActionRowsAfterHealthWait(t *testing.T) {
 	}
 	defer os.RemoveAll(tmp)
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	root := daemon.DaemonRoot(teamDir)
 	pid := os.Getpid()

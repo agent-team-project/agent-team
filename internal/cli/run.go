@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	texttemplate "text/template"
@@ -203,9 +204,23 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 	}
 	target := repoResolved.RepoRoot
 	teamDir := repoResolved.TeamDir
+	instance := cfg.name
+	if instance == "" {
+		instance = agentName
+	}
+	if declaredAgent, mismatch := declaredRunAgentMismatch(teamDir, instance, agentName); mismatch {
+		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: instance %q is declared for agent %q, not %q; choose a different --name.\n", instance, declaredAgent, agentName)
+		return exitErr(2)
+	}
+	declaredInstance := declaredRunInstance(teamDir, instance, agentName)
+	instanceRuntime := runtimebin.Fields{}
+	if declaredInstance != nil {
+		instanceRuntime = runtimebin.Fields{Name: declaredInstance.Name, Kind: declaredInstance.Runtime, Binary: declaredInstance.RuntimeBin}
+	}
 	rt, err := runtimeFromConfigWithOverrides(filepath.Join(teamDir, "config.toml"), runtimeSelection{
-		Kind:   cfg.runtimeKind,
-		Binary: cfg.runtimeBinary,
+		Kind:     cfg.runtimeKind,
+		Binary:   cfg.runtimeBinary,
+		Instance: instanceRuntime,
 	})
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
@@ -256,10 +271,6 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		return exitErr(1)
 	}
 
-	instance := cfg.name
-	if instance == "" {
-		instance = agentName
-	}
 	stateDir := filepath.Join(teamDir, "state", instance)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
@@ -460,6 +471,7 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		fmt.Fprintf(cmd.ErrOrStderr(), "agent-team run: %v\n", err)
 		return exitErr(2)
 	}
+	runModel, runEffort := declaredRunPolicy(teamDir, instance, agentName, rt)
 
 	if daemonDispatch {
 		// runtimeArgs already starts with --agents/--add-dir/.../-p; the
@@ -480,8 +492,8 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 			StateURI:            runResources.StateURI,
 			Runtime:             string(rt.Kind),
 			RuntimeBinary:       rt.Binary,
-			Model:               declaredRunModel(teamDir, instance, agentName, rt),
-			Effort:              declaredRunEffort(teamDir, instance, agentName),
+			Model:               runModel,
+			Effort:              runEffort,
 			Args:                runtimeArgs,
 			Env:                 runtimeArgEnv,
 			Stdin:               runtimeStdin,
@@ -503,6 +515,8 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 			LogURI:              disp.LogURI,
 			Agent:               agentName,
 			Runtime:             disp.Runtime,
+			Model:               disp.Model,
+			Effort:              disp.Effort,
 			PID:                 disp.PID,
 			SessionID:           disp.SessionID,
 			StartedAt:           disp.StartedAt.Format(time.RFC3339),
@@ -528,6 +542,7 @@ func runAgent(cmd *cobra.Command, cfg runConfig, agentName string, forwarded []s
 		return nil
 	}
 
+	runtimeArgs = directRuntimeArgsWithPolicy(rt, runtimeArgs, runModel, runEffort)
 	if cfg.lastMessage {
 		return execRuntimeAndPrintLastMessage(cmd, rt.Binary, runtimeArgs, env, target, runtimeStdin, lastMessagePath)
 	}
@@ -617,39 +632,96 @@ func runLaunchRootShouldPersist(teamDir, instance, agent string) bool {
 	return !inst.Ephemeral
 }
 
-func declaredRunModel(teamDir, instance, agent string, rt runtimebin.Runtime) string {
-	if rt.Kind != runtimebin.KindClaude {
-		return ""
+func declaredRunPolicy(teamDir, instance, agent string, rt runtimebin.Runtime) (string, string) {
+	if rt.Kind != runtimebin.KindClaude && rt.Kind != runtimebin.KindCodex {
+		return "", ""
 	}
-	topo, err := topology.LoadFromTeamDir(teamDir)
-	if err != nil || topo == nil {
-		return ""
-	}
-	inst := topo.Find(strings.TrimSpace(instance))
+	inst := declaredRunInstance(teamDir, instance, agent)
 	if inst == nil {
-		return ""
+		return "", ""
 	}
-	declaredAgent := strings.TrimSpace(inst.Agent)
-	if agent = strings.TrimSpace(agent); agent != "" && declaredAgent != "" && declaredAgent != agent {
-		return ""
-	}
-	return strings.TrimSpace(inst.Model)
+	policy := topology.ResolveRuntimePolicy(
+		topology.ModelPolicy{Runtime: inst.Runtime, Model: inst.Model, Effort: inst.Effort},
+		topology.ModelPolicy{Runtime: string(rt.Kind)},
+	)
+	return policy.Model, policy.Effort
 }
 
-func declaredRunEffort(teamDir, instance, agent string) string {
+func declaredRunAgentMismatch(teamDir, instance, agent string) (string, bool) {
 	topo, err := topology.LoadFromTeamDir(teamDir)
 	if err != nil || topo == nil {
-		return ""
+		return "", false
 	}
 	inst := topo.Find(strings.TrimSpace(instance))
 	if inst == nil {
-		return ""
+		return "", false
 	}
 	declaredAgent := strings.TrimSpace(inst.Agent)
-	if agent = strings.TrimSpace(agent); agent != "" && declaredAgent != "" && declaredAgent != agent {
-		return ""
+	agent = strings.TrimSpace(agent)
+	return declaredAgent, agent != "" && declaredAgent != "" && declaredAgent != agent
+}
+
+func declaredRunInstance(teamDir, instance, agent string) *topology.Instance {
+	topo, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil || topo == nil {
+		return nil
 	}
-	return strings.TrimSpace(inst.Effort)
+	instance = strings.TrimSpace(instance)
+	agent = strings.TrimSpace(agent)
+	inst := topo.Find(instance)
+	if inst != nil {
+		declaredAgent := strings.TrimSpace(inst.Agent)
+		if agent != "" && declaredAgent != "" && declaredAgent != agent {
+			return nil
+		}
+		return inst
+	}
+	if topo.ModelPolicy == nil {
+		return nil
+	}
+	// Ad-hoc names are not declared seats, so they inherit only the shared
+	// policy. This keeps per-instance exceptions scoped to their exact names.
+	return &topology.Instance{
+		Name:    instance,
+		Agent:   agent,
+		Runtime: strings.TrimSpace(topo.ModelPolicy.Runtime),
+		Model:   strings.TrimSpace(topo.ModelPolicy.Model),
+		Effort:  strings.TrimSpace(topo.ModelPolicy.Effort),
+	}
+}
+
+func directRuntimeArgsWithPolicy(rt runtimebin.Runtime, args []string, model, effort string) []string {
+	model = strings.TrimSpace(model)
+	effort = strings.TrimSpace(effort)
+	policyArgs := make([]string, 0, 4)
+	switch rt.Kind {
+	case runtimebin.KindClaude:
+		if model != "" {
+			policyArgs = append(policyArgs, "--model", model)
+		}
+		if effort != "" {
+			policyArgs = append(policyArgs, "--effort", effort)
+		}
+	case runtimebin.KindCodex:
+		if model != "" {
+			policyArgs = append(policyArgs, "--model", model)
+		}
+		if effort != "" {
+			policyArgs = append(policyArgs, "-c", "model_reasoning_effort="+strconv.Quote(effort))
+		}
+	default:
+		return args
+	}
+	if len(policyArgs) == 0 {
+		return args
+	}
+	if rt.Kind == runtimebin.KindCodex && len(args) > 0 && args[0] == "exec" {
+		out := make([]string, 0, len(args)+len(policyArgs))
+		out = append(out, args[0])
+		out = append(out, policyArgs...)
+		return append(out, args[1:]...)
+	}
+	return append(policyArgs, args...)
 }
 
 func prepareRunLaunchRoot(stateDir string, mode runLaunchRootMode) (runLaunchRoot, error) {
@@ -781,6 +853,8 @@ type runDispatchJSON struct {
 	LogURI              string `json:"log_uri,omitempty"`
 	Agent               string `json:"agent"`
 	Runtime             string `json:"runtime,omitempty"`
+	Model               string `json:"model,omitempty"`
+	Effort              string `json:"effort,omitempty"`
 	PID                 int    `json:"pid"`
 	SessionID           string `json:"session_id,omitempty"`
 	StartedAt           string `json:"started_at"`

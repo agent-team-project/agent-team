@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -540,6 +541,213 @@ retry_on_crash = true
 	}
 }
 
+func TestParse_ModelPolicyResolvesInstancesAndPipelineTargets(t *testing.T) {
+	top, err := Parse([]byte(`
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[instances.advisor]
+agent = "advisor"
+runtime = "claude"
+model = "claude-fable-5"
+effort = "max"
+
+[pipelines.delivery]
+trigger.event = "ticket.created"
+
+[[pipelines.delivery.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.delivery.steps]]
+id = "consult"
+target = "advisor"
+after = ["implement"]
+
+[[pipelines.delivery.steps]]
+id = "override"
+target = "worker"
+runtime = "docker"
+model = "special-model"
+effort = "low"
+after = ["consult"]
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := top.ModelPolicy; got == nil || got.Runtime != "codex" || got.Model != "gpt-5.6-sol" || got.Effort != "xhigh" {
+		t.Fatalf("model policy = %+v", got)
+	}
+	if got := top.Instances["worker"]; got.Runtime != "codex" || got.Model != "gpt-5.6-sol" || got.Effort != "xhigh" {
+		t.Fatalf("worker policy = %q/%q/%q", got.Runtime, got.Model, got.Effort)
+	}
+	if got := top.Instances["advisor"]; got.Runtime != "claude" || got.Model != "claude-fable-5" || got.Effort != "max" {
+		t.Fatalf("advisor override = %q/%q/%q", got.Runtime, got.Model, got.Effort)
+	}
+	steps := top.Pipelines["delivery"].Steps
+	for _, want := range []struct {
+		index                  int
+		runtime, model, effort string
+	}{
+		{0, "codex", "gpt-5.6-sol", "xhigh"},
+		{1, "claude", "claude-fable-5", "max"},
+		{2, "docker", "special-model", "low"},
+	} {
+		got := steps[want.index]
+		if got.Runtime != want.runtime || got.Model != want.model || got.Effort != want.effort {
+			t.Fatalf("step %s policy = %q/%q/%q, want %q/%q/%q", got.ID, got.Runtime, got.Model, got.Effort, want.runtime, want.model, want.effort)
+		}
+	}
+}
+
+func TestResolveRuntimePolicyKeepsSelectorsWithinRuntimeFamily(t *testing.T) {
+	tests := []struct {
+		name      string
+		inherited ModelPolicy
+		override  ModelPolicy
+		want      ModelPolicy
+	}{
+		{
+			name:      "same family inherits selectors",
+			inherited: ModelPolicy{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"},
+			override:  ModelPolicy{Runtime: "codex"},
+			want:      ModelPolicy{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"},
+		},
+		{
+			name:      "non-Fable to Claude clears selectors",
+			inherited: ModelPolicy{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"},
+			override:  ModelPolicy{Runtime: "claude"},
+			want:      ModelPolicy{Runtime: "claude"},
+		},
+		{
+			name:      "Fable to Codex clears selectors",
+			inherited: ModelPolicy{Runtime: "claude", Model: "claude-fable-5", Effort: "max"},
+			override:  ModelPolicy{Runtime: "codex"},
+			want:      ModelPolicy{Runtime: "codex"},
+		},
+		{
+			name:      "new family explicit selectors are authoritative",
+			inherited: ModelPolicy{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"},
+			override:  ModelPolicy{Runtime: "claude", Model: "claude-fable-5", Effort: "max"},
+			want:      ModelPolicy{Runtime: "claude", Model: "claude-fable-5", Effort: "max"},
+		},
+		{
+			name:      "partial new family selector does not retain omitted field",
+			inherited: ModelPolicy{Runtime: "claude", Model: "claude-fable-5", Effort: "max"},
+			override:  ModelPolicy{Runtime: "codex", Model: "gpt-5.6-sol"},
+			want:      ModelPolicy{Runtime: "codex", Model: "gpt-5.6-sol"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ResolveRuntimePolicy(tt.inherited, tt.override); got != tt.want {
+				t.Fatalf("ResolveRuntimePolicy() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParse_ModelPolicyClearsSelectorsForRuntimeOnlyInstanceOverrides(t *testing.T) {
+	tests := []struct {
+		name                                     string
+		policyRuntime, policyModel, policyEffort string
+		instanceRuntime                          string
+	}{
+		{"non-Fable to Claude", "codex", "gpt-5.6-sol", "xhigh", "claude"},
+		{"Fable to Codex", "claude", "claude-fable-5", "max", "codex"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			top, err := Parse([]byte(fmt.Sprintf(`
+[model_policy]
+runtime = %q
+model = %q
+effort = %q
+
+[instances.override]
+agent = "worker"
+runtime = %q
+`, tt.policyRuntime, tt.policyModel, tt.policyEffort, tt.instanceRuntime)))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			got := top.Instances["override"]
+			if got.Runtime != tt.instanceRuntime || got.Model != "" || got.Effort != "" {
+				t.Fatalf("runtime-only instance override = %q/%q/%q, want %q with empty selectors", got.Runtime, got.Model, got.Effort, tt.instanceRuntime)
+			}
+		})
+	}
+}
+
+func TestParse_ModelPolicyClearsSelectorsForRuntimeOnlyPipelineOverrides(t *testing.T) {
+	top, err := Parse([]byte(`
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.worker]
+agent = "worker"
+
+[instances.advisor]
+agent = "advisor"
+runtime = "claude"
+model = "claude-fable-5"
+effort = "max"
+
+[pipelines.compatibility]
+trigger.event = "agent.dispatch"
+
+[[pipelines.compatibility.steps]]
+id = "non-fable-to-claude"
+target = "worker"
+runtime = "claude"
+
+[[pipelines.compatibility.steps]]
+id = "fable-to-codex"
+target = "advisor"
+runtime = "codex"
+after = ["non-fable-to-claude"]
+
+[[pipelines.compatibility.steps]]
+id = "explicit-new-family-selectors"
+target = "worker"
+runtime = "claude"
+model = "claude-fable-5"
+effort = "max"
+after = ["fable-to-codex"]
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	steps := top.Pipelines["compatibility"].Steps
+	for _, index := range []int{0, 1} {
+		if got := steps[index]; got.Model != "" || got.Effort != "" {
+			t.Fatalf("runtime-only step %s = %q/%q/%q, want empty selectors", got.ID, got.Runtime, got.Model, got.Effort)
+		}
+	}
+	if got := steps[2]; got.Runtime != "claude" || got.Model != "claude-fable-5" || got.Effort != "max" {
+		t.Fatalf("explicit new-family step = %q/%q/%q, want claude/claude-fable-5/max", got.Runtime, got.Model, got.Effort)
+	}
+}
+
+func TestParse_ModelPolicyValidatesFieldTypes(t *testing.T) {
+	_, err := Parse([]byte(`
+[model_policy]
+runtime = "codex"
+model = 56
+`))
+	if err == nil || !strings.Contains(err.Error(), "model_policy: model must be a string") {
+		t.Fatalf("Parse error = %v, want model policy type error", err)
+	}
+}
+
 func TestParse_DockerRuntime(t *testing.T) {
 	top, err := Parse([]byte(`
 [instances.worker]
@@ -636,13 +844,38 @@ func TestParse_FableMaxEffortExamples(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse self-dogfood topology: %v", err)
 	}
-	for _, name := range []string{"advisor", "harness-reviewer", "org-review"} {
-		inst := top.Instances[name]
-		if inst == nil {
-			t.Fatalf("self-dogfood instance %q missing", name)
+	if got := top.ModelPolicy; got == nil || got.Runtime != "codex" || got.Model != "gpt-5.6-sol" || got.Effort != "xhigh" {
+		t.Fatalf("self-dogfood model policy = %+v", got)
+	}
+	fable := make([]string, 0, 3)
+	for name, inst := range top.Instances {
+		if inst.Model == "claude-fable-5" {
+			fable = append(fable, name)
+			if inst.Runtime != "claude" || inst.Effort != "max" {
+				t.Fatalf("self-dogfood Fable seat %s = %q/%q/%q", name, inst.Runtime, inst.Model, inst.Effort)
+			}
+			continue
 		}
+		if inst.Runtime != "codex" || inst.Model != "gpt-5.6-sol" || inst.Effort != "xhigh" {
+			t.Fatalf("self-dogfood non-Fable seat %s = %q/%q/%q", name, inst.Runtime, inst.Model, inst.Effort)
+		}
+	}
+	sort.Strings(fable)
+	if want := []string{"advisor", "harness-reviewer", "org-review"}; !reflect.DeepEqual(fable, want) {
+		t.Fatalf("self-dogfood Fable seats = %v, want %v", fable, want)
+	}
+	for _, name := range fable {
+		inst := top.Instances[name]
 		if inst.Runtime != "claude" || inst.Model != "claude-fable-5" || inst.Effort != "max" {
 			t.Fatalf("self-dogfood %s runtime/model/effort = %q/%q/%q", name, inst.Runtime, inst.Model, inst.Effort)
+		}
+	}
+	for pipelineName, pipeline := range top.Pipelines {
+		for _, step := range pipeline.Steps {
+			target := top.Instances[step.Target]
+			if target == nil || step.Runtime != target.Runtime || step.Model != target.Model || step.Effort != target.Effort {
+				t.Fatalf("self-dogfood pipeline %s step %s policy = %q/%q/%q, target=%+v", pipelineName, step.ID, step.Runtime, step.Model, step.Effort, target)
+			}
 		}
 	}
 
@@ -654,7 +887,7 @@ func TestParse_FableMaxEffortExamples(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse template quality loops: %v", err)
 	}
-	for _, name := range []string{"harness-reviewer", "org-review"} {
+	for _, name := range []string{"advisor", "harness-reviewer", "org-review"} {
 		inst := top.Instances[name]
 		if inst == nil {
 			t.Fatalf("template instance %q missing", name)

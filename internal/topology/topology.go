@@ -75,6 +75,11 @@ const (
 
 // Topology is the parsed + merged set of declared instances for a repo.
 type Topology struct {
+	// ModelPolicy is the shared runtime/model/effort default for declared seats.
+	// Instances inherit omitted values from it; pipeline steps inherit omitted
+	// values from their resolved target instance while the runtime family stays
+	// compatible.
+	ModelPolicy *ModelPolicy
 	// Instances is keyed by the declared instance name (the `[instances.<n>]`
 	// table key in the TOML).
 	Instances map[string]*Instance
@@ -99,6 +104,43 @@ type Topology struct {
 	ReminderLevels []int
 	// Authority is the optional daemon verb allowlist policy.
 	Authority *Authority
+}
+
+// ModelPolicy is the shared default declared under `[model_policy]`.
+// Explicit instance and pipeline-step fields remain authoritative.
+type ModelPolicy struct {
+	Runtime string
+	Model   string
+	Effort  string
+}
+
+// ResolveRuntimePolicy applies an explicit runtime/model/effort override to an
+// inherited triple. Model and effort are runtime-family-specific: changing the
+// runtime clears inherited selectors from the previous family before any
+// explicitly supplied selectors for the new runtime are applied.
+func ResolveRuntimePolicy(inherited, override ModelPolicy) ModelPolicy {
+	resolved := ModelPolicy{
+		Runtime: strings.TrimSpace(inherited.Runtime),
+		Model:   strings.TrimSpace(inherited.Model),
+		Effort:  strings.TrimSpace(inherited.Effort),
+	}
+	override.Runtime = strings.TrimSpace(override.Runtime)
+	override.Model = strings.TrimSpace(override.Model)
+	override.Effort = strings.TrimSpace(override.Effort)
+	if override.Runtime != "" {
+		if resolved.Runtime != "" && !strings.EqualFold(resolved.Runtime, override.Runtime) {
+			resolved.Model = ""
+			resolved.Effort = ""
+		}
+		resolved.Runtime = override.Runtime
+	}
+	if override.Model != "" {
+		resolved.Model = override.Model
+	}
+	if override.Effort != "" {
+		resolved.Effort = override.Effort
+	}
+	return resolved
 }
 
 // Instance is one declared instance.
@@ -144,6 +186,10 @@ type Instance struct {
 	// instance. An empty list means the instance is only invokable via an
 	// explicit `agent-team run <name>` (i.e. no event-driven dispatch).
 	Triggers []*Trigger
+
+	runtimeDeclared bool
+	modelDeclared   bool
+	effortDeclared  bool
 }
 
 // Lock is a named dispatch semaphore. Slots defaults to 1, making the lock a
@@ -236,6 +282,10 @@ type PipelineStep struct {
 	ReminderLevels   []int
 	MaxAttempts      int
 	RetryOnCrash     bool
+
+	runtimeDeclared bool
+	modelDeclared   bool
+	effortDeclared  bool
 }
 
 // Schedule is a periodic source of `schedule` events.
@@ -827,6 +877,7 @@ func (t *Topology) TeamForChannel(name string) string {
 // so the public Topology can carry validated, normalised values regardless of
 // how lenient toml.Decode is.
 type rawTopology struct {
+	ModelPolicy *rawModelPolicy         `toml:"model_policy"`
 	Instances   map[string]*rawInstance `toml:"instances"`
 	Locks       map[string]*rawLock     `toml:"locks"`
 	Channels    map[string]*rawChannel  `toml:"channels"`
@@ -836,6 +887,12 @@ type rawTopology struct {
 	Budgets     map[string]any          `toml:"budgets"`
 	Concurrency *rawConcurrency         `toml:"concurrency"`
 	Authority   *rawAuthority           `toml:"authority"`
+}
+
+type rawModelPolicy struct {
+	Runtime any `toml:"runtime"`
+	Model   any `toml:"model"`
+	Effort  any `toml:"effort"`
 }
 
 type rawInstance struct {
@@ -951,6 +1008,10 @@ func parseWithTeamValidation(body []byte, validateTeamRefs bool) (*Topology, err
 }
 
 func finalise(raw *rawTopology, validateTeamRefs bool) (*Topology, error) {
+	modelPolicy, err := finaliseModelPolicy(raw.ModelPolicy)
+	if err != nil {
+		return nil, err
+	}
 	budgets, reminderLevels, err := finaliseBudgets(raw.Budgets)
 	if err != nil {
 		return nil, err
@@ -960,6 +1021,7 @@ func finalise(raw *rawTopology, validateTeamRefs bool) (*Topology, error) {
 		return nil, err
 	}
 	t := &Topology{
+		ModelPolicy:    modelPolicy,
 		Instances:      make(map[string]*Instance, len(raw.Instances)),
 		Locks:          make(map[string]*Lock, len(raw.Locks)),
 		Channels:       make(map[string]*Channel, len(raw.Channels)),
@@ -1021,6 +1083,7 @@ func finalise(raw *rawTopology, validateTeamRefs bool) (*Topology, error) {
 		}
 		t.Schedules[name] = s
 	}
+	applyModelPolicyDefaults(t)
 	for name, rt := range raw.Teams {
 		if rt == nil {
 			continue
@@ -1045,6 +1108,71 @@ func finalise(raw *rawTopology, validateTeamRefs bool) (*Topology, error) {
 		}
 	}
 	return t, nil
+}
+
+func finaliseModelPolicy(raw *rawModelPolicy) (*ModelPolicy, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	runtime, err := parseStepRuntime(raw.Runtime)
+	if err != nil {
+		return nil, fmt.Errorf("model_policy: %w", err)
+	}
+	model, err := parseOptionalText(raw.Model, "model")
+	if err != nil {
+		return nil, fmt.Errorf("model_policy: %w", err)
+	}
+	effort, err := parseOptionalText(raw.Effort, "effort")
+	if err != nil {
+		return nil, fmt.Errorf("model_policy: %w", err)
+	}
+	return &ModelPolicy{Runtime: runtime, Model: model, Effort: effort}, nil
+}
+
+func applyModelPolicyDefaults(t *Topology) {
+	if t == nil || t.ModelPolicy == nil {
+		return
+	}
+	policy := *t.ModelPolicy
+	for _, inst := range t.Instances {
+		override := ModelPolicy{}
+		if inst.runtimeDeclared {
+			override.Runtime = inst.Runtime
+		}
+		if inst.modelDeclared {
+			override.Model = inst.Model
+		}
+		if inst.effortDeclared {
+			override.Effort = inst.Effort
+		}
+		resolved := ResolveRuntimePolicy(policy, override)
+		inst.Runtime = resolved.Runtime
+		inst.Model = resolved.Model
+		inst.Effort = resolved.Effort
+	}
+	for _, pipeline := range t.Pipelines {
+		for _, step := range pipeline.Steps {
+			inherited := policy
+			target := t.Instances[step.Target]
+			if target != nil {
+				inherited = ModelPolicy{Runtime: target.Runtime, Model: target.Model, Effort: target.Effort}
+			}
+			override := ModelPolicy{}
+			if step.runtimeDeclared {
+				override.Runtime = step.Runtime
+			}
+			if step.modelDeclared {
+				override.Model = step.Model
+			}
+			if step.effortDeclared {
+				override.Effort = step.Effort
+			}
+			resolved := ResolveRuntimePolicy(inherited, override)
+			step.Runtime = resolved.Runtime
+			step.Model = resolved.Model
+			step.Effort = resolved.Effort
+		}
+	}
 }
 
 func finaliseLock(name string, rl *rawLock) (*Lock, error) {
@@ -1154,26 +1282,29 @@ func finaliseInstance(name string, ri *rawInstance) (*Instance, error) {
 		return nil, err
 	}
 	return &Instance{
-		Name:           name,
-		Agent:          ri.Agent,
-		Ephemeral:      ri.Ephemeral,
-		Runtime:        runtime,
-		RuntimeBin:     runtimeBin,
-		Model:          model,
-		Effort:         effort,
-		Description:    ri.Description,
-		Locks:          locks,
-		Replicas:       replicas,
-		ReapWorktree:   reapWorktree,
-		Restart:        restart,
-		Brief:          brief,
-		TokenBudget:    tokenBudget,
-		TimeBudget:     timeBudget,
-		HardBudget:     ri.Hard,
-		HardMultiplier: hardMultiplier,
-		EnvAllow:       envAllow,
-		Config:         cfg,
-		Triggers:       triggers,
+		Name:            name,
+		Agent:           ri.Agent,
+		Ephemeral:       ri.Ephemeral,
+		Runtime:         runtime,
+		RuntimeBin:      runtimeBin,
+		Model:           model,
+		Effort:          effort,
+		Description:     ri.Description,
+		Locks:           locks,
+		Replicas:        replicas,
+		ReapWorktree:    reapWorktree,
+		Restart:         restart,
+		Brief:           brief,
+		TokenBudget:     tokenBudget,
+		TimeBudget:      timeBudget,
+		HardBudget:      ri.Hard,
+		HardMultiplier:  hardMultiplier,
+		EnvAllow:        envAllow,
+		Config:          cfg,
+		Triggers:        triggers,
+		runtimeDeclared: runtime != "",
+		modelDeclared:   model != "",
+		effortDeclared:  effort != "",
 	}, nil
 }
 
@@ -2070,7 +2201,7 @@ func parsePipelineSteps(name string, raw []map[string]any) ([]*PipelineStep, err
 		if err != nil {
 			return nil, fmt.Errorf("pipeline %q step[%d]: %w", name, i, err)
 		}
-		steps = append(steps, &PipelineStep{ID: id, Label: label, Description: description, Instructions: instructions, Target: target, Locks: locks, Workspace: workspace, Runtime: runtime, RuntimeBin: runtimeBin, Model: model, Effort: effort, After: after, Gate: gate, ApprovalRequired: approvalRequired, Optional: optional, Timeout: timeout, TokenBudget: tokenBudget, TimeBudget: timeBudget, HardBudget: hardBudget, HardMultiplier: hardMultiplier, ReminderLevels: reminderLevels, MaxAttempts: maxAttempts, RetryOnCrash: retryOnCrash})
+		steps = append(steps, &PipelineStep{ID: id, Label: label, Description: description, Instructions: instructions, Target: target, Locks: locks, Workspace: workspace, Runtime: runtime, RuntimeBin: runtimeBin, Model: model, Effort: effort, After: after, Gate: gate, ApprovalRequired: approvalRequired, Optional: optional, Timeout: timeout, TokenBudget: tokenBudget, TimeBudget: timeBudget, HardBudget: hardBudget, HardMultiplier: hardMultiplier, ReminderLevels: reminderLevels, MaxAttempts: maxAttempts, RetryOnCrash: retryOnCrash, runtimeDeclared: runtime != "", modelDeclared: model != "", effortDeclared: effort != ""})
 	}
 	for _, step := range steps {
 		for _, dep := range step.After {
