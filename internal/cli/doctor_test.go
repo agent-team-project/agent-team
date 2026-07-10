@@ -362,6 +362,7 @@ authorization = "${OTEL_AUTHORIZATION_HEADER}"
 func TestDoctorCommandsNamesMissingProviderKeys(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cfgPath := filepath.Join(tmp, ".agent_team", "config.toml")
 	if err := os.WriteFile(cfgPath, []byte(`[pm]
@@ -1208,6 +1209,7 @@ func TestDoctorJSONReportsProblems(t *testing.T) {
 func TestDoctorCommandsReportsAggregatedActions(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	jobsDir := filepath.Join(tmp, ".agent_team", "jobs")
 	if err := os.MkdirAll(jobsDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -1277,6 +1279,7 @@ func TestDoctorCommandsReportsMissingTeamAction(t *testing.T) {
 func TestDoctorCommandsReportsDaemonStartAndSyncActions(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 
 	cmd := NewRootCmd()
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
@@ -1301,6 +1304,7 @@ func TestDoctorCommandsReportsDaemonStartAndSyncActions(t *testing.T) {
 func TestDoctorCommandsReportsDaemonNotReadyActions(t *testing.T) {
 	tmp := t.TempDir()
 	initInto(t, tmp)
+	writePlanShapeTopologyFixture(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	if err := os.MkdirAll(daemon.DaemonRoot(teamDir), 0o755); err != nil {
 		t.Fatal(err)
