@@ -767,11 +767,10 @@ func TestSyncStopExtrasJSONStopsUndeclaredRunningInstances(t *testing.T) {
 	root := daemon.DaemonRoot(teamDir)
 	sleepers := map[string]*exec.Cmd{}
 	for name, agent := range map[string]string{
-		"manager":          "manager",
-		"research-manager": "manager",
-		"ticket-manager":   "ticket-manager",
-		"adhoc":            "worker",
-		"worker-abc123":    "worker",
+		"manager":        "manager",
+		"ticket-manager": "ticket-manager",
+		"adhoc":          "worker",
+		"worker-abc123":  "worker",
 	} {
 		sleepers[name] = startSleepMetadataForSyncTest(t, root, tmp, name, agent)
 	}
@@ -900,10 +899,11 @@ func TestSyncStopExtrasHonorsAgentFilter(t *testing.T) {
 	root := daemon.DaemonRoot(teamDir)
 	sleepers := map[string]*exec.Cmd{}
 	for name, agent := range map[string]string{
-		"manager":        "manager",
-		"ticket-manager": "ticket-manager",
-		"adhoc-manager":  "manager",
-		"adhoc-worker":   "worker",
+		"manager":          "manager",
+		"research-manager": "manager",
+		"ticket-manager":   "ticket-manager",
+		"adhoc-manager":    "manager",
+		"adhoc-worker":     "worker",
 	} {
 		sleepers[name] = startSleepMetadataForSyncTest(t, root, tmp, name, agent)
 	}
