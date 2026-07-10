@@ -2,8 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -62,11 +64,7 @@ func newTopoTestEnv(t *testing.T) *topoTestEnv {
 	mgr := daemon.NewInstanceManager(t.TempDir(), nil)
 	resolver := daemon.NewEventResolver(mgr, teamDir, top)
 	srv := httptest.NewServer(daemon.Handler(mgr, nil, resolver, teamDir))
-	c := &daemonClient{
-		hc:      &http.Client{Timeout: 0},
-		baseURL: srv.URL,
-		teamDir: teamDir,
-	}
+	c := newDaemonHTTPURLClientWithTransport(teamDir, srv.URL, "", 0, srv.Client().Transport)
 	t.Cleanup(srv.Close)
 	return &topoTestEnv{client: c, srv: srv, teamDir: teamDir, mgr: mgr}
 }
@@ -396,21 +394,27 @@ load_weight = 2.5
 	cleanup := startRunTestDaemon(t, teamDir, mgr)
 	defer cleanup()
 
-	dc, err := newDaemonClient(teamDir)
-	if err != nil {
-		t.Fatalf("daemon client: %v", err)
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", daemon.SocketPath(teamDir))
+		},
 	}
-	resp, err := dc.hc.Get(dc.baseURL + "/v1/topology")
+	defer transport.CloseIdleConnections()
+	rawResponse, err := (&http.Client{Transport: transport}).Get("http://daemon/v1/topology")
 	if err != nil {
-		t.Fatalf("raw topology: %v", err)
+		t.Fatalf("raw topology request: %v", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("raw topology status: %s", readErrorBody(resp))
+	defer rawResponse.Body.Close()
+	if rawResponse.StatusCode != http.StatusOK {
+		t.Fatalf("raw topology status = %s, want 200 OK", rawResponse.Status)
 	}
 	var raw map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.NewDecoder(rawResponse.Body).Decode(&raw); err != nil {
 		t.Fatalf("decode raw topology: %v", err)
+	}
+	wantReminderLevels := []any{float64(25), float64(75), float64(100)}
+	if !reflect.DeepEqual(raw["budget_reminder_levels"], wantReminderLevels) {
+		t.Fatalf("raw topology budget_reminder_levels = %v, want %v", raw["budget_reminder_levels"], wantReminderLevels)
 	}
 
 	cmd := NewRootCmd()
