@@ -99,6 +99,7 @@ class DeliveryGate:
                 )
 
             self._queue_request(state, pending, request, current)
+            self._checkpoint_queued_request(state, pending)
             eligible_at = self._eligible_at(state)
             if eligible_at is not None and current < eligible_at:
                 self._record_notification(
@@ -231,6 +232,7 @@ class DeliveryGate:
                 self._save(state, pending)
                 return self._result("duplicate", request.delivery_id, current, state)
             self._queue_request(state, pending, request, current)
+            self._checkpoint_queued_request(state, pending)
             self._record_notification(request, current, reason)
             self._save(state, pending)
             return self._result("unavailable", request.delivery_id, current, state, error=reason)
@@ -290,6 +292,18 @@ class DeliveryGate:
         # filters it through the authoritative ledger and cannot repost it.
         atomic_write_json(self.state_path, state)
         atomic_write_json(self.pending_path, pending)
+        self._write_pending_markdown(pending)
+
+    def _checkpoint_queued_request(
+        self,
+        state: dict[str, object],
+        pending: dict[str, object],
+    ) -> None:
+        # New content cannot be reconstructed from the aggregate ledger, so make
+        # the pending body durable before publishing a notice or reservation.
+        # Recovery can rebuild a ledger record if the process dies between files.
+        atomic_write_json(self.pending_path, pending)
+        atomic_write_json(self.state_path, state)
         self._write_pending_markdown(pending)
 
     def _queue_request(
@@ -390,7 +404,7 @@ class DeliveryGate:
         pending: dict[str, object],
         now: datetime,
     ) -> None:
-        changed = False
+        changed = self._restore_pending_deliveries(state, pending)
         for path in sorted(self.attempts_dir.glob("*.json")):
             attempt = load_json(path, {})
             if not isinstance(attempt, dict) or attempt.get("schema") != SCHEMA:
@@ -414,6 +428,36 @@ class DeliveryGate:
                 changed = True
         if changed:
             self._drop_delivered_pending(state, pending)
+
+    def _restore_pending_deliveries(
+        self,
+        state: dict[str, object],
+        pending: dict[str, object],
+    ) -> bool:
+        deliveries = state["deliveries"]
+        items = pending["items"]
+        assert isinstance(deliveries, dict)
+        assert isinstance(items, list)
+        changed = False
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            delivery_id = str(item.get("delivery_id", "")).strip()
+            if not delivery_id or delivery_id in deliveries:
+                continue
+            created_at = str(item.get("created_at", item.get("updated_at", "")))
+            content = str(item.get("content", ""))
+            deliveries[delivery_id] = {
+                "delivery_id": delivery_id,
+                "first_seen_at": created_at,
+                "kind": str(item.get("kind", "digest")),
+                "priority": int(item.get("priority", 0)),
+                "status": "pending",
+                "content_sha256": content_hash(content),
+                "updated_at": str(item.get("updated_at", created_at)),
+            }
+            changed = True
+        return changed
 
     def _apply_success(
         self,
@@ -828,11 +872,26 @@ def merge_text(existing: str, proposed: str) -> str:
     proposed = proposed.strip()
     if not existing:
         return proposed
-    if not proposed or proposed == existing or proposed in existing:
+    if not proposed or proposed == existing:
         return existing
-    if existing in proposed:
+    existing_units = content_units(existing)
+    proposed_units = content_units(proposed)
+    if contains_unit_sequence(existing_units, proposed_units):
+        return existing
+    if contains_unit_sequence(proposed_units, existing_units):
         return proposed
     return f"{existing}\n\n{proposed}"
+
+
+def content_units(content: str) -> tuple[str, ...]:
+    return tuple(line.strip() for line in content.splitlines() if line.strip())
+
+
+def contains_unit_sequence(container: tuple[str, ...], candidate: tuple[str, ...]) -> bool:
+    if not candidate:
+        return True
+    width = len(candidate)
+    return any(container[start : start + width] == candidate for start in range(len(container) - width + 1))
 
 
 def load_json(path: Path, default: object) -> object:

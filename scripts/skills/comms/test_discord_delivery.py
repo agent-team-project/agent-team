@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 
 sys.dont_write_bytecode = True
@@ -227,6 +228,64 @@ class DiscordDeliveryTests(unittest.TestCase):
             self.assertEqual(retry["outcome"], "duplicate")
             self.assertEqual(sender.bodies, ["confirmed post"])
 
+    def test_deferred_body_survives_interruption_after_supervisor_notice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp) / "discord-delivery"
+            sender = RecordingSender()
+            gate = discord_delivery.DeliveryGate(state_dir)
+            gate.deliver(request("seed", "digest", "seed"), sender, now=T0)
+
+            with mock.patch.object(gate, "_save", side_effect=RuntimeError("interrupted after notice")):
+                with self.assertRaisesRegex(RuntimeError, "interrupted after notice"):
+                    gate.deliver(
+                        request("deferred-release", "release", "durable release"),
+                        sender,
+                        now=T0 + timedelta(hours=1),
+                    )
+
+            notices = (state_dir / "supervisor-notifications.jsonl").read_text(encoding="utf-8")
+            pending = discord_delivery.DeliveryGate(state_dir).status(now=T0 + timedelta(hours=1))
+            self.assertIn("deferred-release", notices)
+            self.assertEqual([item["delivery_id"] for item in pending["pending"]], ["deferred-release"])
+            self.assertEqual(sender.bodies, ["seed"])
+
+    def test_eligible_body_survives_interruption_after_reservation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp) / "discord-delivery"
+            sender = RecordingSender()
+            gate = discord_delivery.DeliveryGate(state_dir)
+
+            with mock.patch.object(gate, "_save", side_effect=RuntimeError("interrupted after reservation")):
+                with self.assertRaisesRegex(RuntimeError, "interrupted after reservation"):
+                    gate.deliver(request("reserved-release", "release", "durable release"), sender, now=T0)
+
+            attempts = list((state_dir / "attempts").glob("*.json"))
+            pending = discord_delivery.DeliveryGate(state_dir).status(now=T0)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual([item["delivery_id"] for item in pending["pending"]], ["reserved-release"])
+            self.assertEqual(sender.bodies, [])
+
+    def test_pending_body_repairs_ledger_after_checkpoint_interruption(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp) / "discord-delivery"
+            gate = discord_delivery.DeliveryGate(state_dir)
+            original_write = discord_delivery.atomic_write_json
+
+            def interrupt_before_state(path: Path, value: object) -> None:
+                if path == gate.state_path:
+                    raise RuntimeError("interrupted between pending and state")
+                original_write(path, value)
+
+            with mock.patch.object(discord_delivery, "atomic_write_json", side_effect=interrupt_before_state):
+                with self.assertRaisesRegex(RuntimeError, "interrupted between pending and state"):
+                    gate.deliver(request("checkpointed", "manual", "durable body"), RecordingSender(), now=T0)
+
+            restarted = discord_delivery.DeliveryGate(state_dir)
+            status = restarted.status(now=T0)
+            ledger = json.loads((state_dir / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual([item["delivery_id"] for item in status["pending"]], ["checkpointed"])
+            self.assertEqual(ledger["deliveries"]["checkpointed"]["status"], "pending")
+
     def test_definitive_failed_delivery_is_immediately_retryable(self) -> None:
         with self.gate() as gate:
             sender = RecordingSender(
@@ -294,6 +353,26 @@ class DiscordDeliveryTests(unittest.TestCase):
             self.assertEqual(result["outcome"], "delivered")
             self.assertEqual(result["included_delivery_ids"], ["digest-deferred", "digest-catch-up"])
             self.assertEqual(sender.bodies[1], "A\nB")
+            self.assertEqual(gate.status(now=T0 + timedelta(hours=24))["pending"], [])
+
+    def test_catch_up_overlap_does_not_collapse_prefix_collision(self) -> None:
+        with self.gate() as gate:
+            sender = RecordingSender()
+            gate.deliver(request("seed", "digest", "seed post"), sender, now=T0)
+            gate.deliver(
+                request("release-12", "release", "Fix #12"),
+                sender,
+                now=T0 + timedelta(seconds=1),
+            )
+            result = gate.deliver(
+                request("digest-123", "digest", "Fix #123 and add docs"),
+                sender,
+                now=T0 + timedelta(hours=24),
+            )
+
+            self.assertEqual(result["outcome"], "delivered")
+            self.assertEqual(result["included_delivery_ids"], ["release-12", "digest-123"])
+            self.assertEqual(sender.bodies[1], "Fix #12\n\nFix #123 and add docs")
             self.assertEqual(gate.status(now=T0 + timedelta(hours=24))["pending"], [])
 
     def test_oversized_pending_content_can_be_corrected_or_skipped(self) -> None:
