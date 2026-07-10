@@ -32,7 +32,11 @@ Every instance inherits omitted `runtime`, `model`, and `effort` values from
 this table. A pipeline step inherits omitted values from its target instance,
 so an explicit instance exception also survives pipeline dispatch. Explicit
 instance fields override the shared policy, and explicit step fields override
-the resolved target instance.
+the resolved target instance. Model and effort are runtime-family-specific: a
+runtime-only override that changes family clears inherited model and effort
+instead of passing Codex selectors to Claude or Claude selectors to Codex. Set
+model or effort alongside the new runtime when that selector should remain
+explicitly authoritative.
 
 The bundled full topology uses this policy for every non-Fable seat. Its only
 exceptions are `advisor`, `harness-reviewer`, and `org-review`, each declared
@@ -204,7 +208,7 @@ Use `agent-team job step <job-id> <step-id> --skip` when a stage is intentionall
 
 Use `optional = true` when a stage is useful but should not block the workflow if it fails. Optional failures still appear in `job explain`, `pipeline explain`, and retry views, but downstream `after` dependencies are treated as satisfied.
 
-Pipeline steps may set `runtime`, `runtime_bin`, `model`, and `effort` to override the spawned runtime for that step. `model` becomes `--model <id>` for Claude and Codex. `effort` becomes `--effort <level>` for Claude and `-c model_reasoning_effort="<level>"` for Codex. Omitted or empty fields inherit the resolved target instance, including `[model_policy]` defaults.
+Pipeline steps may set `runtime`, `runtime_bin`, `model`, and `effort` to override the spawned runtime for that step. `model` becomes `--model <id>` for Claude and Codex. `effort` becomes `--effort <level>` for Claude and `-c model_reasoning_effort="<level>"` for Codex. Omitted or empty fields inherit the resolved target instance, including `[model_policy]` defaults, unless an explicit `runtime` changes family; that clears omitted model and effort fields so selectors cannot cross runtime families.
 
 Use `[pipelines.<name>.infra_signatures]` to classify failed gate signatures
 reported with `agent-team job gate set`. These regexes only classify explicit

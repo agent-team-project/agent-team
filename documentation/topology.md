@@ -165,15 +165,18 @@ Important layering rules:
 - `[model_policy]` supplies shared `runtime`, `model`, and `effort` values.
   Omitted instance fields inherit the policy; omitted pipeline-step fields
   inherit their resolved target instance. Explicit step fields outrank instance
-  fields, and explicit instance fields outrank the shared policy.
+  fields, and explicit instance fields outrank the shared policy. When an
+  override changes runtime family, omitted model and effort fields are cleared
+  rather than inherited from the previous family; selectors explicitly supplied
+  with the new runtime remain authoritative.
 - `[instances.<name>.config]` becomes declared per-instance config and is
   layered above repo config when ephemeral runtime state is prepared.
 - `[instances.<name>]` fields `runtime`, `runtime_bin`, `model`, and `effort`
   customize the launched runtime. `model` is passed as `--model <value>` for
   Claude and Codex runtime launches. `effort` is passed as `--effort <value>`
   for Claude and `-c model_reasoning_effort="<value>"` for Codex. Omitted or
-  empty values inherit the topology chain described above; Docker launches
-  ignore model/effort.
+  empty values inherit the topology chain described above only while the
+  runtime family stays compatible; Docker launches ignore model/effort.
 - Teams own instances, pipelines, schedules, and channels for operator
   commands, origin envelopes, usage accounting, and scoped resources.
 - Budgets are keyed by team; locks and channels may be scoped by machine, team,

@@ -77,7 +77,8 @@ const (
 type Topology struct {
 	// ModelPolicy is the shared runtime/model/effort default for declared seats.
 	// Instances inherit omitted values from it; pipeline steps inherit omitted
-	// values from their resolved target instance.
+	// values from their resolved target instance while the runtime family stays
+	// compatible.
 	ModelPolicy *ModelPolicy
 	// Instances is keyed by the declared instance name (the `[instances.<n>]`
 	// table key in the TOML).
@@ -111,6 +112,35 @@ type ModelPolicy struct {
 	Runtime string
 	Model   string
 	Effort  string
+}
+
+// ResolveRuntimePolicy applies an explicit runtime/model/effort override to an
+// inherited triple. Model and effort are runtime-family-specific: changing the
+// runtime clears inherited selectors from the previous family before any
+// explicitly supplied selectors for the new runtime are applied.
+func ResolveRuntimePolicy(inherited, override ModelPolicy) ModelPolicy {
+	resolved := ModelPolicy{
+		Runtime: strings.TrimSpace(inherited.Runtime),
+		Model:   strings.TrimSpace(inherited.Model),
+		Effort:  strings.TrimSpace(inherited.Effort),
+	}
+	override.Runtime = strings.TrimSpace(override.Runtime)
+	override.Model = strings.TrimSpace(override.Model)
+	override.Effort = strings.TrimSpace(override.Effort)
+	if override.Runtime != "" {
+		if resolved.Runtime != "" && !strings.EqualFold(resolved.Runtime, override.Runtime) {
+			resolved.Model = ""
+			resolved.Effort = ""
+		}
+		resolved.Runtime = override.Runtime
+	}
+	if override.Model != "" {
+		resolved.Model = override.Model
+	}
+	if override.Effort != "" {
+		resolved.Effort = override.Effort
+	}
+	return resolved
 }
 
 // Instance is one declared instance.
@@ -1103,39 +1133,44 @@ func applyModelPolicyDefaults(t *Topology) {
 	if t == nil || t.ModelPolicy == nil {
 		return
 	}
-	policy := t.ModelPolicy
+	policy := *t.ModelPolicy
 	for _, inst := range t.Instances {
-		if !inst.runtimeDeclared {
-			inst.Runtime = policy.Runtime
+		override := ModelPolicy{}
+		if inst.runtimeDeclared {
+			override.Runtime = inst.Runtime
 		}
-		if !inst.modelDeclared {
-			inst.Model = policy.Model
+		if inst.modelDeclared {
+			override.Model = inst.Model
 		}
-		if !inst.effortDeclared {
-			inst.Effort = policy.Effort
+		if inst.effortDeclared {
+			override.Effort = inst.Effort
 		}
+		resolved := ResolveRuntimePolicy(policy, override)
+		inst.Runtime = resolved.Runtime
+		inst.Model = resolved.Model
+		inst.Effort = resolved.Effort
 	}
 	for _, pipeline := range t.Pipelines {
 		for _, step := range pipeline.Steps {
+			inherited := policy
 			target := t.Instances[step.Target]
-			if !step.runtimeDeclared {
-				step.Runtime = policy.Runtime
-				if target != nil {
-					step.Runtime = target.Runtime
-				}
+			if target != nil {
+				inherited = ModelPolicy{Runtime: target.Runtime, Model: target.Model, Effort: target.Effort}
 			}
-			if !step.modelDeclared {
-				step.Model = policy.Model
-				if target != nil {
-					step.Model = target.Model
-				}
+			override := ModelPolicy{}
+			if step.runtimeDeclared {
+				override.Runtime = step.Runtime
 			}
-			if !step.effortDeclared {
-				step.Effort = policy.Effort
-				if target != nil {
-					step.Effort = target.Effort
-				}
+			if step.modelDeclared {
+				override.Model = step.Model
 			}
+			if step.effortDeclared {
+				override.Effort = step.Effort
+			}
+			resolved := ResolveRuntimePolicy(inherited, override)
+			step.Runtime = resolved.Runtime
+			step.Model = resolved.Model
+			step.Effort = resolved.Effort
 		}
 	}
 }

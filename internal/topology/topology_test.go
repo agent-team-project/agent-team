@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -602,6 +603,137 @@ after = ["consult"]
 		if got.Runtime != want.runtime || got.Model != want.model || got.Effort != want.effort {
 			t.Fatalf("step %s policy = %q/%q/%q, want %q/%q/%q", got.ID, got.Runtime, got.Model, got.Effort, want.runtime, want.model, want.effort)
 		}
+	}
+}
+
+func TestResolveRuntimePolicyKeepsSelectorsWithinRuntimeFamily(t *testing.T) {
+	tests := []struct {
+		name      string
+		inherited ModelPolicy
+		override  ModelPolicy
+		want      ModelPolicy
+	}{
+		{
+			name:      "same family inherits selectors",
+			inherited: ModelPolicy{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"},
+			override:  ModelPolicy{Runtime: "codex"},
+			want:      ModelPolicy{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"},
+		},
+		{
+			name:      "non-Fable to Claude clears selectors",
+			inherited: ModelPolicy{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"},
+			override:  ModelPolicy{Runtime: "claude"},
+			want:      ModelPolicy{Runtime: "claude"},
+		},
+		{
+			name:      "Fable to Codex clears selectors",
+			inherited: ModelPolicy{Runtime: "claude", Model: "claude-fable-5", Effort: "max"},
+			override:  ModelPolicy{Runtime: "codex"},
+			want:      ModelPolicy{Runtime: "codex"},
+		},
+		{
+			name:      "new family explicit selectors are authoritative",
+			inherited: ModelPolicy{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"},
+			override:  ModelPolicy{Runtime: "claude", Model: "claude-fable-5", Effort: "max"},
+			want:      ModelPolicy{Runtime: "claude", Model: "claude-fable-5", Effort: "max"},
+		},
+		{
+			name:      "partial new family selector does not retain omitted field",
+			inherited: ModelPolicy{Runtime: "claude", Model: "claude-fable-5", Effort: "max"},
+			override:  ModelPolicy{Runtime: "codex", Model: "gpt-5.6-sol"},
+			want:      ModelPolicy{Runtime: "codex", Model: "gpt-5.6-sol"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ResolveRuntimePolicy(tt.inherited, tt.override); got != tt.want {
+				t.Fatalf("ResolveRuntimePolicy() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParse_ModelPolicyClearsSelectorsForRuntimeOnlyInstanceOverrides(t *testing.T) {
+	tests := []struct {
+		name                                     string
+		policyRuntime, policyModel, policyEffort string
+		instanceRuntime                          string
+	}{
+		{"non-Fable to Claude", "codex", "gpt-5.6-sol", "xhigh", "claude"},
+		{"Fable to Codex", "claude", "claude-fable-5", "max", "codex"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			top, err := Parse([]byte(fmt.Sprintf(`
+[model_policy]
+runtime = %q
+model = %q
+effort = %q
+
+[instances.override]
+agent = "worker"
+runtime = %q
+`, tt.policyRuntime, tt.policyModel, tt.policyEffort, tt.instanceRuntime)))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			got := top.Instances["override"]
+			if got.Runtime != tt.instanceRuntime || got.Model != "" || got.Effort != "" {
+				t.Fatalf("runtime-only instance override = %q/%q/%q, want %q with empty selectors", got.Runtime, got.Model, got.Effort, tt.instanceRuntime)
+			}
+		})
+	}
+}
+
+func TestParse_ModelPolicyClearsSelectorsForRuntimeOnlyPipelineOverrides(t *testing.T) {
+	top, err := Parse([]byte(`
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.worker]
+agent = "worker"
+
+[instances.advisor]
+agent = "advisor"
+runtime = "claude"
+model = "claude-fable-5"
+effort = "max"
+
+[pipelines.compatibility]
+trigger.event = "agent.dispatch"
+
+[[pipelines.compatibility.steps]]
+id = "non-fable-to-claude"
+target = "worker"
+runtime = "claude"
+
+[[pipelines.compatibility.steps]]
+id = "fable-to-codex"
+target = "advisor"
+runtime = "codex"
+after = ["non-fable-to-claude"]
+
+[[pipelines.compatibility.steps]]
+id = "explicit-new-family-selectors"
+target = "worker"
+runtime = "claude"
+model = "claude-fable-5"
+effort = "max"
+after = ["fable-to-codex"]
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	steps := top.Pipelines["compatibility"].Steps
+	for _, index := range []int{0, 1} {
+		if got := steps[index]; got.Model != "" || got.Effort != "" {
+			t.Fatalf("runtime-only step %s = %q/%q/%q, want empty selectors", got.ID, got.Runtime, got.Model, got.Effort)
+		}
+	}
+	if got := steps[2]; got.Runtime != "claude" || got.Model != "claude-fable-5" || got.Effort != "max" {
+		t.Fatalf("explicit new-family step = %q/%q/%q, want claude/claude-fable-5/max", got.Runtime, got.Model, got.Effort)
 	}
 }
 

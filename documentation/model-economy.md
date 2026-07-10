@@ -7,6 +7,8 @@ The mechanism is topology-owned. `[model_policy]` supplies shared `runtime`, `mo
 `effort` defaults; explicit instance declarations override it, and explicit pipeline-step
 declarations override their resolved target instance. `model` is passed as `--model` on
 Claude and Codex launches, and `effort` maps to each runtime's reasoning-effort setting.
+A runtime-family override clears model and effort inherited from the prior family; selectors
+declared alongside the new runtime remain authoritative.
 
 ## Active binding — 2026-07-10
 

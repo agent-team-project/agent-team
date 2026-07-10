@@ -640,11 +640,11 @@ func declaredRunPolicy(teamDir, instance, agent string, rt runtimebin.Runtime) (
 	if inst == nil {
 		return "", ""
 	}
-	policyRuntime, err := runtimebin.ParseKind(strings.TrimSpace(inst.Runtime))
-	if err != nil || policyRuntime != rt.Kind {
-		return "", ""
-	}
-	return strings.TrimSpace(inst.Model), strings.TrimSpace(inst.Effort)
+	policy := topology.ResolveRuntimePolicy(
+		topology.ModelPolicy{Runtime: inst.Runtime, Model: inst.Model, Effort: inst.Effort},
+		topology.ModelPolicy{Runtime: string(rt.Kind)},
+	)
+	return policy.Model, policy.Effort
 }
 
 func declaredRunAgentMismatch(teamDir, instance, agent string) (string, bool) {

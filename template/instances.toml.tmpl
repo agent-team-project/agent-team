@@ -10,8 +10,9 @@
 # your project grows.
 #
 # The shared policy is inherited by every instance and pipeline step unless an
-# explicit declaration overrides it. Keep runtime/model/effort topology-owned
-# so launches never depend on a developer's runtime user config.
+# explicit declaration overrides it. A runtime-family override clears inherited
+# model/effort unless new selectors are declared beside it. Keep this triple
+# topology-owned so launches never depend on a developer's runtime user config.
 [model_policy]
 runtime = "codex"
 model   = "gpt-5.6-sol"

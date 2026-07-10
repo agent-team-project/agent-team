@@ -112,6 +112,7 @@ func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, p
 		cleanupWorkspace()
 		return nil, err
 	}
+	policy := dispatchPolicyForPayload(inst, payload, string(rt.Kind))
 	meta, err := r.mgr.Dispatch(DispatchInput{
 		Agent:               inst.Agent,
 		Name:                name,
@@ -130,8 +131,8 @@ func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, p
 		StateURI:            payloadString(payload, "state_uri"),
 		Runtime:             string(rt.Kind),
 		RuntimeBinary:       rt.Binary,
-		Model:               dispatchModelForPayload(inst, payload),
-		Effort:              dispatchEffortForPayload(inst, payload),
+		Model:               policy.Model,
+		Effort:              policy.Effort,
 		Args:                args,
 		Env:                 env,
 		EnvAllow:            inst.EnvAllow,
@@ -379,24 +380,16 @@ func (r *EventResolver) renderPayloadContract(payload map[string]any, contract *
 	payload["kickoff"] = jobstore.RenderKickoffWithContract(payloadString(payload, "kickoff"), contract)
 }
 
-func dispatchModelForPayload(inst *topology.Instance, payload map[string]any) string {
-	if model := strings.TrimSpace(payloadString(payload, "model")); model != "" {
-		return model
+func dispatchPolicyForPayload(inst *topology.Instance, payload map[string]any, runtime string) topology.ModelPolicy {
+	inherited := topology.ModelPolicy{}
+	if inst != nil {
+		inherited = topology.ModelPolicy{Runtime: inst.Runtime, Model: inst.Model, Effort: inst.Effort}
 	}
-	if inst == nil {
-		return ""
-	}
-	return strings.TrimSpace(inst.Model)
-}
-
-func dispatchEffortForPayload(inst *topology.Instance, payload map[string]any) string {
-	if effort := strings.TrimSpace(payloadString(payload, "effort")); effort != "" {
-		return effort
-	}
-	if inst == nil {
-		return ""
-	}
-	return strings.TrimSpace(inst.Effort)
+	return topology.ResolveRuntimePolicy(inherited, topology.ModelPolicy{
+		Runtime: runtime,
+		Model:   payloadString(payload, "model"),
+		Effort:  payloadString(payload, "effort"),
+	})
 }
 
 type ephemeralRuntime struct {

@@ -2035,6 +2035,267 @@ match.target = "docs-writer"
 	_ = waitForEventReaper(t, m, "docs-writer-squ-135")
 }
 
+func TestEvent_EphemeralDispatchKeepsPolicyWithinEffectiveRuntimeFamily(t *testing.T) {
+	tests := []struct {
+		name        string
+		topology    string
+		target      string
+		instance    string
+		payload     map[string]any
+		wantRuntime string
+		wantModel   string
+		wantEffort  string
+	}{
+		{
+			name: "non-Fable to Claude clears inherited selectors",
+			topology: `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+`,
+			target: "worker", instance: "worker-runtime-family", payload: map[string]any{"runtime": "claude"},
+			wantRuntime: "claude",
+		},
+		{
+			name: "Fable to Codex clears inherited selectors",
+			topology: `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.advisor]
+agent = "worker"
+ephemeral = true
+runtime = "claude"
+model = "claude-fable-5"
+effort = "max"
+
+[[instances.advisor.triggers]]
+event = "agent.dispatch"
+match.target = "advisor"
+`,
+			target: "advisor", instance: "advisor-runtime-family", payload: map[string]any{"runtime": "codex"},
+			wantRuntime: "codex",
+		},
+		{
+			name: "explicit new-family payload selectors remain authoritative",
+			topology: `
+[model_policy]
+runtime = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+`,
+			target: "worker", instance: "worker-explicit-family", payload: map[string]any{"runtime": "claude", "model": "claude-fable-5", "effort": "max"},
+			wantRuntime: "claude", wantModel: "claude-fable-5", wantEffort: "max",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(runtimebin.EnvRuntime, "")
+			t.Setenv(runtimebin.EnvBinary, "")
+			root := t.TempDir()
+			teamDir := fixtureTeamDir(t)
+			top := mustParseCustomTopo(t, tt.topology)
+			fake := newFakeSpawner(30 * time.Second)
+			m := NewInstanceManager(root, fake.spawn)
+			resolver := NewEventResolver(m, teamDir, top)
+			payload := map[string]any{"target": tt.target, "name": tt.instance, "kickoff": "runtime family test"}
+			for key, value := range tt.payload {
+				payload[key] = value
+			}
+			result, err := resolver.EventWithResult(topology.EventAgentDispatch, payload)
+			if err != nil {
+				t.Fatalf("EventWithResult: %v", err)
+			}
+			if len(result.Outcomes) != 1 || result.Outcomes[0].Action != "dispatched" {
+				t.Fatalf("outcomes = %+v", result.Outcomes)
+			}
+			assertRuntimePolicyArgs(t, fake.lastCall(), tt.wantRuntime, tt.wantModel, tt.wantEffort)
+			meta, err := ReadMetadata(root, tt.instance)
+			if err != nil {
+				t.Fatalf("ReadMetadata: %v", err)
+			}
+			if meta.Runtime != tt.wantRuntime || meta.Model != tt.wantModel || meta.Effort != tt.wantEffort {
+				t.Fatalf("metadata policy = %q/%q/%q, want %q/%q/%q", meta.Runtime, meta.Model, meta.Effort, tt.wantRuntime, tt.wantModel, tt.wantEffort)
+			}
+			_, _ = m.Stop(tt.instance)
+			_ = waitForEventReaper(t, m, tt.instance)
+		})
+	}
+}
+
+func TestEvent_RuntimeOnlyDeclaredInstanceOverrideClearsInheritedSelectors(t *testing.T) {
+	tests := []struct {
+		name                                     string
+		policyRuntime, policyModel, policyEffort string
+		instanceRuntime                          string
+	}{
+		{"non-Fable to Claude", "codex", "gpt-5.6-sol", "xhigh", "claude"},
+		{"Fable to Codex", "claude", "claude-fable-5", "max", "codex"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(runtimebin.EnvRuntime, "")
+			t.Setenv(runtimebin.EnvBinary, "")
+			root := t.TempDir()
+			teamDir := fixtureTeamDir(t)
+			top := mustParseCustomTopo(t, fmt.Sprintf(`
+[model_policy]
+runtime = %q
+model = %q
+effort = %q
+
+[instances.override]
+agent = "worker"
+ephemeral = true
+runtime = %q
+
+[[instances.override.triggers]]
+event = "agent.dispatch"
+match.target = "override"
+`, tt.policyRuntime, tt.policyModel, tt.policyEffort, tt.instanceRuntime))
+			fake := newFakeSpawner(30 * time.Second)
+			m := NewInstanceManager(root, fake.spawn)
+			resolver := NewEventResolver(m, teamDir, top)
+			instance := "override-" + strings.ReplaceAll(strings.ToLower(tt.instanceRuntime), "_", "-")
+			result, err := resolver.EventWithResult(topology.EventAgentDispatch, map[string]any{
+				"target": "override", "name": instance, "kickoff": "declared runtime family test",
+			})
+			if err != nil {
+				t.Fatalf("EventWithResult: %v", err)
+			}
+			if len(result.Outcomes) != 1 || result.Outcomes[0].Action != "dispatched" {
+				t.Fatalf("outcomes = %+v", result.Outcomes)
+			}
+			assertRuntimePolicyArgs(t, fake.lastCall(), tt.instanceRuntime, "", "")
+			meta, err := ReadMetadata(root, instance)
+			if err != nil {
+				t.Fatalf("ReadMetadata: %v", err)
+			}
+			if meta.Model != "" || meta.Effort != "" {
+				t.Fatalf("metadata inherited incompatible selectors: %+v", meta)
+			}
+			_, _ = m.Stop(instance)
+			_ = waitForEventReaper(t, m, instance)
+		})
+	}
+}
+
+func TestEvent_RuntimeOnlyPipelineOverrideClearsTargetSelectors(t *testing.T) {
+	tests := []struct {
+		name                                     string
+		policyRuntime, policyModel, policyEffort string
+		stepRuntime                              string
+	}{
+		{"non-Fable to Claude", "codex", "gpt-5.6-sol", "xhigh", "claude"},
+		{"Fable to Codex", "claude", "claude-fable-5", "max", "codex"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(runtimebin.EnvRuntime, "")
+			t.Setenv(runtimebin.EnvBinary, "")
+			root := t.TempDir()
+			teamDir := fixtureTeamDir(t)
+			top := mustParseCustomTopo(t, fmt.Sprintf(`
+[model_policy]
+runtime = %q
+model = %q
+effort = %q
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[pipelines.compatibility]
+trigger.event = "ticket.created"
+
+[[pipelines.compatibility.steps]]
+id = "implement"
+target = "worker"
+runtime = %q
+`, tt.policyRuntime, tt.policyModel, tt.policyEffort, tt.stepRuntime))
+			fake := newFakeSpawner(30 * time.Second)
+			m := NewInstanceManager(root, fake.spawn)
+			resolver := NewEventResolver(m, teamDir, top)
+			result, err := resolver.EventWithResult("ticket.created", map[string]any{
+				"ticket": "SQU-9364", "kickoff": "pipeline runtime family test", "workspace": "repo",
+			})
+			if err != nil {
+				t.Fatalf("EventWithResult: %v", err)
+			}
+			if len(result.Outcomes) != 1 || result.Outcomes[0].Action != "dispatched" {
+				t.Fatalf("outcomes = %+v", result.Outcomes)
+			}
+			instance := result.Outcomes[0].InstanceID
+			assertRuntimePolicyArgs(t, fake.lastCall(), tt.stepRuntime, "", "")
+			meta, err := ReadMetadata(root, instance)
+			if err != nil {
+				t.Fatalf("ReadMetadata: %v", err)
+			}
+			if meta.Model != "" || meta.Effort != "" {
+				t.Fatalf("metadata inherited incompatible selectors: %+v", meta)
+			}
+			job, err := jobstore.Read(teamDir, "SQU-9364")
+			if err != nil {
+				t.Fatalf("read job: %v", err)
+			}
+			if job.Steps[0].Model != "" || job.Steps[0].Effort != "" {
+				t.Fatalf("pipeline step inherited incompatible selectors: %+v", job.Steps[0])
+			}
+			_, _ = m.Stop(instance)
+			_ = waitForEventReaper(t, m, instance)
+		})
+	}
+}
+
+func assertRuntimePolicyArgs(t *testing.T, call []string, runtime, model, effort string) {
+	t.Helper()
+	if len(call) == 0 || call[0] != runtime {
+		t.Fatalf("spawn call = %#v, want runtime binary %q", call, runtime)
+	}
+	if got, ok := argValue(call, "--model"); model == "" && ok {
+		t.Fatalf("spawn call received incompatible model %q: %#v", got, call)
+	} else if model != "" && (!ok || got != model) {
+		t.Fatalf("spawn model = %q, %v; want %q in %#v", got, ok, model, call)
+	}
+	if effort == "" {
+		if got, ok := argValue(call, "--effort"); ok {
+			t.Fatalf("spawn call received incompatible Claude effort %q: %#v", got, call)
+		}
+		if containsArgSubstring(call, "model_reasoning_effort=") {
+			t.Fatalf("spawn call received incompatible Codex effort: %#v", call)
+		}
+		return
+	}
+	if runtime == string(runtimebin.KindClaude) {
+		if got, ok := argValue(call, "--effort"); !ok || got != effort {
+			t.Fatalf("Claude effort = %q, %v; want %q in %#v", got, ok, effort, call)
+		}
+		return
+	}
+	if !containsArgSubstring(call, `model_reasoning_effort="`+effort+`"`) {
+		t.Fatalf("Codex effort %q missing from %#v", effort, call)
+	}
+}
+
 func TestDispatchRuntime_AgentFrontmatterPrecedence(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "")
 	t.Setenv(runtimebin.EnvBinary, "")
