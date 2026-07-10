@@ -767,10 +767,11 @@ func TestSyncStopExtrasJSONStopsUndeclaredRunningInstances(t *testing.T) {
 	root := daemon.DaemonRoot(teamDir)
 	sleepers := map[string]*exec.Cmd{}
 	for name, agent := range map[string]string{
-		"manager":        "manager",
-		"ticket-manager": "ticket-manager",
-		"adhoc":          "worker",
-		"worker-abc123":  "worker",
+		"manager":          "manager",
+		"research-manager": "manager",
+		"ticket-manager":   "ticket-manager",
+		"adhoc":            "worker",
+		"worker-abc123":    "worker",
 	} {
 		sleepers[name] = startSleepMetadataForSyncTest(t, root, tmp, name, agent)
 	}
@@ -938,6 +939,7 @@ func TestSyncStopExtrasHonorsAgentFilter(t *testing.T) {
 	for _, want := range []string{
 		"adhoc-manager:stop:stopped",
 		"manager:skip:running",
+		"research-manager:skip:running",
 	} {
 		if !rows[want] {
 			t.Fatalf("sync --stop-extras filtered actions missing %q: %+v", want, actions)
