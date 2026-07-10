@@ -146,6 +146,51 @@ class DiscordDeliveryTests(unittest.TestCase):
             notices = (state_dir / "supervisor-notifications.jsonl").read_text(encoding="utf-8")
             self.assertIn("missing-webhook", notices)
 
+    def test_shell_wrapper_duplicate_succeeds_when_webhook_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, RecordingWebhook() as webhook:
+            team_root = Path(tmp) / ".agent_team"
+            team_root.mkdir()
+            env_file = Path(tmp) / "delivery.env"
+            env_file.write_text(f"AGENT_TEAM_DISCORD_WEBHOOK={webhook.url}\n", encoding="utf-8")
+            env = os.environ.copy()
+            env.update(
+                AGENT_TEAM_ROOT=str(team_root),
+                AGENT_TEAM_COMMS_TESTING="1",
+                AGENT_TEAM_COMMS_TEST_NOW="2026-07-10T12:00:00Z",
+                PYTHONDONTWRITEBYTECODE="1",
+            )
+            command = [
+                str(WRAPPER),
+                "--content",
+                "already delivered",
+                "--delivery-id",
+                "stable-cli-id",
+                "--kind",
+                "manual",
+            ]
+
+            first = subprocess.run(
+                [*command, "--env-file", str(env_file)],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            duplicate = subprocess.run(
+                [*command, "--env-file", str(Path(tmp) / "absent.env")],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(first.returncode, discord_delivery.EXIT_DELIVERED)
+            self.assertEqual(duplicate.returncode, discord_delivery.EXIT_DELIVERED)
+            self.assertEqual(json.loads(duplicate.stdout)["outcome"], "duplicate")
+            self.assertEqual(webhook.requests, 1)
+
     def test_new_gate_instance_observes_durable_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state_dir = Path(tmp) / "discord-delivery"
@@ -231,6 +276,54 @@ class DiscordDeliveryTests(unittest.TestCase):
             self.assertEqual(sender.bodies[1], "priority release\n\ncatch-up digest")
             self.assertEqual(gate.status(now=T0 + timedelta(hours=24))["pending"], [])
 
+    def test_new_catch_up_digest_coalesces_overlapping_deferred_content(self) -> None:
+        with self.gate() as gate:
+            sender = RecordingSender()
+            gate.deliver(request("seed", "digest", "seed post"), sender, now=T0)
+            gate.deliver(
+                request("digest-deferred", "digest", "A"),
+                sender,
+                now=T0 + timedelta(seconds=1),
+            )
+            result = gate.deliver(
+                request("digest-catch-up", "digest", "A\nB"),
+                sender,
+                now=T0 + timedelta(hours=24),
+            )
+
+            self.assertEqual(result["outcome"], "delivered")
+            self.assertEqual(result["included_delivery_ids"], ["digest-deferred", "digest-catch-up"])
+            self.assertEqual(sender.bodies[1], "A\nB")
+            self.assertEqual(gate.status(now=T0 + timedelta(hours=24))["pending"], [])
+
+    def test_oversized_pending_content_can_be_corrected_or_skipped(self) -> None:
+        with self.gate() as gate:
+            sender = RecordingSender()
+            oversized = "x" * (discord_delivery.MAX_CONTENT_LENGTH + 1)
+
+            rejected = gate.deliver(request("oversized", "release", oversized), sender, now=T0)
+            corrected = gate.deliver(request("oversized", "release", "fixed"), sender, now=T0)
+            poison = gate.deliver(
+                request("still-oversized", "release", oversized),
+                sender,
+                now=T0 + timedelta(hours=25),
+            )
+            unrelated = gate.deliver(
+                request("unrelated-digest", "digest", "digest material"),
+                sender,
+                now=T0 + timedelta(hours=25),
+            )
+
+            self.assertEqual(rejected["outcome"], "failed")
+            self.assertEqual(corrected["outcome"], "delivered")
+            self.assertEqual(poison["outcome"], "failed")
+            self.assertEqual(unrelated["outcome"], "delivered")
+            self.assertEqual(sender.bodies, ["fixed", "digest material"])
+            self.assertEqual(
+                [item["delivery_id"] for item in gate.status(now=T0 + timedelta(hours=25))["pending"]],
+                ["still-oversized"],
+            )
+
     def test_eligibility_immediately_before_at_and_after_24_hours(self) -> None:
         cases = [
             (timedelta(hours=24) - timedelta(seconds=1), "deferred", 1),
@@ -242,6 +335,23 @@ class DiscordDeliveryTests(unittest.TestCase):
                 sender = RecordingSender()
                 gate.deliver(request("seed", "digest", "seed"), sender, now=T0)
                 result = gate.deliver(request("boundary", "digest", "boundary"), sender, now=T0 + offset)
+                self.assertEqual(result["outcome"], expected)
+                self.assertEqual(len(sender.bodies), calls)
+
+    def test_subsecond_success_keeps_window_closed_for_full_24_hours(self) -> None:
+        success_at = T0.replace(microsecond=900_000)
+        cases = [
+            (timedelta(hours=24) - timedelta(microseconds=800_000), "deferred", 1),
+            (timedelta(hours=24) - timedelta(microseconds=1), "deferred", 1),
+            (timedelta(hours=24), "delivered", 2),
+        ]
+        for offset, expected, calls in cases:
+            with self.subTest(offset=offset), self.gate() as gate:
+                sender = RecordingSender()
+                seed = gate.deliver(request("seed", "digest", "seed"), sender, now=success_at)
+                result = gate.deliver(request("boundary", "digest", "boundary"), sender, now=success_at + offset)
+
+                self.assertEqual(seed["last_success"]["timestamp"], "2026-07-10T12:00:00.900000Z")
                 self.assertEqual(result["outcome"], expected)
                 self.assertEqual(len(sender.bodies), calls)
 

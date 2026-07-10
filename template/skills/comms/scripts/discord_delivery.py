@@ -316,7 +316,18 @@ class DeliveryGate:
         else:
             current["kind"] = request.kind
             current["priority"] = max(int(current.get("priority", 0)), KIND_PRIORITY[request.kind])
-            current["content"] = merge_text(str(current.get("content", "")), request.content.strip())
+            existing_content = str(current.get("content", "")).strip()
+            proposed_content = request.content.strip()
+            if (
+                proposed_content
+                and len(existing_content) > MAX_CONTENT_LENGTH
+                and len(proposed_content) <= MAX_CONTENT_LENGTH
+            ):
+                # A retry with the same stable ID may correct an invalid body.
+                # Keeping the oversized version would otherwise poison the queue.
+                current["content"] = proposed_content
+            else:
+                current["content"] = merge_text(existing_content, proposed_content)
             current["updated_at"] = timestamp
 
         deliveries = state["deliveries"]
@@ -346,20 +357,20 @@ class DeliveryGate:
             for item in self._sorted_pending(pending)
             if state["deliveries"].get(item.get("delivery_id"), {}).get("status") != "delivered"
         ]
-        if not candidates or len(str(candidates[0].get("content", ""))) > MAX_CONTENT_LENGTH:
+        if not candidates:
             return [], ""
 
         selected: list[dict[str, object]] = []
-        length = 0
+        combined = ""
         for item in candidates:
             content = str(item.get("content", "")).strip()
             if not content or len(content) > MAX_CONTENT_LENGTH:
                 continue
-            proposed = len(content) if not selected else length + 2 + len(content)
-            if proposed <= MAX_CONTENT_LENGTH:
+            proposed = merge_text(combined, content)
+            if len(proposed) <= MAX_CONTENT_LENGTH:
                 selected.append(item)
-                length = proposed
-        return selected, "\n\n".join(str(item["content"]).strip() for item in selected)
+                combined = proposed
+        return selected, combined
 
     def _sorted_pending(self, pending: dict[str, object]) -> list[dict[str, object]]:
         items = pending["items"]
@@ -759,7 +770,7 @@ def main(argv: list[str] | None = None) -> int:
             result = gate.defer_unavailable(request, str(exc), now=now)
             print(json.dumps(result, sort_keys=True))
             notify_supervisor(result)
-            return EXIT_UNAVAILABLE
+            return EXIT_DELIVERED if result["outcome"] == "duplicate" else EXIT_UNAVAILABLE
 
         interrupt = (
             os.environ.get("AGENT_TEAM_COMMS_TESTING") == "1"
@@ -795,7 +806,7 @@ def validate_delivery_id(value: str) -> None:
 def normalize_time(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise ValueError("timestamps must include a timezone")
-    return value.astimezone(timezone.utc).replace(microsecond=0)
+    return value.astimezone(timezone.utc)
 
 
 def format_time(value: datetime | None) -> str:
