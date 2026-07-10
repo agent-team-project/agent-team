@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -62,11 +61,7 @@ func newTopoTestEnv(t *testing.T) *topoTestEnv {
 	mgr := daemon.NewInstanceManager(t.TempDir(), nil)
 	resolver := daemon.NewEventResolver(mgr, teamDir, top)
 	srv := httptest.NewServer(daemon.Handler(mgr, nil, resolver, teamDir))
-	c := &daemonClient{
-		hc:      &http.Client{Timeout: 0},
-		baseURL: srv.URL,
-		teamDir: teamDir,
-	}
+	c := newDaemonHTTPURLClientWithTransport(teamDir, srv.URL, "", 0, srv.Client().Transport)
 	t.Cleanup(srv.Close)
 	return &topoTestEnv{client: c, srv: srv, teamDir: teamDir, mgr: mgr}
 }
@@ -400,16 +395,16 @@ load_weight = 2.5
 	if err != nil {
 		t.Fatalf("daemon client: %v", err)
 	}
-	resp, err := dc.hc.Get(dc.baseURL + "/v1/topology")
+	topologyResponse, err := dc.Topology()
 	if err != nil {
 		t.Fatalf("raw topology: %v", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("raw topology status: %s", readErrorBody(resp))
-	}
 	var raw map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	encodedTopology, err := json.Marshal(topologyResponse)
+	if err != nil {
+		t.Fatalf("encode raw topology: %v", err)
+	}
+	if err := json.Unmarshal(encodedTopology, &raw); err != nil {
 		t.Fatalf("decode raw topology: %v", err)
 	}
 

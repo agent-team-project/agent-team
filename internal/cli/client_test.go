@@ -23,11 +23,7 @@ import (
 func newTestClient(t *testing.T, h http.Handler) (*daemonClient, func()) {
 	t.Helper()
 	srv := httptest.NewServer(h)
-	c := &daemonClient{
-		hc:      newDaemonHTTPClient(srv.Client().Transport, 0, ""),
-		baseURL: srv.URL,
-		teamDir: t.TempDir(),
-	}
+	c := newDaemonHTTPURLClientWithTransport(t.TempDir(), srv.URL, "", 0, srv.Client().Transport)
 	return c, srv.Close
 }
 
@@ -64,11 +60,7 @@ func TestClient_AttachesBuildHeader(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	c := &daemonClient{
-		hc:      newDaemonHTTPClient(srv.Client().Transport, 0, ""),
-		baseURL: srv.URL,
-		teamDir: t.TempDir(),
-	}
+	c := newDaemonHTTPURLClientWithTransport(t.TempDir(), srv.URL, "", 0, srv.Client().Transport)
 
 	if _, err := c.Status(); err != nil {
 		t.Fatalf("status: %v", err)
@@ -99,11 +91,7 @@ func TestClient_AttachesBearerFromTokenFile(t *testing.T) {
 	if err := os.WriteFile(tokenFile, []byte("secret-token\n"), 0o600); err != nil {
 		t.Fatalf("write token: %v", err)
 	}
-	c := &daemonClient{
-		hc:      newDaemonHTTPClient(srv.Client().Transport, 0, tokenFile),
-		baseURL: srv.URL,
-		teamDir: t.TempDir(),
-	}
+	c := newDaemonHTTPURLClientWithTransport(t.TempDir(), srv.URL, tokenFile, 0, srv.Client().Transport)
 
 	if _, err := c.Status(); err != nil {
 		t.Fatalf("status: %v", err)
@@ -353,11 +341,7 @@ func TestClient_StartInstanceWithFreshOption(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	c := &daemonClient{
-		hc:      newDaemonHTTPClient(srv.Client().Transport, 0, ""),
-		baseURL: srv.URL,
-		teamDir: t.TempDir(),
-	}
+	c := newDaemonHTTPURLClientWithTransport(t.TempDir(), srv.URL, "", 0, srv.Client().Transport)
 
 	if err := c.StartInstanceWithOptions("mgr", true, true); err != nil {
 		t.Fatalf("start fresh: %v", err)
@@ -438,7 +422,7 @@ func TestClient_RestartInstanceWithOptionsSendsForceAndTimeout(t *testing.T) {
 		_, _ = w.Write([]byte(`{"restarted":true}`))
 	}))
 	defer srv.Close()
-	c := &daemonClient{hc: srv.Client(), baseURL: srv.URL}
+	c := newDaemonHTTPURLClientWithTransport(t.TempDir(), srv.URL, "", 0, srv.Client().Transport)
 
 	if err := c.RestartInstanceWithOptions("mgr", true, 2*time.Second); err != nil {
 		t.Fatalf("restart with force options: %v", err)

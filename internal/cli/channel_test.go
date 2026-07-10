@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -30,11 +29,7 @@ func newChannelTestEnv(t *testing.T) *channelTestEnv {
 	mgr := daemon.NewInstanceManager(root, nil)
 	store := daemon.NewChannelStore(root)
 	srv := httptest.NewServer(daemon.Handler(mgr, store, nil, ""))
-	c := &daemonClient{
-		hc:      &http.Client{Timeout: 0},
-		baseURL: srv.URL,
-		teamDir: root,
-	}
+	c := newDaemonHTTPURLClientWithTransport(root, srv.URL, "", 0, srv.Client().Transport)
 	t.Cleanup(srv.Close)
 	return &channelTestEnv{client: c, srv: srv, store: store}
 }
