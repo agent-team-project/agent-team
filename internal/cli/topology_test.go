@@ -2,8 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -391,21 +394,27 @@ load_weight = 2.5
 	cleanup := startRunTestDaemon(t, teamDir, mgr)
 	defer cleanup()
 
-	dc, err := newDaemonClient(teamDir)
-	if err != nil {
-		t.Fatalf("daemon client: %v", err)
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", daemon.SocketPath(teamDir))
+		},
 	}
-	topologyResponse, err := dc.Topology()
+	defer transport.CloseIdleConnections()
+	rawResponse, err := (&http.Client{Transport: transport}).Get("http://daemon/v1/topology")
 	if err != nil {
-		t.Fatalf("raw topology: %v", err)
+		t.Fatalf("raw topology request: %v", err)
+	}
+	defer rawResponse.Body.Close()
+	if rawResponse.StatusCode != http.StatusOK {
+		t.Fatalf("raw topology status = %s, want 200 OK", rawResponse.Status)
 	}
 	var raw map[string]any
-	encodedTopology, err := json.Marshal(topologyResponse)
-	if err != nil {
-		t.Fatalf("encode raw topology: %v", err)
-	}
-	if err := json.Unmarshal(encodedTopology, &raw); err != nil {
+	if err := json.NewDecoder(rawResponse.Body).Decode(&raw); err != nil {
 		t.Fatalf("decode raw topology: %v", err)
+	}
+	wantReminderLevels := []any{float64(25), float64(75), float64(100)}
+	if !reflect.DeepEqual(raw["budget_reminder_levels"], wantReminderLevels) {
+		t.Fatalf("raw topology budget_reminder_levels = %v, want %v", raw["budget_reminder_levels"], wantReminderLevels)
 	}
 
 	cmd := NewRootCmd()
