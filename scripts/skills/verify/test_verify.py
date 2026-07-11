@@ -430,6 +430,52 @@ class VerifyBaseComparisonTest(unittest.TestCase):
         )
         self.assertNotEqual(comparison["head_output_fingerprint"], comparison["base_output_fingerprint"])
 
+    def test_pytest_error_is_not_hidden_by_reproduced_failure(self) -> None:
+        runner = self.repo / "pytest"
+        runner.write_text(
+            "#!/bin/sh\n"
+            "echo 'FAILED test_sample.py::test_base_broken - AssertionError'\n"
+            "echo '=========================== 1 failed in 0.01s ==========================='\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        runner.chmod(0o755)
+        self.git("add", "pytest")
+        self.git("commit", "-m", "base has one pytest failure")
+        self.configure_origin_head()
+        runner.write_text(
+            "#!/bin/sh\n"
+            "echo 'FAILED test_sample.py::test_base_broken - AssertionError'\n"
+            "echo 'ERROR test_sample.py::test_head_error - RuntimeError'\n"
+            "echo '==================== 1 failed, 1 error in 0.01s ===================='\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        self.git("add", "pytest")
+        self.git("commit", "-m", "add head-only pytest error")
+
+        evidence = self.run_verify(self.git("rev-parse", "HEAD"), "./pytest")
+
+        gate = evidence["gates"][0]
+        comparison = gate["base_comparison"]
+        self.assertNotIn("class", gate)
+        self.assertNotEqual(gate["signature"], "base-broken")
+        self.assertFalse(comparison["reproduced"])
+        self.assertEqual(comparison["reproduction_basis"], "failure-identity-subset")
+        self.assertTrue(comparison["head_failure_identities_complete"])
+        self.assertTrue(comparison["base_failure_identities_complete"])
+        self.assertEqual(
+            comparison["head_failure_identities"],
+            [
+                "pytest-error:test_sample.py::test_head_error",
+                "pytest:test_sample.py::test_base_broken",
+            ],
+        )
+        self.assertEqual(
+            comparison["base_failure_identities"],
+            ["pytest:test_sample.py::test_base_broken"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

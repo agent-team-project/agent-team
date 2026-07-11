@@ -108,6 +108,9 @@ entire ANSI-stripped output. Other runners and recognized test invocations with
 no complete structured identities use that same conservative fingerprint
 comparison. The runner never compares only the final output line, so distinct
 failures with the same generic footer do not become `base-broken`.
+Pytest completeness accounts for both `FAILED` and `ERROR` identities and
+requires each footer count to match; an unrepresented setup, teardown, or
+collection error keeps the worker failure classified as content.
 Missing or empty output, a missing command or file at the base, and any other
 ambiguous comparison preserve the head classification.
 

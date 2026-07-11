@@ -767,13 +767,31 @@ def structured_failure_identities(log_path: Path) -> tuple[list[str], bool]:
         complete = bool(counts) and sum(counts) == len(unittest_identities)
         return sorted(unittest_identities), complete
 
-    pytest_identities = {
+    pytest_failed_identities = {
         f"pytest:{match}"
         for match in re.findall(r"^FAILED\s+(\S+(?:::\S+)+)(?:\s+-.*)?$", log, flags=re.MULTILINE)
     }
-    pytest_footer = re.search(r"=+\s+(\d+) failed(?:[,\s].*)?\s+=+", log)
+    pytest_error_identities = {
+        f"pytest-error:{match}"
+        for match in re.findall(r"^ERROR\s+(\S+(?:::\S+)+)(?:\s+-.*)?$", log, flags=re.MULTILINE)
+    }
+    pytest_identities = pytest_failed_identities | pytest_error_identities
+    pytest_footer = next(
+        (
+            line
+            for line in reversed(log.splitlines())
+            if re.match(r"^=+.*=+\s*$", line) and re.search(r"\b(?:failed|errors?)\b", line)
+        ),
+        "",
+    )
     if pytest_identities and pytest_footer:
-        return sorted(pytest_identities), int(pytest_footer.group(1)) == len(pytest_identities)
+        failed_count = sum(int(count) for count in re.findall(r"(\d+)\s+failed\b", pytest_footer))
+        error_count = sum(int(count) for count in re.findall(r"(\d+)\s+errors?\b", pytest_footer))
+        complete = (
+            failed_count == len(pytest_failed_identities)
+            and error_count == len(pytest_error_identities)
+        )
+        return sorted(pytest_identities), complete
 
     return [], False
 
