@@ -141,81 +141,25 @@ func TestTeatestTermDumbKeyboardCaptureHasNoControlBytes(t *testing.T) {
 func TestPTYBindingRegistrySweepChangesIntendedState(t *testing.T) {
 	for _, binding := range Bindings() {
 		binding := binding
-		t.Run(binding.ID, func(t *testing.T) {
-			domain := smallFixtureModel(Capabilities{Dumb: true})
-			domain.RefreshInFlight = false
-			if binding.ID == "escape" {
-				domain.Query = "status:blocked"
-			}
-			if binding.ID == "move" || binding.ID == "page" {
-				domain.FocusIndex = 2
-				domain = preserveFocus(domain)
-				domain.Focus.ItemID = projectOverview(domain).Attention[1].ID
-			}
-			if binding.ID == "go" {
-				domain.Route = RouteWork
-			}
-			before := domain
-			testModel := teatest.NewTestModel(t, NewTestProgramModel(domain), teatest.WithInitialTermSize(80, 24))
-			for _, message := range teaMessages(binding.Keys[0]) {
-				testModel.Send(message)
-			}
-			if binding.ID == "quit" || binding.ID == "cancel" {
-				testModel.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
-			} else if err := testModel.Quit(); err != nil {
-				t.Fatal(err)
-			}
-			program := testModel.FinalModel(t, teatest.WithFinalTimeout(3*time.Second)).(ProgramModel)
-			after := program.Domain
-			switch binding.ID {
-			case "quit", "cancel":
-				if !after.Quit {
-					t.Fatal("PTY quit binding did not request quit")
+		for _, key := range binding.Keys {
+			key := key
+			t.Run(binding.ID+"/"+strings.ReplaceAll(key, " ", "+"), func(t *testing.T) {
+				domain := bindingTestModel(binding.ID, key)
+				domain.Capabilities.Dumb = true
+				before := domain
+				testModel := teatest.NewTestModel(t, NewTestProgramModel(domain), teatest.WithInitialTermSize(80, 24))
+				for _, message := range teaMessages(key) {
+					testModel.Send(message)
 				}
-			case "help":
-				if !after.HasOverlay(OverlayHelp) {
-					t.Fatal("PTY help binding did not open help")
+				if binding.ID == "quit" || binding.ID == "cancel" {
+					testModel.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
+				} else if err := testModel.Quit(); err != nil {
+					t.Fatal(err)
 				}
-			case "palette":
-				if !after.HasOverlay(OverlayPalette) {
-					t.Fatal("PTY palette binding did not open palette")
-				}
-			case "query":
-				if !after.QueryActive {
-					t.Fatal("PTY query binding did not focus query")
-				}
-			case "escape":
-				if after.Query != "" {
-					t.Fatalf("PTY escape left query %q", after.Query)
-				}
-			case "next-focus", "previous-focus":
-				if after.FocusIndex == before.FocusIndex {
-					t.Fatal("PTY focus binding did not move focus")
-				}
-			case "move", "page":
-				if after.Focus.ItemID == before.Focus.ItemID {
-					t.Fatal("PTY list binding did not move the semantic item")
-				}
-			case "inspect", "toggle", "section":
-				if after.Feedback == "" || after.Feedback == before.Feedback {
-					t.Fatalf("PTY binding did not produce intended feedback: %q", after.Feedback)
-				}
-			case "refresh":
-				if !after.RefreshInFlight {
-					t.Fatal("PTY refresh binding did not start refresh")
-				}
-			case "poll":
-				if after.Polling == before.Polling {
-					t.Fatal("PTY polling binding did not toggle")
-				}
-			case "go":
-				if after.Route != RouteOverview {
-					t.Fatalf("PTY go binding route = %s", after.Route)
-				}
-			default:
-				t.Fatalf("registry binding %q lacks a PTY behavior assertion", binding.ID)
-			}
-		})
+				program := testModel.FinalModel(t, teatest.WithFinalTimeout(3*time.Second)).(ProgramModel)
+				assertBindingEffect(t, binding.ID, key, before, program.Domain, nil, false)
+			})
+		}
 	}
 }
 

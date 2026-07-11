@@ -2,11 +2,13 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,6 +18,7 @@ import (
 	"github.com/agent-team-project/agent-team/internal/daemonclient"
 	jobstore "github.com/agent-team-project/agent-team/internal/job"
 	"github.com/agent-team-project/agent-team/internal/outcomes"
+	"github.com/agent-team-project/agent-team/internal/resource"
 	"github.com/agent-team-project/agent-team/internal/topology"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
@@ -57,20 +60,22 @@ func TestSeededLiveDaemonDiscoveryAndOverviewParity(t *testing.T) {
 	}
 	model := modelFromSnapshot(snapshot)
 	projection := projectOverview(model)
-	active := 0
-	for _, job := range jobs {
-		if job != nil && (job.Status == daemonclient.JobQueued || job.Status == daemonclient.JobRunning || job.Status == daemonclient.JobBlocked) {
-			active++
-		}
+	oracle := canonicalOverviewAPIOracle(t, instances, jobs, topology, snapshot.Resources)
+	if projection.Summary != oracle {
+		t.Fatalf("typed TUI/API parity mismatch: projection=%+v oracle=%+v", projection.Summary, oracle)
 	}
-	if projection.Summary.Instances != len(instances) || projection.Summary.Jobs != len(jobs) || projection.Summary.ActiveJobs != active || projection.Summary.Pipelines != len(topology.Pipelines) {
-		t.Fatalf("typed TUI/API parity mismatch: projection=%+v instances=%d jobs=%d active=%d pipelines=%d", projection.Summary, len(instances), len(jobs), active, len(topology.Pipelines))
+	want := OverviewSummary{
+		Instances: 6, Running: 4, Jobs: 12, ActiveJobs: 7, BlockedJobs: 2, FailedJobs: 1,
+		ModelTiers: 4, BounceClasses: 4, Pipelines: 4, Budgets: 2, Teams: 3, Schedules: 5,
+		Deployments: 2, Deadlines: 3,
 	}
-	if projection.Summary.Instances != 6 || projection.Summary.Jobs != 12 || projection.Summary.ActiveJobs != 7 ||
-		projection.Summary.ModelTiers != 4 || projection.Summary.BounceClasses != 4 || projection.Summary.Pipelines != 4 ||
-		projection.Summary.Budgets != 2 || projection.Summary.Teams != 3 || projection.Summary.Schedules != 5 ||
-		projection.Summary.Deployments != 1 || snapshot.DeploymentID != "tui-small-v1" {
-		t.Fatalf("seeded tui-small-v1 projection = %+v deployment=%q", projection.Summary, snapshot.DeploymentID)
+	if oracle != want || snapshot.DeploymentID != "tui-small-v1" {
+		t.Fatalf("seeded tui-small-v1 oracle = %+v want=%+v deployment=%q", oracle, want, snapshot.DeploymentID)
+	}
+	child := snapshot.Resources[resource.DeploymentURI("tui-small-child")]
+	childData := liveResourceData(t, child)
+	if child == nil || childData["charter_uri"] == "" || childData["parent_uri"] != resource.DeploymentURI("tui-small-v1") {
+		t.Fatalf("canonical child deployment/charter resource = %+v data=%v", child, childData)
 	}
 
 	unauthenticated, err := http.Get(connection.Endpoint + "/v1/jobs")
@@ -149,6 +154,233 @@ func modelFromSnapshot(snapshot *daemonclient.Snapshot) Model {
 	}
 	model, _ = Update(model, RefreshFinished{At: snapshot.CapturedAt, AnySuccess: true, Complete: snapshot.Complete()})
 	return model
+}
+
+// canonicalOverviewAPIOracle independently normalizes the typed daemon API
+// fixture. It intentionally does not call the TUI projection helpers under
+// test, so parity fails when either the fixture or projection drifts.
+func canonicalOverviewAPIOracle(t *testing.T, instances []*daemonclient.Instance, jobs []*daemonclient.Job, topology *daemonclient.Topology, resources map[string]*daemonclient.Resource) OverviewSummary {
+	t.Helper()
+	oracle := OverviewSummary{Instances: len(instances), Jobs: len(jobs)}
+	for _, instance := range instances {
+		if instance != nil && instance.Status == daemonclient.InstanceRunning {
+			oracle.Running++
+		}
+	}
+	for _, job := range jobs {
+		if job == nil {
+			continue
+		}
+		switch job.Status {
+		case daemonclient.JobQueued, daemonclient.JobRunning, daemonclient.JobBlocked:
+			oracle.ActiveJobs++
+		}
+		if job.Status == daemonclient.JobBlocked {
+			oracle.BlockedJobs++
+		}
+		if job.Status == daemonclient.JobFailed {
+			oracle.FailedJobs++
+		}
+	}
+	if topology != nil {
+		oracle.Pipelines = len(topology.Pipelines)
+		oracle.Budgets = len(topology.Budgets)
+		oracle.Teams = len(topology.Teams)
+		oracle.Schedules = len(topology.Schedules)
+	}
+
+	recent := append([]*daemonclient.Job(nil), jobs...)
+	sort.SliceStable(recent, func(i, j int) bool {
+		if recent[i] == nil || recent[j] == nil {
+			return recent[j] == nil
+		}
+		if !recent[i].UpdatedAt.Equal(recent[j].UpdatedAt) {
+			return recent[i].UpdatedAt.After(recent[j].UpdatedAt)
+		}
+		return recent[i].ID < recent[j].ID
+	})
+	if len(recent) > 24 {
+		recent = recent[:24]
+	}
+	modelTiers := map[string]bool{}
+	bounceClasses := map[string]bool{}
+	for _, job := range recent {
+		if job == nil {
+			continue
+		}
+		outcome := liveResourceData(t, resources[job.OutcomeURI])
+		model := liveRecursiveString(outcome, "model")
+		tier := liveRecursiveString(outcome, "tier")
+		if model == "" && tier == "" {
+			modelTiers["not reported"] = true
+		} else {
+			modelTiers[model+"/"+tier] = true
+		}
+		for class := range liveBounceClassesForJob(t, job, resources) {
+			bounceClasses[class] = true
+		}
+	}
+	oracle.ModelTiers = len(modelTiers)
+	oracle.BounceClasses = len(bounceClasses)
+
+	deployments := map[string]bool{}
+	for _, instance := range instances {
+		if instance != nil && instance.DeploymentURI != "" {
+			deployments[instance.DeploymentURI] = true
+		}
+	}
+	for _, job := range jobs {
+		if job != nil && job.DeploymentURI != "" {
+			deployments[job.DeploymentURI] = true
+		}
+	}
+	for _, envelope := range resources {
+		liveCollectStringsByKey(liveResourceData(t, envelope), "deployment_uri", deployments)
+	}
+	oracle.Deployments = len(deployments)
+
+	deadlines := map[string]bool{}
+	represented := map[string]bool{}
+	for _, job := range jobs {
+		if job == nil {
+			continue
+		}
+		represented[job.URI] = true
+		if liveDeadline(liveResourceData(t, resources[job.URI])) != "" {
+			deadlines[job.URI] = true
+		}
+	}
+	for _, instance := range instances {
+		if instance == nil {
+			continue
+		}
+		represented[instance.URI] = true
+		if liveDeadline(liveResourceData(t, resources[instance.URI])) != "" || !instance.RuntimeDeadline.IsZero() {
+			deadlines[instance.URI] = true
+		}
+	}
+	for uri, envelope := range resources {
+		if !represented[uri] && liveDeadline(liveResourceData(t, envelope)) != "" {
+			deadlines[uri] = true
+		}
+	}
+	oracle.Deadlines = len(deadlines)
+	return oracle
+}
+
+func liveResourceData(t *testing.T, envelope *daemonclient.Resource) map[string]any {
+	t.Helper()
+	if envelope == nil || len(envelope.Data) == 0 {
+		return nil
+	}
+	var data map[string]any
+	if err := json.Unmarshal(envelope.Data, &data); err != nil {
+		t.Fatalf("decode live resource %q: %v", envelope.URI, err)
+	}
+	return data
+}
+
+func liveBounceClassesForJob(t *testing.T, job *daemonclient.Job, resources map[string]*daemonclient.Resource) map[string]bool {
+	t.Helper()
+	outcome := liveResourceData(t, resources[job.OutcomeURI])
+	if classes := liveClassSet(outcome["bounce_classes"]); len(classes) > 0 {
+		return classes
+	}
+	if classes := liveClassSet(outcome["bounces"]); len(classes) > 0 {
+		return classes
+	}
+	jobData := liveResourceData(t, resources[job.URI])
+	if classes := liveClassSet(jobData["bounce_classes"]); len(classes) > 0 {
+		return classes
+	}
+	classes := map[string]bool{}
+	kickoff, _ := jobData["kickoff"].(string)
+	lower := strings.ToLower(kickoff)
+	if strings.Contains(lower, "review findings (bounce") {
+		for class, phrase := range map[string]string{
+			"capability": "capability", "scope": "scope", "infra": "infra", "spec-ambiguity": "spec-ambiguity",
+		} {
+			if strings.Contains(lower, phrase) {
+				classes[class] = true
+			}
+		}
+	}
+	return classes
+}
+
+func liveClassSet(value any) map[string]bool {
+	classes := map[string]bool{}
+	switch typed := value.(type) {
+	case map[string]any:
+		for class, count := range typed {
+			if number, ok := count.(float64); ok && number > 0 {
+				classes[class] = true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if class, ok := item.(string); ok && class != "" {
+				classes[class] = true
+				continue
+			}
+			entry, _ := item.(map[string]any)
+			values, _ := entry["classes"].([]any)
+			for _, value := range values {
+				if class, ok := value.(string); ok && class != "" {
+					classes[class] = true
+				}
+			}
+		}
+	}
+	return classes
+}
+
+func liveRecursiveString(value any, wanted string) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		if text, ok := typed[wanted].(string); ok && text != "" {
+			return text
+		}
+		for _, child := range typed {
+			if text := liveRecursiveString(child, wanted); text != "" {
+				return text
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if text := liveRecursiveString(child, wanted); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func liveCollectStringsByKey(value any, wanted string, out map[string]bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if strings.EqualFold(key, wanted) {
+				if text, ok := child.(string); ok && text != "" {
+					out[text] = true
+				}
+			}
+			liveCollectStringsByKey(child, wanted, out)
+		}
+	case []any:
+		for _, child := range typed {
+			liveCollectStringsByKey(child, wanted, out)
+		}
+	}
+}
+
+func liveDeadline(data map[string]any) string {
+	for _, key := range []string{"deadline", "runtime_deadline"} {
+		if text, ok := data[key].(string); ok && validDeadlineText(text) {
+			return text
+		}
+	}
+	return ""
 }
 
 type seededLiveDaemon struct {
@@ -271,14 +503,24 @@ every = "24h"
 [schedules.feedback]
 every = "24h"
 `)
+	parentDeploymentURI := resource.DeploymentURI("tui-small-v1")
+	childDeploymentURI := resource.DeploymentURI("tui-small-child")
+	charterID := "tui-small-child-charter"
+	if err := daemon.WriteTeamCharter(daemon.DaemonRoot(teamDir), &daemon.TeamCharter{
+		ID: charterID, URI: resource.CharterURI("tui-small-v1", charterID), Name: "secondary", Target: "comms",
+		ParentDeploymentURI: parentDeploymentURI, ChildDeploymentID: "tui-small-child", ChildDeploymentURI: childDeploymentURI,
+		Relationship: "child", State: daemon.TeamCharterStateRunning, CreatedAt: fixtureTime, UpdatedAt: fixtureTime,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	exitCode := 1
 	metadata := []*daemon.Metadata{
-		{Instance: "frontend-worker-1", Agent: "worker", Status: daemon.StatusStopped, StartedAt: fixtureTime, Workspace: root},
-		{Instance: "platform-worker-2", Agent: "worker", Status: daemon.StatusStopped, StartedAt: fixtureTime, Workspace: root},
-		{Instance: "reviewer-gh382", Agent: "reviewer", Status: daemon.StatusStopped, StartedAt: fixtureTime, Workspace: root},
-		{Instance: "manager", Agent: "manager", Status: daemon.StatusStopped, StartedAt: fixtureTime, Workspace: root},
-		{Instance: "verifier-2", Agent: "verifier", Status: daemon.StatusCrashed, StartedAt: fixtureTime, Workspace: root, ExitCode: &exitCode},
-		{Instance: "comms", Agent: "comms", Status: daemon.StatusStopped, StartedAt: fixtureTime, Workspace: root},
+		{Instance: "frontend-worker-1", Agent: "worker", Job: "gh383-tui-spec", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: fixtureTime, Workspace: root, RuntimeDeadline: fixtureTime.Add(time.Hour), DeploymentURI: parentDeploymentURI},
+		{Instance: "platform-worker-2", Agent: "worker", Job: "job-6", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: fixtureTime, Workspace: root, RuntimeDeadline: fixtureTime.Add(2 * time.Hour), DeploymentURI: parentDeploymentURI},
+		{Instance: "reviewer-gh382", Agent: "reviewer", Job: "job-11", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: fixtureTime, Workspace: root, RuntimeDeadline: fixtureTime.Add(3 * time.Hour), DeploymentURI: parentDeploymentURI},
+		{Instance: "manager", Agent: "manager", Status: daemon.StatusRunning, PID: os.Getpid(), StartedAt: fixtureTime, Workspace: root, DeploymentURI: parentDeploymentURI},
+		{Instance: "verifier-2", Agent: "verifier", Status: daemon.StatusCrashed, StartedAt: fixtureTime, Workspace: root, ExitCode: &exitCode, DeploymentURI: parentDeploymentURI},
+		{Instance: "comms", Agent: "comms", Status: daemon.StatusStopped, StartedAt: fixtureTime, Workspace: root, DeploymentURI: childDeploymentURI, DeploymentParentURI: parentDeploymentURI, Chartered: true, CharterURI: resource.CharterURI("tui-small-v1", charterID)},
 	}
 	for _, instance := range metadata {
 		if err := daemon.WriteMetadata(daemon.DaemonRoot(teamDir), instance); err != nil {
@@ -290,7 +532,6 @@ every = "24h"
 		jobstore.StatusDone, jobstore.StatusRunning, jobstore.StatusDone, jobstore.StatusBlocked,
 		jobstore.StatusQueued, jobstore.StatusDone, jobstore.StatusRunning, jobstore.StatusDone,
 	}
-	classes := []string{"capability", "scope", "infra", "spec-ambiguity"}
 	for i, status := range statuses {
 		id := fmtJobID(i)
 		job, err := jobstore.New("GH-"+fmtInt(380+i), "worker", "seeded tui-small-v1 job", fixtureTime.Add(-time.Duration(i)*time.Minute))
@@ -302,6 +543,13 @@ every = "24h"
 		job.Status = status
 		job.Worktree = root
 		job.UpdatedAt = fixtureTime.Add(-time.Duration(i) * time.Minute)
+		if i == 3 {
+			job.Kickoff = "## Review findings (bounce 1)\nClass: spec-ambiguity\nThe contract needs clarification."
+		}
+		if i == 10 {
+			job.DeploymentURI = childDeploymentURI
+			job.DeploymentParentURI = parentDeploymentURI
+		}
 		if err := jobstore.Write(teamDir, job); err != nil {
 			t.Fatal(err)
 		}
@@ -310,8 +558,14 @@ every = "24h"
 			record.Model = []string{"gpt-5.6", "gpt-5.5", "gpt-5.6"}[i%3]
 			record.Tier = []string{"T2", "T1", "T3"}[i%3]
 		}
-		if i < len(classes) {
-			record.BounceClasses = map[string]int{classes[i]: 1}
+		switch i {
+		case 0:
+			record.BounceClasses = map[string]int{"capability": 1}
+			record.Bounces = []outcomes.BounceRecord{{Number: 1, Classes: []string{"infra"}}}
+		case 1:
+			record.Bounces = []outcomes.BounceRecord{{Number: 1, Classes: []string{"scope"}}}
+		case 2:
+			record.BounceClasses = map[string]int{"infra": 1}
 		}
 		if err := outcomes.WriteRecord(teamDir, record); err != nil {
 			t.Fatal(err)
@@ -328,6 +582,7 @@ func (h *seededLiveDaemon) start(t *testing.T) {
 	if h.daemon != nil {
 		t.Fatal("seeded daemon already running")
 	}
+	h.reseedRunningInstances(t)
 	d, err := daemon.New(daemon.Config{TeamDir: h.teamDir, LogOut: io.Discard, HTTPAddr: "127.0.0.1:0"})
 	if err != nil {
 		t.Fatal(err)
@@ -359,6 +614,31 @@ func (h *seededLiveDaemon) stop(t *testing.T) {
 	if h.daemon == nil {
 		return
 	}
+	// The fixture uses the test process PID to expose four canonical running
+	// rows without launching agents. Let adopted-process watchers retire before
+	// daemon restart so the soak measures a stable goroutine population.
+	restorePIDCheck := daemon.SetPidLiveCheckForTest(func(int) bool { return false })
+	watchersDone := time.Now().Add(3 * time.Second)
+	retired := false
+	for time.Now().Before(watchersDone) {
+		allRetired := true
+		for _, name := range seededRunningInstances {
+			metadata, err := daemon.ReadMetadata(daemon.DaemonRoot(h.teamDir), name)
+			if err == nil && metadata.Status == daemon.StatusRunning {
+				allRetired = false
+				break
+			}
+		}
+		if allRetired {
+			retired = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	restorePIDCheck()
+	if !retired {
+		t.Fatal("seeded daemon adopted-process watchers did not retire")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := h.daemon.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -375,6 +655,26 @@ func (h *seededLiveDaemon) stop(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("seeded daemon socket remained after shutdown: %s", daemon.SocketPath(h.teamDir))
+}
+
+var seededRunningInstances = []string{"frontend-worker-1", "platform-worker-2", "reviewer-gh382", "manager"}
+
+func (h *seededLiveDaemon) reseedRunningInstances(t *testing.T) {
+	t.Helper()
+	for _, name := range seededRunningInstances {
+		metadata, err := daemon.ReadMetadata(daemon.DaemonRoot(h.teamDir), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		metadata.Status = daemon.StatusRunning
+		metadata.PID = os.Getpid()
+		metadata.Adopted = false
+		metadata.ExitedAt = time.Time{}
+		metadata.ExitCode = nil
+		if err := daemon.WriteMetadata(daemon.DaemonRoot(h.teamDir), metadata); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func writeLiveFile(t *testing.T, path, value string) {

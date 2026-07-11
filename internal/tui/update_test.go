@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -128,75 +129,105 @@ func TestQueryUnknownFieldLeavesResultsUnchanged(t *testing.T) {
 func TestAdvertisedBindingRegistryDispatches(t *testing.T) {
 	for _, binding := range Bindings() {
 		binding := binding
-		t.Run(binding.ID, func(t *testing.T) {
-			model := smallFixtureModel(Capabilities{})
-			model.RefreshInFlight = false
-			key := binding.Keys[0]
-			if binding.ID == "move" || binding.ID == "page" {
-				model.FocusIndex = 2
-				model = preserveFocus(model)
-				rows := projectOverview(model).Attention
-				model.Focus.ItemID = rows[min(1, len(rows)-1)].ID
+		for _, key := range binding.Keys {
+			key := key
+			t.Run(binding.ID+"/"+strings.ReplaceAll(key, " ", "+"), func(t *testing.T) {
+				model := bindingTestModel(binding.ID, key)
+				before := model
+				updated, commands := applyBindingKey(model, key)
+				assertBindingEffect(t, binding.ID, key, before, updated, commands, true)
+			})
+		}
+	}
+}
+
+func bindingTestModel(bindingID, key string) Model {
+	model := smallFixtureModel(Capabilities{})
+	model.RefreshInFlight = false
+	if bindingID == "move" || bindingID == "page" {
+		model.FocusIndex = 2
+		model = preserveFocus(model)
+		rows := projectOverview(model).Attention
+		model.Focus.ItemID = rows[min(1, len(rows)-1)].ID
+	}
+	if bindingID == "escape" {
+		model.Query = "status:blocked"
+	}
+	if bindingID == "go" && key == "g o" {
+		model.Route = RouteWork
+	}
+	return model
+}
+
+func applyBindingKey(model Model, key string) (Model, []Command) {
+	commands := []Command{}
+	for index, part := range strings.Fields(key) {
+		var next []Command
+		model, next = Update(model, Key{Name: part, At: fixtureTime.Add(time.Duration(index) * 100 * time.Millisecond)})
+		commands = append(commands, next...)
+	}
+	return model, commands
+}
+
+func assertBindingEffect(t *testing.T, bindingID, key string, before, updated Model, commands []Command, requireCommand bool) {
+	t.Helper()
+	switch bindingID {
+	case "quit", "cancel":
+		if !updated.Quit || requireCommand && (len(commands) != 1 || commands[0].Kind != CommandQuit) {
+			t.Fatalf("%s transition = %+v commands=%+v", key, updated, commands)
+		}
+	case "help":
+		if !updated.HasOverlay(OverlayHelp) {
+			t.Fatalf("%s did not open help", key)
+		}
+	case "palette":
+		if !updated.HasOverlay(OverlayPalette) {
+			t.Fatalf("%s did not open palette", key)
+		}
+	case "query":
+		if !updated.QueryActive {
+			t.Fatalf("%s did not activate query", key)
+		}
+	case "escape":
+		if updated.Query != "" {
+			t.Fatalf("%s left query %q", key, updated.Query)
+		}
+	case "next-focus", "previous-focus":
+		if updated.FocusIndex == before.FocusIndex {
+			t.Fatalf("%s did not move focus", key)
+		}
+	case "move":
+		if key == "up" || key == "down" || key == "j" || key == "k" {
+			if updated.Focus.ItemID == before.Focus.ItemID {
+				t.Fatalf("%s did not move the focused item", key)
 			}
-			if binding.ID == "escape" {
-				model.Query = "status:blocked"
-			}
-			if binding.ID == "go" {
-				model.Route = RouteWork
-				model, _ = Update(model, Key{Name: "g", At: fixtureTime})
-				model, _ = Update(model, Key{Name: "o", At: fixtureTime.Add(500 * time.Millisecond)})
-				if model.Route != RouteOverview {
-					t.Fatalf("go binding did not change route: %+v", model)
-				}
-				return
-			}
-			before := model
-			updated, commands := Update(model, Key{Name: key, At: fixtureTime})
-			switch binding.ID {
-			case "quit", "cancel":
-				if !updated.Quit || len(commands) != 1 || commands[0].Kind != CommandQuit {
-					t.Fatalf("quit transition = %+v commands=%+v", updated, commands)
-				}
-			case "help":
-				if !updated.HasOverlay(OverlayHelp) {
-					t.Fatal("help overlay did not open")
-				}
-			case "palette":
-				if !updated.HasOverlay(OverlayPalette) {
-					t.Fatal("palette did not open")
-				}
-			case "query":
-				if !updated.QueryActive {
-					t.Fatal("query did not activate")
-				}
-			case "escape":
-				if updated.Query != "" {
-					t.Fatalf("escape query = %q", updated.Query)
-				}
-			case "next-focus", "previous-focus":
-				if updated.FocusIndex == before.FocusIndex {
-					t.Fatal("focus did not move")
-				}
-			case "move", "page":
-				if updated.Focus.ItemID == before.Focus.ItemID {
-					t.Fatalf("focused item did not move: %q", updated.Focus.ItemID)
-				}
-			case "inspect", "toggle", "section":
-				if updated.Feedback == before.Feedback || updated.Feedback == "" {
-					t.Fatalf("binding feedback did not change: %q", updated.Feedback)
-				}
-			case "refresh":
-				if len(commands) != 1 || commands[0].Kind != CommandRefresh || !updated.RefreshInFlight {
-					t.Fatalf("refresh commands = %+v model=%+v", commands, updated)
-				}
-			case "poll":
-				if updated.Polling == before.Polling {
-					t.Fatal("polling did not toggle")
-				}
-			default:
-				t.Fatalf("binding %q has no behavior assertion", binding.ID)
-			}
-		})
+		} else if updated.FocusIndex == before.FocusIndex {
+			t.Fatalf("%s did not move focus", key)
+		}
+	case "page":
+		if updated.Focus.ItemID == before.Focus.ItemID {
+			t.Fatalf("%s did not page the focused item", key)
+		}
+	case "inspect", "toggle", "section":
+		if updated.Feedback == before.Feedback || updated.Feedback == "" {
+			t.Fatalf("%s did not produce intended feedback: %q", key, updated.Feedback)
+		}
+	case "refresh":
+		if !updated.RefreshInFlight || requireCommand && (len(commands) != 1 || commands[0].Kind != CommandRefresh) {
+			t.Fatalf("%s commands = %+v model=%+v", key, commands, updated)
+		}
+	case "poll":
+		if updated.Polling == before.Polling {
+			t.Fatalf("%s did not toggle polling", key)
+		}
+	case "go":
+		parts := strings.Fields(key)
+		want, ok := goRoute(parts[len(parts)-1])
+		if !ok || updated.Route != want {
+			t.Fatalf("%s route = %s, want %s", key, updated.Route, want)
+		}
+	default:
+		t.Fatalf("binding %q has no behavior assertion", bindingID)
 	}
 }
 

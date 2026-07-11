@@ -21,6 +21,9 @@ func Render(model Model) string {
 	canvas.box(0, 0, model.Width, model.Height)
 	if model.Size == SizeTooSmall {
 		renderTooSmall(canvas, model)
+		if len(model.Overlays) > 0 && model.Width >= 20 && model.Height >= 9 {
+			renderOverlay(canvas, model, model.Overlays[len(model.Overlays)-1])
+		}
 	} else {
 		renderShell(canvas, model)
 	}
@@ -225,6 +228,9 @@ func renderStatus(canvas *cellCanvas, model Model) {
 func renderFooter(canvas *cellCanvas, model Model) {
 	y := canvas.height - 2
 	text := "Tab focus  arrows/hjkl move  Enter inspect  / filter  g+key screen  r refresh  ? help  q quit"
+	if model.Size == SizeCompact {
+		text = "Tab focus  Enter inspect  / filter  r refresh  ? help  q quit"
+	}
 	if !model.Polling {
 		text += "  [polling paused]"
 	}

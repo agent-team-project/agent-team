@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -58,18 +60,45 @@ func TestOverviewTelemetryPrecedenceAndRecentWindow(t *testing.T) {
 	if got := distinctModelTiers(snapshot); got != 1 {
 		t.Fatalf("recent-24 model tiers = %d, want 1", got)
 	}
-	snapshot.Jobs = snapshot.Jobs[:3]
+	snapshot.Jobs = snapshot.Jobs[:4]
 	first := snapshot.Jobs[0]
-	snapshot.Resources[first.OutcomeURI] = testResource(first.OutcomeURI, "outcome", first.ID, map[string]any{"bounce_classes": map[string]any{"capability": 1}})
+	snapshot.Resources[first.OutcomeURI] = testResource(first.OutcomeURI, "outcome", first.ID, map[string]any{
+		"bounce_classes": map[string]any{"capability": 1},
+		"bounces":        map[string]any{"infra": 1},
+	})
 	snapshot.Resources[first.URI] = testResource(first.URI, "job", first.ID, map[string]any{"bounce_classes": map[string]any{"infra": 1}})
 	second := snapshot.Jobs[1]
-	snapshot.Resources[second.OutcomeURI] = testResource(second.OutcomeURI, "outcome", second.ID, map[string]any{})
-	snapshot.Resources[second.URI] = testResource(second.URI, "job", second.ID, map[string]any{"bounce_classes": map[string]any{"scope": 1}})
+	snapshot.Resources[second.OutcomeURI] = testResource(second.OutcomeURI, "outcome", second.ID, map[string]any{"bounces": []any{map[string]any{"classes": []any{"scope"}}}})
+	snapshot.Resources[second.URI] = testResource(second.URI, "job", second.ID, map[string]any{"bounce_classes": map[string]any{"infra": 1}})
 	third := snapshot.Jobs[2]
 	snapshot.Resources[third.OutcomeURI] = testResource(third.OutcomeURI, "outcome", third.ID, map[string]any{})
-	snapshot.Resources[third.URI] = testResource(third.URI, "job", third.ID, map[string]any{"kickoff": "## Review findings (bounce 1)\nSpec ambiguity needs clarification."})
-	if got := distinctBounceClasses(snapshot); got != 3 {
-		t.Fatalf("bounce classes = %d, want capability/scope/spec-ambiguity only", got)
+	snapshot.Resources[third.URI] = testResource(third.URI, "job", third.ID, map[string]any{
+		"bounce_classes": map[string]any{"infra": 1},
+		"kickoff":        "## Review findings (bounce 1)\nSpec ambiguity needs clarification.",
+	})
+	fourth := snapshot.Jobs[3]
+	snapshot.Resources[fourth.OutcomeURI] = testResource(fourth.OutcomeURI, "outcome", fourth.ID, map[string]any{})
+	snapshot.Resources[fourth.URI] = testResource(fourth.URI, "job", fourth.ID, map[string]any{"kickoff": "## Review findings (bounce 1)\nSpec ambiguity needs clarification."})
+
+	for _, test := range []struct {
+		name string
+		job  *daemonclient.Job
+		want string
+	}{
+		{name: "explicit outcome beats legacy and job", job: first, want: "capability"},
+		{name: "legacy outcome beats job resource", job: second, want: "scope"},
+		{name: "job resource beats kickoff", job: third, want: "infra"},
+		{name: "kickoff is final fallback", job: fourth, want: "spec-ambiguity"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			classes := bounceClassesForJob(snapshot, test.job)
+			if len(classes) != 1 || !classes[test.want] {
+				t.Fatalf("classes = %v, want only %s", classes, test.want)
+			}
+		})
+	}
+	if got := distinctBounceClasses(snapshot); got != 4 {
+		t.Fatalf("bounce classes = %d, want capability/scope/infra/spec-ambiguity", got)
 	}
 }
 
@@ -190,9 +219,9 @@ func TestCanonicalRendersAreExactStableFrames(t *testing.T) {
 
 func TestCanonicalGoldenHashes(t *testing.T) {
 	want := map[string]string{
-		"80x24/color":      "4a5485eb5d08757a0884017874c966244c5ad50d5f82a4678a87833741e79db4",
-		"80x24/NO_COLOR":   "76f5f79937f25bfa23cc46388863d83100a09106a5cab1ff5a0411f9f41d6214",
-		"80x24/TERM=dumb":  "76f5f79937f25bfa23cc46388863d83100a09106a5cab1ff5a0411f9f41d6214",
+		"80x24/color":      "6fc69d96048c2e53be14f721f5634f5e15b0de5c51b0e5ec160342149abb77c1",
+		"80x24/NO_COLOR":   "88a1ac3e982bd240da91b54300548b67462c7884415c76ccc7aa09e0b6e65bdd",
+		"80x24/TERM=dumb":  "88a1ac3e982bd240da91b54300548b67462c7884415c76ccc7aa09e0b6e65bdd",
 		"120x30/color":     "cbbf9ce369e711effe29f74494d8a209b209c158f0cf4aa0d7c7edeb7a2914ed",
 		"120x30/NO_COLOR":  "66db77dadb1f588a6fb080f411eab45f10f4ee1903cb44095b01bc8def5d1b32",
 		"120x30/TERM=dumb": "66db77dadb1f588a6fb080f411eab45f10f4ee1903cb44095b01bc8def5d1b32",
@@ -279,6 +308,31 @@ func TestTooSmallFrameIsStableAndUseful(t *testing.T) {
 	}
 }
 
+func TestBoundaryShellKeepsHelpAndQuitKeyboardComplete(t *testing.T) {
+	model := smallFixtureModel(Capabilities{Dumb: true})
+	model, _ = Update(model, Resize{Width: 59, Height: 50})
+	closed := Render(model)
+	model, _ = Update(model, Key{Name: "?", At: fixtureTime})
+	opened := Render(model)
+	if opened == closed || !strings.Contains(opened, "Help") || !strings.Contains(opened, "q            quit") {
+		t.Fatalf("59x50 help did not visibly own the too-small frame:\n%s", opened)
+	}
+	model, _ = Update(model, Key{Name: "pgdown", At: fixtureTime})
+	if page := Render(model); !strings.Contains(page, "g+key        screen") {
+		t.Fatalf("59x50 help paging omitted the final registry binding:\n%s", page)
+	}
+	model, _ = Update(model, Key{Name: "esc", At: fixtureTime})
+	if model.HasOverlay(OverlayHelp) || Render(model) != closed {
+		t.Fatal("too-small help did not close back to the invoking shell")
+	}
+
+	model, _ = Update(model, Resize{Width: 80, Height: 24})
+	frame := Render(model)
+	if !strings.Contains(strings.Split(frame, "\n")[22], "q quit") {
+		t.Fatalf("80x24 compact footer has no visible quit path:\n%s", frame)
+	}
+}
+
 func TestLargeFleetFirstPaint(t *testing.T) {
 	model := largeFixtureModel()
 	model, _ = Update(model, Resize{Width: 160, Height: 50})
@@ -325,7 +379,10 @@ func TestOneHourSoak(t *testing.T) {
 		t.Fatalf("soak initial connection = %s errors=%v", model.Connection, model.Snapshot.SourceErrors)
 	}
 	startGoroutines := runtime.NumGoroutine()
-	startFDs := openFDCount()
+	startFDs, err := openFDCount()
+	if err != nil {
+		t.Fatalf("file-descriptor metric unavailable: %v", err)
+	}
 	started := time.Now()
 	deadline := started.Add(duration)
 	cadence := 5 * time.Second
@@ -342,7 +399,7 @@ func TestOneHourSoak(t *testing.T) {
 	}
 	var baseline uint64
 	var samples []soakHeapSample
-	refreshes, filterChanges := 0, 0
+	refreshes, filterChanges, navigations := 0, 0, 0
 	disconnected, reconnected := false, false
 	var previousTick time.Time
 	nextHeapSample := started.Add(time.Minute)
@@ -381,6 +438,19 @@ func TestOneHourSoak(t *testing.T) {
 		if reconnected && model.Connection != ConnectionReconnected && model.Connection != ConnectionConnected {
 			t.Fatalf("real transport recovery rendered %s", model.Connection)
 		}
+		navigation := []struct {
+			key   string
+			route Route
+		}{
+			{"o", RouteOverview}, {"w", RouteWork}, {"f", RouteFleet}, {"a", RouteActivity},
+			{"l", RouteLogs}, {"s", RouteResearch}, {"r", RouteRequirements}, {"e", RouteRelease},
+		}[navigations%len(routeOrder)]
+		model, _ = Update(model, Key{Name: "g", At: clockAt})
+		model, _ = Update(model, Key{Name: navigation.key, At: clockAt.Add(100 * time.Millisecond)})
+		if model.Route != navigation.route {
+			t.Fatalf("soak navigation %d route = %s, want %s", navigations, model.Route, navigation.route)
+		}
+		navigations++
 		if refreshes%3 == 0 {
 			before := len(projectOverview(model).Attention)
 			query := "status:failed"
@@ -422,8 +492,8 @@ func TestOneHourSoak(t *testing.T) {
 		t.Fatalf("soak did not execute real disconnect/reconnect: disconnected=%v reconnected=%v", disconnected, reconnected)
 	}
 	minimumRefreshes := int(duration/cadence) - 1
-	if refreshes < minimumRefreshes || filterChanges == 0 {
-		t.Fatalf("soak coverage refreshes=%d want>=%d filter_changes=%d", refreshes, minimumRefreshes, filterChanges)
+	if refreshes < minimumRefreshes || filterChanges == 0 || navigations != refreshes {
+		t.Fatalf("soak coverage refreshes=%d want>=%d filter_changes=%d navigations=%d", refreshes, minimumRefreshes, filterChanges, navigations)
 	}
 	if baseline == 0 {
 		t.Fatal("soak never captured a post-warm-up heap baseline")
@@ -434,7 +504,11 @@ func TestOneHourSoak(t *testing.T) {
 	if runtime.NumGoroutine() > startGoroutines+2 {
 		t.Fatalf("goroutines grew from %d to %d", startGoroutines, runtime.NumGoroutine())
 	}
-	if finalFDs := openFDCount(); startFDs >= 0 && finalFDs > startFDs {
+	finalFDs, err := openFDCount()
+	if err != nil {
+		t.Fatalf("final file-descriptor metric unavailable: %v", err)
+	}
+	if finalFDs > startFDs {
 		t.Fatalf("file descriptors grew from %d to %d", startFDs, finalFDs)
 	}
 	limit := baseline + baseline/10
@@ -445,7 +519,7 @@ func TestOneHourSoak(t *testing.T) {
 	if slope > 1024*1024 {
 		t.Fatalf("final-window retained-heap slope = %.0f bytes/hour, limit 1048576", slope)
 	}
-	t.Logf("SOAK EVIDENCE duration=%s cadence=%s refreshes=%d filters=%d real_disconnect=true real_reconnect=true final_window=%s heap_slope_bytes_per_hour=%.0f retained_baseline=%d retained_final=%d retained_limit=%d goroutines=%d->%d fds=%d->%d", duration, cadence, refreshes, filterChanges, finalWindow, slope, baseline, finalMemory.HeapAlloc, limit, startGoroutines, runtime.NumGoroutine(), startFDs, openFDCount())
+	t.Logf("SOAK EVIDENCE duration=%s cadence=%s refreshes=%d filters=%d navigations=%d routes=%d real_disconnect=true real_reconnect=true final_window=%s heap_slope_bytes_per_hour=%.0f retained_baseline=%d retained_final=%d retained_limit=%d goroutines=%d->%d fds=%d->%d", duration, cadence, refreshes, filterChanges, navigations, len(routeOrder), finalWindow, slope, baseline, finalMemory.HeapAlloc, limit, startGoroutines, runtime.NumGoroutine(), startFDs, finalFDs)
 }
 
 func soakBaselineReady(remaining, finalWindow time.Duration, disconnected, reconnected bool) bool {
@@ -473,12 +547,40 @@ func TestSoakRetainedHeapBaselineStartsAfterRecoveryInFinalWindow(t *testing.T) 
 	}
 }
 
-func openFDCount() int {
-	entries, err := os.ReadDir("/dev/fd")
-	if err != nil {
-		return -1
+func openFDCount() (int, error) {
+	var pathErrors []string
+	for _, path := range []string{"/proc/self/fd", "/dev/fd"} {
+		entries, err := os.ReadDir(path)
+		if err == nil {
+			return len(entries), nil
+		}
+		pathErrors = append(pathErrors, path+": "+err.Error())
 	}
-	return len(entries)
+	lsof, err := exec.LookPath("lsof")
+	if err != nil {
+		return 0, fmt.Errorf("%s; lsof: %w", strings.Join(pathErrors, "; "), err)
+	}
+	body, err := exec.Command(lsof, "-a", "-p", strconv.Itoa(os.Getpid()), "-Fn").Output()
+	if err != nil {
+		return 0, fmt.Errorf("%s; lsof: %w", strings.Join(pathErrors, "; "), err)
+	}
+	count := 0
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(line, "f") {
+			count++
+		}
+	}
+	if count == 0 {
+		return 0, fmt.Errorf("%s; lsof returned no descriptor records", strings.Join(pathErrors, "; "))
+	}
+	return count, nil
+}
+
+func TestOpenFDCountAvailable(t *testing.T) {
+	count, err := openFDCount()
+	if err != nil || count <= 0 {
+		t.Fatalf("openFDCount() = %d, %v", count, err)
+	}
 }
 
 func heapSlopeBytesPerHour(samples []soakHeapSample) float64 {

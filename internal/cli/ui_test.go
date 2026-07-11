@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 
@@ -69,12 +70,12 @@ func TestUIOnceUsesAuthenticatedSharedClient(t *testing.T) {
 	if err := os.WriteFile(tokenPath, []byte("seed-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	hits := 0
+	var hits atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer seed-token" {
 			t.Errorf("Authorization = %q", got)
 		}
-		hits++
+		hits.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/instances", "/v1/jobs":
@@ -97,8 +98,8 @@ func TestUIOnceUsesAuthenticatedSharedClient(t *testing.T) {
 		t.Fatalf("Execute: %v stderr=%s", err, stderr.String())
 	}
 	assertUIOnceFrame(t, stdout.String())
-	if hits != 3 || !strings.Contains(stdout.String(), "CONNECTED") {
-		t.Fatalf("hits=%d frame=%s", hits, stdout.String())
+	if hits.Load() != 3 || !strings.Contains(stdout.String(), "CONNECTED") {
+		t.Fatalf("hits=%d frame=%s", hits.Load(), stdout.String())
 	}
 }
 

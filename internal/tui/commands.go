@@ -52,7 +52,10 @@ func (runtime *commandRuntime) load(includeCache bool) refreshBatch {
 			messages = append(messages, SnapshotOK{Source: source, Snapshot: snapshot, At: fetchedAt})
 			anySuccess = true
 		} else if source == daemonclient.SourceResources && len(snapshot.Resources) > 0 {
-			messages = append(messages, SnapshotOK{Source: source, Snapshot: snapshot, At: at})
+			// A mixed resource refresh has no source-wide success timestamp:
+			// successful URIs merge into the last-good map, while failed URIs
+			// retain the previous source timestamp until the following error.
+			messages = append(messages, SnapshotOK{Source: source, Snapshot: snapshot})
 		}
 		if message := snapshot.SourceErrors[source]; message != "" {
 			messages = append(messages, SnapshotError{Source: source, Error: message, At: at})

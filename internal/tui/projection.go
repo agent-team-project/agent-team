@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/agent-team-project/agent-team/internal/daemonclient"
 )
@@ -209,20 +210,30 @@ func distinctBounceClasses(snapshot *daemonclient.Snapshot) int {
 		if job == nil {
 			continue
 		}
-		jobClasses := map[string]bool{}
-		collectBounceClasses(resourceMap(snapshot.Resources[job.OutcomeURI]), jobClasses)
-		if len(jobClasses) == 0 {
-			data := resourceMap(snapshot.Resources[job.URI])
-			collectBounceClasses(data, jobClasses)
-			if len(jobClasses) == 0 {
-				collectKickoffBounceClasses(recursiveString(data, "kickoff"), jobClasses)
-			}
-		}
-		for class := range jobClasses {
+		for class := range bounceClassesForJob(snapshot, job) {
 			classes[class] = true
 		}
 	}
 	return len(classes)
+}
+
+func bounceClassesForJob(snapshot *daemonclient.Snapshot, job *daemonclient.Job) map[string]bool {
+	if snapshot == nil || job == nil {
+		return map[string]bool{}
+	}
+	outcome := resourceMap(snapshot.Resources[job.OutcomeURI])
+	classes := firstBounceClasses(bounceTelemetrySources(outcome), "bounce_classes", "BounceClasses", "bounceClasses")
+	if len(classes) == 0 {
+		classes = firstBounceClasses(bounceTelemetrySources(outcome), "bounces", "Bounces")
+	}
+	data := resourceMap(snapshot.Resources[job.URI])
+	if len(classes) == 0 {
+		classes = firstBounceClasses(bounceTelemetrySources(data), "bounce_classes", "BounceClasses", "bounceClasses")
+	}
+	if len(classes) == 0 {
+		collectKickoffBounceClasses(recursiveString(data, "kickoff"), classes)
+	}
+	return classes
 }
 
 func collectKickoffBounceClasses(kickoff string, classes map[string]bool) {
@@ -245,34 +256,64 @@ func collectKickoffBounceClasses(kickoff string, classes map[string]bool) {
 	}
 }
 
-func collectBounceClasses(value any, classes map[string]bool) {
+func bounceTelemetrySources(value map[string]any) []map[string]any {
+	if value == nil {
+		return nil
+	}
+	out := []map[string]any{value}
+	for _, name := range []string{"telemetry", "Telemetry", "outcome", "Outcome", "outcome_record", "OutcomeRecord"} {
+		if nested, ok := value[name].(map[string]any); ok {
+			out = append(out, nested)
+		}
+	}
+	return out
+}
+
+func firstBounceClasses(sources []map[string]any, names ...string) map[string]bool {
+	for _, source := range sources {
+		for _, name := range names {
+			value, ok := source[name]
+			if !ok {
+				continue
+			}
+			classes := bounceClassesFromValue(value)
+			if len(classes) > 0 {
+				return classes
+			}
+		}
+	}
+	return map[string]bool{}
+}
+
+func bounceClassesFromValue(value any) map[string]bool {
+	classes := map[string]bool{}
 	switch typed := value.(type) {
 	case map[string]any:
-		for key, child := range typed {
-			lower := strings.ToLower(key)
-			if lower == "bounce_classes" || lower == "bounces" || lower == "bounceclasses" {
-				switch found := child.(type) {
-				case map[string]any:
-					for class, count := range found {
-						if numberPositive(count) {
-							classes[class] = true
-						}
-					}
-				case []any:
-					for _, class := range found {
-						if text, ok := class.(string); ok && strings.TrimSpace(text) != "" {
-							classes[text] = true
+		for class, count := range typed {
+			if numberPositive(count) && strings.TrimSpace(class) != "" {
+				classes[strings.TrimSpace(class)] = true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			switch found := item.(type) {
+			case string:
+				if class := strings.TrimSpace(found); class != "" {
+					classes[class] = true
+				}
+			case map[string]any:
+				for _, name := range []string{"classes", "Classes"} {
+					values, _ := found[name].([]any)
+					for _, value := range values {
+						if class, ok := value.(string); ok && strings.TrimSpace(class) != "" {
+							classes[strings.TrimSpace(class)] = true
 						}
 					}
 				}
 			}
-			collectBounceClasses(child, classes)
-		}
-	case []any:
-		for _, child := range typed {
-			collectBounceClasses(child, classes)
 		}
 	}
+	return classes
 }
 
 func distinctDeployments(snapshot *daemonclient.Snapshot) int {
@@ -295,33 +336,78 @@ func distinctDeployments(snapshot *daemonclient.Snapshot) int {
 
 func distinctDeadlines(snapshot *daemonclient.Snapshot) int {
 	deadlines := map[string]bool{}
+	representedResources := map[string]bool{}
+	for _, job := range snapshot.Jobs {
+		if job == nil {
+			continue
+		}
+		resource := snapshot.Resources[job.URI]
+		data := resourceMap(resource)
+		rememberRepresentedResource(representedResources, job.URI, resource, data)
+		if deadlineValue(data) != "" {
+			deadlines[firstText(resourceIdentity(data), job.URI, "job:"+job.ID)] = true
+		}
+	}
 	for _, instance := range snapshot.Instances {
-		if instance != nil && !instance.RuntimeDeadline.IsZero() {
-			deadlines["instance:"+instance.Instance+":"+instance.RuntimeDeadline.UTC().String()] = true
+		if instance == nil {
+			continue
+		}
+		resource := snapshot.Resources[instance.URI]
+		data := resourceMap(resource)
+		rememberRepresentedResource(representedResources, instance.URI, resource, data)
+		if deadlineValue(data) != "" || !instance.RuntimeDeadline.IsZero() {
+			deadlines[firstText(resourceIdentity(data), instance.URI, "instance:"+instance.Instance)] = true
 		}
 	}
 	for uri, resource := range snapshot.Resources {
-		collectDeadlines(resourceMap(resource), uri, deadlines)
+		if representedResources[uri] {
+			continue
+		}
+		data := resourceMap(resource)
+		if deadlineValue(data) != "" {
+			deadlines[firstText(resourceIdentity(data), uri)] = true
+		}
 	}
 	return len(deadlines)
 }
 
-func collectDeadlines(value any, prefix string, out map[string]bool) {
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, child := range typed {
-			lower := strings.ToLower(key)
-			if strings.Contains(lower, "deadline") && !strings.Contains(lower, "state") && !strings.Contains(lower, "source") {
-				if text, ok := child.(string); ok && strings.TrimSpace(text) != "" {
-					out[prefix+":"+text] = true
-				}
-			}
-			collectDeadlines(child, prefix+"/"+key, out)
+func deadlineValue(value map[string]any) string {
+	for _, name := range []string{"deadline", "Deadline", "runtime_deadline", "RuntimeDeadline"} {
+		if text, ok := value[name].(string); ok && validDeadlineText(text) {
+			return strings.TrimSpace(text)
 		}
-	case []any:
-		for i, child := range typed {
-			collectDeadlines(child, fmt.Sprintf("%s/%d", prefix, i), out)
+	}
+	return ""
+}
+
+func validDeadlineText(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil && parsed.IsZero() {
+		return false
+	}
+	return true
+}
+
+func resourceIdentity(value map[string]any) string {
+	for _, name := range []string{"uri", "URI", "job_uri", "JobURI", "instance_uri", "InstanceURI"} {
+		if text, ok := value[name].(string); ok && strings.TrimSpace(text) != "" {
+			return strings.TrimSpace(text)
 		}
+	}
+	return ""
+}
+
+func rememberRepresentedResource(seen map[string]bool, fallback string, resource *daemonclient.Resource, data map[string]any) {
+	for _, uri := range []string{fallback, resourceIdentity(data)} {
+		if strings.TrimSpace(uri) != "" {
+			seen[strings.TrimSpace(uri)] = true
+		}
+	}
+	if resource != nil && strings.TrimSpace(resource.URI) != "" {
+		seen[strings.TrimSpace(resource.URI)] = true
 	}
 }
 

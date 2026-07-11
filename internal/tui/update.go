@@ -548,7 +548,11 @@ func mergeSnapshotSource(model Model, source daemonclient.SnapshotSource, snapsh
 	case daemonclient.SourceTopology:
 		copy.Topology = snapshot.Topology
 	case daemonclient.SourceResources:
-		copy.Resources = make(map[string]*daemonclient.Resource, len(snapshot.Resources))
+		if !at.IsZero() {
+			copy.Resources = make(map[string]*daemonclient.Resource, len(snapshot.Resources))
+		} else if copy.Resources == nil {
+			copy.Resources = make(map[string]*daemonclient.Resource, len(snapshot.Resources))
+		}
 		for uri, resource := range snapshot.Resources {
 			copy.Resources[uri] = resource
 		}
@@ -557,7 +561,11 @@ func mergeSnapshotSource(model Model, source daemonclient.SnapshotSource, snapsh
 	if at.IsZero() {
 		at = snapshot.SourceTimes[source]
 	}
-	copy.SourceTimes[source] = at
+	if at.IsZero() {
+		at = copy.SourceTimes[source]
+	} else {
+		copy.SourceTimes[source] = at
+	}
 	delete(copy.SourceErrors, source)
 	model.Snapshot = copy
 	model.Sources[source] = SourceState{FetchedAt: at}
