@@ -203,6 +203,75 @@ class VerifyBaseComparisonTest(unittest.TestCase):
             ["go-test:example.com/basebroken:TestBaseBroken"],
         )
 
+    def test_go_test_comparison_preserves_sibling_subtest_identities(self) -> None:
+        (self.repo / "go.mod").write_text("module example.com/subtests\n\ngo 1.22\n", encoding="utf-8")
+        test_file = self.repo / "suite_test.go"
+        test_file.write_text(
+            "package subtests\n\n"
+            'import "testing"\n\n'
+            "func TestSuite(t *testing.T) {\n"
+            '    t.Run("base", func(t *testing.T) { t.Fatal("base-bug") })\n'
+            "}\n",
+            encoding="utf-8",
+        )
+        self.git("add", "go.mod", "suite_test.go")
+        self.git("commit", "-m", "base has one failing subtest")
+        self.configure_origin_head()
+        test_file.write_text(
+            "package subtests\n\n"
+            'import "testing"\n\n'
+            "func TestSuite(t *testing.T) {\n"
+            '    t.Run("base", func(t *testing.T) { t.Fatal("base-bug") })\n'
+            '    t.Run("head-only", func(t *testing.T) { t.Fatal("head-regression") })\n'
+            "}\n",
+            encoding="utf-8",
+        )
+        self.git("add", "suite_test.go")
+        self.git("commit", "-m", "add head-only sibling subtest")
+
+        evidence = self.run_verify(self.git("rev-parse", "HEAD"), "go test ./...")
+
+        gate = evidence["gates"][0]
+        comparison = gate["base_comparison"]
+        self.assertNotIn("class", gate)
+        self.assertNotEqual(gate["signature"], "base-broken")
+        self.assertFalse(comparison["reproduced"])
+        self.assertEqual(
+            comparison["head_failure_identities"],
+            [
+                "go-test:example.com/subtests:TestSuite",
+                "go-test:example.com/subtests:TestSuite/base",
+                "go-test:example.com/subtests:TestSuite/head-only",
+            ],
+        )
+        self.assertEqual(
+            comparison["base_failure_identities"],
+            [
+                "go-test:example.com/subtests:TestSuite",
+                "go-test:example.com/subtests:TestSuite/base",
+            ],
+        )
+
+    def test_fresh_remote_default_ignores_stale_local_tracking_ref(self) -> None:
+        broken_base = self.commit_gate(1, "base broken")
+        self.configure_origin_head()
+        clean_base = self.commit_gate(0, "base fixed remotely")
+        self.git("push", "origin", "main")
+        self.git("update-ref", "refs/remotes/origin/main", broken_base)
+        self.assertEqual(self.git("rev-parse", "origin/main"), broken_base)
+        feature = self.commit_gate(1, "feature regression")
+
+        evidence = self.run_verify(feature)
+
+        gate = evidence["gates"][0]
+        comparison = gate["base_comparison"]
+        self.assertNotIn("class", gate)
+        self.assertNotEqual(gate["signature"], "base-broken")
+        self.assertFalse(comparison["reproduced"])
+        self.assertEqual(comparison["default_branch"], "origin/main")
+        self.assertEqual(comparison["default_branch_sha"], clean_base)
+        self.assertEqual(comparison["merge_base"], clean_base)
+
     def test_generic_same_footer_with_distinct_failures_is_not_reproduced(self) -> None:
         test_file = self.repo / "test_failure.py"
         test_file.write_text(

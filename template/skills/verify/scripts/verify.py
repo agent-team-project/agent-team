@@ -499,6 +499,7 @@ def compare_failed_gate(
         "reproduced": reproduced,
         "reproduction_basis": reproduction_basis,
         "default_branch": base_state["default_branch"],
+        "default_branch_sha": base_state["default_branch_sha"],
         "merge_base": base_state["merge_base"],
         "command": command,
         "head_exit_code": result["exit_code"],
@@ -539,12 +540,12 @@ def prepare_base_checkout(repo: Path, commit: str, temp_root: Path, state: dict[
     if state.get("initialized"):
         return
     state["initialized"] = True
-    default_branch, reason = resolve_default_branch(repo)
+    default_branch, default_branch_sha, reason = resolve_default_branch(repo)
     if reason:
         state["unavailable_reason"] = reason
         return
     merge_base_proc = subprocess.run(
-        ["git", "-C", str(repo), "merge-base", commit, default_branch],
+        ["git", "-C", str(repo), "merge-base", commit, default_branch_sha],
         text=True,
         capture_output=True,
         check=False,
@@ -552,7 +553,8 @@ def prepare_base_checkout(repo: Path, commit: str, temp_root: Path, state: dict[
     merge_base = merge_base_proc.stdout.strip()
     if merge_base_proc.returncode != 0 or not merge_base:
         state["unavailable_reason"] = (
-            f"no merge-base between {commit[:12]} and {default_branch}: "
+            f"no merge-base between {commit[:12]} and {default_branch} "
+            f"at {default_branch_sha[:12]}: "
             f"{last_line(merge_base_proc.stderr) or merge_base_proc.returncode}"
         )
         return
@@ -569,6 +571,7 @@ def prepare_base_checkout(repo: Path, commit: str, temp_root: Path, state: dict[
     state.update(
         {
             "default_branch": default_branch,
+            "default_branch_sha": default_branch_sha,
             "merge_base": merge_base,
             "checkout": str(checkout),
             "checkout_added": True,
@@ -576,19 +579,45 @@ def prepare_base_checkout(repo: Path, commit: str, temp_root: Path, state: dict[
     )
 
 
-def resolve_default_branch(repo: Path) -> tuple[str, str]:
+def resolve_default_branch(repo: Path) -> tuple[str, str, str]:
     proc = subprocess.run(
-        ["git", "-C", str(repo), "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        ["git", "-C", str(repo), "ls-remote", "--symref", "origin", "HEAD"],
         text=True,
         capture_output=True,
         check=False,
     )
-    default_branch = proc.stdout.strip()
-    if proc.returncode != 0 or not default_branch:
-        return "", "remote default branch ref refs/remotes/origin/HEAD is unavailable"
-    if not rev_parse(repo, default_branch):
-        return "", f"remote default branch {default_branch} does not resolve to a commit"
-    return default_branch, ""
+    if proc.returncode != 0:
+        return "", "", f"remote default branch discovery failed: {last_line(proc.stderr) or proc.returncode}"
+    default_ref = ""
+    default_branch_sha = ""
+    for line in proc.stdout.splitlines():
+        target, separator, name = line.partition("\t")
+        if not separator or name != "HEAD":
+            continue
+        if target.startswith("ref: refs/heads/"):
+            default_ref = target.removeprefix("ref: ")
+        elif re.fullmatch(r"[0-9a-fA-F]{40,64}", target):
+            default_branch_sha = target.lower()
+    if not default_ref or not default_branch_sha:
+        return "", "", "remote default branch discovery did not return a symbolic HEAD and commit"
+
+    fetch_proc = subprocess.run(
+        ["git", "-C", str(repo), "fetch", "--no-write-fetch-head", "--no-tags", "origin", default_ref],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    default_branch = f"origin/{default_ref.removeprefix('refs/heads/')}"
+    if fetch_proc.returncode != 0:
+        return (
+            "",
+            "",
+            f"remote default branch fetch failed for {default_branch}: "
+            f"{last_line(fetch_proc.stderr) or fetch_proc.returncode}",
+        )
+    if rev_parse(repo, default_branch_sha) != default_branch_sha:
+        return "", "", f"pinned remote default branch {default_branch} does not resolve after fetch"
+    return default_branch, default_branch_sha, ""
 
 
 def base_comparison_command(command: str, head_log: Path) -> str:
@@ -664,7 +693,7 @@ def go_failure_identities_from_text(log: str) -> tuple[list[str], bool]:
     for line in log.splitlines():
         test_match = re.match(r"^\s*--- FAIL: ([^\s(]+)", line)
         if test_match:
-            pending_tests.add(test_match.group(1).split("/", 1)[0])
+            pending_tests.add(test_match.group(1))
             continue
         package_match = re.match(r"^FAIL\s+(\S+)(?:\s+.*)?$", line)
         if not package_match:

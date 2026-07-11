@@ -83,15 +83,18 @@ The verifier does not edit product files. It writes evidence artifacts and tempo
 
 ## Base-broken discriminator
 
-After a gate fails, the runner resolves the remote default branch through
-`refs/remotes/origin/HEAD`, computes its merge-base with the worker commit, and
-reruns only that failed gate in a detached checkout of the merge-base. For a
+After a gate fails, the runner discovers the remote default branch directly
+from `origin`, fetches that branch without trusting local remote-tracking refs,
+pins the fetched commit SHA in evidence, computes its merge-base with the worker
+commit, and reruns only that failed gate in a detached checkout. For a
 plain `go test <packages>` gate, the rerun is narrowed to the failed packages
 and anchored top-level test names parsed from the head log. Go failures carry
-package/test identities, and a non-zero base run counts as reproduction only
-when every head identity appears at the merge-base. If any head failure lacks
-a package/test identity, the comparison declines to classify it as reproduced.
-This prevents an old failing test from hiding a new head-only regression.
+package/test identities, including complete subtest paths, and a non-zero base
+run counts as reproduction only when every head identity appears at the
+merge-base. Only the scoped rerun's `-run` expression is anchored at top-level
+parent tests. If any head failure lacks a package/test identity, the comparison
+declines to classify it as reproduced. This prevents an old failing test or
+subtest from hiding a new head-only regression.
 
 For other runners, complete `unittest` or `pytest` failure identities use the
 same head-subset rule. If no complete structured identities are available, the
@@ -106,12 +109,14 @@ ambiguous comparison preserve the head classification.
   `base_broken` infra signature makes the durable job gate classification agree.
 - If the scoped gate passes at the merge-base, the original failure signature
   is preserved, so existing signature-based classification is unchanged.
-- If the remote default branch, merge-base, or base checkout is unavailable,
+- If remote-default discovery or fetch, the merge-base, or the base checkout is
+  unavailable,
   the original failure signature is preserved and the evidence contains both
   an `unavailable` comparison result and a warning.
 
 Every failed gate receives a `base_comparison` object in the JSON evidence. A
-completed comparison includes the default-branch ref, merge-base commit,
-scoped command, reproduction basis, head/base exit statuses, structured
-failure identities or full-output fingerprints, duration, and base log path.
+completed comparison includes the default-branch ref and pinned fetched SHA,
+merge-base commit, scoped command, reproduction basis, head/base exit statuses,
+structured failure identities or full-output fingerprints, duration, and base
+log path.
 Passing gate records are unchanged and do not trigger a base checkout.
