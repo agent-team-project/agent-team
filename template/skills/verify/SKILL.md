@@ -76,10 +76,28 @@ A release claim with only smoke evidence must fail.
 The runner writes:
 
 - `target/agent-evidence/<job>.json` - schema version, source commit, gate statuses, timings, log refs, and summary.
+- `target/agent-evidence/<job>.exact-head.json` - for PR-backed green candidates, the authenticated GitHub query provenance, checkout/evidence/head decision, and SHA-256 digest of the canonical verifier JSON.
 - `target/agent-evidence/<job>.summary.md` - short human summary.
 - `target/agent-evidence/logs/<job>/<gate>.log` - full combined stdout/stderr for each gate.
 
 The verifier does not edit product files. It writes evidence artifacts and temporary checkout state only.
+
+## PR-backed exact-head gate
+
+When durable job data contains a canonical GitHub PR URL, the verifier queries
+the PR head through the configured authenticated GitHub helper before it
+consults any explicit commit, local branch, remote-tracking ref, worker
+worktree, or repository `HEAD`. It then fetches `refs/pull/<number>/head` from a
+matching `origin` and requires the fetched full SHA to equal the authenticated
+query.
+
+After deterministic gates pass, the verifier queries the authenticated PR head
+again immediately before publishing green evidence. Checkout commit, canonical
+evidence commit, and the fresh GitHub head must be identical full SHAs. Missing,
+malformed, unavailable, or unequal identity produces an `exact-head` gate with
+`class: infra`, a stable closed reason, a failure attestation, and no successful
+step advance. Non-PR-backed verification keeps the existing local resolution
+path.
 
 ## Base-broken discriminator
 

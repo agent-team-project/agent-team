@@ -18,10 +18,45 @@ import time
 from collections import deque
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+EXACT_HEAD_SCHEMA_VERSION = "agent-team.exact-head-attestation.v1"
 GATE_BLOCK_NAMES = {"agent-team-verify-gates", "verify-gates"}
+FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+EVIDENCE_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+QUERY_STATUSES = {"authenticated", "unavailable", "malformed"}
+EQUALITY_RESULTS = {"equal", "unequal", "unknown"}
+DISPOSITIONS = {"dispatch", "block_infra"}
+EXACT_HEAD_REASONS = {
+    "exact_head_equal",
+    "exact_head_mismatch",
+    "exact_head_unavailable",
+    "evidence_missing",
+    "evidence_malformed",
+    "job_pr_mismatch",
+}
+REVIEW_PHASES = {"not_dispatched", "infra_stop", "content"}
+VALID_EXACT_HEAD_DECISIONS = {
+    ("authenticated", "equal", "dispatch", "exact_head_equal", "not_dispatched"),
+    ("authenticated", "unequal", "block_infra", "exact_head_mismatch", "infra_stop"),
+    ("authenticated", "unknown", "block_infra", "exact_head_unavailable", "infra_stop"),
+    ("authenticated", "unknown", "block_infra", "exact_head_mismatch", "infra_stop"),
+    ("authenticated", "unknown", "block_infra", "evidence_missing", "infra_stop"),
+    ("authenticated", "unknown", "block_infra", "evidence_malformed", "infra_stop"),
+    ("authenticated", "unknown", "block_infra", "job_pr_mismatch", "infra_stop"),
+    ("unavailable", "unknown", "block_infra", "exact_head_unavailable", "infra_stop"),
+    ("malformed", "unknown", "block_infra", "exact_head_unavailable", "infra_stop"),
+    ("malformed", "unknown", "block_infra", "job_pr_mismatch", "infra_stop"),
+}
+
+
+class ExactHeadResolutionError(RuntimeError):
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__(detail)
+        self.reason = reason
+        self.detail = detail
 
 
 def main(argv: list[str]) -> int:
@@ -44,8 +79,74 @@ def main(argv: list[str]) -> int:
 
     branch = args.branch or value_ci(job_data, "branch") or ""
     worker_worktree = value_ci(job_data, "worktree") or ""
-    pr_url = value_ci(job_data, "pr") or ""
-    commit = resolve_commit(repo, current_repo, args.commit, branch, worker_worktree, args.repo is not None, warnings)
+    pr_url = value_ci(job_data, "pr") or os.environ.get("AGENT_TEAM_PR") or ""
+    pr_identity = parse_github_pr_url(pr_url) if pr_url else None
+    resolution_query: dict[str, Any] | None = None
+    if pr_url and pr_identity is None:
+        resolution_query = malformed_pr_query(pr_url)
+        return write_preflight_exact_head_failure(
+            args,
+            repo,
+            evidence_dir,
+            job_id,
+            pipeline_step,
+            branch,
+            worker_worktree,
+            pr_url,
+            job_data,
+            warnings,
+            resolution_query,
+            None,
+            "job_pr_mismatch",
+        )
+    if pr_identity is not None:
+        resolution_query = query_authenticated_pr_head(repo, pr_identity)
+        if resolution_query["query_status"] != "authenticated":
+            return write_preflight_exact_head_failure(
+                args,
+                repo,
+                evidence_dir,
+                job_id,
+                pipeline_step,
+                branch,
+                worker_worktree,
+                pr_url,
+                job_data,
+                warnings,
+                resolution_query,
+                pr_identity,
+                "exact_head_unavailable",
+            )
+    try:
+        commit = resolve_commit(
+            repo,
+            current_repo,
+            args.commit,
+            branch,
+            worker_worktree,
+            args.repo is not None,
+            warnings,
+            pr_identity,
+            resolution_query,
+        )
+    except ExactHeadResolutionError as exc:
+        warnings.append(exc.detail)
+        assert resolution_query is not None
+        return write_preflight_exact_head_failure(
+            args,
+            repo,
+            evidence_dir,
+            job_id,
+            pipeline_step,
+            branch,
+            worker_worktree,
+            pr_url,
+            job_data,
+            warnings,
+            resolution_query,
+            pr_identity,
+            exc.reason,
+        )
     if not commit:
         print("verify: could not resolve worker commit", file=sys.stderr)
         return 2
@@ -58,6 +159,8 @@ def main(argv: list[str]) -> int:
 
     results: list[dict[str, Any]] = []
     status = "pass"
+    exact_head_attestation: dict[str, Any] | None = None
+    checkout_commit = ""
     gate_evidence_root = evidence_dir / "gates" / safe_name(job_id or commit[:12])
     base_state: dict[str, Any] = {}
     try:
@@ -79,6 +182,8 @@ def main(argv: list[str]) -> int:
             results.append(result)
             if result["status"] != "pass":
                 status = "fail"
+        if status == "pass" and pr_identity is not None:
+            checkout_commit = rev_parse(checkout, "HEAD")
     finally:
         if args.keep_worktree:
             warnings.append(f"temporary worktree preserved at {checkout}")
@@ -89,6 +194,24 @@ def main(argv: list[str]) -> int:
                 remove_temp_worktree(repo, Path(base_state["checkout"]), warnings)
             remove_temp_worktree(repo, checkout, warnings)
             shutil.rmtree(temp_root, ignore_errors=True)
+
+    if status == "pass" and pr_identity is not None:
+        write_query = query_authenticated_pr_head(repo, pr_identity)
+        assert resolution_query is not None
+        exact_head_attestation = exact_head_decision(
+            job_id,
+            os.environ.get("AGENT_TEAM_PIPELINE") or value_ci(job_data, "pipeline") or "",
+            pipeline_step,
+            pr_identity,
+            resolution_query,
+            write_query,
+            checkout_commit,
+            commit,
+        )
+        exact_head_result = exact_head_gate_result(exact_head_attestation)
+        results.append(exact_head_result)
+        if exact_head_result["status"] != "pass":
+            status = "fail"
 
     finished_at = utc_now()
     summary = summarize(job_id, status, results)
@@ -112,23 +235,40 @@ def main(argv: list[str]) -> int:
         "gates": results,
         "warnings": warnings,
     }
+    if resolution_query is not None:
+        evidence["source"]["pr_head_resolution"] = resolution_query
 
     evidence_path = evidence_dir / f"{safe_name(job_id or commit[:12])}.json"
     summary_path = evidence_dir / f"{safe_name(job_id or commit[:12])}.summary.md"
-    write_json(evidence_path, evidence)
-    write_summary(summary_path, evidence)
+    if exact_head_attestation is None and not args.no_record_gates and job_id:
+        record_gate_results(job_id, repo, results, warnings)
+    evidence["warnings"] = warnings
+
+    if exact_head_attestation is not None:
+        attestation_path = evidence_dir / f"{safe_name(job_id or commit[:12])}.exact-head.json"
+        evidence["exact_head_attestation"] = relpath(attestation_path, repo)
+        write_evidence_bundle(
+            repo,
+            evidence_path,
+            summary_path,
+            attestation_path,
+            evidence,
+            exact_head_attestation,
+        )
+        print(f"verify: wrote exact-head attestation {attestation_path}", flush=True)
+    else:
+        write_json(evidence_path, evidence)
+        write_summary(summary_path, evidence)
     print(f"verify: wrote evidence {evidence_path}", flush=True)
     print(f"verify: wrote summary {summary_path}", flush=True)
 
-    if not args.no_record_gates and job_id:
-        record_gate_results(job_id, repo, results, warnings)
-        evidence["warnings"] = warnings
-        write_json(evidence_path, evidence)
-
     if args.complete_step:
         complete_step(job_id, pipeline_step, repo, status, summary, warnings)
-        evidence["warnings"] = warnings
-        write_json(evidence_path, evidence)
+        if exact_head_attestation is None:
+            evidence["warnings"] = warnings
+            write_json(evidence_path, evidence)
+    if exact_head_attestation is not None and not args.no_record_gates and job_id:
+        record_gate_results(job_id, repo, results, warnings)
 
     print(summary, flush=True)
     return 0 if status == "pass" else 1
@@ -297,7 +437,16 @@ def resolve_commit(
     worker_worktree: str,
     explicit_repo: bool,
     warnings: list[str],
+    pr_identity: dict[str, Any] | None = None,
+    pr_query: dict[str, Any] | None = None,
 ) -> str:
+    if pr_identity is not None:
+        if pr_query is None or pr_query.get("query_status") != "authenticated":
+            raise ExactHeadResolutionError(
+                "exact_head_unavailable",
+                "authenticated GitHub PR head is unavailable; local refs were not consulted",
+            )
+        return fetch_authoritative_pr_head(repo, pr_identity, pr_query)
     if explicit:
         if current_repo and not explicit_repo:
             commit = rev_parse(current_repo, explicit)
@@ -328,6 +477,210 @@ def resolve_commit(
         if commit:
             return commit
     return rev_parse(repo, "HEAD")
+
+
+def parse_github_pr_url(raw: str) -> dict[str, Any] | None:
+    parsed = urlparse(raw.strip())
+    if parsed.scheme != "https" or parsed.hostname != "github.com":
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) != 4 or parts[2] != "pull" or not parts[3].isdigit():
+        return None
+    number = int(parts[3])
+    if number <= 0:
+        return None
+    owner, repo = parts[0], parts[1]
+    if not owner or not repo:
+        return None
+    return {
+        "repository": f"{owner}/{repo}",
+        "owner": owner,
+        "repo": repo,
+        "pr_number": number,
+        "pr_url": f"https://github.com/{owner}/{repo}/pull/{number}",
+    }
+
+
+def malformed_pr_query(pr_url: str) -> dict[str, Any]:
+    return {
+        "repository": "",
+        "pr_number": 0,
+        "pr_url": pr_url,
+        "query_status": "malformed",
+        "head_commit": "",
+        "queried_at": utc_now(),
+        "authenticated_actor": "",
+        "query_transport": "github-auth.sh/gh-graphql",
+        "query_error": "job PR is not a canonical github.com pull-request URL",
+    }
+
+
+def query_authenticated_pr_head(repo: Path, pr_identity: dict[str, Any]) -> dict[str, Any]:
+    queried_at = utc_now()
+    base = {
+        "repository": pr_identity["repository"],
+        "pr_number": pr_identity["pr_number"],
+        "pr_url": pr_identity["pr_url"],
+        "query_status": "unavailable",
+        "head_commit": "",
+        "queried_at": queried_at,
+        "authenticated_actor": "",
+        "query_transport": "github-auth.sh/gh-graphql",
+        "query_error": "",
+    }
+    helper = github_auth_helper(repo)
+    if not helper.is_file():
+        base["query_error"] = f"authenticated GitHub helper not found: {helper}"
+        return base
+    query = (
+        "query($owner:String!,$name:String!,$number:Int!){"
+        "viewer{login} repository(owner:$owner,name:$name){"
+        "pullRequest(number:$number){url headRefOid}}}"
+    )
+    proc = subprocess.run(
+        [
+            str(helper),
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"query={query}",
+            "-F",
+            f"owner={pr_identity['owner']}",
+            "-F",
+            f"name={pr_identity['repo']}",
+            "-F",
+            f"number={pr_identity['pr_number']}",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        base["query_error"] = stable_subprocess_error(proc)
+        return base
+    try:
+        payload = json.loads(proc.stdout)
+        data = payload["data"]
+        actor = data["viewer"]["login"]
+        pull = data["repository"]["pullRequest"]
+        head = pull["headRefOid"]
+        returned_identity = parse_github_pr_url(pull["url"])
+    except (KeyError, TypeError, json.JSONDecodeError):
+        base["query_status"] = "malformed"
+        base["query_error"] = "authenticated GitHub response did not contain PR head provenance"
+        return base
+    if (
+        not isinstance(actor, str)
+        or not actor.strip()
+        or not isinstance(head, str)
+        or not is_full_sha(head)
+        or returned_identity != pr_identity
+    ):
+        base["query_status"] = "malformed"
+        base["query_error"] = "authenticated GitHub response contained malformed or mismatched PR identity"
+        return base
+    base.update(
+        {
+            "query_status": "authenticated",
+            "head_commit": head,
+            "authenticated_actor": actor.strip(),
+        }
+    )
+    return base
+
+
+def fetch_authoritative_pr_head(
+    repo: Path,
+    pr_identity: dict[str, Any],
+    pr_query: dict[str, Any],
+) -> str:
+    expected_repository = pr_identity["repository"]
+    remote_repository = origin_repository(repo)
+    if not remote_repository:
+        raise ExactHeadResolutionError(
+            "exact_head_unavailable",
+            "origin is unavailable; authenticated PR head was not replaced by a local ref",
+        )
+    if remote_repository.lower() != expected_repository.lower():
+        raise ExactHeadResolutionError(
+            "job_pr_mismatch",
+            f"origin repository {remote_repository} does not match PR repository {expected_repository}",
+        )
+    expected_head = pr_query["head_commit"]
+    proc = run_authenticated_fetch(repo, f"refs/pull/{pr_identity['pr_number']}/head")
+    if proc.returncode != 0:
+        raise ExactHeadResolutionError(
+            "exact_head_unavailable",
+            f"authenticated PR-head fetch failed: {stable_subprocess_error(proc)}",
+        )
+    fetched_head = rev_parse(repo, "FETCH_HEAD")
+    if not is_full_sha(fetched_head):
+        raise ExactHeadResolutionError(
+            "exact_head_unavailable",
+            "authenticated PR-head fetch did not produce a full commit SHA",
+        )
+    if fetched_head != expected_head:
+        raise ExactHeadResolutionError(
+            "exact_head_mismatch",
+            f"authenticated query head {expected_head} differs from fetched PR head {fetched_head}",
+        )
+    return fetched_head
+
+
+def run_authenticated_fetch(repo: Path, ref: str) -> subprocess.CompletedProcess[str]:
+    helper = github_auth_helper(repo)
+    if not helper.is_file():
+        return subprocess.CompletedProcess(
+            args=[str(helper), "git", "fetch"],
+            returncode=127,
+            stdout="",
+            stderr=f"authenticated GitHub helper not found: {helper}",
+        )
+    return subprocess.run(
+        [str(helper), "git", "fetch", "--no-tags", "--depth=1", "origin", ref],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=repo,
+    )
+
+
+def github_auth_helper(repo: Path) -> Path:
+    team_root = os.environ.get("AGENT_TEAM_ROOT")
+    if team_root:
+        return Path(team_root) / "skills" / "github" / "scripts" / "github-auth.sh"
+    return repo / ".agent_team" / "skills" / "github" / "scripts" / "github-auth.sh"
+
+
+def origin_repository(repo: Path) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "remote", "get-url", "origin"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return ""
+    raw = proc.stdout.strip()
+    patterns = (
+        r"^https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$",
+        r"^git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$",
+        r"^ssh://git@github\.com/([^/]+)/([^/]+?)(?:\.git)?$",
+    )
+    for pattern in patterns:
+        match = re.match(pattern, raw)
+        if match:
+            return f"{match.group(1)}/{match.group(2)}"
+    return ""
+
+
+def stable_subprocess_error(proc: subprocess.CompletedProcess[str]) -> str:
+    return (last_line(proc.stderr) or last_line(proc.stdout) or f"exit {proc.returncode}")[:300]
+
+
+def is_full_sha(value: Any) -> bool:
+    return isinstance(value, str) and bool(FULL_SHA_RE.fullmatch(value))
 
 
 def rev_parse(repo: Path, ref: str) -> str:
@@ -903,6 +1256,313 @@ def complete_step(job_id: str, pipeline_step: str, repo: Path, status: str, summ
         raise SystemExit(message)
 
 
+def exact_head_decision(
+    job_id: str,
+    pipeline: str,
+    pipeline_step: str,
+    pr_identity: dict[str, Any],
+    resolution_query: dict[str, Any],
+    write_query: dict[str, Any],
+    checkout_commit: str,
+    evidence_commit: str,
+) -> dict[str, Any]:
+    query = write_query
+    if query["query_status"] != "authenticated":
+        return make_exact_head_attestation(
+            job_id,
+            pipeline,
+            pipeline_step,
+            pr_identity,
+            resolution_query,
+            query,
+            evidence_commit,
+            "unknown",
+            "block_infra",
+            "exact_head_unavailable",
+            "infra_stop",
+        )
+    if not evidence_commit:
+        return make_exact_head_attestation(
+            job_id,
+            pipeline,
+            pipeline_step,
+            pr_identity,
+            resolution_query,
+            query,
+            evidence_commit,
+            "unknown",
+            "block_infra",
+            "evidence_missing",
+            "infra_stop",
+        )
+    if not is_full_sha(checkout_commit) or not is_full_sha(evidence_commit):
+        return make_exact_head_attestation(
+            job_id,
+            pipeline,
+            pipeline_step,
+            pr_identity,
+            resolution_query,
+            query,
+            evidence_commit,
+            "unknown",
+            "block_infra",
+            "evidence_malformed",
+            "infra_stop",
+        )
+    if checkout_commit != evidence_commit or evidence_commit != query["head_commit"]:
+        return make_exact_head_attestation(
+            job_id,
+            pipeline,
+            pipeline_step,
+            pr_identity,
+            resolution_query,
+            query,
+            evidence_commit,
+            "unequal",
+            "block_infra",
+            "exact_head_mismatch",
+            "infra_stop",
+        )
+    return make_exact_head_attestation(
+        job_id,
+        pipeline,
+        pipeline_step,
+        pr_identity,
+        resolution_query,
+        query,
+        evidence_commit,
+        "equal",
+        "dispatch",
+        "exact_head_equal",
+        "not_dispatched",
+    )
+
+
+def make_exact_head_attestation(
+    job_id: str,
+    pipeline: str,
+    pipeline_step: str,
+    pr_identity: dict[str, Any] | None,
+    resolution_query: dict[str, Any],
+    decision_query: dict[str, Any],
+    evidence_commit: str,
+    equality: str,
+    disposition: str,
+    reason: str,
+    review_phase: str,
+) -> dict[str, Any]:
+    identity = pr_identity or {
+        "repository": decision_query.get("repository", ""),
+        "pr_number": decision_query.get("pr_number", 0),
+        "pr_url": decision_query.get("pr_url", ""),
+    }
+    return {
+        "schema_version": EXACT_HEAD_SCHEMA_VERSION,
+        "job_id": job_id,
+        "pipeline": pipeline,
+        "step": pipeline_step,
+        "repository": identity["repository"],
+        "pr_number": identity["pr_number"],
+        "pr_url": identity["pr_url"],
+        "evidence_path": "",
+        "evidence_sha256": "",
+        "evidence_commit": evidence_commit,
+        "github_head_commit": decision_query.get("head_commit", ""),
+        "queried_at": decision_query.get("queried_at", ""),
+        "authenticated_actor": decision_query.get("authenticated_actor", ""),
+        "query_transport": decision_query.get("query_transport", ""),
+        "query_status": decision_query.get("query_status", "malformed"),
+        "query_error": decision_query.get("query_error", ""),
+        "equality": equality,
+        "disposition": disposition,
+        "reason": reason,
+        "review_phase": review_phase,
+        "linked_dispatch_id": "",
+        "resolution_query": resolution_query,
+    }
+
+
+def exact_head_gate_result(attestation: dict[str, Any]) -> dict[str, Any]:
+    passed = attestation["disposition"] == "dispatch"
+    now = utc_now()
+    result = {
+        "name": "exact-head",
+        "command": "authenticated GitHub PR head == checkout commit == evidence commit",
+        "status": "pass" if passed else "fail",
+        "exit_code": 0 if passed else 1,
+        "started_at": attestation["queried_at"] or now,
+        "finished_at": now,
+        "duration_ms": 0,
+        "log_path": "",
+        "signature": "" if passed else attestation["reason"],
+    }
+    if not passed:
+        result["class"] = "infra"
+    return result
+
+
+def write_preflight_exact_head_failure(
+    args: argparse.Namespace,
+    repo: Path,
+    evidence_dir: Path,
+    job_id: str,
+    pipeline_step: str,
+    branch: str,
+    worker_worktree: str,
+    pr_url: str,
+    job_data: dict[str, Any],
+    warnings: list[str],
+    resolution_query: dict[str, Any],
+    pr_identity: dict[str, Any] | None,
+    reason: str,
+) -> int:
+    pipeline = os.environ.get("AGENT_TEAM_PIPELINE") or value_ci(job_data, "pipeline") or ""
+    warnings.append(f"exact-head infrastructure stop: {reason}")
+    attestation = make_exact_head_attestation(
+        job_id,
+        pipeline,
+        pipeline_step,
+        pr_identity,
+        resolution_query,
+        resolution_query,
+        "",
+        "unknown",
+        "block_infra",
+        reason,
+        "infra_stop",
+    )
+    result = exact_head_gate_result(attestation)
+    results = [result]
+    summary = summarize(job_id, "fail", results)
+    now = utc_now()
+    evidence = {
+        "schema_version": SCHEMA_VERSION,
+        "job_id": job_id,
+        "pipeline": pipeline,
+        "pipeline_step": pipeline_step,
+        "status": "fail",
+        "summary": summary,
+        "started_at": now,
+        "finished_at": now,
+        "repo": str(repo),
+        "source": {
+            "branch": branch,
+            "commit": "",
+            "worker_worktree": worker_worktree,
+            "pr": pr_url,
+            "pr_head_resolution": resolution_query,
+        },
+        "evidence_dir": str(evidence_dir),
+        "gates": results,
+        "warnings": warnings,
+    }
+    artifact_name = safe_name(job_id or "exact-head-failure")
+    evidence_path = evidence_dir / f"{artifact_name}.json"
+    summary_path = evidence_dir / f"{artifact_name}.summary.md"
+    attestation_path = evidence_dir / f"{artifact_name}.exact-head.json"
+    evidence["exact_head_attestation"] = relpath(attestation_path, repo)
+    if not args.no_record_gates and job_id:
+        record_gate_results(job_id, repo, results, warnings)
+        evidence["warnings"] = warnings
+    write_evidence_bundle(
+        repo,
+        evidence_path,
+        summary_path,
+        attestation_path,
+        evidence,
+        attestation,
+    )
+    print(f"verify: wrote exact-head infrastructure evidence {evidence_path}", file=sys.stderr)
+    if args.complete_step:
+        complete_step(job_id, pipeline_step, repo, "fail", summary, warnings)
+    print(summary, flush=True)
+    return 1
+
+
+def write_evidence_bundle(
+    repo: Path,
+    evidence_path: Path,
+    summary_path: Path,
+    attestation_path: Path,
+    evidence: dict[str, Any],
+    attestation: dict[str, Any],
+) -> None:
+    evidence_bytes = json_bytes(evidence)
+    attestation["evidence_path"] = relpath(evidence_path, repo)
+    attestation["evidence_sha256"] = hashlib.sha256(evidence_bytes).hexdigest()
+    validate_exact_head_attestation(attestation)
+    evidence_tmp = evidence_path.with_suffix(evidence_path.suffix + ".tmp")
+    attestation_tmp = attestation_path.with_suffix(attestation_path.suffix + ".tmp")
+    evidence_tmp.write_bytes(evidence_bytes)
+    attestation_tmp.write_bytes(json_bytes(attestation))
+    attestation_tmp.replace(attestation_path)
+    evidence_tmp.replace(evidence_path)
+    write_summary(summary_path, evidence)
+
+
+def validate_exact_head_attestation(attestation: dict[str, Any]) -> None:
+    if attestation.get("schema_version") != EXACT_HEAD_SCHEMA_VERSION:
+        raise ValueError("invalid exact-head schema_version")
+    query_status = attestation.get("query_status")
+    equality = attestation.get("equality")
+    disposition = attestation.get("disposition")
+    reason = attestation.get("reason")
+    review_phase = attestation.get("review_phase")
+    if query_status not in QUERY_STATUSES:
+        raise ValueError("invalid exact-head query_status")
+    if equality not in EQUALITY_RESULTS:
+        raise ValueError("invalid exact-head equality")
+    if disposition not in DISPOSITIONS:
+        raise ValueError("invalid exact-head disposition")
+    if reason not in EXACT_HEAD_REASONS:
+        raise ValueError("invalid exact-head reason")
+    if review_phase not in REVIEW_PHASES:
+        raise ValueError("invalid exact-head review_phase")
+    decision = (query_status, equality, disposition, reason, review_phase)
+    if decision not in VALID_EXACT_HEAD_DECISIONS:
+        raise ValueError(f"invalid exact-head decision combination: {decision}")
+    if not isinstance(attestation.get("evidence_path"), str) or not attestation["evidence_path"]:
+        raise ValueError("exact-head evidence_path is required")
+    if not EVIDENCE_DIGEST_RE.fullmatch(str(attestation.get("evidence_sha256", ""))):
+        raise ValueError("exact-head evidence_sha256 must be a full SHA-256 digest")
+    if not isinstance(attestation.get("queried_at"), str) or not attestation["queried_at"]:
+        raise ValueError("exact-head queried_at is required")
+    if not isinstance(attestation.get("query_transport"), str) or not attestation["query_transport"]:
+        raise ValueError("exact-head query_transport is required")
+    if reason != "job_pr_mismatch":
+        if not isinstance(attestation.get("repository"), str) or "/" not in attestation["repository"]:
+            raise ValueError("exact-head repository identity is required")
+        if not isinstance(attestation.get("pr_number"), int) or attestation["pr_number"] <= 0:
+            raise ValueError("exact-head pr_number is required")
+        if parse_github_pr_url(str(attestation.get("pr_url", ""))) is None:
+            raise ValueError("exact-head pr_url must be canonical")
+    if query_status == "authenticated":
+        if not is_full_sha(attestation.get("github_head_commit")):
+            raise ValueError("authenticated exact-head query requires a full GitHub head SHA")
+        if not str(attestation.get("authenticated_actor", "")).strip():
+            raise ValueError("authenticated exact-head query requires an actor")
+    if equality in {"equal", "unequal"}:
+        if not is_full_sha(attestation.get("evidence_commit")):
+            raise ValueError("known exact-head equality requires a full evidence SHA")
+    if equality == "equal" and attestation["evidence_commit"] != attestation["github_head_commit"]:
+        raise ValueError("equal exact-head decision contains unequal SHAs")
+    if equality == "unequal" and attestation["evidence_commit"] == attestation["github_head_commit"]:
+        raise ValueError("unequal exact-head decision contains equal SHAs")
+    if disposition == "dispatch" and attestation.get("linked_dispatch_id"):
+        raise ValueError("evidence-write attestation cannot claim a later dispatch id")
+    validate_query_provenance(attestation.get("resolution_query"))
+
+
+def validate_query_provenance(query: Any) -> None:
+    if not isinstance(query, dict) or query.get("query_status") not in QUERY_STATUSES:
+        raise ValueError("invalid exact-head resolution query provenance")
+    if not str(query.get("queried_at", "")).strip() or not str(query.get("query_transport", "")).strip():
+        raise ValueError("incomplete exact-head resolution query provenance")
+    if query["query_status"] == "authenticated":
+        if not is_full_sha(query.get("head_commit")) or not str(query.get("authenticated_actor", "")).strip():
+            raise ValueError("authenticated resolution query has incomplete identity")
+
+
 def remove_temp_worktree(repo: Path, checkout: Path, warnings: list[str]) -> None:
     proc = subprocess.run(
         ["git", "-C", str(repo), "worktree", "remove", "--force", str(checkout)],
@@ -923,8 +1583,12 @@ def summarize(job_id: str, status: str, results: list[dict[str, Any]]) -> str:
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.write_bytes(json_bytes(data))
     tmp.replace(path)
+
+
+def json_bytes(data: dict[str, Any]) -> bytes:
+    return (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
 def write_summary(path: Path, evidence: dict[str, Any]) -> None:
