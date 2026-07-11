@@ -8,12 +8,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/agent-team-project/agent-team/internal/buildinfo"
 	"github.com/agent-team-project/agent-team/internal/daemon"
+	"github.com/agent-team-project/agent-team/internal/origin"
 	"github.com/agent-team-project/agent-team/internal/runtimebin"
 )
 
@@ -24,45 +26,9 @@ func TestDoctor_FailsOnEmptyLinearKeys(t *testing.T) {
 	// Wipe the resolved Linear keys to simulate a freshly-init'd repo where
 	// the user hasn't yet supplied real values.
 	cfgPath := filepath.Join(tmp, ".agent_team", "config.toml")
-	if err := os.WriteFile(cfgPath, []byte(`[team]
-pm_tool = "linear"
-
-[linear]
-team_id = ""
-ticket_prefix = ""
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cmd := NewRootCmd()
-	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp})
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error: empty Linear team_id/ticket_prefix")
-	}
-	var ec ExitCode
-	if !errors.As(err, &ec) || int(ec) != 1 {
-		t.Errorf("expected exit 1, got %v", err)
-	}
-	if !strings.Contains(errOut.String(), `[linear].team_id is required when [team].pm_tool = "linear"`) {
-		t.Errorf("missing team_id complaint: %s", errOut.String())
-	}
-}
-
-func TestDoctor_FailsOnEmptyLinearKeysFromPMProvider(t *testing.T) {
-	tmp := t.TempDir()
-	initInto(t, tmp)
-
-	cfgPath := filepath.Join(tmp, ".agent_team", "config.toml")
 	if err := os.WriteFile(cfgPath, []byte(`[pm]
 provider = "linear"
 
-[team]
-pm_tool = "none"
-
 [linear]
 team_id = ""
 ticket_prefix = ""
@@ -74,7 +40,7 @@ ticket_prefix = ""
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error: empty Linear team_id/ticket_prefix")
@@ -107,7 +73,7 @@ repo = ""
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error: empty GitHub owner/repo")
@@ -144,7 +110,7 @@ api_key = "do-not-print-this-secret"
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected config secret check to fail")
@@ -190,7 +156,7 @@ endpoint = "https://discord.com/api/webhooks/1234567890/abcdefghijklmnopqrstuvwx
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected config secret literal check to fail")
@@ -278,7 +244,7 @@ endpoint = "%s"
 			out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 			cmd.SetOut(out)
 			cmd.SetErr(errOut)
-			cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+			cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 			err := cmd.Execute()
 			if tt.wantOK {
 				if err != nil {
@@ -346,7 +312,7 @@ authorization = "${OTEL_AUTHORIZATION_HEADER}"
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor should allow non-secret token terms and env references: %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
 	}
@@ -382,7 +348,7 @@ repo = ""
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--commands"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--commands"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor --commands with blank GitHub config to fail")
@@ -405,6 +371,61 @@ repo = ""
 	}
 }
 
+func TestDoctorCommandsProjectIDFixUsesCanonicalRepoSelector(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+
+	teamDir := filepath.Join(tmp, ".agent_team")
+	projectID, err := origin.ProjectID(teamDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projectID == "" {
+		t.Fatal("init did not generate [project].id")
+	}
+	cfgPath := filepath.Join(teamDir, "config.toml")
+	cfg, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withEmptyProjectID := strings.Replace(string(cfg), `id = "`+projectID+`"`, `id = ""`, 1)
+	if withEmptyProjectID == string(cfg) {
+		t.Fatalf("config.toml missing generated project id %q:\n%s", projectID, cfg)
+	}
+	if err := os.WriteFile(cfgPath, []byte(withEmptyProjectID), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--commands"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("doctor --commands with empty project id: %v\nstderr: %s", err, errOut.String())
+	}
+	want := scopedOperatorAction("agent-team doctor --fix", operatorCommandScope{Repo: tmp, Set: true})
+	commands := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if !slices.Contains(commands, want) {
+		t.Fatalf("doctor --commands output = %q, want command %q", out.String(), want)
+	}
+	if strings.Contains(out.String(), "doctor --target") {
+		t.Fatalf("doctor --commands retained removed repo selector: %q", out.String())
+	}
+
+	fix := NewRootCmd()
+	fixOut, fixErrOut := &bytes.Buffer{}, &bytes.Buffer{}
+	fix.SetOut(fixOut)
+	fix.SetErr(fixErrOut)
+	fix.SetArgs([]string{"--repo", tmp, "doctor", "--fix"})
+	if err := fix.Execute(); err != nil {
+		t.Fatalf("canonical project-id remediation failed: %v\nstdout: %s\nstderr: %s", err, fixOut.String(), fixErrOut.String())
+	}
+	if got, err := origin.ProjectID(teamDir); err != nil || got == "" {
+		t.Fatalf("canonical remediation project id = %q, err = %v", got, err)
+	}
+}
+
 func TestDoctor_PassesWithFilledLinearKeys(t *testing.T) {
 	tmp := t.TempDir()
 	// initInto supplies linear.team_id and linear.ticket_prefix via --set, so
@@ -415,7 +436,7 @@ func TestDoctor_PassesWithFilledLinearKeys(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor failed unexpectedly: %v\nstderr: %s", err, errOut.String())
 	}
@@ -454,7 +475,7 @@ func TestDoctorWarnsOnDaemonBuildMismatch(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor --json with build mismatch should warn, not fail: %v\nstderr=%s", err, errOut.String())
 	}
@@ -473,7 +494,7 @@ func TestDoctorWarnsOnDaemonBuildMismatch(t *testing.T) {
 	}
 }
 
-func TestDoctor_RepoFlagOverridesTarget(t *testing.T) {
+func TestDoctor_UsesGlobalRepoFlag(t *testing.T) {
 	t.Setenv(runtimebin.EnvRuntime, "")
 	t.Setenv(runtimebin.EnvBinary, "")
 	withRuntimeLookPath(t, func(bin string) (string, error) {
@@ -485,21 +506,16 @@ func TestDoctor_RepoFlagOverridesTarget(t *testing.T) {
 
 	tmp := t.TempDir()
 	initInto(t, tmp)
-	badTarget := t.TempDir()
-
 	cmd := NewRootCmd()
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"--repo", tmp, "doctor", "--target", badTarget})
+	cmd.SetArgs([]string{"--repo", tmp, "doctor"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor with --repo override: %v\nstderr: %s", err, errOut.String())
 	}
 	if !strings.Contains(out.String(), "agent-team doctor: OK") {
 		t.Fatalf("expected OK output, got: %s", out.String())
-	}
-	if strings.Contains(errOut.String(), badTarget) {
-		t.Fatalf("doctor inspected legacy --target despite --repo override: %s", errOut.String())
 	}
 }
 
@@ -558,7 +574,7 @@ func TestDoctor_WarnsWhenAgentTeamdMissing(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("missing agent-teamd should warn, not fail: %v\nstderr: %s", err, errOut.String())
 	}
@@ -584,7 +600,7 @@ func TestDoctorStrictDaemonFailsWhenAgentTeamdMissing(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--strict-daemon", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--strict-daemon", "--repo", tmp})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected strict daemon check to fail")
@@ -621,7 +637,7 @@ func TestDoctor_WarnsWhenRuntimeBinaryMissing(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("missing runtime should warn, not fail: %v\nstderr: %s", err, errOut.String())
 	}
@@ -650,7 +666,7 @@ func TestDoctorRuntimeFlagOverridesInvalidEnvRuntime(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--runtime", "codex", "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--runtime", "codex", "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor --runtime codex should ignore invalid env runtime: %v\nstderr: %s", err, errOut.String())
 	}
@@ -677,7 +693,7 @@ func TestDoctorJSONReportsWarnings(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor --json warning should not fail: %v\nstderr: %s", err, errOut.String())
 	}
@@ -701,7 +717,7 @@ func TestDoctorCanaryRequiresDaemon(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--canary", "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--canary", "--json"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor --canary to fail when daemon is down")
@@ -754,7 +770,7 @@ func TestDoctorCanaryCodexSuccessCleansState(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--canary", "worker", "--runtime", "codex", "--runtime-bin", "codex-test", "--canary-timeout", "2s", "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--canary", "worker", "--runtime", "codex", "--runtime-bin", "codex-test", "--canary-timeout", "2s", "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor canary codex success: %v\nstdout=%s\nstderr=%s", err, out.String(), errOut.String())
 	}
@@ -813,7 +829,7 @@ func TestDoctorCanaryClassifiesMissingDaemonRuntimeBinary(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--canary", "--runtime", "codex", "--runtime-bin", "missing-codex-doctor-test", "--canary-timeout", "2s", "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--canary", "--runtime", "codex", "--runtime-bin", "missing-codex-doctor-test", "--canary-timeout", "2s", "--json"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected missing daemon runtime binary to fail canary")
@@ -851,7 +867,7 @@ func TestDoctorFormatReportsWarnings(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--format", "{{.OK}} {{len .Problems}}"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--format", "{{.OK}} {{len .Problems}}"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor --format warning should not fail: %v\nstderr: %s", err, errOut.String())
 	}
@@ -877,7 +893,7 @@ func TestDoctorStrictRuntimeFailsWhenRuntimeBinaryMissing(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--strict-runtime", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--strict-runtime", "--repo", tmp})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected strict runtime check to fail")
@@ -919,7 +935,7 @@ func TestDoctorStrictEnablesDaemonAndRuntimeChecks(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--strict", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--strict", "--repo", tmp, "--json"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected aggregate strict doctor check to fail")
@@ -998,7 +1014,7 @@ pipelines = ["ticket_to_pr"]
 	nonStrictOut, nonStrictErr := &bytes.Buffer{}, &bytes.Buffer{}
 	nonStrict.SetOut(nonStrictOut)
 	nonStrict.SetErr(nonStrictErr)
-	nonStrict.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	nonStrict.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	if err := nonStrict.Execute(); err != nil {
 		t.Fatalf("doctor warning-only runtime defaults should not fail: %v\nstderr=%s", err, nonStrictErr.String())
 	}
@@ -1026,7 +1042,7 @@ pipelines = ["ticket_to_pr"]
 	strictOut, strictErr := &bytes.Buffer{}, &bytes.Buffer{}
 	strict.SetOut(strictOut)
 	strict.SetErr(strictErr)
-	strict.SetArgs([]string{"doctor", "--target", tmp, "--strict-runtime", "--json"})
+	strict.SetArgs([]string{"doctor", "--repo", tmp, "--strict-runtime", "--json"})
 	err := strict.Execute()
 	if err == nil {
 		t.Fatal("expected strict doctor to fail on missing step runtime")
@@ -1101,7 +1117,7 @@ Run Codex work.
 	nonStrictOut, nonStrictErr := &bytes.Buffer{}, &bytes.Buffer{}
 	nonStrict.SetOut(nonStrictOut)
 	nonStrict.SetErr(nonStrictErr)
-	nonStrict.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	nonStrict.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	if err := nonStrict.Execute(); err != nil {
 		t.Fatalf("doctor warning-only agent runtime defaults should not fail: %v\nstderr=%s", err, nonStrictErr.String())
 	}
@@ -1125,7 +1141,7 @@ Run Codex work.
 	strictOut, strictErr := &bytes.Buffer{}, &bytes.Buffer{}
 	strict.SetOut(strictOut)
 	strict.SetErr(strictErr)
-	strict.SetArgs([]string{"doctor", "--target", tmp, "--strict-runtime", "--json"})
+	strict.SetArgs([]string{"doctor", "--repo", tmp, "--strict-runtime", "--json"})
 	err := strict.Execute()
 	if err == nil {
 		t.Fatal("expected strict doctor to fail on missing agent runtime")
@@ -1161,7 +1177,7 @@ func TestDoctorFailsOnInvalidRuntimeEnv(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected invalid runtime to fail")
@@ -1185,7 +1201,7 @@ func TestDoctorJSONReportsProblems(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor --json with invalid runtime to fail")
@@ -1225,7 +1241,7 @@ status = "queued"
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--commands"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--commands"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor --commands with invalid job to fail")
@@ -1254,7 +1270,7 @@ func TestDoctorCommandsReportsMissingTeamAction(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--commands"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--commands"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor --commands without .agent_team to fail")
@@ -1285,7 +1301,7 @@ func TestDoctorCommandsReportsDaemonStartAndSyncActions(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--commands"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--commands"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor --commands daemon start/sync actions: %v\nstderr=%s", err, errOut.String())
 	}
@@ -1317,7 +1333,7 @@ func TestDoctorCommandsReportsDaemonNotReadyActions(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--commands"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--commands"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor --commands daemon not-ready actions: %v\nstderr=%s", err, errOut.String())
 	}
@@ -1366,7 +1382,7 @@ after = ["implement"]
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--commands"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--commands"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor --commands with invalid pipeline to fail")
@@ -1423,7 +1439,7 @@ pipelines = ["ticket_to_pr"]
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--commands"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--commands"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor --commands with invalid team topology to fail")
@@ -1453,7 +1469,7 @@ func TestDoctorFormatReportsProblems(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--format", "{{.OK}} {{len .Problems}}"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--format", "{{.OK}} {{len .Problems}}"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor --format with invalid runtime to fail")
@@ -1518,7 +1534,7 @@ func TestDoctorIncludesIntakeLedgerProblems(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor to fail on corrupt intake ledger")
@@ -1555,7 +1571,7 @@ func TestDoctorIncludesQueueProblems(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor to fail on corrupt queue file")
@@ -1592,7 +1608,7 @@ func TestDoctorIncludesOutboxProblems(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor to fail on corrupt outbox file")
@@ -1632,7 +1648,7 @@ func TestDoctorWarnsOnQueueQuarantine(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor queue quarantine warning should not fail: %v\nstderr=%s", err, errOut.String())
 	}
@@ -1664,7 +1680,7 @@ updated_at = 2026-06-27T23:25:00Z
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor job quarantine warning should not fail: %v\nstderr=%s", err, errOut.String())
 	}
@@ -1699,7 +1715,7 @@ func TestDoctorWarnsOnOutboxQuarantine(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor outbox quarantine warning should not fail: %v\nstderr=%s", err, errOut.String())
 	}
@@ -1747,7 +1763,7 @@ after = ["implement"]
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor to fail on pipeline dependency cycle")
@@ -1805,7 +1821,7 @@ pipelines = ["ticket_to_pr"]
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected doctor to fail on team topology leak")
@@ -1832,12 +1848,12 @@ func TestDoctor_NoTeamDir(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error when .agent_team/ missing")
 	}
-	for _, want := range []string{"--repo/--target", ".agent_team", "cwd ancestors", "AGENT_TEAM_ROOT"} {
+	for _, want := range []string{"--repo <repo>", ".agent_team", "cwd ancestors", "AGENT_TEAM_ROOT"} {
 		if !strings.Contains(errOut.String(), want) {
 			t.Errorf("missing resolver hint %q: %s", want, errOut.String())
 		}
@@ -1856,7 +1872,7 @@ func TestDoctor_BadTOML(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error on invalid TOML")
@@ -1877,7 +1893,7 @@ func TestDoctor_WarnsWhenTemplateLockMissing(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("missing lock should warn, not fail: %v\nstderr: %s", err, errOut.String())
 	}
@@ -1914,7 +1930,7 @@ func TestDoctor_SkipsMissingTemplateLockWarningForLocalTemplateSymlinks(t *testi
 			out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 			cmd.SetOut(out)
 			cmd.SetErr(errOut)
-			cmd.SetArgs([]string{"doctor", "--target", tmp, "--json"})
+			cmd.SetArgs([]string{"doctor", "--repo", tmp, "--json"})
 			if err := cmd.Execute(); err != nil {
 				t.Fatalf("doctor failed unexpectedly: %v\nstderr: %s", err, errOut.String())
 			}
@@ -1947,7 +1963,7 @@ content_hash = "not-sha256"
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--repo", tmp})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected invalid lock to fail")
@@ -1989,7 +2005,7 @@ func TestDoctorStrictTemplateDetectsLockDrift(t *testing.T) {
 	nonStrict := NewRootCmd()
 	nonStrict.SetOut(&bytes.Buffer{})
 	nonStrict.SetErr(&bytes.Buffer{})
-	nonStrict.SetArgs([]string{"doctor", "--target", tmp})
+	nonStrict.SetArgs([]string{"doctor", "--repo", tmp})
 	if err := nonStrict.Execute(); err != nil {
 		t.Fatalf("non-strict doctor should not fail on drift: %v", err)
 	}
@@ -1998,7 +2014,7 @@ func TestDoctorStrictTemplateDetectsLockDrift(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)
-	cmd.SetArgs([]string{"doctor", "--strict-template", "--target", tmp})
+	cmd.SetArgs([]string{"doctor", "--strict-template", "--repo", tmp})
 	err = cmd.Execute()
 	if err == nil {
 		t.Fatal("expected strict template drift to fail")
