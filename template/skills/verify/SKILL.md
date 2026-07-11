@@ -87,13 +87,19 @@ After a gate fails, the runner resolves the remote default branch through
 `refs/remotes/origin/HEAD`, computes its merge-base with the worker commit, and
 reruns only that failed gate in a detached checkout of the merge-base. For a
 plain `go test <packages>` gate, the rerun is narrowed to the failed packages
-and anchored top-level test names parsed from the head log. A non-zero base
-run counts as reproduction only when at least one of those named tests fails
-again, so a package missing at the base cannot become a false infra result.
-For every other failed gate (including a Go gate with no parsed test name), the
-base run counts as reproduction only when its exit code and normalized failure
-signature exactly match the head run. A missing command or file at the base
-therefore cannot turn a different head-only failure into `base-broken`.
+and anchored top-level test names parsed from the head log. Go failures carry
+package/test identities, and a non-zero base run counts as reproduction only
+when every head identity appears at the merge-base. If any head failure lacks
+a package/test identity, the comparison declines to classify it as reproduced.
+This prevents an old failing test from hiding a new head-only regression.
+
+For other runners, complete `unittest` or `pytest` failure identities use the
+same head-subset rule. If no complete structured identities are available, the
+runner requires the same exit code and a non-empty SHA-256 fingerprint of the
+entire ANSI-stripped output. It never compares only the final output line, so
+distinct failures with the same generic footer do not become `base-broken`.
+Missing or empty output, a missing command or file at the base, and any other
+ambiguous comparison preserve the head classification.
 
 - If the scoped gate also fails at the merge-base, the result records
   `class: infra` and `signature: base-broken`. The pipeline's semantic
@@ -106,6 +112,6 @@ therefore cannot turn a different head-only failure into `base-broken`.
 
 Every failed gate receives a `base_comparison` object in the JSON evidence. A
 completed comparison includes the default-branch ref, merge-base commit,
-scoped command, reproduction basis, head/base exit statuses and signatures,
-duration, and base log path. Passing gate records are unchanged and do not
-trigger a base checkout.
+scoped command, reproduction basis, head/base exit statuses, structured
+failure identities or full-output fingerprints, duration, and base log path.
+Passing gate records are unchanged and do not trigger a base checkout.

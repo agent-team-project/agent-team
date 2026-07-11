@@ -128,7 +128,7 @@ class VerifyBaseComparisonTest(unittest.TestCase):
         self.assertNotIn("class", gate)
         self.assertEqual(gate["signature"], "OK")
         self.assertFalse(comparison["reproduced"])
-        self.assertEqual(comparison["reproduction_basis"], "exit-code-and-signature")
+        self.assertEqual(comparison["reproduction_basis"], "exit-code-and-full-output-fingerprint")
         self.assertEqual(comparison["head_exit_code"], 1)
         self.assertEqual(comparison["exit_code"], 2)
         self.assertNotEqual(comparison["signature"], gate["signature"])
@@ -159,6 +159,87 @@ class VerifyBaseComparisonTest(unittest.TestCase):
         self.assertEqual(
             command,
             "go test -run '^(?:TestAlpha|TestBeta)$' example.com/project/internal/daemon",
+        )
+
+    def test_go_test_requires_every_head_failure_at_merge_base(self) -> None:
+        (self.repo / "go.mod").write_text("module example.com/basebroken\n\ngo 1.22\n", encoding="utf-8")
+        test_file = self.repo / "base_broken_test.go"
+        test_file.write_text(
+            "package basebroken\n\n"
+            'import "testing"\n\n'
+            "func TestBaseBroken(t *testing.T) { t.Fatal(\"base-bug\") }\n",
+            encoding="utf-8",
+        )
+        self.git("add", "go.mod", "base_broken_test.go")
+        self.git("commit", "-m", "base has one failing test")
+        self.configure_origin_head()
+        test_file.write_text(
+            "package basebroken\n\n"
+            'import "testing"\n\n'
+            "func TestBaseBroken(t *testing.T) { t.Fatal(\"base-bug\") }\n"
+            "func TestHeadOnlyRegression(t *testing.T) { t.Fatal(\"head-regression\") }\n",
+            encoding="utf-8",
+        )
+        self.git("add", "base_broken_test.go")
+        self.git("commit", "-m", "add head-only regression")
+
+        evidence = self.run_verify(self.git("rev-parse", "HEAD"), "go test ./...")
+
+        gate = evidence["gates"][0]
+        comparison = gate["base_comparison"]
+        self.assertNotIn("class", gate)
+        self.assertNotEqual(gate["signature"], "base-broken")
+        self.assertFalse(comparison["reproduced"])
+        self.assertEqual(comparison["reproduction_basis"], "go-test-identity-subset")
+        self.assertEqual(
+            comparison["head_failure_identities"],
+            [
+                "go-test:example.com/basebroken:TestBaseBroken",
+                "go-test:example.com/basebroken:TestHeadOnlyRegression",
+            ],
+        )
+        self.assertEqual(
+            comparison["base_failure_identities"],
+            ["go-test:example.com/basebroken:TestBaseBroken"],
+        )
+
+    def test_generic_same_footer_with_distinct_failures_is_not_reproduced(self) -> None:
+        test_file = self.repo / "test_failure.py"
+        test_file.write_text(
+            "import unittest\n\n"
+            "class BaseFailure(unittest.TestCase):\n"
+            "    def test_base_behavior(self):\n"
+            "        self.fail(\"base-bug\")\n",
+            encoding="utf-8",
+        )
+        self.git("add", "test_failure.py")
+        self.git("commit", "-m", "base unittest failure")
+        self.configure_origin_head()
+        test_file.write_text(
+            "import unittest\n\n"
+            "class HeadFailure(unittest.TestCase):\n"
+            "    def test_head_only_behavior(self):\n"
+            "        self.fail(\"head-regression\")\n",
+            encoding="utf-8",
+        )
+        self.git("add", "test_failure.py")
+        self.git("commit", "-m", "replace with head-only unittest failure")
+
+        evidence = self.run_verify(self.git("rev-parse", "HEAD"), "python3 -m unittest -v")
+
+        gate = evidence["gates"][0]
+        comparison = gate["base_comparison"]
+        self.assertEqual(gate["signature"], "FAILED (failures=1)")
+        self.assertNotIn("class", gate)
+        self.assertFalse(comparison["reproduced"])
+        self.assertEqual(comparison["reproduction_basis"], "failure-identity-subset")
+        self.assertEqual(
+            comparison["head_failure_identities"],
+            ["unittest:test_failure.HeadFailure.test_head_only_behavior"],
+        )
+        self.assertEqual(
+            comparison["base_failure_identities"],
+            ["unittest:test_failure.BaseFailure.test_base_behavior"],
         )
 
 

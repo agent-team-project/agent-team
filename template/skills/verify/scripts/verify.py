@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -454,19 +455,45 @@ def compare_failed_gate(
     )
     base_status = "pass" if exit_code == 0 else "fail"
     print(f"verify: base comparison {base_status} {gate['name']} ({duration_ms}ms)", flush=True)
-    head_failed_tests = failed_go_test_names(head_log) if is_simple_go_test_command(gate["command"]) else []
-    base_failed_tests = failed_go_test_names(base_log) if head_failed_tests else []
     base_signature = "" if exit_code == 0 else failure_signature(exit_code, tail)
-    if head_failed_tests:
-        reproduced = exit_code != 0 and bool(set(head_failed_tests).intersection(base_failed_tests))
-        reproduction_basis = "failed-go-test-overlap"
-    else:
+    is_go_test = is_simple_go_test_command(gate["command"])
+    head_identities: list[str] = []
+    base_identities: list[str] = []
+    head_identities_complete = False
+    base_identities_complete = False
+    head_fingerprint = ""
+    base_fingerprint = ""
+    if is_go_test:
+        head_identities, head_identities_complete = go_failure_identities(head_log)
+        base_identities, base_identities_complete = go_failure_identities(base_log)
         reproduced = (
             exit_code != 0
             and exit_code == result["exit_code"]
-            and base_signature == result["signature"]
+            and head_identities_complete
+            and bool(head_identities)
+            and set(head_identities).issubset(base_identities)
         )
-        reproduction_basis = "exit-code-and-signature"
+        reproduction_basis = "go-test-identity-subset"
+    else:
+        head_identities, head_identities_complete = structured_failure_identities(head_log)
+        base_identities, base_identities_complete = structured_failure_identities(base_log)
+        if head_identities_complete and head_identities:
+            reproduced = (
+                exit_code != 0
+                and exit_code == result["exit_code"]
+                and set(head_identities).issubset(base_identities)
+            )
+            reproduction_basis = "failure-identity-subset"
+        else:
+            head_fingerprint = full_output_fingerprint(head_log)
+            base_fingerprint = full_output_fingerprint(base_log)
+            reproduced = (
+                exit_code != 0
+                and exit_code == result["exit_code"]
+                and bool(head_fingerprint)
+                and head_fingerprint == base_fingerprint
+            )
+            reproduction_basis = "exit-code-and-full-output-fingerprint"
     comparison = {
         "status": base_status,
         "reproduced": reproduced,
@@ -481,14 +508,24 @@ def compare_failed_gate(
         "log_path": relpath(base_log, repo),
         "signature": base_signature,
     }
-    if head_failed_tests:
-        comparison["head_failed_tests"] = head_failed_tests
-        comparison["base_failed_tests"] = base_failed_tests
+    comparison["head_failure_identities"] = head_identities
+    comparison["base_failure_identities"] = base_identities
+    comparison["head_failure_identities_complete"] = head_identities_complete
+    comparison["base_failure_identities_complete"] = base_identities_complete
+    if head_fingerprint or base_fingerprint:
+        comparison["head_output_fingerprint"] = head_fingerprint
+        comparison["base_output_fingerprint"] = base_fingerprint
     if exit_code != 0 and not reproduced:
-        if head_failed_tests:
-            comparison["reason"] = "the failed Go tests from the worker commit did not fail at the merge-base"
+        if is_go_test and not head_identities_complete:
+            comparison["reason"] = "the worker Go failure did not expose complete package/test identities"
+        elif reproduction_basis == "go-test-identity-subset":
+            comparison["reason"] = "one or more worker package/test failures did not reproduce at the merge-base"
+        elif reproduction_basis == "failure-identity-subset":
+            comparison["reason"] = "one or more worker failure identities did not reproduce at the merge-base"
+        elif not head_fingerprint:
+            comparison["reason"] = "the worker failure output did not expose a stable identity"
         else:
-            comparison["reason"] = "the merge-base failure fingerprint differs from the worker commit"
+            comparison["reason"] = "the merge-base full-output fingerprint differs from the worker commit"
     if reproduced:
         result["class"] = "infra"
         result["signature"] = "base-broken"
@@ -609,6 +646,86 @@ def failed_go_test_names_from_text(log: str) -> list[str]:
             for match in re.findall(r"^\s*--- FAIL: ([^\s(]+)", log, flags=re.MULTILINE)
         }
     )
+
+
+def go_failure_identities(log_path: Path) -> tuple[list[str], bool]:
+    try:
+        log = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [], False
+    return go_failure_identities_from_text(log)
+
+
+def go_failure_identities_from_text(log: str) -> tuple[list[str], bool]:
+    identities: set[str] = set()
+    pending_tests: set[str] = set()
+    saw_package_failure = False
+    complete = True
+    for line in log.splitlines():
+        test_match = re.match(r"^\s*--- FAIL: ([^\s(]+)", line)
+        if test_match:
+            pending_tests.add(test_match.group(1).split("/", 1)[0])
+            continue
+        package_match = re.match(r"^FAIL\s+(\S+)(?:\s+.*)?$", line)
+        if not package_match:
+            continue
+        saw_package_failure = True
+        package = package_match.group(1)
+        if not pending_tests:
+            complete = False
+            continue
+        identities.update(f"go-test:{package}:{test}" for test in pending_tests)
+        pending_tests.clear()
+    if pending_tests:
+        complete = False
+    return sorted(identities), saw_package_failure and complete and bool(identities)
+
+
+def structured_failure_identities(log_path: Path) -> tuple[list[str], bool]:
+    try:
+        log = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [], False
+
+    unittest_identities = {
+        f"unittest:{match}"
+        for match in re.findall(r"^(?:FAIL|ERROR):\s+\S+\s+\(([^)]+)\)\s*$", log, flags=re.MULTILINE)
+    }
+    unittest_footer = re.search(r"^FAILED \(([^)]*)\)\s*$", log, flags=re.MULTILINE)
+    if unittest_identities and unittest_footer:
+        counts = [
+            int(count)
+            for count in re.findall(r"(?:failures|errors)=(\d+)", unittest_footer.group(1))
+        ]
+        complete = bool(counts) and sum(counts) == len(unittest_identities)
+        return sorted(unittest_identities), complete
+
+    pytest_identities = {
+        f"pytest:{match}"
+        for match in re.findall(r"^FAILED\s+(\S+(?:::\S+)+)(?:\s+-.*)?$", log, flags=re.MULTILINE)
+    }
+    pytest_footer = re.search(r"=+\s+(\d+) failed(?:[,\s].*)?\s+=+", log)
+    if pytest_identities and pytest_footer:
+        return sorted(pytest_identities), int(pytest_footer.group(1)) == len(pytest_identities)
+
+    return [], False
+
+
+def full_output_fingerprint(log_path: Path) -> str:
+    try:
+        log = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    ansi_escape = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+    lines = [ansi_escape.sub("", line).rstrip() for line in log.splitlines()]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    normalized = "\n".join(lines)
+    if not normalized.strip():
+        return ""
+    return f"sha256:{hashlib.sha256(normalized.encode('utf-8')).hexdigest()}"
 
 
 def run_logged_command(
