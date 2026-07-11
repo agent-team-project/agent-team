@@ -949,6 +949,164 @@ schedules   = ["research-reconcile", "research-evidence-audit"]
 tokens_per_day = 100_000_000_000
 jobs_in_flight = 16
 
+# Dedicated terminal-interface unit. The embedded web dashboard is being
+# replaced cleanly; the first eligible slice is a spec/parity gate, and no
+# product implementation or web deletion may advance before that review lands.
+[instances.frontend-manager]
+agent         = "manager"
+ephemeral     = false
+brief         = true
+token_budget  = "100M"
+time_budget   = "2h"
+description   = "Persistent frontend conductor for the terminal-first human interface and same-epic web cutover."
+
+[[instances.frontend-manager.triggers]]
+event = "user_invocation"
+
+[[instances.frontend-manager.triggers]]
+event        = "agent.dispatch"
+match.target = "frontend-manager"
+
+[[instances.frontend-manager.triggers]]
+event      = "schedule"
+match.name = "frontend-reconcile"
+match.kind = "frontend_reconcile"
+
+[[instances.frontend-manager.triggers]]
+event        = "job.step_completed"
+match.target = "frontend-manager"
+
+[[instances.frontend-manager.triggers]]
+event          = "job.completed"
+match.pipeline = "frontend_ticket_to_pr"
+
+[[instances.frontend-manager.triggers]]
+event          = "deliverable.ready"
+match.pipeline = "frontend_ticket_to_pr"
+
+[instances.frontend-worker]
+agent         = "worker"
+ephemeral     = true
+replicas      = 4
+token_budget  = "60M"
+time_budget   = "60m"
+description   = "Terminal-interface worker. Implements one advisor-backed, acceptance-gated TUI slice in an isolated worktree."
+
+[[instances.frontend-worker.triggers]]
+event        = "agent.dispatch"
+match.target = "frontend-worker"
+
+[instances.frontend-verifier]
+agent         = "verifier"
+ephemeral     = true
+replicas      = 2
+token_budget  = "10M"
+time_budget   = "30m"
+description   = "Deterministic TUI verifier: Go gates plus slice-declared golden, PTY, parity, auth, resize, and removal checks."
+
+[[instances.frontend-verifier.triggers]]
+event        = "agent.dispatch"
+match.target = "frontend-verifier"
+
+[instances.frontend-reviewer]
+agent         = "reviewer"
+ephemeral     = true
+replicas      = 2
+token_budget  = "20M"
+time_budget   = "45m"
+description   = "Adversarial TUI reviewer: information architecture, terminal behavior, API truth, capability safety, and clean-cut removal."
+
+[[instances.frontend-reviewer.triggers]]
+event        = "agent.dispatch"
+match.target = "frontend-reviewer"
+
+[schedules.frontend-reconcile]
+every = "2h"
+run_on_start = true
+
+[schedules.frontend-reconcile.payload]
+kind   = "frontend_reconcile"
+target = "frontend-manager"
+epic   = "agent-team-project/kensho#153"
+task   = "Reconcile the terminal-interface epic from canonical issue, PR, job, gate, and repository evidence. Keep product slices blocked until the advisor-backed spec/parity gate is approved; then dispatch only non-conflicting accepted slices."
+
+[pipelines.frontend_ticket_to_pr]
+trigger.event = "frontend.slice.ready"
+auto_advance = true
+redispatch_on_reentry = false
+reap_worktree = "on_merge"
+
+[[pipelines.frontend_ticket_to_pr.steps]]
+id           = "implement"
+target       = "frontend-worker"
+workspace    = "worktree"
+timeout      = "60m"
+token_budget = "60M"
+time_budget  = "60m"
+max_attempts = 1
+instructions = """
+Implement exactly one accepted terminal-interface epic slice. Follow its issue
+contract and advisor-backed specification. Preserve the daemon HTTP/JSON API as
+the data/control plane; do not create a compatibility web shim, bypass gates,
+or broaden into later slices.
+"""
+
+[[pipelines.frontend_ticket_to_pr.steps]]
+id             = "verify"
+target         = "frontend-verifier"
+after          = ["implement"]
+workspace      = "repo"
+timeout        = "30m"
+token_budget   = "10M"
+time_budget    = "30m"
+max_attempts   = 1
+retry_on_crash = true
+instructions = """
+Run deterministic repository gates plus every slice-specific golden, PTY,
+resize, seeded-daemon, API/CLI parity, auth, NO_COLOR, non-TTY, capability, and
+web-removal gate declared by the issue. Record exact commands and artifacts.
+
+```agent-team-verify-gates
+gofmt-check :: test -z "$(gofmt -l .)"
+go-vet :: go vet ./...
+go-test :: go test ./...
+toml-contracts :: python3 scripts/ci/validate_toml.py
+```
+"""
+
+[[pipelines.frontend_ticket_to_pr.steps]]
+id             = "review"
+target         = "frontend-reviewer"
+after          = ["verify"]
+workspace      = "repo"
+timeout        = "45m"
+token_budget   = "20M"
+time_budget    = "45m"
+max_attempts   = 1
+retry_on_crash = true
+instructions = """
+Adversarially review the exact issue contract and verifier evidence. Hand-check
+information hierarchy at 80x24, 120x30, and 160x50; keyboard completeness;
+stale/disconnected states; canonical API use; action-mode authority; test
+sensitivity; and the absence of premature compatibility or deletion work.
+Report APPROVE or clause-keyed BOUNCE. Never push fixes.
+"""
+
+[[pipelines.frontend_ticket_to_pr.steps]]
+id           = "integrate"
+target       = "frontend-manager"
+after        = ["review"]
+gate         = "manual"
+instructions = """
+Merge or advance only on green deterministic evidence and independent review.
+Keep the cutover deletion manual until the complete parity matrix passes. On a
+bounce, return findings through the durable job path; never amend the branch.
+"""
+
+[budgets.frontend]
+tokens_per_day = 50_000_000_000
+jobs_in_flight = 8
+
 [teams.pr]
 description = "Public relations: community digests, announcements, discussions, outward feedback intake."
 instances   = ["comms"]
@@ -970,6 +1128,12 @@ description = "Proactive architecture, tech-debt, harness auditing, production s
 instances   = ["debt-auditor", "harness-reviewer", "org-review", "sentinel", "product-verifier"]
 schedules   = ["debt-sweep", "harness-review", "org-review", "sentinel", "product-verify"]
 
+[teams.frontend]
+description = "Terminal-first human interface: advisor-backed specification, TUI delivery, deterministic terminal verification, and clean web cutover."
+instances   = ["frontend-manager", "frontend-worker", "frontend-verifier", "frontend-reviewer"]
+pipelines   = ["frontend_ticket_to_pr"]
+schedules   = ["frontend-reconcile"]
+
 [teams.delivery]
 description = "Default software-delivery team for ticket intake, implementation, review, and merge."
 instances   = ["manager", "ticket-manager", "worker", "verifier", "reviewer", "feedback-triage"]
@@ -983,10 +1147,13 @@ enforcement = "enforce"
 allow = ["*"]
 
 [authority.instances.research-manager]
-allow = ["event.publish", "job.events", "job.gate.*:own", "job.step:own", "job.bounce:own", "job.close:own", "job.merge:own", "read", "ticket.create", "ticket.comment", "ticket.update"]
+allow = ["event.publish", "job.events", "job.gate.*:team", "job.step:team", "job.bounce:team", "job.close:team", "job.merge:team", "read", "ticket.create", "ticket.comment", "ticket.update"]
 
 [authority.instances.research-auditor]
 allow = ["read"]
+
+[authority.instances.frontend-manager]
+allow = ["event.publish", "job.events", "job.gate.*:team", "job.step:team", "job.bounce:team", "job.close:team", "job.merge:team", "read", "ticket.create", "ticket.comment", "ticket.update"]
 
 [authority.agents.worker]
 allow = ["budget.status", "channel.*", "event.publish", "feedback.*", "inbox.*", "job.events", "job.gate.*:own", "job.show", "job.step:own", "status.*"]

@@ -117,6 +117,9 @@ func LoadLayered(templatePath, repoPath string) (*Topology, error) {
 	if err := validateBudgetReferences(merged); err != nil {
 		return nil, err
 	}
+	if err := validatePipelineAuthoritySatisfiability(merged); err != nil {
+		return nil, err
+	}
 	return merged, nil
 }
 

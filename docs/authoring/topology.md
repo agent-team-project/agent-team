@@ -312,10 +312,19 @@ allow = ["inbox.send", "channel.*", "job.gate.*:own"]
 allow = ["*"]
 ```
 
-Allow entries are exact verbs or prefix wildcards such as `queue.*`. Job
-verbs can add `:own`, such as `job.gate.*:own`, to match only when the target
-job id equals the caller's origin job. Unqualified entries match any target
-job. Instance, agent, and team rules are additive.
+Allow entries are exact verbs or prefix wildcards such as `queue.*`. Job verbs
+can add one of two scope qualifiers:
+
+- `:own`, such as `job.gate.*:own`, matches when the target job id equals the
+  caller's origin job. Use it for workers, verifiers, and reviewers dispatched
+  as part of that job.
+- `:team`, such as `job.bounce:team`, matches when the target job's recorded
+  origin team equals the caller instance's topology-derived team. Use it for a
+  persistent manager that operates its team's pipeline jobs but is not itself
+  dispatched as part of those jobs.
+
+Unqualified entries match any target job. Instance, agent, and team rules are
+additive.
 
 Under `enforcement = "enforce"`, launched runtimes get an `agent-team` shim
 that resolves invocations through the live Cobra command tree and denies
@@ -329,13 +338,22 @@ authority.
 Use:
 
 ```sh
+agent-team topology validate
 agent-team topology summary
 agent-team pipeline doctor --all
 agent-team team doctor --all
 agent-team doctor
 ```
 
-These catch missing agents, invalid topology references, unrouteable pipeline steps, and team ownership problems.
+`topology validate` is also run by this repository's TOML CI gate. In addition
+to schema and reference errors, it rejects a managed pipeline when its manual
+decision or declared-merge owner is missing or ambiguous, cannot receive the
+daemon's completion event, or cannot satisfiably perform the pipeline's
+required job mutations after instance, agent, team, and scope rules are
+composed.
+
+The remaining commands catch missing agents, unrouteable pipeline steps, and
+runtime team ownership problems.
 
 ## Code Areas
 

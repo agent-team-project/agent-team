@@ -72,7 +72,7 @@ func TestResearchProgramTemplateMatchesSelfDogfood(t *testing.T) {
 	const start = "# Standing empirical software-research organization."
 	body := string(selfDogfood)
 	startAt := strings.Index(body, start)
-	endAt := strings.Index(body, "\n[teams.pr]")
+	endAt := strings.Index(body, "\n# Dedicated terminal-interface unit.")
 	if startAt < 0 || endAt < 0 || endAt <= startAt {
 		t.Fatalf("could not isolate self-dogfood research block")
 	}

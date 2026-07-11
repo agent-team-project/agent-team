@@ -20,4 +20,10 @@ description = "Proactive architecture, tech-debt, harness auditing, production s
 instances   = ["debt-auditor", "harness-reviewer", "org-review", "sentinel", "product-verifier"]
 schedules   = ["debt-sweep", "harness-review", "org-review", "sentinel", "product-verify"]
 
+[teams.frontend]
+description = "Terminal-first human interface: advisor-backed specification, TUI delivery, deterministic terminal verification, and clean web cutover."
+instances   = ["frontend-manager", "frontend-worker", "frontend-verifier", "frontend-reviewer"]
+pipelines   = ["frontend_ticket_to_pr"]
+schedules   = ["frontend-reconcile"]
+
 {{ end }}

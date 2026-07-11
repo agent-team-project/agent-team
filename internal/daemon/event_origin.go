@@ -111,14 +111,7 @@ func (r *EventResolver) teamForPipeline(pipeline string) string {
 	if pipeline == "" || r == nil || r.topo == nil {
 		return ""
 	}
-	for _, team := range r.topo.SortedTeams() {
-		for _, name := range team.Pipelines {
-			if name == pipeline {
-				return team.Name
-			}
-		}
-	}
-	return ""
+	return r.topo.TeamForPipeline(pipeline)
 }
 
 func (r *EventResolver) originForEvent(inst *topology.Instance, instance, eventType string, payload map[string]any) origin.Envelope {

@@ -60,6 +60,7 @@ Current `agent-team topology --help` output exposes:
 | `topology show` | Print declared instances and triggers, preferring daemon state and falling back to local parsing. |
 | `topology graph` | Render teams, instances, pipelines, schedules, and dispatch wiring. |
 | `topology summary` | Summarize declared topology and workflow health. |
+| `topology validate` | Validate schema, ownership, and pipeline-manager authority satisfiability. |
 | `topology reload` | Ask the running daemon to re-read `.agent_team/instances.toml`. |
 
 Current `agent-team event --help` output exposes:
@@ -184,6 +185,15 @@ Important layering rules:
 - Authority policy supports audit and enforce modes. Audit records violations
   for triage; enforce denies disallowed audited mutations while operator/no
   origin calls and reads remain open.
+- Job authority can be scoped to the caller's origin job with `:own` or to the
+  target job's recorded topology team with `:team`. Persistent pipeline
+  managers use `:team`; unlike job-attached workers, they have no actor job that
+  could satisfy `:own`.
+- Topology loading resolves each manual-gate or declared-merge pipeline owner
+  through the same completion-event triggers used by the daemon and evaluates
+  its mandatory job mutations through the runtime authority composer. Missing,
+  ambiguous, or scope-unsatisfiable manager paths are rejected before daemon
+  activation.
 
 ## Contributor Checks
 

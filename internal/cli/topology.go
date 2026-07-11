@@ -27,8 +27,35 @@ func newTopologyCmd() *cobra.Command {
 	cmd.AddCommand(newTopologyShowCmd())
 	cmd.AddCommand(newTopologyGraphCmd())
 	cmd.AddCommand(newTopologySummaryCmd())
+	cmd.AddCommand(newTopologyValidateCmd())
 	cmd.AddCommand(newTopologyReloadCmd())
 	return cmd
+}
+
+func newTopologyValidateCmd() *cobra.Command {
+	target, _ := os.Getwd()
+	return &cobra.Command{
+		Use:   "validate",
+		Short: "Validate topology structure and authority satisfiability.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			teamDir, err := resolveTeamDir(cmd, target)
+			if err != nil {
+				return err
+			}
+			top, err := topology.LoadFromTeamDir(teamDir)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team topology validate: %v\n", err)
+				return exitErr(1)
+			}
+			if top == nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), "agent-team topology validate: .agent_team/instances.toml not found")
+				return exitErr(1)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "OK  .agent_team/instances.toml (structure and authority satisfiable)")
+			return nil
+		},
+	}
 }
 
 func newTopologyShowCmd() *cobra.Command {

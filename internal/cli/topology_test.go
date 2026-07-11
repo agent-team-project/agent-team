@@ -105,6 +105,94 @@ agent = "manager"
 	}
 }
 
+func TestTopologyValidateCommand(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
+		root := t.TempDir()
+		teamDir := filepath.Join(root, ".agent_team")
+		if err := os.MkdirAll(teamDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs([]string{"--repo", root, "topology", "validate"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("topology validate: %v\nstderr=%s", err, stderr.String())
+		}
+		if !strings.Contains(out.String(), "structure and authority satisfiable") {
+			t.Fatalf("stdout = %q", out.String())
+		}
+	})
+
+	t.Run("unsatisfiable", func(t *testing.T) {
+		root := t.TempDir()
+		teamDir := filepath.Join(root, ".agent_team")
+		if err := os.MkdirAll(teamDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `
+[instances.manager]
+agent = "manager"
+
+[[instances.manager.triggers]]
+event = "job.step_completed"
+match.target = "manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "approve"
+target = "manager"
+after = ["implement"]
+gate = "manual"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+
+[authority]
+enforcement = "enforce"
+
+[authority.instances.manager]
+allow = ["job.bounce:own", "job.step:own", "job.gate.*:own"]
+`
+		if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs([]string{"--repo", root, "topology", "validate"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("topology validate succeeded: %s", out.String())
+		}
+		var ec ExitCode
+		if !errors.As(err, &ec) || int(ec) != 1 {
+			t.Fatalf("error = %v, want exit 1", err)
+		}
+		for _, want := range []string{`pipeline "ticket_to_pr"`, `owner "manager"`, `"job.bounce:team"`, `[authority.instances.manager].allow`} {
+			if !strings.Contains(stderr.String(), want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+			}
+		}
+	})
+}
+
 func TestTopologyReloadCommandJSONAndFormat(t *testing.T) {
 	root := t.TempDir()
 	if eval, err := filepath.EvalSymlinks(root); err == nil {
@@ -180,6 +268,7 @@ func TestTopologyEventCommandsUseRepoSelectorOnly(t *testing.T) {
 		{"topology", "show", "--help"},
 		{"topology", "graph", "--help"},
 		{"topology", "summary", "--help"},
+		{"topology", "validate", "--help"},
 		{"topology", "reload", "--help"},
 		{"event", "publish", "--help"},
 		{"event", "trace", "--help"},

@@ -380,9 +380,9 @@ func TestSyncFormatPrintsActionRows(t *testing.T) {
 	teamDir := filepath.Join(tmp, ".agent_team")
 	root := daemon.DaemonRoot(teamDir)
 	pid := os.Getpid()
-	for _, name := range []string{"manager", "research-manager", "ticket-manager"} {
+	for _, name := range []string{"frontend-manager", "manager", "research-manager", "ticket-manager"} {
 		agent := name
-		if name == "research-manager" {
+		if name == "research-manager" || name == "frontend-manager" {
 			agent = "manager"
 		}
 		if err := daemon.WriteMetadata(root, &daemon.Metadata{
@@ -497,9 +497,9 @@ func TestSyncFormatHonorsAgentFilter(t *testing.T) {
 	teamDir := filepath.Join(tmp, ".agent_team")
 	root := daemon.DaemonRoot(teamDir)
 	pid := os.Getpid()
-	for _, name := range []string{"manager", "research-manager", "ticket-manager"} {
+	for _, name := range []string{"frontend-manager", "manager", "research-manager", "ticket-manager"} {
 		agent := name
-		if name == "research-manager" {
+		if name == "frontend-manager" || name == "research-manager" {
 			agent = "manager"
 		}
 		if err := daemon.WriteMetadata(root, &daemon.Metadata{
@@ -531,7 +531,7 @@ func TestSyncFormatHonorsAgentFilter(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("sync --agent manager --format: %v\nstderr: %s", err, stderr.String())
 	}
-	if got, want := strings.TrimSpace(out.String()), "manager:skip:running\nresearch-manager:skip:running"; got != want {
+	if got, want := strings.TrimSpace(out.String()), "frontend-manager:skip:running\nmanager:skip:running\nresearch-manager:skip:running"; got != want {
 		t.Fatalf("sync --agent manager rows = %q, want %q", got, want)
 	}
 }
@@ -598,7 +598,7 @@ func TestSyncFormatHonorsActionFilter(t *testing.T) {
 	initInto(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	root := daemon.DaemonRoot(teamDir)
-	for _, name := range []string{"manager", "research-manager"} {
+	for _, name := range []string{"frontend-manager", "manager", "research-manager"} {
 		if err := daemon.WriteMetadata(root, &daemon.Metadata{
 			Instance: name,
 			Agent:    "manager",
@@ -628,7 +628,7 @@ func TestSyncFormatHonorsActionFilter(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("sync --action keep --format: %v\nstderr: %s", err, stderr.String())
 	}
-	if got, want := strings.TrimSpace(out.String()), "manager:skip:running\nresearch-manager:skip:running"; got != want {
+	if got, want := strings.TrimSpace(out.String()), "frontend-manager:skip:running\nmanager:skip:running\nresearch-manager:skip:running"; got != want {
 		t.Fatalf("sync --action keep rows = %q, want %q", got, want)
 	}
 }
@@ -642,7 +642,7 @@ func TestSyncWaitJSONHonorsAgentFilterHealth(t *testing.T) {
 	initInto(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	root := daemon.DaemonRoot(teamDir)
-	for _, name := range []string{"manager", "research-manager"} {
+	for _, name := range []string{"frontend-manager", "manager", "research-manager"} {
 		if err := daemon.WriteMetadata(root, &daemon.Metadata{
 			Instance: name,
 			Agent:    "manager",
@@ -681,11 +681,11 @@ func TestSyncWaitJSONHonorsAgentFilterHealth(t *testing.T) {
 	if body.Health == nil || !body.Health.Healthy {
 		t.Fatalf("filtered wait health = %+v, want healthy manager-only health", body.Health)
 	}
-	if len(body.Actions) != 2 || body.Actions[0].Instance != "manager" || body.Actions[1].Instance != "research-manager" || body.Actions[0].Action != "skip" || body.Actions[1].Action != "skip" {
-		t.Fatalf("filtered wait actions = %+v, want both manager seats skipped", body.Actions)
+	if len(body.Actions) != 3 || body.Actions[0].Instance != "frontend-manager" || body.Actions[1].Instance != "manager" || body.Actions[2].Instance != "research-manager" || body.Actions[0].Action != "skip" || body.Actions[1].Action != "skip" || body.Actions[2].Action != "skip" {
+		t.Fatalf("filtered wait actions = %+v, want all manager seats skipped", body.Actions)
 	}
-	if body.Health.Declared.Persistent != 2 || body.Health.Declared.Running != 2 || body.Health.Declared.Missing != 0 {
-		t.Fatalf("filtered wait declared health = %+v, want both manager seats declared", body.Health.Declared)
+	if body.Health.Declared.Persistent != 3 || body.Health.Declared.Running != 3 || body.Health.Declared.Missing != 0 {
+		t.Fatalf("filtered wait declared health = %+v, want all manager seats declared", body.Health.Declared)
 	}
 }
 

@@ -37,6 +37,7 @@ type AuthorityAuditOptions struct {
 	Resource   string
 	JobID      string
 	TargetJob  string
+	TargetTeam string
 	EventActor string
 }
 
@@ -60,12 +61,13 @@ func AuditAuthority(opts AuthorityAuditOptions) error {
 	if targetJob == "" {
 		targetJob = strings.TrimSpace(opts.JobID)
 	}
-	handled, eval, err := charterAuthorityEvaluation(opts, actor, verb, resource, targetJob)
+	targetTeam := authorityTargetTeam(opts, targetJob)
+	handled, eval, err := charterAuthorityEvaluation(opts, actor, verb, resource, targetJob, targetTeam)
 	if err != nil {
 		return err
 	}
 	if !handled {
-		decision := authorityDecisionForActor(topo, actor, operator, verb, targetJob)
+		decision := authorityDecisionForActor(topo, actor, operator, verb, targetJob, targetTeam)
 		eval = topo.Authority.Evaluate(decision)
 	}
 	if eval.Allowed {
@@ -82,7 +84,8 @@ func AuditAuthority(opts AuthorityAuditOptions) error {
 		// The actor's ORIGIN job verbatim — the jobstore event's Origin.Job is
 		// backfilled from the target job for completeness, but an absent actor
 		// job is signal (it is why :own failed) and must stay observable.
-		"actor_job": actor.Job,
+		"actor_job":   actor.Job,
+		"target_team": targetTeam,
 	}
 	jobID := targetJob
 	if jobID == "" {
@@ -120,19 +123,19 @@ func AuditAuthority(opts AuthorityAuditOptions) error {
 	return nil
 }
 
-func charterAuthorityEvaluation(opts AuthorityAuditOptions, actor origin.Envelope, verb, auditResource, targetJob string) (bool, topology.AuthorityEvaluation, error) {
+func charterAuthorityEvaluation(opts AuthorityAuditOptions, actor origin.Envelope, verb, auditResource, targetJob, targetTeam string) (bool, topology.AuthorityEvaluation, error) {
 	if opts.Operator || strings.TrimSpace(opts.DaemonRoot) == "" || strings.TrimSpace(actor.Instance) == "" {
 		return false, topology.AuthorityEvaluation{}, nil
 	}
 	marker, markerErr := readCharteredInstanceMarker(opts.DaemonRoot, actor.Instance)
 	if markerErr != nil && !errors.Is(markerErr, fs.ErrNotExist) {
-		return true, deniedCharterAuthorityEvaluation(actor, verb, targetJob, "charter.metadata"), fmt.Errorf("authority violation: charter marker lookup for instance %s: %w", actor.Instance, markerErr)
+		return true, deniedCharterAuthorityEvaluation(actor, verb, targetJob, targetTeam, "charter.metadata"), fmt.Errorf("authority violation: charter marker lookup for instance %s: %w", actor.Instance, markerErr)
 	}
 	charter, err := ReadTeamCharterByInstance(opts.DaemonRoot, actor.Instance)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			if marker.Chartered {
-				return true, deniedCharterAuthorityEvaluation(actor, verb, targetJob, "charter.missing"), nil
+				return true, deniedCharterAuthorityEvaluation(actor, verb, targetJob, targetTeam, "charter.missing"), nil
 			}
 			return false, topology.AuthorityEvaluation{}, nil
 		}
@@ -140,30 +143,31 @@ func charterAuthorityEvaluation(opts AuthorityAuditOptions, actor origin.Envelop
 	}
 	if charter == nil {
 		if marker.Chartered {
-			return true, deniedCharterAuthorityEvaluation(actor, verb, targetJob, "charter.missing"), nil
+			return true, deniedCharterAuthorityEvaluation(actor, verb, targetJob, targetTeam, "charter.missing"), nil
 		}
 		return false, topology.AuthorityEvaluation{}, nil
 	}
 	if teamCharterTerminal(charter.State) {
-		return true, deniedCharterAuthorityEvaluation(actor, verb, targetJob, "charter."+charter.ID+".terminal"), nil
+		return true, deniedCharterAuthorityEvaluation(actor, verb, targetJob, targetTeam, "charter."+charter.ID+".terminal"), nil
 	}
 	if marker.Chartered {
 		if marker.CharterURI != "" && marker.CharterURI != charter.URI {
-			return true, deniedCharterAuthorityEvaluation(actor, verb, targetJob, "charter.marker"), nil
+			return true, deniedCharterAuthorityEvaluation(actor, verb, targetJob, targetTeam, "charter.marker"), nil
 		}
 		if marker.CapabilityURI != "" && marker.CapabilityURI != charter.Authority.CapabilityURI {
-			return true, deniedCharterAuthorityEvaluation(actor, verb, targetJob, "charter.marker"), nil
+			return true, deniedCharterAuthorityEvaluation(actor, verb, targetJob, targetTeam, "charter.marker"), nil
 		}
 	}
 	eval := topology.AuthorityEvaluation{
 		Allowed: true,
 		Decision: topology.AuthorityDecision{
-			Instance:  actor.Instance,
-			Agent:     actor.Agent,
-			Team:      actor.Team,
-			Verb:      verb,
-			ActorJob:  actor.Job,
-			TargetJob: targetJob,
+			Instance:   actor.Instance,
+			Agent:      actor.Agent,
+			Team:       actor.Team,
+			Verb:       verb,
+			ActorJob:   actor.Job,
+			TargetJob:  targetJob,
+			TargetTeam: targetTeam,
 		},
 		Sources: []string{"charter." + charter.ID},
 	}
@@ -177,16 +181,17 @@ func charterAuthorityEvaluation(opts AuthorityAuditOptions, actor origin.Envelop
 	return true, eval, nil
 }
 
-func deniedCharterAuthorityEvaluation(actor origin.Envelope, verb, targetJob, source string) topology.AuthorityEvaluation {
+func deniedCharterAuthorityEvaluation(actor origin.Envelope, verb, targetJob, targetTeam, source string) topology.AuthorityEvaluation {
 	return topology.AuthorityEvaluation{
 		Allowed: false,
 		Decision: topology.AuthorityDecision{
-			Instance:  actor.Instance,
-			Agent:     actor.Agent,
-			Team:      actor.Team,
-			Verb:      verb,
-			ActorJob:  actor.Job,
-			TargetJob: targetJob,
+			Instance:   actor.Instance,
+			Agent:      actor.Agent,
+			Team:       actor.Team,
+			Verb:       verb,
+			ActorJob:   actor.Job,
+			TargetJob:  targetJob,
+			TargetTeam: targetTeam,
 		},
 		Sources: []string{source},
 	}
@@ -342,7 +347,7 @@ func authorityActorIdentityEmpty(actor origin.Envelope) bool {
 	return actor.Instance == "" && actor.Agent == "" && actor.Team == ""
 }
 
-func authorityDecisionForActor(topo *topology.Topology, actor origin.Envelope, operator bool, verb, targetJob string) topology.AuthorityDecision {
+func authorityDecisionForActor(topo *topology.Topology, actor origin.Envelope, operator bool, verb, targetJob, targetTeam string) topology.AuthorityDecision {
 	actor = actor.Clean()
 	instance := actor.Instance
 	agent := actor.Agent
@@ -364,14 +369,31 @@ func authorityDecisionForActor(topo *topology.Topology, actor origin.Envelope, o
 		}
 	}
 	return topology.AuthorityDecision{
-		Instance:  instance,
-		Agent:     agent,
-		Team:      team,
-		Operator:  operator,
-		Verb:      verb,
-		ActorJob:  actor.Job,
-		TargetJob: targetJob,
+		Instance:   instance,
+		Agent:      agent,
+		Team:       team,
+		Operator:   operator,
+		Verb:       verb,
+		ActorJob:   actor.Job,
+		TargetJob:  targetJob,
+		TargetTeam: targetTeam,
 	}
+}
+
+func authorityTargetTeam(opts AuthorityAuditOptions, targetJob string) string {
+	if team := strings.TrimSpace(opts.TargetTeam); team != "" {
+		return team
+	}
+	targetJob = strings.TrimSpace(targetJob)
+	teamDir := strings.TrimSpace(opts.TeamDir)
+	if targetJob == "" || teamDir == "" {
+		return ""
+	}
+	j, err := jobstore.Read(teamDir, targetJob)
+	if err != nil || j == nil {
+		return ""
+	}
+	return strings.TrimSpace(j.Origin.Team)
 }
 
 func authorityOriginFromTopology(topo *topology.Topology, actor origin.Envelope) origin.Envelope {
