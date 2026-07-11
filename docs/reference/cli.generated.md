@@ -90,6 +90,7 @@ Subcommands:
 - `agent-team tick` - Run one orchestration maintenance cycle.
 - `agent-team ticket` - Create and update PM tickets through the configured provider.
 - `agent-team topology` - Show declared instances and triggers (reads .agent_team/instances.toml).
+- `agent-team ui` - Open the read-only terminal command center.
 - `agent-team upgrade` - Check or apply a template upgrade using the repo&#39;s template lock.
 - `agent-team usage` - Show runtime token usage rollups.
 - `agent-team wait` - Wait for daemon-managed instances to reach a lifecycle condition.
@@ -11074,6 +11075,29 @@ Flags:
 
 ```text
       --json   Emit topology summary as JSON.
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team ui`
+
+Open the read-only terminal command center.
+
+Open the keyboard-complete read-only terminal UI over agent-teamd. Endpoint and token discovery use the same shared daemon client as other CLI commands.
+
+```text
+agent-team ui [flags]
+```
+
+Flags:
+
+```text
+      --once            Load one snapshot, render a plain 120x30 Overview frame, and exit.
+      --target string   Repo root containing .agent_team (legacy; prefer global --repo). (default "<repo>")
 ```
 
 Inherited Flags:
