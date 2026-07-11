@@ -1938,7 +1938,7 @@ func (t *Topology) ValidateAuthoritySatisfiability() error {
 }
 
 func validatePipelineAuthoritySatisfiability(t *Topology) error {
-	if t == nil || t.Authority == nil || !t.Authority.Configured() {
+	if t == nil || t.Authority == nil || !t.Authority.Configured() || !t.Authority.Enforced() {
 		return nil
 	}
 	for _, pipeline := range t.SortedPipelines() {
