@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -475,6 +479,394 @@ class VerifyBaseComparisonTest(unittest.TestCase):
             comparison["base_failure_identities"],
             ["pytest:test_sample.py::test_base_broken"],
         )
+
+
+class VerifyExactHeadTest(unittest.TestCase):
+    PR_IDENTITY = {
+        "repository": "acme/widgets",
+        "owner": "acme",
+        "repo": "widgets",
+        "pr_number": 42,
+        "pr_url": "https://github.com/acme/widgets/pull/42",
+    }
+
+    def git(self, *args: str, cwd: Path) -> str:
+        return subprocess.check_output(
+            ["git", *args],
+            cwd=cwd,
+            text=True,
+            stderr=subprocess.STDOUT,
+        ).strip()
+
+    def create_fixture(self, root: Path, *, advance: bool = True) -> dict[str, object]:
+        origin = root / "origin.git"
+        publisher = root / "publisher"
+        verifier_repo = root / "verifier"
+        subprocess.check_call(["git", "init", "--bare", str(origin)], stdout=subprocess.DEVNULL)
+        publisher.mkdir()
+        self.git("init", "-b", "main", cwd=publisher)
+        self.git("config", "user.name", "Publisher", cwd=publisher)
+        self.git("config", "user.email", "publisher@example.invalid", cwd=publisher)
+        gate = publisher / "gate.sh"
+        gate.write_text("#!/bin/sh\necho exact-head-gate\nexit 0\n", encoding="utf-8")
+        gate.chmod(0o755)
+        self.git("add", "gate.sh", cwd=publisher)
+        self.git("commit", "-m", "commit A", cwd=publisher)
+        commit_a = self.git("rev-parse", "HEAD", cwd=publisher)
+        self.git("remote", "add", "origin", str(origin), cwd=publisher)
+        self.git("push", "origin", "main", cwd=publisher)
+        self.git("push", "origin", "HEAD:refs/pull/42/head", cwd=publisher)
+        self.git("symbolic-ref", "HEAD", "refs/heads/main", cwd=origin)
+        subprocess.check_call(["git", "clone", str(origin), str(verifier_repo)], stdout=subprocess.DEVNULL)
+        self.git("config", "user.name", "Verifier", cwd=verifier_repo)
+        self.git("config", "user.email", "verifier@example.invalid", cwd=verifier_repo)
+        self.git("checkout", "-b", "feature", commit_a, cwd=verifier_repo)
+        commit_r = commit_a
+        if advance:
+            note = publisher / "remote.txt"
+            note.write_text("remote R\n", encoding="utf-8")
+            self.git("add", "remote.txt", cwd=publisher)
+            self.git("commit", "-m", "commit R", cwd=publisher)
+            commit_r = self.git("rev-parse", "HEAD", cwd=publisher)
+            self.git("push", "origin", "HEAD:refs/pull/42/head", "--force", cwd=publisher)
+        return {
+            "origin": origin,
+            "publisher": publisher,
+            "repo": verifier_repo,
+            "commit_a": commit_a,
+            "commit_r": commit_r,
+        }
+
+    def query(
+        self,
+        head: str = "",
+        *,
+        status: str = "authenticated",
+        queried_at: str = "2026-07-11T18:00:00Z",
+    ) -> dict[str, object]:
+        return {
+            "repository": self.PR_IDENTITY["repository"],
+            "pr_number": self.PR_IDENTITY["pr_number"],
+            "pr_url": self.PR_IDENTITY["pr_url"],
+            "query_status": status,
+            "head_commit": head if status == "authenticated" else "",
+            "queried_at": queried_at,
+            "authenticated_actor": "fixture-actor" if status == "authenticated" else "",
+            "query_transport": "fixture-authenticated-oracle",
+            "query_error": "" if status == "authenticated" else "fixture oracle unavailable",
+        }
+
+    def raw_fetch(self, repo: Path, ref: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(repo), "fetch", "--no-tags", "--depth=1", "origin", ref],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def run_pr_verify(
+        self,
+        fixture: dict[str, object],
+        queries: object,
+        *,
+        branch: str = "feature",
+        explicit_commit: str = "",
+        gate_command: str = "./gate.sh",
+        complete_step: bool = False,
+    ) -> tuple[int, dict[str, object], dict[str, object], mock.Mock]:
+        root = Path(fixture["repo"]).parent
+        gates = root / "gates.txt"
+        gates.write_text(f"tests :: {gate_command}\n", encoding="utf-8")
+        evidence_dir = root / "evidence"
+        args = [
+            "--repo",
+            str(fixture["repo"]),
+            "--job",
+            "fixture-a",
+            "--gates-file",
+            str(gates),
+            "--evidence-dir",
+            str(evidence_dir),
+            "--no-record-gates",
+        ]
+        if explicit_commit:
+            args.extend(["--commit", explicit_commit])
+        if complete_step:
+            args.append("--complete-step")
+        job = {
+            "Branch": branch,
+            "Worktree": "",
+            "PR": self.PR_IDENTITY["pr_url"],
+            "Pipeline": "research_slice",
+        }
+        clean_env = {key: value for key, value in os.environ.items() if not key.startswith("AGENT_TEAM_")}
+        completion = mock.Mock()
+        with (
+            mock.patch.dict(os.environ, clean_env, clear=True),
+            mock.patch.object(verify, "load_job", return_value=job),
+            mock.patch.object(verify, "query_authenticated_pr_head", side_effect=queries),
+            mock.patch.object(verify, "origin_repository", return_value=self.PR_IDENTITY["repository"]),
+            mock.patch.object(verify, "run_authenticated_fetch", side_effect=self.raw_fetch),
+            mock.patch.object(verify, "complete_step", completion),
+        ):
+            code = verify.main(args)
+        evidence_path = evidence_dir / "fixture-a.json"
+        attestation_path = evidence_dir / "fixture-a.exact-head.json"
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+            attestation["evidence_sha256"],
+        )
+        return code, evidence, attestation, completion
+
+    def test_fixture_a_authoritative_head_wins_all_local_ref_shapes(self) -> None:
+        shapes = ("stale", "divergent", "local-ahead", "missing-local", "explicit-stale")
+        for shape in shapes:
+            with self.subTest(shape=shape), tempfile.TemporaryDirectory() as temp:
+                fixture = self.create_fixture(Path(temp))
+                repo = Path(fixture["repo"])
+                commit_a = str(fixture["commit_a"])
+                commit_r = str(fixture["commit_r"])
+                branch = "feature"
+                explicit = ""
+                if shape == "divergent":
+                    (repo / "local.txt").write_text("divergent local\n", encoding="utf-8")
+                    self.git("add", "local.txt", cwd=repo)
+                    self.git("commit", "-m", "divergent local commit", cwd=repo)
+                elif shape == "local-ahead":
+                    self.git("fetch", "origin", "refs/pull/42/head", cwd=repo)
+                    self.git("reset", "--hard", "FETCH_HEAD", cwd=repo)
+                    (repo / "local.txt").write_text("unpushed local\n", encoding="utf-8")
+                    self.git("add", "local.txt", cwd=repo)
+                    self.git("commit", "-m", "local ahead unpushed", cwd=repo)
+                elif shape == "missing-local":
+                    self.git("checkout", "main", cwd=repo)
+                    self.git("branch", "-D", "feature", cwd=repo)
+                elif shape == "explicit-stale":
+                    explicit = commit_a
+
+                code, evidence, attestation, completion = self.run_pr_verify(
+                    fixture,
+                    [self.query(commit_r), self.query(commit_r, queried_at="2026-07-11T18:00:01Z")],
+                    branch=branch,
+                    explicit_commit=explicit,
+                    complete_step=True,
+                )
+
+                self.assertEqual(code, 0)
+                self.assertEqual(evidence["status"], "pass")
+                self.assertEqual(evidence["source"]["commit"], commit_r)
+                self.assertEqual(attestation["evidence_commit"], commit_r)
+                self.assertEqual(attestation["github_head_commit"], commit_r)
+                self.assertEqual(attestation["query_status"], "authenticated")
+                self.assertEqual(attestation["equality"], "equal")
+                self.assertEqual(attestation["disposition"], "dispatch")
+                self.assertEqual(attestation["reason"], "exact_head_equal")
+                completion.assert_called_once()
+                self.assertEqual(completion.call_args.args[3], "pass")
+
+    def test_authenticated_graphql_oracle_records_closed_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            helper = Path(temp) / "github-auth.sh"
+            helper.touch()
+            head = "a" * 40
+            payload = json.dumps(
+                {
+                    "data": {
+                        "viewer": {"login": "fixture-actor"},
+                        "repository": {
+                            "pullRequest": {
+                                "url": self.PR_IDENTITY["pr_url"],
+                                "headRefOid": head,
+                            }
+                        },
+                    }
+                }
+            )
+            response = subprocess.CompletedProcess([], 0, payload, "")
+            with (
+                mock.patch.object(verify, "github_auth_helper", return_value=helper),
+                mock.patch.object(verify.subprocess, "run", return_value=response) as run,
+            ):
+                query = verify.query_authenticated_pr_head(Path(temp), self.PR_IDENTITY)
+
+            self.assertEqual(query["query_status"], "authenticated")
+            self.assertEqual(query["head_commit"], head)
+            self.assertEqual(query["authenticated_actor"], "fixture-actor")
+            self.assertEqual(query["query_transport"], "github-auth.sh/gh-graphql")
+            command = run.call_args.args[0]
+            self.assertEqual(command[:4], [str(helper), "gh", "api", "graphql"])
+            self.assertIn("query=", command[5])
+
+            malformed = subprocess.CompletedProcess([], 0, '{"data": {}}', "")
+            unavailable = subprocess.CompletedProcess([], 1, "", "authentication failed")
+            for response, expected in ((malformed, "malformed"), (unavailable, "unavailable")):
+                with self.subTest(expected=expected):
+                    with (
+                        mock.patch.object(verify, "github_auth_helper", return_value=helper),
+                        mock.patch.object(verify.subprocess, "run", return_value=response),
+                    ):
+                        query = verify.query_authenticated_pr_head(Path(temp), self.PR_IDENTITY)
+                        self.assertEqual(query["query_status"], expected)
+                        self.assertEqual(query["head_commit"], "")
+
+    def test_fixture_a_missing_origin_fails_closed_without_local_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = self.create_fixture(Path(temp))
+            repo = Path(fixture["repo"])
+            commit_r = str(fixture["commit_r"])
+            self.git("remote", "remove", "origin", cwd=repo)
+
+            code, evidence, attestation, _ = self.run_pr_verify(
+                fixture,
+                [self.query(commit_r)],
+            )
+
+            self.assertEqual(code, 1)
+            self.assertEqual(evidence["status"], "fail")
+            self.assertEqual(evidence["source"]["commit"], "")
+            self.assertEqual(attestation["query_status"], "authenticated")
+            self.assertEqual(attestation["equality"], "unknown")
+            self.assertEqual(attestation["disposition"], "block_infra")
+            self.assertEqual(attestation["reason"], "exact_head_unavailable")
+            self.assertEqual(evidence["gates"][0]["class"], "infra")
+
+    def test_unknown_resolution_query_fails_closed_before_local_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = self.create_fixture(Path(temp))
+            code, evidence, attestation, _ = self.run_pr_verify(
+                fixture,
+                [self.query(status="unavailable")],
+            )
+
+            self.assertEqual(code, 1)
+            self.assertEqual(evidence["source"]["commit"], "")
+            self.assertEqual(attestation["query_status"], "unavailable")
+            self.assertEqual(attestation["equality"], "unknown")
+            self.assertEqual(attestation["reason"], "exact_head_unavailable")
+
+    def test_fixture_b_head_advance_blocks_green_evidence_and_successful_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fixture = self.create_fixture(root, advance=False)
+            publisher = Path(fixture["publisher"])
+            commit_a = str(fixture["commit_a"])
+            signal = root / "gate-started"
+            release = root / "gate-release"
+            head_file = root / "oracle-head"
+            head_file.write_text(commit_a, encoding="utf-8")
+            barrier = root / "barrier.sh"
+            barrier.write_text(
+                "#!/bin/sh\n"
+                f": > {shlex.quote(str(signal))}\n"
+                f"while [ ! -e {shlex.quote(str(release))} ]; do sleep 0.01; done\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            barrier.chmod(0o755)
+
+            def live_query(*_args: object) -> dict[str, object]:
+                return self.query(head_file.read_text(encoding="utf-8").strip())
+
+            result: dict[str, object] = {}
+
+            def run() -> None:
+                try:
+                    result["value"] = self.run_pr_verify(
+                        fixture,
+                        live_query,
+                        gate_command=str(barrier),
+                        complete_step=True,
+                    )
+                except BaseException as exc:  # pragma: no cover - surfaced below
+                    result["error"] = exc
+
+            thread = threading.Thread(target=run)
+            thread.start()
+            deadline = time.monotonic() + 10
+            while not signal.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(signal.exists(), "fixture gate did not reach the deterministic barrier")
+            (publisher / "advanced.txt").write_text("commit B\n", encoding="utf-8")
+            self.git("add", "advanced.txt", cwd=publisher)
+            self.git("commit", "-m", "advance PR head to B", cwd=publisher)
+            commit_b = self.git("rev-parse", "HEAD", cwd=publisher)
+            self.git("push", "origin", "HEAD:refs/pull/42/head", "--force", cwd=publisher)
+            head_file.write_text(commit_b, encoding="utf-8")
+            release.touch()
+            thread.join(timeout=10)
+            self.assertFalse(thread.is_alive(), "fixture verifier did not leave the barrier")
+            if "error" in result:
+                raise result["error"]  # type: ignore[misc]
+            code, evidence, attestation, completion = result["value"]  # type: ignore[misc]
+
+            self.assertEqual(code, 1)
+            self.assertEqual(evidence["status"], "fail")
+            self.assertEqual(evidence["source"]["commit"], commit_a)
+            self.assertEqual(attestation["evidence_commit"], commit_a)
+            self.assertEqual(attestation["github_head_commit"], commit_b)
+            self.assertEqual(attestation["equality"], "unequal")
+            self.assertEqual(attestation["disposition"], "block_infra")
+            self.assertEqual(attestation["reason"], "exact_head_mismatch")
+            self.assertEqual(evidence["gates"][-1]["class"], "infra")
+            completion.assert_called_once()
+            self.assertEqual(completion.call_args.args[3], "fail")
+
+    def test_unknown_write_query_fails_closed_instead_of_using_resolution_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = self.create_fixture(Path(temp))
+            commit_r = str(fixture["commit_r"])
+
+            code, evidence, attestation, _ = self.run_pr_verify(
+                fixture,
+                [self.query(commit_r), self.query(status="unavailable")],
+            )
+
+            self.assertEqual(code, 1)
+            self.assertEqual(evidence["status"], "fail")
+            self.assertEqual(attestation["query_status"], "unavailable")
+            self.assertEqual(attestation["equality"], "unknown")
+            self.assertEqual(attestation["disposition"], "block_infra")
+            self.assertEqual(attestation["reason"], "exact_head_unavailable")
+            self.assertEqual(evidence["gates"][-1]["class"], "infra")
+
+    def test_attestation_schema_rejects_invalid_closed_vocabulary_combinations(self) -> None:
+        sha = "a" * 40
+        resolution = self.query(sha)
+        attestation = verify.make_exact_head_attestation(
+            "fixture-a",
+            "research_slice",
+            "verify",
+            self.PR_IDENTITY,
+            resolution,
+            resolution,
+            sha,
+            "equal",
+            "dispatch",
+            "exact_head_equal",
+            "not_dispatched",
+        )
+        attestation["evidence_path"] = "target/agent-evidence/fixture-a.json"
+        attestation["evidence_sha256"] = "b" * 64
+        verify.validate_exact_head_attestation(attestation)
+
+        invalid_rows = (
+            {"query_status": "cached"},
+            {"equality": "probably"},
+            {"disposition": "warn"},
+            {"reason": "content_failure"},
+            {"review_phase": "reviewing"},
+            {"query_status": "unavailable", "equality": "equal"},
+            {"equality": "unequal", "disposition": "dispatch"},
+            {"disposition": "block_infra", "reason": "exact_head_equal"},
+        )
+        for changes in invalid_rows:
+            with self.subTest(changes=changes):
+                invalid = dict(attestation)
+                invalid.update(changes)
+                with self.assertRaises(ValueError):
+                    verify.validate_exact_head_attestation(invalid)
 
 
 if __name__ == "__main__":
