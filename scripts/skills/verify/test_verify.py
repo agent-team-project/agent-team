@@ -299,6 +299,38 @@ class VerifyBaseComparisonTest(unittest.TestCase):
         self.assertNotEqual(comparison["head_output_fingerprint"], comparison["base_output_fingerprint"])
         self.assertIn("fingerprint differs", comparison["reason"])
 
+    def test_compound_go_gate_does_not_hide_head_only_failure(self) -> None:
+        (self.repo / "go.mod").write_text("module example.com/compound\n\ngo 1.22\n", encoding="utf-8")
+        (self.repo / "base_broken_test.go").write_text(
+            "package compound\n\n"
+            'import "testing"\n\n'
+            'func TestBaseBroken(t *testing.T) { t.Fatal("base-bug") }\n',
+            encoding="utf-8",
+        )
+        self.git("add", "go.mod", "base_broken_test.go")
+        self.git("commit", "-m", "base has failing Go test")
+        self.configure_origin_head()
+        (self.repo / "feature_gate.py").write_text(
+            "import sys\nprint('head-regression', file=sys.stderr)\nraise SystemExit(2)\n",
+            encoding="utf-8",
+        )
+        self.git("add", "feature_gate.py")
+        self.git("commit", "-m", "add head-only gate failure")
+        command = "go test ./...; python3 feature_gate.py"
+
+        evidence = self.run_verify(self.git("rev-parse", "HEAD"), command)
+
+        gate = evidence["gates"][0]
+        comparison = gate["base_comparison"]
+        self.assertNotIn("class", gate)
+        self.assertEqual(gate["signature"], "head-regression")
+        self.assertFalse(comparison["reproduced"])
+        self.assertEqual(comparison["command"], command)
+        self.assertEqual(comparison["reproduction_basis"], "exit-code-and-full-output-fingerprint")
+        self.assertEqual(comparison["head_exit_code"], 2)
+        self.assertEqual(comparison["exit_code"], 2)
+        self.assertNotEqual(comparison["head_output_fingerprint"], comparison["base_output_fingerprint"])
+
     def test_fresh_remote_default_ignores_stale_local_tracking_ref(self) -> None:
         broken_base = self.commit_gate(1, "base broken")
         self.configure_origin_head()
@@ -357,6 +389,46 @@ class VerifyBaseComparisonTest(unittest.TestCase):
             comparison["base_failure_identities"],
             ["unittest:test_failure.BaseFailure.test_base_behavior"],
         )
+
+    def test_compound_unittest_gate_does_not_hide_head_only_failure(self) -> None:
+        (self.repo / "test_failure.py").write_text(
+            "import unittest\n\n"
+            "class BaseFailure(unittest.TestCase):\n"
+            "    def test_base_behavior(self):\n"
+            "        self.fail('base-bug')\n",
+            encoding="utf-8",
+        )
+        self.git("add", "test_failure.py")
+        self.git("commit", "-m", "base has failing unittest")
+        self.configure_origin_head()
+        (self.repo / "feature_gate.py").write_text(
+            "import sys\nprint('head-regression', file=sys.stderr)\nraise SystemExit(2)\n",
+            encoding="utf-8",
+        )
+        self.git("add", "feature_gate.py")
+        self.git("commit", "-m", "add head-only gate failure")
+        command = "python3 -m unittest -v; python3 feature_gate.py"
+
+        evidence = self.run_verify(self.git("rev-parse", "HEAD"), command)
+
+        gate = evidence["gates"][0]
+        comparison = gate["base_comparison"]
+        self.assertNotIn("class", gate)
+        self.assertEqual(gate["signature"], "head-regression")
+        self.assertFalse(comparison["reproduced"])
+        self.assertEqual(comparison["command"], command)
+        self.assertEqual(comparison["reproduction_basis"], "exit-code-and-full-output-fingerprint")
+        self.assertEqual(comparison["head_exit_code"], 2)
+        self.assertEqual(comparison["exit_code"], 2)
+        self.assertEqual(
+            comparison["head_failure_identities"],
+            ["unittest:test_failure.BaseFailure.test_base_behavior"],
+        )
+        self.assertEqual(
+            comparison["base_failure_identities"],
+            ["unittest:test_failure.BaseFailure.test_base_behavior"],
+        )
+        self.assertNotEqual(comparison["head_output_fingerprint"], comparison["base_output_fingerprint"])
 
 
 if __name__ == "__main__":

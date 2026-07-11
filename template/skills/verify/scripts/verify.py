@@ -457,6 +457,7 @@ def compare_failed_gate(
     print(f"verify: base comparison {base_status} {gate['name']} ({duration_ms}ms)", flush=True)
     base_signature = "" if exit_code == 0 else failure_signature(exit_code, tail)
     is_go_test = is_simple_go_test_command(gate["command"])
+    is_structured_test = is_simple_structured_test_command(gate["command"])
     head_identities: list[str] = []
     base_identities: list[str] = []
     head_identities_complete = False
@@ -489,7 +490,7 @@ def compare_failed_gate(
     else:
         head_identities, head_identities_complete = structured_failure_identities(head_log)
         base_identities, base_identities_complete = structured_failure_identities(base_log)
-        if head_identities_complete and head_identities:
+        if is_structured_test and head_identities_complete and head_identities:
             reproduced = (
                 exit_code != 0
                 and exit_code == result["exit_code"]
@@ -633,11 +634,8 @@ def resolve_default_branch(repo: Path) -> tuple[str, str, str]:
 
 
 def base_comparison_command(command: str, head_log: Path) -> str:
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return command
-    if len(tokens) < 3 or tokens[:2] != ["go", "test"]:
+    tokens = single_shell_command_tokens(command)
+    if tokens is None or len(tokens) < 3 or tokens[:2] != ["go", "test"]:
         return command
     package_args = tokens[2:]
     if any(token.startswith("-") or re.search(r"[|&;<>()$`]", token) for token in package_args):
@@ -665,11 +663,39 @@ def base_comparison_command(command: str, head_log: Path) -> str:
 
 
 def is_simple_go_test_command(command: str) -> bool:
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
+    tokens = single_shell_command_tokens(command)
+    return tokens is not None and len(tokens) >= 3 and tokens[:2] == ["go", "test"]
+
+
+def is_simple_structured_test_command(command: str) -> bool:
+    tokens = single_shell_command_tokens(command)
+    if not tokens:
         return False
-    return len(tokens) >= 3 and tokens[:2] == ["go", "test"]
+    runner = Path(tokens[0]).name
+    if runner in {"pytest", "py.test", "pytest-3"}:
+        return True
+    if not re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", runner):
+        return False
+    return len(tokens) >= 3 and tokens[1] == "-m" and tokens[2] in {"pytest", "unittest"}
+
+
+def single_shell_command_tokens(command: str) -> list[str] | None:
+    if "\n" in command or "\r" in command:
+        return None
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars="|&;()<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    if any(token and all(char in "|&;()<>" for char in token) for token in tokens):
+        return None
+    if any("$(" in token or "`" in token for token in tokens):
+        return None
+    return tokens
 
 
 def failed_go_test_names(log_path: Path) -> list[str]:

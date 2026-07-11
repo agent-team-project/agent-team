@@ -87,7 +87,7 @@ After a gate fails, the runner discovers the remote default branch directly
 from `origin`, fetches that branch without trusting local remote-tracking refs,
 pins the fetched commit SHA in evidence, computes its merge-base with the worker
 commit, and reruns only that failed gate in a detached checkout. For a
-plain `go test <packages>` gate, the rerun is narrowed to the failed packages
+single, plain `go test <packages>` gate, the rerun is narrowed to the failed packages
 and anchored top-level test names parsed from the head log. Go failures carry
 package/test identities, including complete subtest paths, and a non-zero base
 run counts as reproduction only when every head identity appears at the
@@ -99,11 +99,15 @@ not use the fingerprint fallback. This prevents an old failing test or subtest
 from hiding a new head-only regression while still recognizing an identical
 pre-existing compile failure.
 
-For other runners, complete `unittest` or `pytest` failure identities use the
-same head-subset rule. If no complete structured identities are available, the
-runner requires the same exit code and a non-empty SHA-256 fingerprint of the
-entire ANSI-stripped output. It never compares only the final output line, so
-distinct failures with the same generic footer do not become `base-broken`.
+Structured identity matching is enabled only when the entire gate parses as one
+recognized `go test`, `unittest`, or `pytest` invocation. Compound commands,
+redirected commands, command substitutions, and otherwise ambiguous shell
+shapes cannot use an identity subset to claim that the whole gate reproduced;
+they require the same exit code and a non-empty SHA-256 fingerprint of the
+entire ANSI-stripped output. Other runners and recognized test invocations with
+no complete structured identities use that same conservative fingerprint
+comparison. The runner never compares only the final output line, so distinct
+failures with the same generic footer do not become `base-broken`.
 Missing or empty output, a missing command or file at the base, and any other
 ambiguous comparison preserve the head classification.
 
