@@ -349,6 +349,7 @@ ephemeral = false
 [[instances.manager.triggers]]
 event = "job.step_completed"
 match.target = "manager"
+match.source = "daemon:completion"
 
 [instances.worker]
 agent = "worker"

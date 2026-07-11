@@ -73,6 +73,27 @@ const (
 	EventDeliverableReady = "deliverable.ready"
 )
 
+// ManagerCompletionTriggerPayload returns the stable completion-event fields
+// that topology triggers may safely constrain. The daemon enriches this base
+// with job- and step-specific fields before publishing the event.
+func ManagerCompletionTriggerPayload(pipeline, target string, managerGateReady bool) map[string]any {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		target = "manager"
+	}
+	payload := map[string]any{
+		"source": "daemon:completion",
+		"target": target,
+	}
+	if pipeline = strings.TrimSpace(pipeline); pipeline != "" {
+		payload["pipeline"] = pipeline
+	}
+	if managerGateReady {
+		payload["manager_gate_ready"] = true
+	}
+	return payload
+}
+
 // Topology is the parsed + merged set of declared instances for a repo.
 type Topology struct {
 	// ModelPolicy is the shared runtime/model/effort default for declared seats.
@@ -1968,10 +1989,10 @@ func (t *Topology) resolvePipelineManager(pipeline *Pipeline) (*Instance, bool, 
 		}
 	}
 	if len(owners) == 0 {
-		if pipeline.Merge == nil {
+		if pipeline.Merge == nil && pipeline.ReapWorktree != worktreepolicy.OnMerge && pipeline.ReapWorktree != worktreepolicy.OnClose {
 			return nil, false, nil
 		}
-		payload := map[string]any{"pipeline": pipeline.Name}
+		payload := ManagerCompletionTriggerPayload(pipeline.Name, "", false)
 		var candidates []string
 		for _, candidate := range t.Resolve(EventJobCompleted, payload) {
 			if candidate != nil && !candidate.Ephemeral {
@@ -1979,10 +2000,10 @@ func (t *Topology) resolvePipelineManager(pipeline *Pipeline) (*Instance, bool, 
 			}
 		}
 		if len(candidates) == 0 {
-			return nil, true, fmt.Errorf("pipeline %q: unsupported managing instance for declared merge: no persistent instance trigger matches job.completed with pipeline %q", pipeline.Name, pipeline.Name)
+			return nil, true, fmt.Errorf("pipeline %q: unsupported managing instance for %s: no persistent instance trigger matches job.completed with pipeline %q", pipeline.Name, pipelineCompletionManagerDuty(pipeline), pipeline.Name)
 		}
 		if len(candidates) != 1 {
-			return nil, true, fmt.Errorf("pipeline %q: ambiguous completion owner for declared merge: matched %s", pipeline.Name, strings.Join(candidates, ", "))
+			return nil, true, fmt.Errorf("pipeline %q: ambiguous completion owner for %s: matched %s", pipeline.Name, pipelineCompletionManagerDuty(pipeline), strings.Join(candidates, ", "))
 		}
 		return t.Instances[candidates[0]], true, nil
 	}
@@ -1997,11 +2018,7 @@ func (t *Topology) resolvePipelineManager(pipeline *Pipeline) (*Instance, bool, 
 	if owner.Ephemeral {
 		return nil, true, fmt.Errorf("pipeline %q: unsupported managing instance %q from manual gate: owner must be persistent", pipeline.Name, owner.Name)
 	}
-	payload := map[string]any{
-		"pipeline":           pipeline.Name,
-		"target":             owner.Name,
-		"manager_gate_ready": true,
-	}
+	payload := ManagerCompletionTriggerPayload(pipeline.Name, owner.Name, true)
 	var candidates []string
 	for _, candidate := range t.Resolve(EventJobStepCompleted, payload) {
 		if candidate != nil && !candidate.Ephemeral {
@@ -2015,6 +2032,16 @@ func (t *Topology) resolvePipelineManager(pipeline *Pipeline) (*Instance, bool, 
 		return nil, true, fmt.Errorf("pipeline %q: ambiguous completion owner for job.step_completed target %q: matched %s", pipeline.Name, owner.Name, strings.Join(candidates, ", "))
 	}
 	return owner, true, nil
+}
+
+func pipelineCompletionManagerDuty(pipeline *Pipeline) string {
+	if pipeline == nil {
+		return "completion duty"
+	}
+	if pipeline.Merge != nil {
+		return "declared merge"
+	}
+	return fmt.Sprintf("reap_worktree %q", pipeline.ReapWorktree)
 }
 
 func (t *Topology) pipelineOwningTeam(pipeline string) (string, error) {

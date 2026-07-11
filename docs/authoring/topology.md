@@ -347,8 +347,8 @@ agent-team doctor
 
 `topology validate` is also run by this repository's TOML CI gate. In addition
 to schema and reference errors, it rejects a managed pipeline when its manual
-decision or declared-merge owner is missing or ambiguous, cannot receive the
-daemon's completion event, or cannot satisfiably perform the pipeline's
+decision, merge, or reap-policy owner is missing or ambiguous, cannot receive
+the daemon's completion event, or cannot satisfiably perform the pipeline's
 required job mutations after instance, agent, team, and scope rules are
 composed.
 

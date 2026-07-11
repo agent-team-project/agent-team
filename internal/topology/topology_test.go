@@ -388,6 +388,69 @@ allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team"]
 		assertAuthoritySatisfiabilityError(t, err, `"job.close:team"`)
 	})
 
+	for _, tc := range []struct {
+		name          string
+		reap          string
+		requiredGrant string
+	}{
+		{name: "close-only pipeline", reap: "on_close", requiredGrant: "job.close:team"},
+		{name: "merge-only reap pipeline", reap: "on_merge", requiredGrant: "job.merge:team"},
+	} {
+		t.Run(tc.name+" resolves completion owner", func(t *testing.T) {
+			body := fmt.Sprintf(`
+[instances.release-manager]
+agent = "manager"
+
+[[instances.release-manager.triggers]]
+event = "job.completed"
+match.pipeline = "release"
+match.target = "manager"
+match.source = "daemon:completion"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[pipelines.release]
+trigger.event = "release.ready"
+reap_worktree = %q
+
+[[pipelines.release.steps]]
+id = "prepare"
+target = "worker"
+
+[teams.release]
+instances = ["release-manager", "worker"]
+pipelines = ["release"]
+
+[authority]
+enforcement = "enforce"
+
+[authority.instances.release-manager]
+allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team"]
+`, tc.reap)
+			_, err := Parse([]byte(body))
+			assertAuthoritySatisfiabilityError(t, err, `pipeline "release"`, `owner "release-manager"`, `"`+tc.requiredGrant+`"`)
+
+			valid := strings.Replace(body, `"job.gate.*:team"]`, `"job.gate.*:team", "`+tc.requiredGrant+`"]`, 1)
+			if _, err := Parse([]byte(valid)); err != nil {
+				t.Fatalf("Parse valid %s: %v", tc.name, err)
+			}
+		})
+	}
+
+	t.Run("manual owner resolves canonical completion source", func(t *testing.T) {
+		body := managedPipelineAuthorityFixture("frontend-manager", "frontend", "on_merge", `
+[authority.instances.frontend-manager]
+allow = ["event.publish", "job.*:team"]
+`)
+		body = strings.Replace(body, `match.target = "frontend-manager"`, `match.target = "frontend-manager"
+match.source = "daemon:completion"`, 1)
+		if _, err := Parse([]byte(body)); err != nil {
+			t.Fatalf("Parse completion-source-constrained owner: %v", err)
+		}
+	})
+
 	t.Run("merge-only pipeline owner resolves from completion trigger", func(t *testing.T) {
 		body := `
 [instances.release-manager]

@@ -189,11 +189,11 @@ Important layering rules:
   target job's recorded topology team with `:team`. Persistent pipeline
   managers use `:team`; unlike job-attached workers, they have no actor job that
   could satisfy `:own`.
-- Topology loading resolves each manual-gate or declared-merge pipeline owner
-  through the same completion-event triggers used by the daemon and evaluates
-  its mandatory job mutations through the runtime authority composer. Missing,
-  ambiguous, or scope-unsatisfiable manager paths are rejected before daemon
-  activation.
+- Topology loading resolves each manual-gate, merge, or reap-policy pipeline
+  owner through the same completion-event triggers used by the daemon and
+  evaluates its mandatory job mutations through the runtime authority
+  composer. Missing, ambiguous, or scope-unsatisfiable manager paths are
+  rejected before daemon activation.
 
 ## Contributor Checks
 
