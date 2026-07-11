@@ -208,6 +208,20 @@ unattended review/merge loop. In a multi-manager topology, route ownership by
 pipeline as well as direct target: completion payloads may retain the step role
 in `target`, and a broad manager target can wake the wrong portfolio owner.
 
+Persistent `job.step_completed` and `job.completed` triggers that determine a
+managed pipeline's owner may constrain only the stable completion fields
+`source`, `pipeline`, `target`, and `manager_gate_ready`. The daemon also
+delivers runtime-enriched fields such as `status`, `job_status`,
+`completed_step`, and `step_status`, but those values cannot define static
+manager ownership: topology validation rejects a compatible owner trigger that
+depends on them. Use `match.pipeline` and/or `match.target` to partition manager
+routes instead. Validation checks both possible stable payload shapes for each
+completion event: `manager_gate_ready` absent (false) and present as `true`.
+Every shape must resolve exactly one persistent owner. Missing or ambiguous
+routes are structural errors even when `[authority]` is omitted or configured
+for audit; only effective allowlist denials remain non-blocking outside enforce
+mode.
+
 ```toml
 [[instances.research-manager.triggers]]
 event = "job.completed"
@@ -312,10 +326,19 @@ allow = ["inbox.send", "channel.*", "job.gate.*:own"]
 allow = ["*"]
 ```
 
-Allow entries are exact verbs or prefix wildcards such as `queue.*`. Job
-verbs can add `:own`, such as `job.gate.*:own`, to match only when the target
-job id equals the caller's origin job. Unqualified entries match any target
-job. Instance, agent, and team rules are additive.
+Allow entries are exact verbs or prefix wildcards such as `queue.*`. Job verbs
+can add one of two scope qualifiers:
+
+- `:own`, such as `job.gate.*:own`, matches when the target job id equals the
+  caller's origin job. Use it for workers, verifiers, and reviewers dispatched
+  as part of that job.
+- `:team`, such as `job.bounce:team`, matches when the target job's recorded
+  origin team equals the caller instance's topology-derived team. Use it for a
+  persistent manager that operates its team's pipeline jobs but is not itself
+  dispatched as part of those jobs.
+
+Unqualified entries match any target job. Instance, agent, and team rules are
+additive.
 
 Under `enforcement = "enforce"`, launched runtimes get an `agent-team` shim
 that resolves invocations through the live Cobra command tree and denies
@@ -329,13 +352,26 @@ authority.
 Use:
 
 ```sh
+agent-team topology validate
 agent-team topology summary
 agent-team pipeline doctor --all
 agent-team team doctor --all
 agent-team doctor
 ```
 
-These catch missing agents, invalid topology references, unrouteable pipeline steps, and team ownership problems.
+`topology validate` is also run by this repository's TOML CI gate. In addition
+to schema and reference errors, it independently resolves every manual-decision
+and terminal merge/reap route and rejects missing or ambiguous completion-event
+owners in both authority modes. Runtime-enriched completion match fields are
+also rejected when they could introduce an owner that the stable payload cannot
+resolve. With `enforcement = "enforce"`, validation additionally rejects an
+owner that cannot satisfiably perform its route's required job mutations after
+instance, agent, team, and scope rules are composed. Audit mode keeps those
+grant denials observable and non-blocking, but does not make an ambiguous or
+unsupported topology structurally valid.
+
+The remaining commands catch missing agents, unrouteable pipeline steps, and
+runtime team ownership problems.
 
 ## Code Areas
 

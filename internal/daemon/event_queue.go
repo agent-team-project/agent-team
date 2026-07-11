@@ -340,23 +340,17 @@ func managerCompletionShouldWake(j *jobstore.Job, completedStep *jobstore.Step, 
 }
 
 func managerCompletionPayload(j *jobstore.Job, completedStep *jobstore.Step, meta *Metadata, status jobstore.Status) map[string]any {
-	payload := map[string]any{
-		"source":     "daemon:completion",
-		"target":     managerCompletionTarget(j),
-		"job_id":     j.ID,
-		"job":        j.ID,
-		"ticket":     j.Ticket,
-		"status":     string(status),
-		"job_status": string(j.Status),
-	}
+	payload := topology.ManagerCompletionTriggerPayload(j.Pipeline, managerCompletionTarget(j), managerGateReady(j))
+	payload["job_id"] = j.ID
+	payload["job"] = j.ID
+	payload["ticket"] = j.Ticket
+	payload["status"] = string(status)
+	payload["job_status"] = string(j.Status)
 	if j.TicketURL != "" {
 		payload["ticket_url"] = j.TicketURL
 	}
 	if j.Epic != "" {
 		payload["epic"] = j.Epic
-	}
-	if j.Pipeline != "" {
-		payload["pipeline"] = j.Pipeline
 	}
 	if j.Branch != "" {
 		payload["branch"] = j.Branch
@@ -385,9 +379,6 @@ func managerCompletionPayload(j *jobstore.Job, completedStep *jobstore.Step, met
 	}
 	if completionDeliverableReady(j, completedStep, status) {
 		payload["deliverable_ready"] = true
-	}
-	if managerGateReady(j) {
-		payload["manager_gate_ready"] = true
 	}
 	return payload
 }

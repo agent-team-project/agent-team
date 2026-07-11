@@ -60,6 +60,7 @@ Current `agent-team topology --help` output exposes:
 | `topology show` | Print declared instances and triggers, preferring daemon state and falling back to local parsing. |
 | `topology graph` | Render teams, instances, pipelines, schedules, and dispatch wiring. |
 | `topology summary` | Summarize declared topology and workflow health. |
+| `topology validate` | Validate schema, ownership, and pipeline-manager authority satisfiability. |
 | `topology reload` | Ask the running daemon to re-read `.agent_team/instances.toml`. |
 
 Current `agent-team event --help` output exposes:
@@ -184,6 +185,22 @@ Important layering rules:
 - Authority policy supports audit and enforce modes. Audit records violations
   for triage; enforce denies disallowed audited mutations while operator/no
   origin calls and reads remain open.
+- Job authority can be scoped to the caller's origin job with `:own` or to the
+  target job's recorded topology team with `:team`. Persistent pipeline
+  managers use `:team`; unlike job-attached workers, they have no actor job that
+  could satisfy `:own`.
+- Topology loading independently resolves every manual-gate and terminal
+  merge/reap route through the same completion-event triggers used by the
+  daemon. Ownership triggers may constrain only the stable completion payload
+  fields produced by `ManagerCompletionTriggerPayload`; a compatible trigger
+  that depends on runtime-enriched job or step fields is rejected as an
+  unsupported dynamic owner. Both absent/false and true `manager_gate_ready`
+  payload shapes must resolve exactly one owner for `job.step_completed` and
+  `job.completed`. Missing or ambiguous routes are rejected whether authority
+  is omitted, audit-only, or enforced. Under enforcement, each route's
+  mandatory job mutations are also evaluated through the runtime authority
+  composer, so scope-unsatisfiable manager paths are rejected before daemon
+  activation.
 
 ## Contributor Checks
 

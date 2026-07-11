@@ -105,6 +105,94 @@ agent = "manager"
 	}
 }
 
+func TestTopologyValidateCommand(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
+		root := t.TempDir()
+		teamDir := filepath.Join(root, ".agent_team")
+		if err := os.MkdirAll(teamDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topoFixture), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs([]string{"--repo", root, "topology", "validate"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("topology validate: %v\nstderr=%s", err, stderr.String())
+		}
+		if !strings.Contains(out.String(), "structure and authority satisfiable") {
+			t.Fatalf("stdout = %q", out.String())
+		}
+	})
+
+	t.Run("unsatisfiable", func(t *testing.T) {
+		root := t.TempDir()
+		teamDir := filepath.Join(root, ".agent_team")
+		if err := os.MkdirAll(teamDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `
+[instances.manager]
+agent = "manager"
+
+[[instances.manager.triggers]]
+event = "job.step_completed"
+match.target = "manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[pipelines.ticket_to_pr]
+trigger.event = "ticket.created"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+
+[[pipelines.ticket_to_pr.steps]]
+id = "approve"
+target = "manager"
+after = ["implement"]
+gate = "manual"
+
+[teams.delivery]
+instances = ["manager", "worker"]
+pipelines = ["ticket_to_pr"]
+
+[authority]
+enforcement = "enforce"
+
+[authority.instances.manager]
+allow = ["job.bounce:own", "job.step:own", "job.gate.*:own"]
+`
+		if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs([]string{"--repo", root, "topology", "validate"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("topology validate succeeded: %s", out.String())
+		}
+		var ec ExitCode
+		if !errors.As(err, &ec) || int(ec) != 1 {
+			t.Fatalf("error = %v, want exit 1", err)
+		}
+		for _, want := range []string{`pipeline "ticket_to_pr"`, `owner "manager"`, `"job.bounce:team"`, `[authority.instances.manager].allow`} {
+			if !strings.Contains(stderr.String(), want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+			}
+		}
+	})
+}
+
 func TestTopologyReloadCommandJSONAndFormat(t *testing.T) {
 	root := t.TempDir()
 	if eval, err := filepath.EvalSymlinks(root); err == nil {
@@ -180,6 +268,7 @@ func TestTopologyEventCommandsUseRepoSelectorOnly(t *testing.T) {
 		{"topology", "show", "--help"},
 		{"topology", "graph", "--help"},
 		{"topology", "summary", "--help"},
+		{"topology", "validate", "--help"},
 		{"topology", "reload", "--help"},
 		{"event", "publish", "--help"},
 		{"event", "trace", "--help"},
@@ -325,6 +414,13 @@ func TestTopologyShowJSONMirrorsDaemonTopology(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `
+[instances.manager]
+agent = "manager"
+
+[[instances.manager.triggers]]
+event = "job.completed"
+match.pipeline = "ticket_to_pr"
+
 [instances.worker]
 agent = "worker"
 ephemeral = true
@@ -373,7 +469,7 @@ scope = "team"
 
 [teams.delivery]
 description = "Delivery team"
-instances = ["worker", "reviewer"]
+instances = ["manager", "worker", "reviewer"]
 pipelines = ["ticket_to_pr"]
 schedules = ["nightly"]
 channels = ["delivery"]
@@ -428,6 +524,21 @@ load_weight = 2.5
 	var shown map[string]any
 	if err := json.Unmarshal(out.Bytes(), &shown); err != nil {
 		t.Fatalf("decode topology show json: %v\nbody=%s", err, out.String())
+	}
+	// The typed daemon client materializes zero-valued runtime counters while
+	// the raw endpoint omits them for persistent instances. Ignore only those
+	// client defaults before asserting that every daemon field survives.
+	rawInstances, _ := raw["instances"].([]any)
+	shownInstances, _ := shown["instances"].([]any)
+	for i := 0; i < len(rawInstances) && i < len(shownInstances); i++ {
+		rawInstance, _ := rawInstances[i].(map[string]any)
+		shownInstance, _ := shownInstances[i].(map[string]any)
+		if _, ok := rawInstance["running"]; !ok {
+			delete(shownInstance, "running")
+		}
+		if _, ok := rawInstance["queued"]; !ok {
+			delete(shownInstance, "queued")
+		}
 	}
 	if !reflect.DeepEqual(shown, raw) {
 		want, _ := json.MarshalIndent(raw, "", "  ")

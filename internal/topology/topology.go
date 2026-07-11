@@ -73,6 +73,27 @@ const (
 	EventDeliverableReady = "deliverable.ready"
 )
 
+// ManagerCompletionTriggerPayload returns the stable completion-event fields
+// that topology triggers may safely constrain. The daemon enriches this base
+// with job- and step-specific fields before publishing the event.
+func ManagerCompletionTriggerPayload(pipeline, target string, managerGateReady bool) map[string]any {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		target = "manager"
+	}
+	payload := map[string]any{
+		"source": "daemon:completion",
+		"target": target,
+	}
+	if pipeline = strings.TrimSpace(pipeline); pipeline != "" {
+		payload["pipeline"] = pipeline
+	}
+	if managerGateReady {
+		payload["manager_gate_ready"] = true
+	}
+	return payload
+}
+
 // Topology is the parsed + merged set of declared instances for a repo.
 type Topology struct {
 	// ModelPolicy is the shared runtime/model/effort default for declared seats.
@@ -343,7 +364,7 @@ type Authority struct {
 
 // AuthorityRule is a verb allowlist for one agent or team. Verbs may be exact
 // (`job.gate.set`) or prefix wildcards (`job.*`), with optional scope
-// qualifiers such as `:own`.
+// qualifiers such as `:own` and `:team`.
 type AuthorityRule struct {
 	Allow []string
 }
@@ -357,6 +378,10 @@ type AuthorityDecision struct {
 	Verb      string
 	ActorJob  string
 	TargetJob string
+	// TargetTeam is the owning team recorded on the target job. It is kept
+	// separate from Team because persistent managers are not attached to the
+	// jobs they manage and may act across more than one declared team.
+	TargetTeam string
 }
 
 // AuthorityEvaluation is the result of checking one audited action against the
@@ -450,13 +475,14 @@ func (r *AuthorityRule) Allows(decision AuthorityDecision) bool {
 
 func cleanAuthorityDecision(decision AuthorityDecision) AuthorityDecision {
 	return AuthorityDecision{
-		Instance:  strings.TrimSpace(decision.Instance),
-		Agent:     strings.TrimSpace(decision.Agent),
-		Team:      strings.TrimSpace(decision.Team),
-		Operator:  decision.Operator,
-		Verb:      strings.TrimSpace(decision.Verb),
-		ActorJob:  strings.TrimSpace(decision.ActorJob),
-		TargetJob: strings.TrimSpace(decision.TargetJob),
+		Instance:   strings.TrimSpace(decision.Instance),
+		Agent:      strings.TrimSpace(decision.Agent),
+		Team:       strings.TrimSpace(decision.Team),
+		Operator:   decision.Operator,
+		Verb:       strings.TrimSpace(decision.Verb),
+		ActorJob:   strings.TrimSpace(decision.ActorJob),
+		TargetJob:  strings.TrimSpace(decision.TargetJob),
+		TargetTeam: strings.TrimSpace(decision.TargetTeam),
 	}
 }
 
@@ -470,6 +496,8 @@ func authorityAllowMatches(allow string, decision AuthorityDecision) bool {
 		return true
 	case "own":
 		return decision.ActorJob != "" && decision.TargetJob != "" && strings.EqualFold(decision.ActorJob, decision.TargetJob)
+	case "team":
+		return decision.Team != "" && decision.TargetTeam != "" && strings.EqualFold(decision.Team, decision.TargetTeam)
 	default:
 		return false
 	}
@@ -795,6 +823,24 @@ func (t *Topology) TeamForInstance(name string) string {
 	return bestTeam
 }
 
+// TeamForPipeline returns the owning team declared for a pipeline. Topology
+// validation rejects managed pipelines with missing or ambiguous ownership, so
+// runtime callers receive one stable team for every validated manager path.
+func (t *Topology) TeamForPipeline(name string) string {
+	if t == nil {
+		return ""
+	}
+	name = strings.TrimSpace(name)
+	for _, team := range t.SortedTeams() {
+		for _, ref := range team.Pipelines {
+			if ref == name {
+				return team.Name
+			}
+		}
+	}
+	return ""
+}
+
 // AuthorityAllowlistForInstance returns the topology-declared authority
 // patterns that apply to a runtime instance. Per-agent and per-team rules are
 // additive, mirroring Authority.Allows.
@@ -1104,6 +1150,9 @@ func finalise(raw *rawTopology, validateTeamRefs bool) (*Topology, error) {
 			return nil, err
 		}
 		if err := validateBudgetReferences(t); err != nil {
+			return nil, err
+		}
+		if err := validatePipelineAuthoritySatisfiability(t); err != nil {
 			return nil, err
 		}
 	}
@@ -1878,6 +1927,303 @@ func validateBudgetReferences(t *Topology) error {
 	return nil
 }
 
+// ValidateAuthoritySatisfiability checks that every declaratively managed
+// pipeline has unambiguous persistent receivers for its manual-gate and
+// terminal completion events. Under enforcement it also checks that each
+// receiver can perform its route's duties. It intentionally evaluates concrete
+// AuthorityDecisions instead of searching allowlist strings, so wildcard,
+// instance/agent/team composition, and scope qualifiers stay identical to the
+// runtime authorizer.
+func (t *Topology) ValidateAuthoritySatisfiability() error {
+	return validatePipelineAuthoritySatisfiability(t)
+}
+
+func validatePipelineAuthoritySatisfiability(t *Topology) error {
+	if t == nil {
+		return nil
+	}
+	for _, pipeline := range t.SortedPipelines() {
+		routes, managed, err := t.resolvePipelineManagers(pipeline)
+		if err != nil {
+			return err
+		}
+		if !managed {
+			continue
+		}
+		team, err := t.pipelineOwningTeam(pipeline.Name)
+		if err != nil {
+			return err
+		}
+		if t.Authority == nil || !t.Authority.Configured() || !t.Authority.Enforced() {
+			continue
+		}
+		for _, route := range routes {
+			for _, verb := range route.verbs {
+				decision := t.pipelineManagerAuthorityDecision(route.owner, verb, pipeline.Name, team)
+				eval := t.Authority.Evaluate(decision)
+				if eval.Allowed {
+					continue
+				}
+				requiredGrant := verb
+				if strings.HasPrefix(verb, "job.") && decision.Team != "" && strings.EqualFold(decision.Team, team) {
+					requiredGrant += ":team"
+				}
+				return fmt.Errorf("pipeline %q: owner %q for %s lacks effective authority %q for team %q (runtime sources: %s); add %q to [authority.instances.%s].allow", pipeline.Name, route.owner.Name, route.duty, requiredGrant, team, eval.SourceDescription(), requiredGrant, route.owner.Name)
+			}
+		}
+	}
+	return nil
+}
+
+// pipelineManagerAuthorityDecision models the target context supplied by the
+// runtime path for each mandatory manager duty. Job mutations resolve the
+// target job and its durable topology team; non-job actions such as
+// event.publish have neither and therefore cannot satisfy :own or :team grants.
+func (t *Topology) pipelineManagerAuthorityDecision(owner *Instance, verb, pipeline, pipelineTeam string) AuthorityDecision {
+	decision := AuthorityDecision{
+		Instance: owner.Name,
+		Agent:    owner.Agent,
+		Team:     t.TeamForInstance(owner.Name),
+		Verb:     verb,
+	}
+	if strings.HasPrefix(verb, "job.") {
+		// The concrete job ID does not exist at topology-load time. A stable,
+		// non-empty representative preserves the runtime scope semantics:
+		// persistent managers still have no ActorJob, while the target does.
+		decision.TargetJob = "pipeline-job:" + pipeline
+		decision.TargetTeam = pipelineTeam
+	}
+	return decision
+}
+
+type pipelineManagerRoute struct {
+	owner *Instance
+	duty  string
+	verbs []string
+}
+
+func (t *Topology) resolvePipelineManagers(pipeline *Pipeline) ([]pipelineManagerRoute, bool, error) {
+	if pipeline == nil {
+		return nil, false, nil
+	}
+	owners := map[string]bool{}
+	for _, step := range pipeline.Steps {
+		if step == nil || step.Gate != "manual" {
+			continue
+		}
+		if target := strings.TrimSpace(step.Target); target != "" {
+			owners[target] = true
+		}
+	}
+	terminalVerbs := pipelineTerminalManagerRequiredVerbs(pipeline)
+	if len(owners) == 0 && len(terminalVerbs) == 0 {
+		return nil, false, nil
+	}
+
+	var routes []pipelineManagerRoute
+	terminalTarget := ""
+	if len(owners) > 0 {
+		names := sortedStringKeys(owners)
+		if len(names) != 1 {
+			return nil, true, fmt.Errorf("pipeline %q: ambiguous managing instances from manual gates: %s", pipeline.Name, strings.Join(names, ", "))
+		}
+		owner := t.Instances[names[0]]
+		if owner == nil {
+			return nil, true, fmt.Errorf("pipeline %q: unsupported managing instance %q from manual gate: instance is not declared", pipeline.Name, names[0])
+		}
+		if owner.Ephemeral {
+			return nil, true, fmt.Errorf("pipeline %q: unsupported managing instance %q from manual gate: owner must be persistent", pipeline.Name, owner.Name)
+		}
+		for _, managerGateReady := range []bool{false, true} {
+			payload := ManagerCompletionTriggerPayload(pipeline.Name, owner.Name, managerGateReady)
+			if candidate, fields, ok := t.unsupportedPersistentCompletionOwner(EventJobStepCompleted, payload); ok {
+				return nil, true, fmt.Errorf("%v (manager_gate_ready=%t)", unsupportedDynamicCompletionOwnerError(pipeline.Name, EventJobStepCompleted, candidate, fields), managerGateReady)
+			}
+			candidates := t.persistentCompletionCandidates(EventJobStepCompleted, payload)
+			if len(candidates) == 0 {
+				return nil, true, fmt.Errorf("pipeline %q: unsupported owner %q: no persistent instance trigger matches job.step_completed for target %q when manager_gate_ready=%t", pipeline.Name, owner.Name, owner.Name, managerGateReady)
+			}
+			if len(candidates) != 1 || candidates[0] != owner.Name {
+				return nil, true, fmt.Errorf("pipeline %q: ambiguous completion owner for job.step_completed target %q when manager_gate_ready=%t: matched %s", pipeline.Name, owner.Name, managerGateReady, strings.Join(candidates, ", "))
+			}
+		}
+		routes = append(routes, pipelineManagerRoute{
+			owner: owner,
+			duty:  "manual-gate completion",
+			verbs: pipelineManualManagerRequiredVerbs(),
+		})
+		terminalTarget = owner.Name
+	}
+
+	if len(terminalVerbs) > 0 {
+		terminalOwners := map[string]bool{}
+		for _, managerGateReady := range []bool{false, true} {
+			payload := ManagerCompletionTriggerPayload(pipeline.Name, terminalTarget, managerGateReady)
+			if candidate, fields, ok := t.unsupportedPersistentCompletionOwner(EventJobCompleted, payload); ok {
+				return nil, true, fmt.Errorf("%v (manager_gate_ready=%t)", unsupportedDynamicCompletionOwnerError(pipeline.Name, EventJobCompleted, candidate, fields), managerGateReady)
+			}
+			candidates := t.persistentCompletionCandidates(EventJobCompleted, payload)
+			if len(candidates) == 0 {
+				return nil, true, fmt.Errorf("pipeline %q: unsupported managing instance for %s: no persistent instance trigger matches job.completed with pipeline %q when manager_gate_ready=%t", pipeline.Name, pipelineCompletionManagerDuty(pipeline), pipeline.Name, managerGateReady)
+			}
+			if len(candidates) != 1 {
+				return nil, true, fmt.Errorf("pipeline %q: ambiguous completion owner for %s when manager_gate_ready=%t: matched %s", pipeline.Name, pipelineCompletionManagerDuty(pipeline), managerGateReady, strings.Join(candidates, ", "))
+			}
+			terminalOwners[candidates[0]] = true
+		}
+		verbs := terminalVerbs
+		if len(owners) == 0 {
+			verbs = append(pipelineCoreManagerRequiredVerbs(), terminalVerbs...)
+		}
+		for _, name := range sortedStringKeys(terminalOwners) {
+			routes = append(routes, pipelineManagerRoute{
+				owner: t.Instances[name],
+				duty:  pipelineCompletionManagerDuty(pipeline),
+				verbs: verbs,
+			})
+		}
+	}
+	return routes, true, nil
+}
+
+func (t *Topology) unsupportedPersistentCompletionOwner(event string, payload map[string]any) (string, []string, bool) {
+	stableKeys := managerCompletionStableMatchKeys()
+	for _, candidate := range t.SortedInstances() {
+		if candidate == nil || candidate.Ephemeral {
+			continue
+		}
+		for _, trigger := range candidate.Triggers {
+			if trigger == nil || trigger.Event != event || !completionTriggerMatchesStablePayload(trigger, payload, stableKeys) {
+				continue
+			}
+			var dynamicKeys []string
+			for key := range trigger.Match {
+				if !stableKeys[key] {
+					dynamicKeys = append(dynamicKeys, key)
+				}
+			}
+			if len(dynamicKeys) == 0 {
+				continue
+			}
+			sort.Strings(dynamicKeys)
+			return candidate.Name, dynamicKeys, true
+		}
+	}
+	return "", nil, false
+}
+
+func managerCompletionStableMatchKeys() map[string]bool {
+	payload := ManagerCompletionTriggerPayload("pipeline", "manager", true)
+	keys := make(map[string]bool, len(payload))
+	for key := range payload {
+		keys[key] = true
+	}
+	return keys
+}
+
+func completionTriggerMatchesStablePayload(trigger *Trigger, payload map[string]any, stableKeys map[string]bool) bool {
+	for key, matcher := range trigger.Match {
+		if !stableKeys[key] {
+			continue
+		}
+		value, ok := payload[key]
+		if !ok || !matcher.Eval(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func unsupportedDynamicCompletionOwnerError(pipeline, event, owner string, fields []string) error {
+	stableKeys := sortedStringKeys(managerCompletionStableMatchKeys())
+	return fmt.Errorf(
+		"pipeline %q: unsupported dynamic completion owner %q for %s: trigger constrains %s; runtime-enriched completion fields cannot determine manager ownership; use only stable completion fields %s",
+		pipeline,
+		owner,
+		event,
+		strings.Join(prefixedMatchKeys(fields), ", "),
+		strings.Join(prefixedMatchKeys(stableKeys), ", "),
+	)
+}
+
+func prefixedMatchKeys(keys []string) []string {
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, "match."+key)
+	}
+	return out
+}
+
+func (t *Topology) persistentCompletionCandidates(event string, payload map[string]any) []string {
+	var candidates []string
+	for _, candidate := range t.Resolve(event, payload) {
+		if candidate != nil && !candidate.Ephemeral {
+			candidates = append(candidates, candidate.Name)
+		}
+	}
+	return candidates
+}
+
+func pipelineCompletionManagerDuty(pipeline *Pipeline) string {
+	if pipeline == nil {
+		return "completion duty"
+	}
+	if pipeline.Merge != nil {
+		return "declared merge"
+	}
+	return fmt.Sprintf("reap_worktree %q", pipeline.ReapWorktree)
+}
+
+func (t *Topology) pipelineOwningTeam(pipeline string) (string, error) {
+	var owners []string
+	for _, team := range t.SortedTeams() {
+		for _, ref := range team.Pipelines {
+			if ref == pipeline {
+				owners = append(owners, team.Name)
+			}
+		}
+	}
+	switch len(owners) {
+	case 0:
+		return "", fmt.Errorf("pipeline %q: unsupported authority scope: managed pipeline has no owning [teams.*].pipelines declaration", pipeline)
+	case 1:
+		return owners[0], nil
+	default:
+		return "", fmt.Errorf("pipeline %q: ambiguous authority scope: declared by teams %s", pipeline, strings.Join(owners, ", "))
+	}
+}
+
+func pipelineManualManagerRequiredVerbs() []string {
+	return append(pipelineCoreManagerRequiredVerbs(), "job.approve", "job.reject")
+}
+
+func pipelineCoreManagerRequiredVerbs() []string {
+	return []string{"job.bounce", "job.step", "job.gate.set", "event.publish"}
+}
+
+func pipelineTerminalManagerRequiredVerbs(pipeline *Pipeline) []string {
+	if pipeline == nil {
+		return nil
+	}
+	var verbs []string
+	if pipeline.Merge != nil || pipeline.ReapWorktree == worktreepolicy.OnMerge {
+		verbs = append(verbs, "job.merge")
+	}
+	if pipeline.ReapWorktree == worktreepolicy.OnClose {
+		verbs = append(verbs, "job.close")
+	}
+	return verbs
+}
+
+func sortedStringKeys(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func finaliseAuthority(raw *rawAuthority) (*Authority, error) {
 	if raw == nil {
 		return nil, nil
@@ -1965,10 +2311,12 @@ func validateAuthorityVerb(value string) error {
 	verb, qualifier, hasQualifier := strings.Cut(value, ":")
 	if hasQualifier {
 		if strings.Contains(qualifier, ":") {
-			return fmt.Errorf("authority scope qualifier must be :own")
+			return fmt.Errorf("authority scope qualifier must be :own or :team")
 		}
-		if strings.TrimSpace(qualifier) != "own" {
-			return fmt.Errorf("authority scope qualifier must be :own")
+		switch strings.TrimSpace(qualifier) {
+		case "own", "team":
+		default:
+			return fmt.Errorf("authority scope qualifier must be :own or :team")
 		}
 		value = strings.TrimSpace(verb)
 	}

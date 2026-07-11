@@ -10995,6 +10995,7 @@ Subcommands:
 - `agent-team topology reload` - Re-read instances.toml from disk (daemon must be running).
 - `agent-team topology show` - Print the resolved topology (declared instances + triggers).
 - `agent-team topology summary` - Summarize declared topology and workflow health.
+- `agent-team topology validate` - Validate topology structure and authority satisfiability.
 
 ## `agent-team topology graph`
 
@@ -11075,6 +11076,20 @@ Flags:
 
 ```text
       --json   Emit topology summary as JSON.
+```
+
+Inherited Flags:
+
+```text
+      --repo string   Repo root containing .agent_team for commands that read repo state; overrides legacy repo-root --target flags.
+```
+
+## `agent-team topology validate`
+
+Validate topology structure and authority satisfiability.
+
+```text
+agent-team topology validate
 ```
 
 Inherited Flags:

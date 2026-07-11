@@ -50,7 +50,9 @@ jobs:
         run: pip install --no-cache-dir pyyaml==6.0.2
 
       - name: Validate TOML files
-        run: python3 scripts/ci/validate_toml.py
+        run: |
+          python3 scripts/ci/validate_toml.py
+          go run ./cmd/agent-team --repo . topology validate
 
       - name: Validate agent & skill frontmatter
         run: python3 scripts/ci/validate_frontmatter.py

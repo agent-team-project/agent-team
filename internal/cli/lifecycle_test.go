@@ -1381,7 +1381,7 @@ func TestStartWaitJSONHonorsAgentFilterHealth(t *testing.T) {
 	initInto(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	root := daemon.DaemonRoot(teamDir)
-	for _, name := range []string{"manager", "research-manager"} {
+	for _, name := range []string{"frontend-manager", "manager", "research-manager"} {
 		if err := daemon.WriteMetadata(root, &daemon.Metadata{
 			Instance: name,
 			Agent:    "manager",
@@ -1420,11 +1420,11 @@ func TestStartWaitJSONHonorsAgentFilterHealth(t *testing.T) {
 	if body.Health == nil || !body.Health.Healthy {
 		t.Fatalf("filtered start wait health = %+v, want healthy manager-only health", body.Health)
 	}
-	if len(body.Actions) != 2 || body.Actions[0].Instance != "manager" || body.Actions[1].Instance != "research-manager" || body.Actions[0].Action != "skip" || body.Actions[1].Action != "skip" {
-		t.Fatalf("filtered start wait actions = %+v, want both manager seats skipped", body.Actions)
+	if len(body.Actions) != 3 || body.Actions[0].Instance != "frontend-manager" || body.Actions[1].Instance != "manager" || body.Actions[2].Instance != "research-manager" || body.Actions[0].Action != "skip" || body.Actions[1].Action != "skip" || body.Actions[2].Action != "skip" {
+		t.Fatalf("filtered start wait actions = %+v, want all manager seats skipped", body.Actions)
 	}
-	if body.Health.Declared.Persistent != 2 || body.Health.Declared.Running != 2 || body.Health.Declared.Missing != 0 {
-		t.Fatalf("filtered start wait declared health = %+v, want both manager seats declared", body.Health.Declared)
+	if body.Health.Declared.Persistent != 3 || body.Health.Declared.Running != 3 || body.Health.Declared.Missing != 0 {
+		t.Fatalf("filtered start wait declared health = %+v, want all manager seats declared", body.Health.Declared)
 	}
 }
 
@@ -3064,6 +3064,10 @@ func TestRestartWaitJSONHonorsAgentFilterHealth(t *testing.T) {
 		t.Fatalf("dispatch manager: %v", err)
 	}
 	defer stopAndWaitForTest(t, mgr, "manager")
+	if _, err := mgr.Dispatch(daemon.DispatchInput{Agent: "manager", Name: "frontend-manager", Workspace: tmp}); err != nil {
+		t.Fatalf("dispatch frontend-manager: %v", err)
+	}
+	defer stopAndWaitForTest(t, mgr, "frontend-manager")
 	if _, err := mgr.Dispatch(daemon.DispatchInput{Agent: "manager", Name: "research-manager", Workspace: tmp}); err != nil {
 		t.Fatalf("dispatch research-manager: %v", err)
 	}
@@ -3091,11 +3095,11 @@ func TestRestartWaitJSONHonorsAgentFilterHealth(t *testing.T) {
 	if body.Health == nil || !body.Health.Healthy {
 		t.Fatalf("filtered restart wait health = %+v, want healthy manager-only health", body.Health)
 	}
-	if len(body.Actions) != 2 || body.Actions[0].Instance != "manager" || body.Actions[1].Instance != "research-manager" || body.Actions[0].Action != "restart" || body.Actions[1].Action != "restart" {
-		t.Fatalf("filtered restart wait actions = %+v, want both manager seats restarted", body.Actions)
+	if len(body.Actions) != 3 || body.Actions[0].Instance != "frontend-manager" || body.Actions[1].Instance != "manager" || body.Actions[2].Instance != "research-manager" || body.Actions[0].Action != "restart" || body.Actions[1].Action != "restart" || body.Actions[2].Action != "restart" {
+		t.Fatalf("filtered restart wait actions = %+v, want all manager seats restarted", body.Actions)
 	}
-	if body.Health.Declared.Persistent != 2 || body.Health.Declared.Running != 2 || body.Health.Declared.Missing != 0 {
-		t.Fatalf("filtered restart wait declared health = %+v, want both manager seats declared", body.Health.Declared)
+	if body.Health.Declared.Persistent != 3 || body.Health.Declared.Running != 3 || body.Health.Declared.Missing != 0 {
+		t.Fatalf("filtered restart wait declared health = %+v, want all manager seats declared", body.Health.Declared)
 	}
 }
 

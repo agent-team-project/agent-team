@@ -1013,7 +1013,7 @@ func TestSelectLifecycleTargets_DefaultIgnoresAdhocMetadata(t *testing.T) {
 	for _, target := range targets {
 		names = append(names, target.name)
 	}
-	if strings.Join(names, ",") != "advisor,manager,research-auditor,research-manager,ticket-manager" {
+	if strings.Join(names, ",") != "advisor,frontend-manager,manager,research-auditor,research-manager,ticket-manager" {
 		t.Fatalf("default targets = %v, want declared persistent only", names)
 	}
 }
@@ -1039,11 +1039,11 @@ func TestSelectAllLifecycleTargetsIncludesDaemonKnownExtras(t *testing.T) {
 	for _, target := range targets {
 		names = append(names, target.name)
 	}
-	if strings.Join(names, ",") != "advisor,manager,research-auditor,research-manager,ticket-manager,adhoc-a,adhoc-b" {
+	if strings.Join(names, ",") != "advisor,frontend-manager,manager,research-auditor,research-manager,ticket-manager,adhoc-a,adhoc-b" {
 		t.Fatalf("all lifecycle targets = %v", names)
 	}
-	if !targets[1].running() || targets[1].name != "manager" {
-		t.Fatalf("manager target should carry running daemon metadata: %+v", targets[1])
+	if !targets[2].running() || targets[2].name != "manager" {
+		t.Fatalf("manager target should carry running daemon metadata: %+v", targets[2])
 	}
 }
 
@@ -1068,11 +1068,11 @@ func TestSelectAgentLifecycleTargetsIncludesDeclaredAndDaemonKnown(t *testing.T)
 	for _, target := range targets {
 		names = append(names, target.name)
 	}
-	if strings.Join(names, ",") != "manager,research-manager,adhoc-b" {
+	if strings.Join(names, ",") != "frontend-manager,manager,research-manager,adhoc-b" {
 		t.Fatalf("manager lifecycle targets = %v, want declared manager then daemon-known adhoc-b", names)
 	}
-	if !targets[0].running() {
-		t.Fatalf("declared manager target should carry running metadata: %+v", targets[0])
+	if !targets[1].running() {
+		t.Fatalf("declared manager target should carry running metadata: %+v", targets[1])
 	}
 
 	targets, err = selectAgentLifecycleTargets(topo, metas, []string{"worker"})
@@ -2135,7 +2135,7 @@ func TestInstanceUpWaitJSONHonorsAgentFilterHealth(t *testing.T) {
 	initInto(t, tmp)
 	teamDir := filepath.Join(tmp, ".agent_team")
 	root := daemon.DaemonRoot(teamDir)
-	for _, name := range []string{"manager", "research-manager"} {
+	for _, name := range []string{"frontend-manager", "manager", "research-manager"} {
 		if err := daemon.WriteMetadata(root, &daemon.Metadata{
 			Instance: name,
 			Agent:    "manager",
@@ -2174,11 +2174,11 @@ func TestInstanceUpWaitJSONHonorsAgentFilterHealth(t *testing.T) {
 	if body.Health == nil || !body.Health.Healthy {
 		t.Fatalf("filtered instance up wait health = %+v, want healthy manager-only health", body.Health)
 	}
-	if len(body.Actions) != 2 || body.Actions[0].Instance != "manager" || body.Actions[1].Instance != "research-manager" || body.Actions[0].Action != "skip" || body.Actions[1].Action != "skip" {
-		t.Fatalf("filtered instance up wait actions = %+v, want both manager seats skipped", body.Actions)
+	if len(body.Actions) != 3 || body.Actions[0].Instance != "frontend-manager" || body.Actions[1].Instance != "manager" || body.Actions[2].Instance != "research-manager" || body.Actions[0].Action != "skip" || body.Actions[1].Action != "skip" || body.Actions[2].Action != "skip" {
+		t.Fatalf("filtered instance up wait actions = %+v, want all manager seats skipped", body.Actions)
 	}
-	if body.Health.Declared.Persistent != 2 || body.Health.Declared.Running != 2 || body.Health.Declared.Missing != 0 {
-		t.Fatalf("filtered instance up wait declared health = %+v, want both manager seats declared", body.Health.Declared)
+	if body.Health.Declared.Persistent != 3 || body.Health.Declared.Running != 3 || body.Health.Declared.Missing != 0 {
+		t.Fatalf("filtered instance up wait declared health = %+v, want all manager seats declared", body.Health.Declared)
 	}
 }
 

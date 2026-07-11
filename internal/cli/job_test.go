@@ -25,6 +25,7 @@ import (
 	"github.com/agent-team-project/agent-team/internal/linearwriteback"
 	"github.com/agent-team-project/agent-team/internal/origin"
 	"github.com/agent-team-project/agent-team/internal/runtimebin"
+	"github.com/agent-team-project/agent-team/internal/topology"
 	"github.com/agent-team-project/agent-team/internal/worktreecleanup"
 	"github.com/agent-team-project/agent-team/internal/worktreepolicy"
 )
@@ -5863,6 +5864,153 @@ func TestJobCreateDispatchesImmediately(t *testing.T) {
 	}
 }
 
+func TestGH403SharedWorkerDispatchPreservesPipelineOwningTeam(t *testing.T) {
+	for _, key := range []string{
+		"AGENT_TEAM_PROJECT",
+		"AGENT_TEAM_TEAM",
+		"AGENT_TEAM_INSTANCE",
+		"AGENT_TEAM_ORIGIN_INSTANCE",
+		"AGENT_TEAM_ORIGIN_AGENT",
+		"AGENT_TEAM_JOB_ID",
+		"AGENT_TEAM_ORIGIN_JOB",
+		"AGENT_TEAM_ORIGIN_TRIGGER",
+	} {
+		t.Setenv(key, "")
+	}
+
+	tmp, err := os.MkdirTemp("/tmp", "agent-team-gh403-shared-worker-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.alpha-manager]
+agent = "manager"
+
+[instances.beta-manager]
+agent = "manager"
+
+[[instances.beta-manager.triggers]]
+event = "job.step_completed"
+match.pipeline = "beta"
+match.target = "beta-manager"
+
+[instances.shared-worker]
+agent = "worker"
+ephemeral = true
+
+[[instances.shared-worker.triggers]]
+event = "agent.dispatch"
+match.target = "shared-worker"
+
+[pipelines.beta]
+trigger.event = "ticket.created"
+
+[[pipelines.beta.steps]]
+id = "implement"
+target = "shared-worker"
+workspace = "repo"
+
+[[pipelines.beta.steps]]
+id = "approve"
+target = "beta-manager"
+after = ["implement"]
+gate = "manual"
+
+[teams.alpha]
+instances = ["alpha-manager", "shared-worker"]
+
+[teams.beta]
+instances = ["beta-manager", "shared-worker"]
+pipelines = ["beta"]
+
+[authority]
+enforcement = "enforce"
+
+[authority.instances.alpha-manager]
+allow = ["job.bounce:team"]
+
+[authority.instances.beta-manager]
+allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team", "job.approve:team", "job.reject:team"]
+`), 0o644); err != nil {
+		t.Fatalf("write instances.toml: %v", err)
+	}
+
+	top, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil {
+		t.Fatalf("load topology: %v", err)
+	}
+	root := daemon.DaemonRoot(teamDir)
+	mgr := daemon.NewInstanceManager(root, fakeSpawnerForTest(t, 2*time.Second))
+	cleanup := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanup()
+
+	create := NewRootCmd()
+	createOut, createErr := &bytes.Buffer{}, &bytes.Buffer{}
+	create.SetOut(createOut)
+	create.SetErr(createErr)
+	create.SetArgs([]string{
+		"job", "create", "GH-403-SHARED",
+		"--repo", tmp,
+		"--pipeline", "beta",
+		"--dispatch",
+		"--workspace", "repo",
+		"--json",
+	})
+	if err := create.Execute(); err != nil {
+		t.Fatalf("job create --pipeline beta --dispatch: %v\nstderr=%s", err, createErr.String())
+	}
+
+	j, err := job.Read(teamDir, "gh-403-shared")
+	if err != nil {
+		t.Fatalf("read dispatched job: %v\nstdout=%s", err, createOut.String())
+	}
+	if j.Origin.Team != "beta" {
+		t.Fatalf("pipeline job origin team = %q, want beta; origin=%+v", j.Origin.Team, j.Origin)
+	}
+	meta, err := daemon.ReadMetadata(root, "shared-worker-gh-403-shared-implement")
+	if err != nil {
+		t.Fatalf("read dispatched step metadata: %v", err)
+	}
+	if meta.Origin.Team != "beta" {
+		t.Fatalf("pipeline step origin team = %q, want beta; origin=%+v", meta.Origin.Team, meta.Origin)
+	}
+
+	if err := daemon.AuditAuthority(daemon.AuthorityAuditOptions{
+		TeamDir:    teamDir,
+		DaemonRoot: root,
+		Topology:   top,
+		Actor: origin.Envelope{
+			Team:     "beta",
+			Instance: "beta-manager",
+			Agent:    "manager",
+		},
+		Verb:      "job.bounce",
+		TargetJob: j.ID,
+	}); err != nil {
+		t.Fatalf("validated beta manager denied its beta pipeline job: %v", err)
+	}
+
+	if err := daemon.AuditAuthority(daemon.AuthorityAuditOptions{
+		TeamDir:    teamDir,
+		DaemonRoot: root,
+		Topology:   top,
+		Actor: origin.Envelope{
+			Team:     "alpha",
+			Instance: "alpha-manager",
+			Agent:    "manager",
+		},
+		Verb:      "job.bounce",
+		TargetJob: j.ID,
+	}); err == nil {
+		t.Fatal("cross-team alpha manager authorized for beta pipeline job")
+	}
+
+	stopAndWaitForTest(t, mgr, "shared-worker-gh-403-shared-implement")
+}
+
 func TestJobCreateDispatchWaitsForRequestedStatus(t *testing.T) {
 	tmp, err := os.MkdirTemp("/tmp", "agent-team-job-create-dispatch-wait-")
 	if err != nil {
@@ -7437,6 +7585,241 @@ func TestJobBounceAdvanceDispatchesRequeuedStep(t *testing.T) {
 		t.Fatalf("events = %+v", events)
 	}
 	stopAndWaitForTest(t, mgr, result.Step.Instance)
+}
+
+func TestFrontendManagerTeamAuthoritySupportsConsecutiveVerdictBounceTransitions(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "agent-team-gh403-transition-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	teamDir := filepath.Join(root, ".agent_team")
+	if err := os.MkdirAll(filepath.Join(teamDir, "agents", "worker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "agents", "worker", "agent.md"), []byte("---\ndescription: transition worker\n---\n\nRun the next pipeline step.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(teamDir, "agents", "manager"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "agents", "manager", "agent.md"), []byte("---\ndescription: transition manager\n---\n\nComplete the manager pipeline step.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const topologyBody = `
+[instances.frontend-manager]
+agent = "manager"
+
+[[instances.frontend-manager.triggers]]
+event = "job.step_completed"
+match.target = "frontend-manager"
+
+[[instances.frontend-manager.triggers]]
+event = "agent.dispatch"
+match.target = "frontend-manager"
+
+[instances.worker]
+agent = "worker"
+ephemeral = true
+
+[[instances.worker.triggers]]
+event = "agent.dispatch"
+match.target = "worker"
+
+[pipelines.frontend_ticket_to_pr]
+trigger.event = "frontend.slice.ready"
+auto_advance = true
+
+[[pipelines.frontend_ticket_to_pr.steps]]
+id = "implement"
+target = "worker"
+workspace = "repo"
+
+[[pipelines.frontend_ticket_to_pr.steps]]
+id = "review"
+target = "worker"
+after = ["implement"]
+
+[[pipelines.frontend_ticket_to_pr.steps]]
+id = "integrate"
+target = "frontend-manager"
+after = ["review"]
+gate = "manual"
+
+[teams.frontend]
+instances = ["frontend-manager", "worker"]
+pipelines = ["frontend_ticket_to_pr"]
+
+[authority]
+enforcement = "enforce"
+
+[authority.instances.frontend-manager]
+allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team", "job.approve:team", "job.reject:team"]
+
+[authority.agents.worker]
+allow = ["job.step:own"]
+`
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(topologyBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	top, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil {
+		t.Fatalf("load topology: %v", err)
+	}
+	routes := top.Resolve(topology.EventJobStepCompleted, map[string]any{
+		"pipeline":           "frontend_ticket_to_pr",
+		"target":             "frontend-manager",
+		"manager_gate_ready": true,
+	})
+	if len(routes) != 1 || routes[0].Name != "frontend-manager" {
+		t.Fatalf("verdict completion routes = %+v, want frontend-manager", routes)
+	}
+
+	mgr := daemon.NewInstanceManager(daemon.DaemonRoot(teamDir), fakeSpawnerForTest(t, 2*time.Second))
+	cleanupDaemon := startRunTestDaemon(t, teamDir, mgr)
+	defer cleanupDaemon()
+
+	now := time.Now().UTC()
+	j := &job.Job{
+		ID:        "gh403-transition",
+		Ticket:    "GH-403",
+		Target:    "worker",
+		Kickoff:   "exercise frontend verdict transition",
+		Pipeline:  "frontend_ticket_to_pr",
+		Status:    job.StatusBlocked,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Origin:    origin.Envelope{Team: "frontend", Job: "gh403-transition"},
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Workspace: "repo", Status: job.StatusDone, Instance: "worker-old", StartedAt: now.Add(-3 * time.Minute), FinishedAt: now.Add(-2 * time.Minute)},
+			{ID: "review", Target: "worker", Status: job.StatusDone, Instance: "reviewer-old", After: []string{"implement"}, StartedAt: now.Add(-2 * time.Minute), FinishedAt: now.Add(-time.Minute)},
+			{ID: "integrate", Target: "frontend-manager", Status: job.StatusBlocked, After: []string{"review"}, Gate: job.StepGateManual},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatalf("write transition job: %v", err)
+	}
+	t.Setenv("AGENT_TEAM_PROJECT", "project-1")
+	t.Setenv("AGENT_TEAM_TEAM", "frontend")
+	t.Setenv("AGENT_TEAM_INSTANCE", "frontend-manager")
+	t.Setenv("AGENT_TEAM_ORIGIN_INSTANCE", "frontend-manager")
+	t.Setenv("AGENT_TEAM_ORIGIN_AGENT", "manager")
+	t.Setenv("AGENT_TEAM_JOB_ID", "")
+	t.Setenv("AGENT_TEAM_ORIGIN_JOB", "")
+	t.Setenv("AGENT_TEAM_ORIGIN_TRIGGER", "daemon:completion")
+
+	for round := 1; round <= 3; round++ {
+		cmd := NewRootCmd()
+		out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		cmd.SetOut(out)
+		cmd.SetErr(stderr)
+		cmd.SetArgs([]string{"job", "bounce", j.ID, "--repo", root, "--step", "implement", "--findings", fmt.Sprintf("round %d verdict finding", round), "--advance", "--workspace", "repo", "--json"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("round %d bounce --advance: %v\nstderr=%s", round, err, stderr.String())
+		}
+		var result jobAdvanceResult
+		if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+			t.Fatalf("round %d decode: %v\nbody=%s", round, err, out.String())
+		}
+		if result.Step == nil || result.Step.ID != "implement" || result.Step.Status != job.StatusRunning || result.Step.Instance == "" {
+			t.Fatalf("round %d next step = %+v", round, result.Step)
+		}
+		stopAndWaitForTest(t, mgr, result.Step.Instance)
+		j, err = job.Read(teamDir, j.ID)
+		if err != nil {
+			t.Fatalf("round %d read: %v", round, err)
+		}
+		if !strings.Contains(j.Kickoff, fmt.Sprintf("## Review findings (bounce %d)", round)) {
+			t.Fatalf("round %d kickoff missing bounce ledger: %q", round, j.Kickoff)
+		}
+		for i := range j.Steps {
+			switch j.Steps[i].ID {
+			case "implement", "review":
+				j.Steps[i].Status = job.StatusDone
+				j.Steps[i].FinishedAt = time.Now().UTC()
+			case "integrate":
+				j.Steps[i].Status = job.StatusBlocked
+			}
+		}
+		j.Status = job.StatusBlocked
+		if err := job.Write(teamDir, j); err != nil {
+			t.Fatalf("round %d prepare next verdict: %v", round, err)
+		}
+	}
+
+	approve := NewRootCmd()
+	approveOut, approveErr := &bytes.Buffer{}, &bytes.Buffer{}
+	approve.SetOut(approveOut)
+	approve.SetErr(approveErr)
+	approve.SetArgs([]string{"job", "approve", j.ID, "--repo", root, "--step", "integrate", "--advance", "--workspace", "repo", "--json"})
+	if err := approve.Execute(); err != nil {
+		t.Fatalf("frontend manager approve --advance: %v\nstderr=%s", err, approveErr.String())
+	}
+	var approved jobAdvanceResult
+	if err := json.Unmarshal(approveOut.Bytes(), &approved); err != nil {
+		t.Fatalf("decode approve --advance: %v\nbody=%s", err, approveOut.String())
+	}
+	if approved.Step == nil || approved.Step.ID != "integrate" || (approved.Step.Status != job.StatusRunning && approved.Step.Status != job.StatusQueued) || approved.Step.Instance == "" {
+		t.Fatalf("approved manager step = %+v", approved.Step)
+	}
+	if approved.Step.Status == job.StatusRunning {
+		stopAndWaitForTest(t, mgr, approved.Step.Instance)
+	}
+
+	events, err := job.ListEvents(teamDir, j.ID)
+	if err != nil {
+		t.Fatalf("list transition events: %v", err)
+	}
+	counts := map[string]int{}
+	for _, event := range events {
+		counts[event.Type]++
+	}
+	if counts["bounced"] != 3 || counts["manual_gate_approved"] != 1 || counts["advance_dispatched"] != 3 || counts["advance_queued"] != 1 || counts["authority_violation"] != 0 {
+		t.Fatalf("transition event counts = %+v, want three bounces, one approval, three dispatched advances, one queued manager advance, and no authority violation", counts)
+	}
+
+	crossTeam := &job.Job{
+		ID:        "gh403-cross-team",
+		Ticket:    "GH-403-CROSS",
+		Target:    "worker",
+		Kickoff:   "prove cross-team manual gate denial",
+		Pipeline:  "frontend_ticket_to_pr",
+		Status:    job.StatusBlocked,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Origin:    origin.Envelope{Team: "research", Job: "gh403-cross-team"},
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusDone, FinishedAt: now},
+			{ID: "review", Target: "worker", Status: job.StatusDone, After: []string{"implement"}, FinishedAt: now},
+			{ID: "integrate", Target: "frontend-manager", Status: job.StatusBlocked, After: []string{"review"}, Gate: job.StepGateManual},
+		},
+	}
+	if err := job.Write(teamDir, crossTeam); err != nil {
+		t.Fatalf("write cross-team job: %v", err)
+	}
+	denied := NewRootCmd()
+	deniedOut, deniedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	denied.SetOut(deniedOut)
+	denied.SetErr(deniedErr)
+	denied.SetArgs([]string{"job", "approve", crossTeam.ID, "--repo", root, "--step", "integrate", "--advance", "--workspace", "repo", "--json"})
+	err = denied.Execute()
+	if err == nil {
+		t.Fatal("frontend manager approved a cross-team manual gate")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 3 {
+		t.Fatalf("cross-team approve err = %v, want exit 3; stderr=%s", err, deniedErr.String())
+	}
+	if body := deniedErr.String(); !strings.Contains(body, "authority violation") || !strings.Contains(body, "verb=job.approve") {
+		t.Fatalf("cross-team approve stderr = %q", body)
+	}
+	unchanged, err := job.Read(teamDir, crossTeam.ID)
+	if err != nil {
+		t.Fatalf("read cross-team job: %v", err)
+	}
+	if unchanged.Steps[2].Status != job.StatusBlocked {
+		t.Fatalf("cross-team manual gate mutated despite denial: %+v", unchanged.Steps[2])
+	}
 }
 
 func TestJobReopenRefusesRunningUnlessForced(t *testing.T) {
