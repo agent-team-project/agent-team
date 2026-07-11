@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agent-team-project/agent-team/internal/job"
 	"github.com/agent-team-project/agent-team/internal/runtimebin"
@@ -1107,8 +1108,21 @@ description = "Recoverable Codex manager."
 	}); err != nil {
 		t.Fatal(err)
 	}
+	mailPrefix := strings.Repeat("a", briefOneLineMaxBytes-len(briefEllipsis)-1)
+	if err := AppendMessage(root, "mgr", &Message{
+		ID:   "long-multibyte-mail",
+		From: "advisor",
+		Body: mailPrefix + "—" + strings.Repeat("tail", 20),
+	}); err != nil {
+		t.Fatalf("append long multibyte mailbox message: %v", err)
+	}
 	fake := newFakeSpawner(30 * time.Second)
-	m := NewInstanceManager(root, fake.spawn)
+	m := NewInstanceManager(root, func(args []string, env []string, workspace, stdoutPath, stderrPath, stdinContent string) (*os.Process, error) {
+		if !utf8.ValidString(stdinContent) {
+			return nil, errors.New("runtime prompt reader: input is not valid UTF-8")
+		}
+		return fake.spawn(args, env, workspace, stdoutPath, stderrPath, stdinContent)
+	})
 
 	resumed, err := m.Start("mgr")
 	if err != nil {
@@ -1120,8 +1134,15 @@ description = "Recoverable Codex manager."
 	if got, want := fake.lastCall(), []string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "resume", sessionID, "-"}; !stringSlicesEqual(got, want) {
 		t.Fatalf("resume args = %v, want %v", got, want)
 	}
-	if stdin := fake.lastStdin(); !strings.Contains(stdin, "# Instance brief: mgr") || !strings.Contains(stdin, "Recoverable Codex manager.") {
+	stdin := fake.lastStdin()
+	if !strings.Contains(stdin, "# Instance brief: mgr") || !strings.Contains(stdin, "Recoverable Codex manager.") {
 		t.Fatalf("resume stdin missing brief:\n%s", stdin)
+	}
+	if want := mailPrefix + briefEllipsis; !strings.Contains(stdin, want) {
+		t.Fatalf("resume stdin missing rune-safe mailbox truncation %q:\n%s", want, stdin)
+	}
+	if strings.Contains(stdin, "—") || strings.Contains(stdin, "tail") {
+		t.Fatalf("resume stdin retained content beyond deterministic mailbox brief bound:\n%s", stdin)
 	}
 	if got := lastEnvValue(fake.lastEnv(), "MARKER"); got != "dispatch" {
 		t.Fatalf("resume env MARKER = %q, want dispatch", got)

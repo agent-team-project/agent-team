@@ -2,19 +2,25 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 	jobstore "github.com/agent-team-project/agent-team/internal/job"
 	"github.com/agent-team-project/agent-team/internal/topology"
 )
 
-const DefaultBriefEventLimit = 12
+const (
+	DefaultBriefEventLimit = 12
+	briefOneLineMaxBytes   = 240
+	briefEllipsis          = "..."
+)
 
 type BriefOptions struct {
 	EventLimit int
@@ -177,6 +183,9 @@ func GenerateAndWriteInstanceBrief(teamDir, instance string, opts BriefOptions) 
 		return nil, err
 	}
 	text := RenderInstanceBrief(brief)
+	if err := validateInstanceBriefText(text); err != nil {
+		return nil, err
+	}
 	stateDir := filepath.Join(teamDir, "state", instance)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return nil, fmt.Errorf("brief: mkdir state dir: %w", err)
@@ -750,10 +759,21 @@ func emptyBriefDash(value string) string {
 
 func oneLine(value string) string {
 	value = strings.Join(strings.Fields(value), " ")
-	if len(value) > 240 {
-		return value[:237] + "..."
+	if len(value) > briefOneLineMaxBytes {
+		limit := briefOneLineMaxBytes - len(briefEllipsis)
+		for limit > 0 && !utf8.ValidString(value[:limit]) {
+			limit--
+		}
+		return value[:limit] + briefEllipsis
 	}
 	return value
+}
+
+func validateInstanceBriefText(text string) error {
+	if !utf8.ValidString(text) {
+		return errors.New("brief: rendered text is not valid UTF-8")
+	}
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {
