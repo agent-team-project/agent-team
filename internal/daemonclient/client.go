@@ -69,25 +69,39 @@ type Client struct {
 	hc         *http.Client
 	baseURL    string
 	connection Connection
+	teamDir    string
 }
 
 // New uses a configured loopback HTTP endpoint when one is
 // advertised, otherwise it probes the daemon's pidfile before dialing the
 // unix socket. Returns ErrNotRunning if no usable transport is known.
 func New(teamDir string, options Options) (*Client, error) {
+	var client *Client
+	var err error
 	if baseURL := configuredDaemonHTTPURL(teamDir); baseURL != "" {
-		return newDaemonHTTPURLClient(teamDir, baseURL, options)
+		client, err = newDaemonHTTPURLClient(teamDir, baseURL, options)
+	} else {
+		client, err = newDaemonUnixSocketClientForTeamDir(teamDir, options)
 	}
-	return newDaemonUnixSocketClientForTeamDir(teamDir, options)
+	if client != nil {
+		client.teamDir = teamDir
+	}
+	return client, err
 }
 
 // NewForTargetTeamDir discovers a transport for another team directory. It
 // deliberately ignores inherited endpoint/token environment variables.
 func NewForTargetTeamDir(teamDir string, options Options) (*Client, error) {
 	if baseURL := persistedDaemonHTTPURL(teamDir); baseURL != "" {
-		return NewHTTP(baseURL, daemon.OperatorTokenPath(teamDir), options), nil
+		client := NewHTTP(baseURL, daemon.OperatorTokenPath(teamDir), options)
+		client.teamDir = teamDir
+		return client, nil
 	}
-	return newDaemonUnixSocketClientForTeamDir(teamDir, options)
+	client, err := newDaemonUnixSocketClientForTeamDir(teamDir, options)
+	if client != nil {
+		client.teamDir = teamDir
+	}
+	return client, err
 }
 
 func newDaemonUnixSocketClientForTeamDir(teamDir string, options Options) (*Client, error) {

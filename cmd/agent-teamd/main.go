@@ -17,9 +17,13 @@ import (
 	"runtime/debug"
 	"syscall"
 
-	"github.com/agent-team-project/agent-team/internal/cli"
+	"github.com/agent-team-project/agent-team/internal/buildinfo"
 	"github.com/agent-team-project/agent-team/internal/daemon"
 )
+
+// Version is overridden for release builds. It lives in the daemon entrypoint
+// so agent-teamd does not import the CLI command tree (and therefore the TUI).
+var Version = "0.1.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -38,7 +42,7 @@ func run(argv []string) (err error) {
 		return err
 	}
 	if *showVersion {
-		fmt.Println("agent-teamd", cli.BuildInfo().VersionLine())
+		fmt.Println("agent-teamd", buildinfo.Current(Version).VersionLine())
 		return nil
 	}
 
@@ -51,7 +55,7 @@ func run(argv []string) (err error) {
 	if err != nil || !st.IsDir() {
 		return fmt.Errorf("%s not found — run `agent-team init` first", teamDir)
 	}
-	build := cli.BuildInfo()
+	build := buildinfo.Current(Version)
 	writeExitReason := func(reason daemon.ExitReason) {
 		reason.PID = os.Getpid()
 		reason.Build = build
