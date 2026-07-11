@@ -899,6 +899,7 @@ func TestSyncStopExtrasHonorsAgentFilter(t *testing.T) {
 	root := daemon.DaemonRoot(teamDir)
 	sleepers := map[string]*exec.Cmd{}
 	for name, agent := range map[string]string{
+		"frontend-manager": "manager",
 		"manager":          "manager",
 		"research-manager": "manager",
 		"ticket-manager":   "ticket-manager",
@@ -938,6 +939,7 @@ func TestSyncStopExtrasHonorsAgentFilter(t *testing.T) {
 	}
 	for _, want := range []string{
 		"adhoc-manager:stop:stopped",
+		"frontend-manager:skip:running",
 		"manager:skip:running",
 		"research-manager:skip:running",
 	} {
