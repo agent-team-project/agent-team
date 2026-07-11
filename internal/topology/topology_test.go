@@ -564,6 +564,62 @@ allow = ["event.publish", "job.*:team"]
 		assertAuthoritySatisfiabilityError(t, err, `ambiguous completion owner`, `catch-all-manager, frontend-manager`)
 	})
 
+	t.Run("runtime-enriched completion match fields are unsupported", func(t *testing.T) {
+		base := managedPipelineAuthorityFixture("frontend-manager", "frontend", "on_merge", `
+[authority.instances.frontend-manager]
+allow = ["event.publish", "job.*:team"]
+`)
+		for _, tc := range []struct {
+			name  string
+			event string
+			match string
+			field string
+			audit bool
+		}{
+			{name: "manual status", event: EventJobStepCompleted, match: `match.status = "done"`, field: "match.status"},
+			{name: "manual completed step", event: EventJobStepCompleted, match: `match.completed_step = "implement"`, field: "match.completed_step"},
+			{name: "terminal job status in audit", event: EventJobCompleted, match: `match.job_status = "done"`, field: "match.job_status", audit: true},
+			{name: "terminal step status", event: EventJobCompleted, match: `match.step_status = "done"`, field: "match.step_status"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				body := base
+				if tc.audit {
+					body = strings.Replace(body, `enforcement = "enforce"`, `enforcement = "audit"`, 1)
+				}
+				body += fmt.Sprintf(`
+[instances.dynamic-manager]
+agent = "manager"
+
+[[instances.dynamic-manager.triggers]]
+event = %q
+match.pipeline = "managed"
+%s
+`, tc.event, tc.match)
+				_, err := Parse([]byte(body))
+				assertAuthoritySatisfiabilityError(t, err,
+					`pipeline "managed"`,
+					`unsupported dynamic completion owner "dynamic-manager"`,
+					tc.event,
+					tc.field,
+					`runtime-enriched completion fields cannot determine manager ownership`,
+				)
+			})
+		}
+
+		unrelated := base + `
+[instances.other-pipeline-manager]
+agent = "manager"
+
+[[instances.other-pipeline-manager.triggers]]
+event = "job.step_completed"
+match.pipeline = "other"
+match.status = "done"
+`
+		if _, err := Parse([]byte(unrelated)); err != nil {
+			t.Fatalf("Parse unrelated runtime-enriched completion trigger: %v", err)
+		}
+	})
+
 	t.Run("audit still rejects ambiguous manager routing", func(t *testing.T) {
 		body := managedPipelineAuthorityFixture("frontend-manager", "frontend", "on_merge", `
 [authority.instances.frontend-manager]

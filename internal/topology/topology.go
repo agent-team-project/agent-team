@@ -2020,6 +2020,9 @@ func (t *Topology) resolvePipelineManagers(pipeline *Pipeline) ([]pipelineManage
 			return nil, true, fmt.Errorf("pipeline %q: unsupported managing instance %q from manual gate: owner must be persistent", pipeline.Name, owner.Name)
 		}
 		payload := ManagerCompletionTriggerPayload(pipeline.Name, owner.Name, true)
+		if candidate, fields, ok := t.unsupportedPersistentCompletionOwner(EventJobStepCompleted, payload); ok {
+			return nil, true, unsupportedDynamicCompletionOwnerError(pipeline.Name, EventJobStepCompleted, candidate, fields)
+		}
 		candidates := t.persistentCompletionCandidates(EventJobStepCompleted, payload)
 		if len(candidates) == 0 {
 			return nil, true, fmt.Errorf("pipeline %q: unsupported owner %q: no persistent instance trigger matches job.step_completed for target %q", pipeline.Name, owner.Name, owner.Name)
@@ -2037,6 +2040,9 @@ func (t *Topology) resolvePipelineManagers(pipeline *Pipeline) ([]pipelineManage
 
 	if len(terminalVerbs) > 0 {
 		payload := ManagerCompletionTriggerPayload(pipeline.Name, terminalTarget, false)
+		if candidate, fields, ok := t.unsupportedPersistentCompletionOwner(EventJobCompleted, payload); ok {
+			return nil, true, unsupportedDynamicCompletionOwnerError(pipeline.Name, EventJobCompleted, candidate, fields)
+		}
 		candidates := t.persistentCompletionCandidates(EventJobCompleted, payload)
 		if len(candidates) == 0 {
 			return nil, true, fmt.Errorf("pipeline %q: unsupported managing instance for %s: no persistent instance trigger matches job.completed with pipeline %q", pipeline.Name, pipelineCompletionManagerDuty(pipeline), pipeline.Name)
@@ -2055,6 +2061,74 @@ func (t *Topology) resolvePipelineManagers(pipeline *Pipeline) ([]pipelineManage
 		})
 	}
 	return routes, true, nil
+}
+
+func (t *Topology) unsupportedPersistentCompletionOwner(event string, payload map[string]any) (string, []string, bool) {
+	stableKeys := managerCompletionStableMatchKeys()
+	for _, candidate := range t.SortedInstances() {
+		if candidate == nil || candidate.Ephemeral {
+			continue
+		}
+		for _, trigger := range candidate.Triggers {
+			if trigger == nil || trigger.Event != event || !completionTriggerMatchesStablePayload(trigger, payload, stableKeys) {
+				continue
+			}
+			var dynamicKeys []string
+			for key := range trigger.Match {
+				if !stableKeys[key] {
+					dynamicKeys = append(dynamicKeys, key)
+				}
+			}
+			if len(dynamicKeys) == 0 {
+				continue
+			}
+			sort.Strings(dynamicKeys)
+			return candidate.Name, dynamicKeys, true
+		}
+	}
+	return "", nil, false
+}
+
+func managerCompletionStableMatchKeys() map[string]bool {
+	payload := ManagerCompletionTriggerPayload("pipeline", "manager", true)
+	keys := make(map[string]bool, len(payload))
+	for key := range payload {
+		keys[key] = true
+	}
+	return keys
+}
+
+func completionTriggerMatchesStablePayload(trigger *Trigger, payload map[string]any, stableKeys map[string]bool) bool {
+	for key, matcher := range trigger.Match {
+		if !stableKeys[key] {
+			continue
+		}
+		value, ok := payload[key]
+		if !ok || !matcher.Eval(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func unsupportedDynamicCompletionOwnerError(pipeline, event, owner string, fields []string) error {
+	stableKeys := sortedStringKeys(managerCompletionStableMatchKeys())
+	return fmt.Errorf(
+		"pipeline %q: unsupported dynamic completion owner %q for %s: trigger constrains %s; runtime-enriched completion fields cannot determine manager ownership; use only stable completion fields %s",
+		pipeline,
+		owner,
+		event,
+		strings.Join(prefixedMatchKeys(fields), ", "),
+		strings.Join(prefixedMatchKeys(stableKeys), ", "),
+	)
+}
+
+func prefixedMatchKeys(keys []string) []string {
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, "match."+key)
+	}
+	return out
 }
 
 func (t *Topology) persistentCompletionCandidates(event string, payload map[string]any) []string {

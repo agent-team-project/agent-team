@@ -191,10 +191,13 @@ Important layering rules:
   could satisfy `:own`.
 - Topology loading independently resolves every manual-gate and terminal
   merge/reap route through the same completion-event triggers used by the
-  daemon. Missing or ambiguous routes are rejected in both audit and enforce
-  modes. Under enforcement, each route's mandatory job mutations are also
-  evaluated through the runtime authority composer, so scope-unsatisfiable
-  manager paths are rejected before daemon activation.
+  daemon. Ownership triggers may constrain only the stable completion payload
+  fields produced by `ManagerCompletionTriggerPayload`; a compatible trigger
+  that depends on runtime-enriched job or step fields is rejected as an
+  unsupported dynamic owner. Missing or ambiguous routes are rejected in both
+  audit and enforce modes. Under enforcement, each route's mandatory job
+  mutations are also evaluated through the runtime authority composer, so
+  scope-unsatisfiable manager paths are rejected before daemon activation.
 
 ## Contributor Checks
 
