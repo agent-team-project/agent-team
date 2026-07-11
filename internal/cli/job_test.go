@@ -5933,7 +5933,7 @@ enforcement = "enforce"
 allow = ["job.bounce:team"]
 
 [authority.instances.beta-manager]
-allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team"]
+allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team", "job.approve:team", "job.reject:team"]
 `), 0o644); err != nil {
 		t.Fatalf("write instances.toml: %v", err)
 	}
@@ -7600,12 +7600,22 @@ func TestFrontendManagerTeamAuthoritySupportsConsecutiveVerdictBounceTransitions
 	if err := os.WriteFile(filepath.Join(teamDir, "agents", "worker", "agent.md"), []byte("---\ndescription: transition worker\n---\n\nRun the next pipeline step.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(teamDir, "agents", "manager"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "agents", "manager", "agent.md"), []byte("---\ndescription: transition manager\n---\n\nComplete the manager pipeline step.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	const topologyBody = `
 [instances.frontend-manager]
 agent = "manager"
 
 [[instances.frontend-manager.triggers]]
 event = "job.step_completed"
+match.target = "frontend-manager"
+
+[[instances.frontend-manager.triggers]]
+event = "agent.dispatch"
 match.target = "frontend-manager"
 
 [instances.worker]
@@ -7644,7 +7654,7 @@ pipelines = ["frontend_ticket_to_pr"]
 enforcement = "enforce"
 
 [authority.instances.frontend-manager]
-allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team"]
+allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team", "job.approve:team", "job.reject:team"]
 
 [authority.agents.worker]
 allow = ["job.step:own"]
@@ -7737,6 +7747,25 @@ allow = ["job.step:own"]
 		}
 	}
 
+	approve := NewRootCmd()
+	approveOut, approveErr := &bytes.Buffer{}, &bytes.Buffer{}
+	approve.SetOut(approveOut)
+	approve.SetErr(approveErr)
+	approve.SetArgs([]string{"job", "approve", j.ID, "--repo", root, "--step", "integrate", "--advance", "--workspace", "repo", "--json"})
+	if err := approve.Execute(); err != nil {
+		t.Fatalf("frontend manager approve --advance: %v\nstderr=%s", err, approveErr.String())
+	}
+	var approved jobAdvanceResult
+	if err := json.Unmarshal(approveOut.Bytes(), &approved); err != nil {
+		t.Fatalf("decode approve --advance: %v\nbody=%s", err, approveOut.String())
+	}
+	if approved.Step == nil || approved.Step.ID != "integrate" || (approved.Step.Status != job.StatusRunning && approved.Step.Status != job.StatusQueued) || approved.Step.Instance == "" {
+		t.Fatalf("approved manager step = %+v", approved.Step)
+	}
+	if approved.Step.Status == job.StatusRunning {
+		stopAndWaitForTest(t, mgr, approved.Step.Instance)
+	}
+
 	events, err := job.ListEvents(teamDir, j.ID)
 	if err != nil {
 		t.Fatalf("list transition events: %v", err)
@@ -7745,8 +7774,51 @@ allow = ["job.step:own"]
 	for _, event := range events {
 		counts[event.Type]++
 	}
-	if counts["bounced"] != 3 || counts["advance_dispatched"] != 3 || counts["authority_violation"] != 0 {
-		t.Fatalf("transition event counts = %+v, want three bounce/advance pairs and no authority violation", counts)
+	if counts["bounced"] != 3 || counts["manual_gate_approved"] != 1 || counts["advance_dispatched"] != 3 || counts["advance_queued"] != 1 || counts["authority_violation"] != 0 {
+		t.Fatalf("transition event counts = %+v, want three bounces, one approval, three dispatched advances, one queued manager advance, and no authority violation", counts)
+	}
+
+	crossTeam := &job.Job{
+		ID:        "gh403-cross-team",
+		Ticket:    "GH-403-CROSS",
+		Target:    "worker",
+		Kickoff:   "prove cross-team manual gate denial",
+		Pipeline:  "frontend_ticket_to_pr",
+		Status:    job.StatusBlocked,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Origin:    origin.Envelope{Team: "research", Job: "gh403-cross-team"},
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusDone, FinishedAt: now},
+			{ID: "review", Target: "worker", Status: job.StatusDone, After: []string{"implement"}, FinishedAt: now},
+			{ID: "integrate", Target: "frontend-manager", Status: job.StatusBlocked, After: []string{"review"}, Gate: job.StepGateManual},
+		},
+	}
+	if err := job.Write(teamDir, crossTeam); err != nil {
+		t.Fatalf("write cross-team job: %v", err)
+	}
+	denied := NewRootCmd()
+	deniedOut, deniedErr := &bytes.Buffer{}, &bytes.Buffer{}
+	denied.SetOut(deniedOut)
+	denied.SetErr(deniedErr)
+	denied.SetArgs([]string{"job", "approve", crossTeam.ID, "--repo", root, "--step", "integrate", "--advance", "--workspace", "repo", "--json"})
+	err = denied.Execute()
+	if err == nil {
+		t.Fatal("frontend manager approved a cross-team manual gate")
+	}
+	var code ExitCode
+	if !errors.As(err, &code) || int(code) != 3 {
+		t.Fatalf("cross-team approve err = %v, want exit 3; stderr=%s", err, deniedErr.String())
+	}
+	if body := deniedErr.String(); !strings.Contains(body, "authority violation") || !strings.Contains(body, "verb=job.approve") {
+		t.Fatalf("cross-team approve stderr = %q", body)
+	}
+	unchanged, err := job.Read(teamDir, crossTeam.ID)
+	if err != nil {
+		t.Fatalf("read cross-team job: %v", err)
+	}
+	if unchanged.Steps[2].Status != job.StatusBlocked {
+		t.Fatalf("cross-team manual gate mutated despite denial: %+v", unchanged.Steps[2])
 	}
 }
 

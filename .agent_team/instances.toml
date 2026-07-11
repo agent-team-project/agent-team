@@ -1155,13 +1155,13 @@ enforcement = "enforce"
 allow = ["*"]
 
 [authority.instances.research-manager]
-allow = ["event.publish", "job.events", "job.gate.*:team", "job.step:team", "job.bounce:team", "job.close:team", "job.merge:team", "read", "ticket.create", "ticket.comment", "ticket.update"]
+allow = ["event.publish", "job.events", "job.gate.*:team", "job.step:team", "job.bounce:team", "job.approve:team", "job.reject:team", "job.close:team", "job.merge:team", "read", "ticket.create", "ticket.comment", "ticket.update"]
 
 [authority.instances.research-auditor]
 allow = ["read"]
 
 [authority.instances.frontend-manager]
-allow = ["event.publish", "job.events", "job.gate.*:team", "job.step:team", "job.bounce:team", "job.close:team", "job.merge:team", "read", "ticket.create", "ticket.comment", "ticket.update"]
+allow = ["event.publish", "job.events", "job.gate.*:team", "job.step:team", "job.bounce:team", "job.approve:team", "job.reject:team", "job.close:team", "job.merge:team", "read", "ticket.create", "ticket.comment", "ticket.update"]
 
 [authority.agents.worker]
 allow = ["budget.status", "channel.*", "event.publish", "feedback.*", "inbox.*", "job.events", "job.gate.*:own", "job.show", "job.step:own", "status.*"]

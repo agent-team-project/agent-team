@@ -4428,7 +4428,7 @@ enforcement = "enforce"
 allow = ["job.bounce:team"]
 
 [authority.instances.beta-manager]
-allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team"]
+allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team", "job.approve:team", "job.reject:team"]
 `)
 	fake := newFakeSpawner(30 * time.Second)
 	mgr := NewInstanceManager(root, fake.spawn)

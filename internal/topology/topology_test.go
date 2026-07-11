@@ -350,7 +350,7 @@ func TestParse_PipelineAuthoritySatisfiability(t *testing.T) {
 allow = ["read"]
 
 [authority.agents.manager]
-allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team", "job.merge:team"]
+allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team", "job.approve:team", "job.reject:team", "job.merge:team"]
 `))); err != nil {
 			t.Fatalf("Parse valid frontend topology: %v", err)
 		}
@@ -359,7 +359,7 @@ allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team",
 	t.Run("frontend dead own grants", func(t *testing.T) {
 		_, err := Parse([]byte(managedPipelineAuthorityFixture("frontend-manager", "frontend", "on_merge", `
 [authority.instances.frontend-manager]
-allow = ["event.publish", "job.bounce:own", "job.step:own", "job.gate.*:own", "job.merge:own"]
+allow = ["event.publish", "job.bounce:own", "job.step:own", "job.gate.*:own", "job.approve:own", "job.reject:own", "job.merge:own"]
 `)))
 		assertAuthoritySatisfiabilityError(t, err, `pipeline "managed"`, `owner "frontend-manager"`, `"job.bounce:team"`, `[authority.instances.frontend-manager].allow`)
 	})
@@ -367,7 +367,7 @@ allow = ["event.publish", "job.bounce:own", "job.step:own", "job.gate.*:own", "j
 	t.Run("research dead own grants", func(t *testing.T) {
 		_, err := Parse([]byte(managedPipelineAuthorityFixture("research-manager", "research", "on_close", `
 [authority.instances.research-manager]
-allow = ["event.publish", "job.bounce:own", "job.step:own", "job.gate.*:own", "job.close:own"]
+allow = ["event.publish", "job.bounce:own", "job.step:own", "job.gate.*:own", "job.approve:own", "job.reject:own", "job.close:own"]
 `)))
 		assertAuthoritySatisfiabilityError(t, err, `pipeline "managed"`, `owner "research-manager"`, `"job.bounce:team"`, `[authority.instances.research-manager].allow`)
 	})
@@ -375,7 +375,7 @@ allow = ["event.publish", "job.bounce:own", "job.step:own", "job.gate.*:own", "j
 	t.Run("declared merge duty", func(t *testing.T) {
 		_, err := Parse([]byte(managedPipelineAuthorityFixture("frontend-manager", "frontend", "on_merge", `
 [authority.instances.frontend-manager]
-allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team"]
+allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team", "job.approve:team", "job.reject:team"]
 `)))
 		assertAuthoritySatisfiabilityError(t, err, `"job.merge:team"`)
 	})
@@ -383,7 +383,7 @@ allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team"]
 	t.Run("declared close duty", func(t *testing.T) {
 		_, err := Parse([]byte(managedPipelineAuthorityFixture("research-manager", "research", "on_close", `
 [authority.instances.research-manager]
-allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team"]
+allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team", "job.approve:team", "job.reject:team"]
 `)))
 		assertAuthoritySatisfiabilityError(t, err, `"job.close:team"`)
 	})
@@ -449,6 +449,27 @@ match.source = "daemon:completion"`, 1)
 		if _, err := Parse([]byte(body)); err != nil {
 			t.Fatalf("Parse completion-source-constrained owner: %v", err)
 		}
+	})
+
+	t.Run("manual gate requires approve and reject authority", func(t *testing.T) {
+		base := managedPipelineAuthorityFixture("frontend-manager", "frontend", "on_merge", `
+[authority.instances.frontend-manager]
+allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team", "job.merge:team"]
+`)
+		_, err := Parse([]byte(base))
+		assertAuthoritySatisfiabilityError(t, err, `pipeline "managed"`, `owner "frontend-manager"`, `"job.approve:team"`)
+
+		deadApprove := strings.Replace(base, `"job.merge:team"]`, `"job.approve:own", "job.reject:team", "job.merge:team"]`, 1)
+		_, err = Parse([]byte(deadApprove))
+		assertAuthoritySatisfiabilityError(t, err, `"job.approve:team"`)
+
+		missingReject := strings.Replace(base, `"job.merge:team"]`, `"job.approve:team", "job.merge:team"]`, 1)
+		_, err = Parse([]byte(missingReject))
+		assertAuthoritySatisfiabilityError(t, err, `"job.reject:team"`)
+
+		deadReject := strings.Replace(base, `"job.merge:team"]`, `"job.approve:team", "job.reject:own", "job.merge:team"]`, 1)
+		_, err = Parse([]byte(deadReject))
+		assertAuthoritySatisfiabilityError(t, err, `"job.reject:team"`)
 	})
 
 	t.Run("merge-only pipeline owner resolves from completion trigger", func(t *testing.T) {
@@ -550,7 +571,7 @@ allow = ["event.publish", "job.*:team"]
 	t.Run("grant string mutation cannot fake runtime scope", func(t *testing.T) {
 		valid := managedPipelineAuthorityFixture("frontend-manager", "frontend", "on_merge", `
 [authority.instances.frontend-manager]
-allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team", "job.merge:team"]
+allow = ["event.publish", "job.bounce:team", "job.step:team", "job.gate.*:team", "job.approve:team", "job.reject:team", "job.merge:team"]
 `)
 		if _, err := Parse([]byte(valid)); err != nil {
 			t.Fatalf("Parse valid control: %v", err)

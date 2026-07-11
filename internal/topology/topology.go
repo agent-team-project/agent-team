@@ -2068,6 +2068,12 @@ func pipelineManagerRequiredVerbs(pipeline *Pipeline) []string {
 	if pipeline == nil {
 		return verbs
 	}
+	for _, step := range pipeline.Steps {
+		if step != nil && step.Gate == "manual" {
+			verbs = append(verbs, "job.approve", "job.reject")
+			break
+		}
+	}
 	if pipeline.Merge != nil || pipeline.ReapWorktree == worktreepolicy.OnMerge {
 		verbs = append(verbs, "job.merge")
 	}

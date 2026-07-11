@@ -28,7 +28,7 @@ func TestFrontendProgramAuthorityContract(t *testing.T) {
 			if !frontendManagerReceivesGateReady(owner) {
 				t.Fatal("frontend-manager lacks exact job.step_completed target trigger")
 			}
-			for _, verb := range []string{"job.bounce", "job.step", "job.gate.set", "job.merge"} {
+			for _, verb := range []string{"job.bounce", "job.step", "job.gate.set", "job.approve", "job.reject", "job.merge"} {
 				decision := AuthorityDecision{
 					Instance:   owner.Name,
 					Agent:      owner.Agent,
@@ -51,9 +51,9 @@ func TestFrontendProgramDeadOwnGrantMutationIsRejected(t *testing.T) {
 	}
 	mutated := strings.Replace(string(body),
 		`[authority.instances.frontend-manager]
-allow = ["event.publish", "job.events", "job.gate.*:team", "job.step:team", "job.bounce:team", "job.close:team", "job.merge:team", "read", "ticket.create", "ticket.comment", "ticket.update"]`,
+allow = ["event.publish", "job.events", "job.gate.*:team", "job.step:team", "job.bounce:team", "job.approve:team", "job.reject:team", "job.close:team", "job.merge:team", "read", "ticket.create", "ticket.comment", "ticket.update"]`,
 		`[authority.instances.frontend-manager]
-allow = ["event.publish", "job.events", "job.gate.*:own", "job.step:own", "job.bounce:own", "job.close:own", "job.merge:own", "read", "ticket.create", "ticket.comment", "ticket.update"]`,
+allow = ["event.publish", "job.events", "job.gate.*:own", "job.step:own", "job.bounce:own", "job.approve:own", "job.reject:own", "job.close:own", "job.merge:own", "read", "ticket.create", "ticket.comment", "ticket.update"]`,
 		1,
 	)
 	if mutated == string(body) {

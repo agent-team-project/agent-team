@@ -55,6 +55,18 @@ func TestResearchProgramTopologyContract(t *testing.T) {
 	if top.Authority == nil || !reflect.DeepEqual(top.Authority.Instances["research-auditor"].Allow, []string{"read"}) {
 		t.Fatalf("research auditor authority = %+v, want read-only", top.Authority)
 	}
+	owner := top.Instances["research-manager"]
+	for _, verb := range []string{"job.approve", "job.reject"} {
+		if eval := top.Authority.Evaluate(AuthorityDecision{
+			Instance:   owner.Name,
+			Agent:      owner.Agent,
+			Team:       top.TeamForInstance(owner.Name),
+			Verb:       verb,
+			TargetTeam: "research",
+		}); !eval.Allowed {
+			t.Fatalf("research manager denied %s: %+v", verb, eval)
+		}
+	}
 
 	assertResearchPipeline(t, top.Pipelines["research_study"],
 		[]string{"preregister", "verify", "review", "activate"}, "activate")
