@@ -573,7 +573,12 @@ func TestOneHourSoak(t *testing.T) {
 	if !disconnected || !reconnected {
 		t.Fatalf("soak did not execute real disconnect/reconnect: disconnected=%v reconnected=%v", disconnected, reconnected)
 	}
-	minimumRefreshes := max(1, int(duration/cadence)-6)
+	// A fixed cadence launches one timer per interval, while an intentional
+	// disconnect replaces pending timers as reconnect backoff changes. Discount
+	// those observed stale generations plus a small boundary allowance; the
+	// stronger invariant below still requires every current tick (except the
+	// terminal deadline tick) to produce one refresh and navigation.
+	minimumRefreshes := max(1, int(duration/cadence)-staleTicks-3)
 	if refreshes < minimumRefreshes || filterChanges == 0 || navigations != refreshes || currentTicks < refreshes || currentTicks > refreshes+1 || cadenceChecks != currentTicks+staleTicks {
 		t.Fatalf("soak coverage refreshes=%d want>=%d schedules=%d current_ticks=%d stale_ticks=%d cadence_checks=%d filter_changes=%d navigations=%d", refreshes, minimumRefreshes, schedules, currentTicks, staleTicks, cadenceChecks, filterChanges, navigations)
 	}
