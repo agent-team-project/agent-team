@@ -138,7 +138,11 @@ func (c *Client) Snapshot(ctx context.Context, at time.Time) *Snapshot {
 	resourceURIs := snapshotResourceURIs(out.Instances, out.Jobs)
 	out.ResourcesRequested = len(resourceURIs)
 	if len(resourceURIs) == 0 {
-		out.SourceTimes[SourceResources] = at
+		if out.SourceErrors[SourceInstances] != "" && out.SourceErrors[SourceJobs] != "" {
+			out.SourceErrors[SourceResources] = "resource discovery unavailable because instances and jobs failed"
+		} else {
+			out.SourceTimes[SourceResources] = at
+		}
 		return out
 	}
 	type resourceResult struct {

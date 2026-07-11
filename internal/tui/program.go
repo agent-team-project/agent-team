@@ -100,7 +100,10 @@ func (model ProgramModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case Tick:
 		model.Domain, commands = Update(model.Domain, value)
-	case rendered:
+	case plainFrame:
+		if model.plainOutput != nil {
+			_, _ = fmt.Fprintln(model.plainOutput, value.frame)
+		}
 		return model, nil
 	default:
 		return model, nil
@@ -145,14 +148,12 @@ func (model ProgramModel) commands(commands []Command) []tea.Cmd {
 	return out
 }
 
-type rendered struct{}
+type plainFrame struct{ frame string }
 
 func (model ProgramModel) renderPlain() tea.Cmd {
+	frame := Render(model.Domain)
 	return func() tea.Msg {
-		if model.plainOutput != nil {
-			_, _ = fmt.Fprintln(model.plainOutput, Render(model.Domain))
-		}
-		return rendered{}
+		return plainFrame{frame: frame}
 	}
 }
 

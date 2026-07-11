@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -17,6 +18,11 @@ import (
 )
 
 var sgrPattern = regexp.MustCompile("\\x1b\\[[0-9;]*m")
+
+type soakHeapSample struct {
+	elapsed time.Duration
+	bytes   uint64
+}
 
 func TestOverviewProjectionMatchesCanonicalFixture(t *testing.T) {
 	projection := projectOverview(smallFixtureModel(Capabilities{}))
@@ -67,6 +73,88 @@ func TestOverviewTelemetryPrecedenceAndRecentWindow(t *testing.T) {
 	}
 }
 
+func TestBounceClassesUseStableRecent24Window(t *testing.T) {
+	snapshot := &daemonclient.Snapshot{Resources: map[string]*daemonclient.Resource{}}
+	for i := 0; i < 25; i++ {
+		id := fmt.Sprintf("job-%02d", i)
+		uri := "agt://dep/outcome/" + id
+		snapshot.Jobs = append(snapshot.Jobs, &daemonclient.Job{ID: id, OutcomeURI: uri, UpdatedAt: fixtureTime.Add(-time.Duration(i) * time.Minute)})
+		data := map[string]any{}
+		if i == 24 {
+			data["bounce_classes"] = map[string]any{"infra": 1}
+		}
+		snapshot.Resources[uri] = testResource(uri, "outcome", id, data)
+	}
+	if got := distinctBounceClasses(snapshot); got != 0 {
+		t.Fatalf("bounce classes = %d, want 0 because the only class is outside recent 24", got)
+	}
+}
+
+func TestPartialRefreshRendersRetainedSourceTimeAndError(t *testing.T) {
+	model := smallFixtureModel(Capabilities{Dumb: true})
+	refreshedAt := fixtureTime.Add(5 * time.Second)
+	for _, source := range []daemonclient.SnapshotSource{daemonclient.SourceInstances, daemonclient.SourceTopology, daemonclient.SourceResources} {
+		model, _ = Update(model, SnapshotOK{Source: source, Snapshot: smallFixtureSnapshot(), At: refreshedAt})
+	}
+	model, _ = Update(model, SnapshotError{Source: daemonclient.SourceJobs, Error: "daemon: jobs: 503 unavailable", At: refreshedAt})
+	model.RefreshInFlight = true
+	model, _ = Update(model, RefreshFinished{At: refreshedAt, AnySuccess: true})
+	frame := Render(model)
+	for _, want := range []string{"PARTIAL", "collections 2/3", "JOBS retained 12:04:05 ERROR: daemon: jobs: 503 unavailable"} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("partial frame missing %q:\n%s", want, frame)
+		}
+	}
+	if !model.Sources[daemonclient.SourceInstances].FetchedAt.Equal(refreshedAt) || !model.Sources[daemonclient.SourceJobs].FetchedAt.Equal(fixtureTime) {
+		t.Fatalf("source times = %+v", model.Sources)
+	}
+}
+
+func TestEveryFailedSourceRendersRetainedTimeAndCurrentError(t *testing.T) {
+	model := smallFixtureModel(Capabilities{Dumb: true})
+	for _, source := range daemonclient.SnapshotSources() {
+		model, _ = Update(model, SnapshotError{Source: source, Error: string(source) + "-503", At: fixtureTime.Add(time.Second)})
+	}
+	model.Connection = ConnectionPartial
+	frame := Render(model)
+	for _, source := range daemonclient.SnapshotSources() {
+		want := strings.ToUpper(string(source)) + " retained 12:04:05 ERROR: " + string(source) + "-503"
+		if !strings.Contains(frame, want) {
+			t.Errorf("frame omits failed source %q:\n%s", want, frame)
+		}
+	}
+}
+
+func TestHelpPagesExposeEveryBindingAtEveryCanonicalGeometry(t *testing.T) {
+	for _, geometry := range [][2]int{{80, 24}, {120, 30}, {160, 50}} {
+		model := smallFixtureModel(Capabilities{Dumb: true})
+		model, _ = Update(model, Resize{Width: geometry[0], Height: geometry[1]})
+		model, _ = Update(model, OpenOverlay{Overlay: OverlayHelp})
+		var pages strings.Builder
+		for page := 0; page < helpPageCount(model); page++ {
+			model.HelpPage = page
+			pages.WriteString(Render(model))
+		}
+		for _, binding := range Bindings() {
+			if !strings.Contains(pages.String(), binding.Label) || !strings.Contains(pages.String(), binding.Description) {
+				t.Errorf("%dx%d help pages omit binding %+v", geometry[0], geometry[1], binding)
+			}
+		}
+	}
+}
+
+func TestEveryFocusTargetHasPlainTextMarker(t *testing.T) {
+	model := smallFixtureModel(Capabilities{Dumb: true})
+	wants := []string{"> Fleet", "> Work", "> job", "> auditor", "> Filter"}
+	for index, want := range wants {
+		model.FocusIndex = index
+		model = preserveFocus(model)
+		if frame := Render(model); !strings.Contains(frame, want) {
+			t.Errorf("focus %d frame missing %q", index, want)
+		}
+	}
+}
+
 func TestCanonicalRendersAreExactStableFrames(t *testing.T) {
 	geometries := [][2]int{{80, 24}, {120, 30}, {160, 50}}
 	modes := []struct {
@@ -102,15 +190,15 @@ func TestCanonicalRendersAreExactStableFrames(t *testing.T) {
 
 func TestCanonicalGoldenHashes(t *testing.T) {
 	want := map[string]string{
-		"80x24/color":      "fdbae9e95edbffc5ed4e6e76589d282d0858a1f2d6c41a74c5b15aaca1a12b98",
-		"80x24/NO_COLOR":   "3afb13d009bc43ad8860a41bb7774e9b9a3802ef35eac10fa96c8e13b7403556",
-		"80x24/TERM=dumb":  "3afb13d009bc43ad8860a41bb7774e9b9a3802ef35eac10fa96c8e13b7403556",
-		"120x30/color":     "706ab7c2999c1490ffc2fc209109f963880656efde1746816fd68847e12a6440",
-		"120x30/NO_COLOR":  "8662b8dc7e41990d0f93a108ee638cb09813691ef1c88471616716104c7df230",
-		"120x30/TERM=dumb": "8662b8dc7e41990d0f93a108ee638cb09813691ef1c88471616716104c7df230",
-		"160x50/color":     "698f6fd8ec0882a3507d4d4cccf1bf721715f595e4b1c14a21221402ea55a2db",
-		"160x50/NO_COLOR":  "9674f1e43ae20aeeb9422d127d501f50923ca74111f2905f8e89e68153b5155c",
-		"160x50/TERM=dumb": "9674f1e43ae20aeeb9422d127d501f50923ca74111f2905f8e89e68153b5155c",
+		"80x24/color":      "4a5485eb5d08757a0884017874c966244c5ad50d5f82a4678a87833741e79db4",
+		"80x24/NO_COLOR":   "76f5f79937f25bfa23cc46388863d83100a09106a5cab1ff5a0411f9f41d6214",
+		"80x24/TERM=dumb":  "76f5f79937f25bfa23cc46388863d83100a09106a5cab1ff5a0411f9f41d6214",
+		"120x30/color":     "cbbf9ce369e711effe29f74494d8a209b209c158f0cf4aa0d7c7edeb7a2914ed",
+		"120x30/NO_COLOR":  "66db77dadb1f588a6fb080f411eab45f10f4ee1903cb44095b01bc8def5d1b32",
+		"120x30/TERM=dumb": "66db77dadb1f588a6fb080f411eab45f10f4ee1903cb44095b01bc8def5d1b32",
+		"160x50/color":     "d0725c00adddf09fbe1523c9b0fed6174000316c5d0b9bd1029ab37af16c43f4",
+		"160x50/NO_COLOR":  "504720ff6b61e308de9ca3e17b720be9e33d0d819c2707feb9e298f38933bc63",
+		"160x50/TERM=dumb": "504720ff6b61e308de9ca3e17b720be9e33d0d819c2707feb9e298f38933bc63",
 	}
 	modes := []struct {
 		name string
@@ -210,31 +298,138 @@ func TestOneHourSoak(t *testing.T) {
 	if os.Getenv("AGENT_TEAM_TUI_SOAK") != "1" {
 		t.Skip("set AGENT_TEAM_TUI_SOAK=1 for the one-hour acceptance soak")
 	}
-	model := largeFixtureModel()
+	t.Setenv("AGENT_TEAM_DAEMON_URL", "")
+	t.Setenv("AGENT_TEAM_DAEMON_TOKEN_FILE", "")
+	t.Setenv("AGENT_TEAM_DAEMON_SOCKET", "")
+	duration := time.Hour
+	if override := os.Getenv("AGENT_TEAM_TUI_SOAK_DURATION"); override != "" {
+		parsed, err := time.ParseDuration(override)
+		if err != nil || parsed < 15*time.Second {
+			t.Fatalf("AGENT_TEAM_TUI_SOAK_DURATION must be at least 15s: %q (%v)", override, err)
+		}
+		duration = parsed
+	}
+	harness := newSeededLiveDaemon(t)
+	harness.start(t)
+	clockAt := fixtureTime
+	commandRuntime := &commandRuntime{ctx: context.Background(), teamDir: harness.teamDir, clock: func() time.Time { return clockAt }}
+	batch := commandRuntime.load(true)
+	model := NewModel(clockAt, Capabilities{Dumb: true})
+	model.Booted = true
+	model.RefreshInFlight = true
+	for _, message := range batch.messages {
+		model, _ = Update(model, message)
+	}
 	model, _ = Update(model, Resize{Width: 160, Height: 50})
+	if !model.HasSnapshot() || model.Connection != ConnectionConnected {
+		t.Fatalf("soak initial connection = %s errors=%v", model.Connection, model.Snapshot.SourceErrors)
+	}
 	startGoroutines := runtime.NumGoroutine()
-	runtime.GC()
-	var startMemory runtime.MemStats
-	runtime.ReadMemStats(&startMemory)
-	deadline := time.Now().Add(time.Hour)
-	ticker := time.NewTicker(5 * time.Second)
+	startFDs := openFDCount()
+	started := time.Now()
+	deadline := started.Add(duration)
+	cadence := 5 * time.Second
+	ticker := time.NewTicker(cadence)
 	defer ticker.Stop()
-	iteration := 0
+	warmup := 5 * time.Minute
+	if duration < 20*time.Minute {
+		warmup = duration / 10
+	}
+	disconnectAt := started.Add(duration / 3)
+	reconnectAt := disconnectAt.Add(30 * time.Second)
+	if duration < 5*time.Minute {
+		reconnectAt = disconnectAt.Add(2 * cadence)
+	}
+	finalWindow := 30 * time.Minute
+	if duration < time.Hour {
+		finalWindow = duration / 2
+	}
+	var baseline uint64
+	var samples []soakHeapSample
+	refreshes, filterChanges := 0, 0
+	disconnected, reconnected := false, false
+	var previousTick time.Time
+	nextHeapSample := started.Add(time.Minute)
+	if duration < 10*time.Minute {
+		nextHeapSample = started.Add(cadence)
+	}
 	for now := range ticker.C {
 		if now.After(deadline) {
 			break
 		}
-		model.Now = now.UTC()
-		if iteration%3 == 0 {
-			model, _ = Update(model, Key{Name: "tab", At: model.Now})
+		if !previousTick.IsZero() {
+			interval := now.Sub(previousTick)
+			if interval < cadence-time.Second || interval > cadence+time.Second {
+				t.Fatalf("refresh cadence drifted: got %s, want %s±1s", interval, cadence)
+			}
 		}
-		if iteration%7 == 0 {
-			widths := [][2]int{{80, 24}, {120, 30}, {160, 50}}
-			size := widths[iteration%len(widths)]
-			model, _ = Update(model, Resize{Width: size[0], Height: size[1]})
+		previousTick = now
+		clockAt = fixtureTime.Add(now.Sub(started))
+		if !disconnected && !now.Before(disconnectAt) {
+			harness.stop(t)
+			disconnected = true
 		}
-		_ = Render(model)
-		iteration++
+		if disconnected && !reconnected && !now.Before(reconnectAt) {
+			harness.start(t)
+			reconnected = true
+		}
+		model, _ = Update(model, RefreshStarted{At: clockAt})
+		batch = commandRuntime.load(false)
+		for _, message := range batch.messages {
+			model, _ = Update(model, message)
+		}
+		refreshes++
+		if disconnected && !reconnected && model.Connection != ConnectionDisconnected {
+			t.Fatalf("real transport loss rendered %s, want disconnected", model.Connection)
+		}
+		if reconnected && model.Connection != ConnectionReconnected && model.Connection != ConnectionConnected {
+			t.Fatalf("real transport recovery rendered %s", model.Connection)
+		}
+		if refreshes%3 == 0 {
+			before := len(projectOverview(model).Attention)
+			query := "status:failed"
+			if model.Query != "" {
+				query = ""
+			}
+			model, _ = Update(model, QueryChanged{Value: query})
+			model, _ = Update(model, QueryCommit{})
+			if len(projectOverview(model).Attention) != before {
+				filterChanges++
+			}
+		}
+		frame := Render(model)
+		assertFrameGeometry(t, frame, 160, 50)
+		if strings.ContainsRune(frame, '\x00') || strings.ContainsRune(frame, '\x1b') {
+			t.Fatal("soak observed a corrupt/control-bearing TERM=dumb frame")
+		}
+		if baseline == 0 && now.Sub(started) >= warmup {
+			runtime.GC()
+			var memory runtime.MemStats
+			runtime.ReadMemStats(&memory)
+			baseline = memory.HeapAlloc
+		}
+		if !now.Before(nextHeapSample) {
+			runtime.GC()
+			var memory runtime.MemStats
+			runtime.ReadMemStats(&memory)
+			if deadline.Sub(now) <= finalWindow {
+				samples = append(samples, soakHeapSample{elapsed: now.Sub(started), bytes: memory.HeapAlloc})
+			}
+			nextHeapSample = now.Add(time.Minute)
+			if duration < 10*time.Minute {
+				nextHeapSample = now.Add(cadence)
+			}
+		}
+	}
+	if !disconnected || !reconnected {
+		t.Fatalf("soak did not execute real disconnect/reconnect: disconnected=%v reconnected=%v", disconnected, reconnected)
+	}
+	minimumRefreshes := int(duration/cadence) - 1
+	if refreshes < minimumRefreshes || filterChanges == 0 {
+		t.Fatalf("soak coverage refreshes=%d want>=%d filter_changes=%d", refreshes, minimumRefreshes, filterChanges)
+	}
+	if baseline == 0 {
+		t.Fatal("soak never captured a post-warm-up heap baseline")
 	}
 	runtime.GC()
 	var finalMemory runtime.MemStats
@@ -242,10 +437,49 @@ func TestOneHourSoak(t *testing.T) {
 	if runtime.NumGoroutine() > startGoroutines+2 {
 		t.Fatalf("goroutines grew from %d to %d", startGoroutines, runtime.NumGoroutine())
 	}
-	limit := startMemory.HeapAlloc + startMemory.HeapAlloc/10 + 1024*1024
-	if finalMemory.HeapAlloc > limit {
-		t.Fatalf("retained heap grew from %d to %d", startMemory.HeapAlloc, finalMemory.HeapAlloc)
+	if finalFDs := openFDCount(); startFDs >= 0 && finalFDs > startFDs {
+		t.Fatalf("file descriptors grew from %d to %d", startFDs, finalFDs)
 	}
+	limit := baseline + baseline/10
+	if finalMemory.HeapAlloc > limit {
+		t.Fatalf("retained heap grew from %d to %d (limit %d, exact 10%%)", baseline, finalMemory.HeapAlloc, limit)
+	}
+	slope := heapSlopeBytesPerHour(samples)
+	if slope > 1024*1024 {
+		t.Fatalf("final-window retained-heap slope = %.0f bytes/hour, limit 1048576", slope)
+	}
+	t.Logf("SOAK EVIDENCE duration=%s cadence=%s refreshes=%d filters=%d real_disconnect=true real_reconnect=true final_window=%s heap_slope_bytes_per_hour=%.0f retained_baseline=%d retained_final=%d retained_limit=%d goroutines=%d->%d fds=%d->%d", duration, cadence, refreshes, filterChanges, finalWindow, slope, baseline, finalMemory.HeapAlloc, limit, startGoroutines, runtime.NumGoroutine(), startFDs, openFDCount())
+}
+
+func openFDCount() int {
+	entries, err := os.ReadDir("/dev/fd")
+	if err != nil {
+		return -1
+	}
+	return len(entries)
+}
+
+func heapSlopeBytesPerHour(samples []soakHeapSample) float64 {
+	if len(samples) < 2 {
+		return 0
+	}
+	var sumX, sumY float64
+	for _, sample := range samples {
+		sumX += sample.elapsed.Hours()
+		sumY += float64(sample.bytes)
+	}
+	meanX := sumX / float64(len(samples))
+	meanY := sumY / float64(len(samples))
+	var numerator, denominator float64
+	for _, sample := range samples {
+		x := sample.elapsed.Hours() - meanX
+		numerator += x * (float64(sample.bytes) - meanY)
+		denominator += x * x
+	}
+	if denominator == 0 {
+		return 0
+	}
+	return numerator / denominator
 }
 
 func assertFrameGeometry(t *testing.T, frame string, width, height int) {

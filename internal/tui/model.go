@@ -69,6 +69,11 @@ const (
 	OverlayPalette Overlay = "palette"
 )
 
+type OverlayInvoker struct {
+	Focus      Focus
+	FocusIndex int
+}
+
 type Capabilities struct {
 	Color bool
 	Dumb  bool
@@ -102,6 +107,10 @@ type Model struct {
 	QueryActive       bool
 	QueryError        string
 	Overlays          []Overlay
+	OverlayInvokers   []OverlayInvoker
+	HelpPage          int
+	PaletteQuery      string
+	PaletteIndex      int
 	Feedback          string
 	PendingGo         bool
 	GoDeadline        time.Time

@@ -126,25 +126,110 @@ func TestQueryUnknownFieldLeavesResultsUnchanged(t *testing.T) {
 }
 
 func TestAdvertisedBindingRegistryDispatches(t *testing.T) {
-	keys := []string{"tab", "shift+tab", "up", "down", "left", "right", "h", "j", "k", "l", "enter", "space", "pgup", "pgdown", "home", "end", "[", "]", "r", "p", "/", "esc", "?", "ctrl+k"}
-	for _, name := range keys {
-		t.Run(name, func(t *testing.T) {
+	for _, binding := range Bindings() {
+		binding := binding
+		t.Run(binding.ID, func(t *testing.T) {
 			model := smallFixtureModel(Capabilities{})
 			model.RefreshInFlight = false
-			updated, commands := Update(model, Key{Name: name, At: fixtureTime})
-			if updated.Route == "" || updated.Sources == nil {
-				t.Fatal("transition returned an invalid model")
+			key := binding.Keys[0]
+			if binding.ID == "move" || binding.ID == "page" {
+				model.FocusIndex = 2
+				model = preserveFocus(model)
+				rows := projectOverview(model).Attention
+				model.Focus.ItemID = rows[min(1, len(rows)-1)].ID
 			}
-			if name == "r" && (len(commands) != 1 || commands[0].Kind != CommandRefresh) {
-				t.Fatalf("refresh commands = %+v", commands)
+			if binding.ID == "escape" {
+				model.Query = "status:blocked"
+			}
+			if binding.ID == "go" {
+				model.Route = RouteWork
+				model, _ = Update(model, Key{Name: "g", At: fixtureTime})
+				model, _ = Update(model, Key{Name: "o", At: fixtureTime.Add(500 * time.Millisecond)})
+				if model.Route != RouteOverview {
+					t.Fatalf("go binding did not change route: %+v", model)
+				}
+				return
+			}
+			before := model
+			updated, commands := Update(model, Key{Name: key, At: fixtureTime})
+			switch binding.ID {
+			case "quit", "cancel":
+				if !updated.Quit || len(commands) != 1 || commands[0].Kind != CommandQuit {
+					t.Fatalf("quit transition = %+v commands=%+v", updated, commands)
+				}
+			case "help":
+				if !updated.HasOverlay(OverlayHelp) {
+					t.Fatal("help overlay did not open")
+				}
+			case "palette":
+				if !updated.HasOverlay(OverlayPalette) {
+					t.Fatal("palette did not open")
+				}
+			case "query":
+				if !updated.QueryActive {
+					t.Fatal("query did not activate")
+				}
+			case "escape":
+				if updated.Query != "" {
+					t.Fatalf("escape query = %q", updated.Query)
+				}
+			case "next-focus", "previous-focus":
+				if updated.FocusIndex == before.FocusIndex {
+					t.Fatal("focus did not move")
+				}
+			case "move", "page":
+				if updated.Focus.ItemID == before.Focus.ItemID {
+					t.Fatalf("focused item did not move: %q", updated.Focus.ItemID)
+				}
+			case "inspect", "toggle", "section":
+				if updated.Feedback == before.Feedback || updated.Feedback == "" {
+					t.Fatalf("binding feedback did not change: %q", updated.Feedback)
+				}
+			case "refresh":
+				if len(commands) != 1 || commands[0].Kind != CommandRefresh || !updated.RefreshInFlight {
+					t.Fatalf("refresh commands = %+v model=%+v", commands, updated)
+				}
+			case "poll":
+				if updated.Polling == before.Polling {
+					t.Fatal("polling did not toggle")
+				}
+			default:
+				t.Fatalf("binding %q has no behavior assertion", binding.ID)
 			}
 		})
 	}
+}
+
+func TestOverlaysOwnInputSearchSelectAndRestoreInvoker(t *testing.T) {
 	model := smallFixtureModel(Capabilities{})
-	model, _ = Update(model, Key{Name: "g", At: fixtureTime})
-	model, _ = Update(model, Key{Name: "w", At: fixtureTime.Add(500 * time.Millisecond)})
-	if model.Route != RouteWork || model.Feedback == "" {
-		t.Fatalf("go chord model=%+v", model)
+	model.FocusIndex = 3
+	model = preserveFocus(model)
+	invoker := model.Focus
+	model, _ = Update(model, Key{Name: "ctrl+k", At: fixtureTime})
+	model, _ = Update(model, Key{Name: "q", At: fixtureTime})
+	if model.Quit || model.PaletteQuery != "q" || !model.HasOverlay(OverlayPalette) {
+		t.Fatalf("palette did not own q: %+v", model)
+	}
+	model, _ = Update(model, Key{Name: "backspace", At: fixtureTime})
+	for _, key := range []string{"w", "o", "r", "k"} {
+		model, _ = Update(model, Key{Name: key, At: fixtureTime})
+	}
+	model, _ = Update(model, Key{Name: "enter", At: fixtureTime})
+	if model.HasOverlay(OverlayPalette) || model.Route != RouteWork {
+		t.Fatalf("palette selection = %+v", model)
+	}
+
+	model.Route = RouteOverview
+	model.Focus = invoker
+	model.FocusIndex = 3
+	model, _ = Update(model, Key{Name: "?", At: fixtureTime})
+	model, _ = Update(model, Key{Name: "enter", At: fixtureTime})
+	if !model.HasOverlay(OverlayHelp) || model.Feedback != "Help owns input; use PgUp/PgDn, ? or Esc" {
+		t.Fatalf("help did not own Enter: %+v", model)
+	}
+	model, _ = Update(model, Key{Name: "esc", At: fixtureTime})
+	if len(model.Overlays) != 0 || model.Focus != invoker || model.FocusIndex != 3 {
+		t.Fatalf("overlay invoker was not restored: %+v", model)
 	}
 }
 

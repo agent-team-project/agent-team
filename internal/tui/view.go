@@ -98,15 +98,15 @@ func renderPlaceholder(canvas *cellCanvas, model Model) {
 func renderCompactOverview(canvas *cellCanvas, model Model) {
 	projection := projectOverview(model)
 	summary := projection.Summary
-	canvas.putClipped(2, 3, fmt.Sprintf("Fleet      %d instances   %d running   %d teams   %d crashed", summary.Instances, summary.Running, summary.Teams, countStatus(projection.Attention, "instance", "crashed")), canvas.width-4)
-	canvas.putClipped(2, 4, fmt.Sprintf("Work       %d jobs        %d active    %d blocked %d failed", summary.Jobs, summary.ActiveJobs, summary.BlockedJobs, summary.FailedJobs), canvas.width-4)
+	canvas.putClipped(2, 3, fmt.Sprintf("%s Fleet      %d instances   %d running   %d teams   %d crashed", focusMarker(model, "summary", "fleet"), summary.Instances, summary.Running, summary.Teams, countStatus(projection.Attention, "instance", "crashed")), canvas.width-4)
+	canvas.putClipped(2, 4, fmt.Sprintf("%s Work       %d jobs        %d active    %d blocked %d failed", focusMarker(model, "summary", "work"), summary.Jobs, summary.ActiveJobs, summary.BlockedJobs, summary.FailedJobs), canvas.width-4)
 	canvas.putClipped(2, 5, fmt.Sprintf("Telemetry  %d model tiers %d bounce classes   %d deployments", summary.ModelTiers, summary.BounceClasses, summary.Deployments), canvas.width-4)
 	canvas.putClipped(2, 6, fmt.Sprintf("Capacity   %d pipelines   %d budgets   %d schedules  %d deadlines", summary.Pipelines, summary.Budgets, summary.Schedules, summary.Deadlines), canvas.width-4)
 	canvas.separator(7, "Attention")
 	renderAttention(canvas, model, projection.Attention, 8, min(12, canvas.height-7), 2, canvas.width-4)
 	orgStart := min(13, canvas.height-6)
 	canvas.separator(orgStart-1, "Live org")
-	renderOrg(canvas, projection.Org, orgStart, canvas.height-4, 2, canvas.width-4)
+	renderOrg(canvas, model, projection.Org, orgStart, canvas.height-4, 2, canvas.width-4)
 }
 
 func renderStandardOverview(canvas *cellCanvas, model Model) {
@@ -115,14 +115,14 @@ func renderStandardOverview(canvas *cellCanvas, model Model) {
 	middle := canvas.width / 2
 	canvas.separator(3, "Summary")
 	canvas.vertical(middle, 3, canvas.height-4)
-	canvas.putClipped(2, 4, fmt.Sprintf("Fleet       instances %-4d running %-4d teams %-4d", summary.Instances, summary.Running, summary.Teams), middle-4)
-	canvas.putClipped(2, 5, fmt.Sprintf("Work        jobs %-9d active %-5d blocked %-2d failed %-2d", summary.Jobs, summary.ActiveJobs, summary.BlockedJobs, summary.FailedJobs), middle-4)
+	canvas.putClipped(2, 4, fmt.Sprintf("%s Fleet       instances %-4d running %-4d teams %-4d", focusMarker(model, "summary", "fleet"), summary.Instances, summary.Running, summary.Teams), middle-4)
+	canvas.putClipped(2, 5, fmt.Sprintf("%s Work        jobs %-9d active %-5d blocked %-2d failed %-2d", focusMarker(model, "summary", "work"), summary.Jobs, summary.ActiveJobs, summary.BlockedJobs, summary.FailedJobs), middle-4)
 	canvas.putClipped(2, 6, fmt.Sprintf("Telemetry   model/tier %-3d bounce classes %-3d deployments %-3d", summary.ModelTiers, summary.BounceClasses, summary.Deployments), middle-4)
 	canvas.putClipped(2, 7, fmt.Sprintf("Topology    pipelines %-4d budgets %-4d schedules %-4d deadlines %-4d", summary.Pipelines, summary.Budgets, summary.Schedules, summary.Deadlines), middle-4)
 	canvas.put(middle+2, 3, "Attention")
 	renderAttention(canvas, model, projection.Attention, 4, 12, middle+2, canvas.width-middle-4)
 	canvas.separator(13, "Live org")
-	renderOrg(canvas, projection.Org, 14, canvas.height-4, 2, canvas.width-4)
+	renderOrg(canvas, model, projection.Org, 14, canvas.height-4, 2, canvas.width-4)
 }
 
 func renderWideOverview(canvas *cellCanvas, model Model) {
@@ -133,9 +133,9 @@ func renderWideOverview(canvas *cellCanvas, model Model) {
 	canvas.vertical(rail, 2, canvas.height-4)
 	canvas.vertical(right, 2, canvas.height-4)
 	canvas.put(2, 3, "Overview")
-	canvas.put(2, 5, "  Summary")
-	canvas.put(2, 6, "  Attention")
-	canvas.put(2, 7, "  Live org")
+	canvas.put(2, 5, focusMarker(model, "summary", model.Focus.Control)+" Summary")
+	canvas.put(2, 6, focusMarker(model, "attention", "list")+" Attention")
+	canvas.put(2, 7, focusMarker(model, "org", "list")+" Live org")
 	canvas.put(rail+2, 3, "Fleet and work summary")
 	canvas.putClipped(rail+2, 5, fmt.Sprintf("Fleet       %d instances   %d running   %d teams", summary.Instances, summary.Running, summary.Teams), right-rail-4)
 	canvas.putClipped(rail+2, 6, fmt.Sprintf("Work        %d jobs        %d active    %d blocked   %d failed", summary.Jobs, summary.ActiveJobs, summary.BlockedJobs, summary.FailedJobs), right-rail-4)
@@ -149,7 +149,7 @@ func renderWideOverview(canvas *cellCanvas, model Model) {
 	canvas.put(rail+2, 10, "Attention")
 	renderAttention(canvas, model, projection.Attention, 11, 20, rail+2, right-rail-4)
 	canvas.put(right+2, 10, "Live org")
-	renderOrg(canvas, projection.Org, 11, canvas.height-4, right+2, canvas.width-right-4)
+	renderOrg(canvas, model, projection.Org, 11, canvas.height-4, right+2, canvas.width-right-4)
 }
 
 func renderAttention(canvas *cellCanvas, model Model, rows []AttentionRow, start, end, x, width int) {
@@ -169,7 +169,7 @@ func renderAttention(canvas *cellCanvas, model Model, rows []AttentionRow, start
 	}
 }
 
-func renderOrg(canvas *cellCanvas, rows []OrgRow, start, end, x, width int) {
+func renderOrg(canvas *cellCanvas, model Model, rows []OrgRow, start, end, x, width int) {
 	if len(rows) == 0 {
 		canvas.put(x, start, "No runtime instances reported.")
 		return
@@ -181,14 +181,24 @@ func renderOrg(canvas *cellCanvas, rows []OrgRow, start, end, x, width int) {
 		if row.Capacity > 0 {
 			capacity = fmt.Sprintf("%d/%d running", row.Running, row.Capacity)
 		}
-		line := fmt.Sprintf("%-16s %d working  %d idle  %d crashed  [%s, %d queued]", row.Role, row.Working, row.Idle, row.Crashed, capacity, row.Queued)
+		marker := " "
+		if model.Focus.Region == "org" && i == 0 {
+			marker = ">"
+		}
+		line := fmt.Sprintf("%s %-16s %d working  %d idle  %d crashed  [%s, %d queued]", marker, row.Role, row.Working, row.Idle, row.Crashed, capacity, row.Queued)
 		canvas.putClipped(x, start+i, line, width)
 	}
 }
 
 func renderStatus(canvas *cellCanvas, model Model) {
 	y := canvas.height - 3
-	canvas.horizontal(0, y-1, canvas.width)
+	failures := failedSourceLines(model)
+	start := y - len(failures)
+	canvas.clearRect(1, max(3, start-1), canvas.width-2, y-max(3, start-1)+1)
+	canvas.horizontal(0, start-1, canvas.width)
+	for i, failure := range failures {
+		canvas.putClipped(2, start+i, failure, canvas.width-4)
+	}
 	query := "none"
 	if model.Query != "" {
 		query = model.Query
@@ -208,7 +218,7 @@ func renderStatus(canvas *cellCanvas, model Model) {
 			requested = resources
 		}
 	}
-	line := fmt.Sprintf("Filter: %s | %s | collections %d/3 | resources %d/%d | focus %s", query, freshnessText(model), successfulCollections(model), resources, requested, model.FocusLabel())
+	line := fmt.Sprintf("%s Filter: %s | %s | collections %d/3 | resources %d/%d | focus %s", focusMarker(model, "status", "refresh"), query, freshnessText(model), successfulCollections(model), resources, requested, model.FocusLabel())
 	canvas.putClipped(2, y, line, canvas.width-4)
 }
 
@@ -231,22 +241,38 @@ func renderOverlay(canvas *cellCanvas, model Model, overlay Overlay) {
 	switch overlay {
 	case OverlayHelp:
 		canvas.put(x+2, y, " Help ")
+		bindings := Bindings()
+		pageSize := helpPageSize(model)
+		page := clampHelpPage(model, model.HelpPage)
+		first := page * pageSize
+		last := min(len(bindings), first+pageSize)
 		row := y + 2
-		for _, binding := range Bindings() {
-			if row >= y+h-2 {
-				break
-			}
+		for _, binding := range bindings[first:last] {
 			canvas.putClipped(x+2, row, fmt.Sprintf("%-12s %s", binding.Label, binding.Description), w-4)
 			row++
 		}
-		canvas.putClipped(x+2, y+h-2, "? or Esc closes help; every listed key is keyboard-testable.", w-4)
+		canvas.putClipped(x+2, y+h-2, fmt.Sprintf("Page %d/%d  PgUp/PgDn pages  ? or Esc closes", page+1, helpPageCount(model)), w-4)
 	case OverlayPalette:
 		canvas.put(x+2, y, " Command palette ")
-		canvas.put(x+2, y+2, "> overview")
-		for i, route := range routeOrder[1:] {
-			canvas.putClipped(x+2, y+3+i, fmt.Sprintf("  %-14s read-only screen (later slice)", routeTitle(route)), w-4)
+		canvas.putClipped(x+2, y+2, "Search: "+model.PaletteQuery, w-4)
+		items := filteredPaletteItems(model.PaletteQuery)
+		visible := max(1, h-5)
+		first := 0
+		if model.PaletteIndex >= visible {
+			first = model.PaletteIndex - visible + 1
 		}
-		canvas.putClipped(x+2, y+h-2, "Enter selects; Ctrl+K or Esc closes.", w-4)
+		last := min(len(items), first+visible)
+		for i, item := range items[first:last] {
+			marker := " "
+			if first+i == model.PaletteIndex {
+				marker = ">"
+			}
+			canvas.putClipped(x+2, y+3+i, marker+" "+item.Label, w-4)
+		}
+		if len(items) == 0 {
+			canvas.put(x+2, y+3, "No matching commands")
+		}
+		canvas.putClipped(x+2, y+h-2, "Type to search; Enter selects; Ctrl+K or Esc closes.", w-4)
 	}
 }
 
@@ -300,11 +326,32 @@ func freshnessText(model Model) string {
 func successfulCollections(model Model) int {
 	count := 0
 	for _, source := range []daemonclient.SnapshotSource{daemonclient.SourceInstances, daemonclient.SourceJobs, daemonclient.SourceTopology} {
-		if !model.Sources[source].FetchedAt.IsZero() {
+		state := model.Sources[source]
+		if !state.FetchedAt.IsZero() && strings.TrimSpace(state.Error) == "" {
 			count++
 		}
 	}
 	return count
+}
+
+func failedSourceLines(model Model) []string {
+	lines := []string{}
+	for _, source := range daemonclient.SnapshotSources() {
+		state := model.Sources[source]
+		if strings.TrimSpace(state.Error) == "" {
+			continue
+		}
+		errorText := strings.Join(strings.Fields(state.Error), " ")
+		lines = append(lines, fmt.Sprintf("%s retained %s ERROR: %s", strings.ToUpper(string(source)), clockText(state.FetchedAt), errorText))
+	}
+	return lines
+}
+
+func focusMarker(model Model, region, control string) string {
+	if model.Focus.Region == region && (control == "" || model.Focus.Control == control) {
+		return ">"
+	}
+	return " "
 }
 
 func countStatus(rows []AttentionRow, kind, status string) int {

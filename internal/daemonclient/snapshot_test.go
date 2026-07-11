@@ -8,12 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 func TestSnapshotCollectsCollectionsAndResourceEnrichment(t *testing.T) {
 	resourceHits := map[string]int{}
+	var resourceHitsMu sync.Mutex
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/instances", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(t, w, []map[string]any{{
@@ -33,7 +35,9 @@ func TestSnapshotCollectsCollectionsAndResourceEnrichment(t *testing.T) {
 	})
 	mux.HandleFunc("/v1/resources", func(w http.ResponseWriter, r *http.Request) {
 		uri := r.URL.Query().Get("uri")
+		resourceHitsMu.Lock()
 		resourceHits[uri]++
+		resourceHitsMu.Unlock()
 		writeJSON(t, w, map[string]any{"uri": uri, "kind": "test", "id": uri, "data": map[string]any{"ok": true}})
 	})
 	server := httptest.NewServer(mux)
@@ -48,7 +52,10 @@ func TestSnapshotCollectsCollectionsAndResourceEnrichment(t *testing.T) {
 	if len(snapshot.Instances) != 1 || len(snapshot.Jobs) != 1 || snapshot.Topology == nil {
 		t.Fatalf("snapshot collections = %+v", snapshot)
 	}
-	if len(resourceHits) != 4 || len(snapshot.Resources) != 4 {
+	resourceHitsMu.Lock()
+	resourceHitCount := len(resourceHits)
+	resourceHitsMu.Unlock()
+	if resourceHitCount != 4 || len(snapshot.Resources) != 4 {
 		t.Fatalf("resource hits=%v snapshot=%d", resourceHits, len(snapshot.Resources))
 	}
 	for _, source := range SnapshotSources() {
@@ -83,6 +90,19 @@ func TestSnapshotPreservesPartialResourceResults(t *testing.T) {
 	}
 	if len(snapshot.Resources) != 1 || snapshot.SourceErrors[SourceResources] == "" {
 		t.Fatalf("resources=%d errors=%v", len(snapshot.Resources), snapshot.SourceErrors)
+	}
+}
+
+func TestSnapshotAllCollectionFailuresDoNotClaimResourceSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "transport unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	client := NewHTTP(server.URL, "", Options{RoundTripper: server.Client().Transport})
+
+	snapshot := client.Snapshot(context.Background(), time.Now())
+	if snapshot.Usable() || snapshot.SourceErrors[SourceResources] == "" || !snapshot.SourceTimes[SourceResources].IsZero() {
+		t.Fatalf("all-failed snapshot usable=%v resource_time=%v errors=%v", snapshot.Usable(), snapshot.SourceTimes[SourceResources], snapshot.SourceErrors)
 	}
 }
 

@@ -168,19 +168,7 @@ func projectOrg(snapshot *daemonclient.Snapshot) []OrgRow {
 }
 
 func distinctModelTiers(snapshot *daemonclient.Snapshot) int {
-	jobs := append([]*daemonclient.Job(nil), snapshot.Jobs...)
-	sort.SliceStable(jobs, func(i, j int) bool {
-		if jobs[i] == nil || jobs[j] == nil {
-			return jobs[j] == nil
-		}
-		if !jobs[i].UpdatedAt.Equal(jobs[j].UpdatedAt) {
-			return jobs[i].UpdatedAt.After(jobs[j].UpdatedAt)
-		}
-		return jobs[i].ID < jobs[j].ID
-	})
-	if len(jobs) > 24 {
-		jobs = jobs[:24]
-	}
+	jobs := recentJobs(snapshot.Jobs, 24)
 	groups := map[string]bool{}
 	for _, job := range jobs {
 		if job == nil {
@@ -198,9 +186,26 @@ func distinctModelTiers(snapshot *daemonclient.Snapshot) int {
 	return len(groups)
 }
 
+func recentJobs(source []*daemonclient.Job, limit int) []*daemonclient.Job {
+	jobs := append([]*daemonclient.Job(nil), source...)
+	sort.SliceStable(jobs, func(i, j int) bool {
+		if jobs[i] == nil || jobs[j] == nil {
+			return jobs[j] == nil
+		}
+		if !jobs[i].UpdatedAt.Equal(jobs[j].UpdatedAt) {
+			return jobs[i].UpdatedAt.After(jobs[j].UpdatedAt)
+		}
+		return jobs[i].ID < jobs[j].ID
+	})
+	if limit >= 0 && len(jobs) > limit {
+		jobs = jobs[:limit]
+	}
+	return jobs
+}
+
 func distinctBounceClasses(snapshot *daemonclient.Snapshot) int {
 	classes := map[string]bool{}
-	for _, job := range snapshot.Jobs {
+	for _, job := range recentJobs(snapshot.Jobs, 24) {
 		if job == nil {
 			continue
 		}

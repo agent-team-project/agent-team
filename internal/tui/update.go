@@ -97,6 +97,7 @@ func Update(model Model, msg Msg) (Model, []Command) {
 		model.Width = max(0, value.Width)
 		model.Height = max(0, value.Height)
 		model.Size = ClassifySize(model.Width, model.Height)
+		model.HelpPage = clampHelpPage(model, model.HelpPage)
 		model = preserveFocus(model)
 		return model, nil
 	case CachedSnapshot:
@@ -131,6 +132,11 @@ func Update(model Model, msg Msg) (Model, []Command) {
 		state := model.Sources[value.Source]
 		state.Error = strings.TrimSpace(value.Error)
 		model.Sources[value.Source] = state
+		if model.Snapshot != nil {
+			copy := cloneSnapshot(model.Snapshot)
+			copy.SourceErrors[value.Source] = state.Error
+			model.Snapshot = copy
+		}
 		return model, nil
 	case RefreshFinished:
 		model.Now = normalizedTime(value.At, model.Now)
@@ -195,14 +201,10 @@ func Update(model Model, msg Msg) (Model, []Command) {
 		}
 		return model, nil
 	case OpenOverlay:
-		if !model.HasOverlay(value.Overlay) {
-			model.Overlays = append(model.Overlays, value.Overlay)
-		}
+		model = openOverlay(model, value.Overlay)
 		return model, nil
 	case CloseOverlay:
-		if len(model.Overlays) > 0 {
-			model.Overlays = model.Overlays[:len(model.Overlays)-1]
-		}
+		model = closeOverlay(model)
 		return model, nil
 	case AttachRequested:
 		model.Polling = false
@@ -232,6 +234,9 @@ func Update(model Model, msg Msg) (Model, []Command) {
 func updateKey(model Model, key Key) (Model, []Command) {
 	name := strings.ToLower(strings.TrimSpace(key.Name))
 	model.Now = normalizedTime(key.At, model.Now)
+	if len(model.Overlays) > 0 {
+		return updateOverlayKey(model, name)
+	}
 	if model.PendingGo {
 		model.PendingGo = false
 		if !model.GoDeadline.IsZero() && model.Now.After(model.GoDeadline) {
@@ -288,8 +293,6 @@ func updateKey(model Model, key Key) (Model, []Command) {
 		if model.Query != "" {
 			model.Query = ""
 			model.QueryError = ""
-		} else if len(model.Overlays) > 0 {
-			model.Overlays = model.Overlays[:len(model.Overlays)-1]
 		} else {
 			model.Feedback = "Already at Overview"
 		}
@@ -343,7 +346,7 @@ func updateKey(model Model, key Key) (Model, []Command) {
 
 func requestQuit(model Model) (Model, []Command) {
 	if len(model.Overlays) > 0 {
-		model.Overlays = model.Overlays[:len(model.Overlays)-1]
+		model = closeOverlay(model)
 		return model, nil
 	}
 	if model.QueryActive {
@@ -352,6 +355,172 @@ func requestQuit(model Model) (Model, []Command) {
 	}
 	model.Quit = true
 	return model, []Command{{Kind: CommandQuit}}
+}
+
+func openOverlay(model Model, overlay Overlay) Model {
+	if model.HasOverlay(overlay) {
+		return model
+	}
+	model.Overlays = append(model.Overlays, overlay)
+	model.OverlayInvokers = append(model.OverlayInvokers, OverlayInvoker{Focus: model.Focus, FocusIndex: model.FocusIndex})
+	switch overlay {
+	case OverlayHelp:
+		model.HelpPage = 0
+	case OverlayPalette:
+		model.PaletteQuery = ""
+		model.PaletteIndex = 0
+	}
+	return model
+}
+
+func closeOverlay(model Model) Model {
+	if len(model.Overlays) == 0 {
+		return model
+	}
+	model.Overlays = model.Overlays[:len(model.Overlays)-1]
+	if len(model.OverlayInvokers) > 0 {
+		invoker := model.OverlayInvokers[len(model.OverlayInvokers)-1]
+		model.OverlayInvokers = model.OverlayInvokers[:len(model.OverlayInvokers)-1]
+		model.FocusIndex = invoker.FocusIndex
+		model.Focus = invoker.Focus
+		model = preserveFocus(model)
+	}
+	return model
+}
+
+func updateOverlayKey(model Model, name string) (Model, []Command) {
+	switch model.Overlays[len(model.Overlays)-1] {
+	case OverlayHelp:
+		switch name {
+		case "?", "esc", "ctrl+c":
+			model = closeOverlay(model)
+		case "tab", "down", "j", "right", "l", "pgdown", "space":
+			model.HelpPage = clampHelpPage(model, model.HelpPage+1)
+		case "shift+tab", "up", "k", "left", "h", "pgup":
+			model.HelpPage = clampHelpPage(model, model.HelpPage-1)
+		case "home":
+			model.HelpPage = 0
+		case "end":
+			model.HelpPage = helpPageCount(model) - 1
+		default:
+			model.Feedback = "Help owns input; use PgUp/PgDn, ? or Esc"
+		}
+		return model, nil
+	case OverlayPalette:
+		items := filteredPaletteItems(model.PaletteQuery)
+		switch name {
+		case "ctrl+k", "esc", "ctrl+c":
+			return closeOverlay(model), nil
+		case "up", "k":
+			if len(items) > 0 {
+				model.PaletteIndex = (model.PaletteIndex - 1 + len(items)) % len(items)
+			}
+		case "down", "j", "tab":
+			if len(items) > 0 {
+				model.PaletteIndex = (model.PaletteIndex + 1) % len(items)
+			}
+		case "home":
+			model.PaletteIndex = 0
+		case "end":
+			model.PaletteIndex = max(0, len(items)-1)
+		case "backspace", "ctrl+h":
+			model.PaletteQuery = trimLastRune(model.PaletteQuery)
+			model.PaletteIndex = 0
+		case "enter":
+			if len(items) == 0 {
+				model.Feedback = "No command matches palette search"
+				return model, nil
+			}
+			selected := items[min(model.PaletteIndex, len(items)-1)]
+			model = closeOverlay(model)
+			if selected.Route != "" {
+				model.Route = selected.Route
+				model.FocusIndex = 0
+				model = preserveFocus(model)
+				if selected.Route != RouteOverview {
+					model.Feedback = routeTitle(selected.Route) + " arrives in a later read-only slice"
+				}
+				return model, nil
+			}
+			var commands []Command
+			for _, keyName := range strings.Fields(selected.Key) {
+				var next []Command
+				model, next = updateKey(model, Key{Name: keyName, At: model.Now})
+				commands = append(commands, next...)
+			}
+			return model, commands
+		default:
+			if name == "space" {
+				model.PaletteQuery += " "
+				model.PaletteIndex = 0
+			} else if len([]rune(name)) == 1 {
+				model.PaletteQuery += name
+				model.PaletteIndex = 0
+			} else {
+				model.Feedback = "Command palette owns input"
+			}
+		}
+		return model, nil
+	default:
+		return model, nil
+	}
+}
+
+type paletteItem struct {
+	Label string
+	Key   string
+	Route Route
+}
+
+func paletteItems() []paletteItem {
+	items := make([]paletteItem, 0, len(routeOrder)+len(Bindings()))
+	for _, route := range routeOrder {
+		items = append(items, paletteItem{Label: routeTitle(route) + " route", Route: route})
+	}
+	for _, binding := range Bindings() {
+		key := ""
+		if len(binding.Keys) > 0 {
+			key = binding.Keys[0]
+		}
+		items = append(items, paletteItem{Label: binding.Label + " — " + binding.Description, Key: key})
+	}
+	return items
+}
+
+func filteredPaletteItems(query string) []paletteItem {
+	query = strings.ToLower(strings.TrimSpace(query))
+	items := paletteItems()
+	if query == "" {
+		return items
+	}
+	filtered := items[:0]
+	for _, item := range items {
+		if strings.Contains(strings.ToLower(item.Label), query) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func trimLastRune(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return ""
+	}
+	return string(runes[:len(runes)-1])
+}
+
+func helpPageSize(model Model) int {
+	height := min(model.Height-8, 19)
+	return max(1, height-4)
+}
+
+func helpPageCount(model Model) int {
+	return max(1, (len(Bindings())+helpPageSize(model)-1)/helpPageSize(model))
+}
+
+func clampHelpPage(model Model, page int) int {
+	return max(0, min(helpPageCount(model)-1, page))
 }
 
 func mergeSnapshotSource(model Model, source daemonclient.SnapshotSource, snapshot *daemonclient.Snapshot, at time.Time) Model {
