@@ -5,9 +5,43 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	templatecfg "github.com/agent-team-project/agent-team/internal/template"
 )
+
+func TestFrontendProgramSoakBudgets(t *testing.T) {
+	for _, fixture := range frontendProgramTopologies(t) {
+		t.Run(fixture.name, func(t *testing.T) {
+			pipeline := fixture.top.Pipelines["frontend_ticket_to_pr"]
+			if pipeline == nil {
+				t.Fatal("frontend_ticket_to_pr pipeline is missing")
+			}
+			for _, want := range []struct {
+				id         string
+				timeout    time.Duration
+				timeBudget time.Duration
+			}{
+				{id: "implement", timeout: 3 * time.Hour, timeBudget: 3 * time.Hour},
+				{id: "verify", timeout: 2 * time.Hour, timeBudget: 2 * time.Hour},
+			} {
+				var step *PipelineStep
+				for _, candidate := range pipeline.Steps {
+					if candidate.ID == want.id {
+						step = candidate
+						break
+					}
+				}
+				if step == nil {
+					t.Fatalf("frontend %s step is missing", want.id)
+				}
+				if step.Timeout != want.timeout || step.TimeBudget != want.timeBudget {
+					t.Fatalf("frontend %s timeout/time budget = %s/%s, want %s/%s", want.id, step.Timeout, step.TimeBudget, want.timeout, want.timeBudget)
+				}
+			}
+		})
+	}
+}
 
 func TestFrontendProgramAuthorityContract(t *testing.T) {
 	for _, fixture := range frontendProgramTopologies(t) {
