@@ -5838,6 +5838,10 @@ func newJobStepCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job step: stale attempt %d; current attempt is %d.\n", attempt, job.CurrentAttempt(j))
 				return exitErr(2)
 			}
+			if err := validateJobStepHead(j, args[1], head); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job step: %v\n", err)
+				return exitErr(2)
+			}
 			if !dryRun {
 				if err := auditCLIJobAuthority(teamDir, j, "job.step", "job:"+j.ID+":step:"+args[1]); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job step: %v\n", err)
@@ -11766,7 +11770,7 @@ func jobHasAnyStepInstance(j *job.Job) bool {
 
 func reconcileJobFromDaemonMetadata(teamDir string, j *job.Job, meta *daemon.Metadata, matchedBy string, dryRun bool, now time.Time) jobEventReconcileResult {
 	before := cloneJobForEventReconcile(j)
-	if meta == nil || !job.AttemptMatches(j, meta.Attempt) {
+	if meta == nil || !job.AttemptHeadMatches(j, meta.Attempt, meta.Head) {
 		return jobEventReconcileResult{JobID: j.ID, MatchedBy: matchedBy, Before: j.Status, After: j.Status, DryRun: dryRun}
 	}
 	target := j
@@ -12041,7 +12045,7 @@ func jobForStatusRow(jobs []*job.Job, row instanceRow) (*job.Job, string) {
 }
 
 func reconcileJobFromStatusRow(teamDir string, j *job.Job, row instanceRow, matchedBy string, dryRun bool, now time.Time) jobStatusReconcileResult {
-	if !job.AttemptMatches(j, row.Attempt) {
+	if !job.AttemptHeadMatches(j, row.Attempt, row.Head) {
 		return jobStatusReconcileResult{JobID: j.ID, Instance: row.Instance, Phase: row.Phase, MatchedBy: matchedBy, Before: j.Status, After: j.Status, DryRun: dryRun}
 	}
 	before := j.Status
@@ -12161,7 +12165,7 @@ func jobForQueueItem(jobs []*job.Job, item *daemon.QueueItem) *job.Job {
 }
 
 func reconcileJobFromQueueItem(j *job.Job, item *daemon.QueueItem, dryRun bool, now time.Time) jobQueueReconcileResult {
-	if item == nil || !job.AttemptMatches(j, payloadAttemptFromQueue(item.Payload)) {
+	if item == nil || !job.AttemptHeadMatches(j, payloadAttemptFromQueue(item.Payload), payloadHeadFromQueue(item.Payload)) {
 		return jobQueueReconcileResult{JobID: j.ID, Before: j.Status, After: j.Status, DryRun: dryRun}
 	}
 	before := j.Status
@@ -12202,6 +12206,10 @@ func payloadAttemptFromQueue(payload map[string]any) int {
 	raw := queuePayloadString(payload, "attempt")
 	attempt, _ := strconv.Atoi(raw)
 	return attempt
+}
+
+func payloadHeadFromQueue(payload map[string]any) string {
+	return queuePayloadString(payload, "head")
 }
 
 func queueReconciledJobState(j *job.Job, item *daemon.QueueItem, now time.Time) (job.Status, string, string) {
@@ -12339,6 +12347,37 @@ func validateJobStepRunningOwner(j *job.Job, stepID string, status job.Status, i
 		return nil
 	}
 	return fmt.Errorf("status running requires --instance for step %q; pass --force to record an ownerless running step", stepID)
+}
+
+func validateJobStepHead(j *job.Job, stepID, head string) error {
+	if j == nil || jobStepProducesImplementationHead(j, stepID) {
+		return nil
+	}
+	current := strings.TrimSpace(j.Head)
+	if current == "" {
+		return nil
+	}
+	head = strings.TrimSpace(head)
+	if head == "" {
+		return fmt.Errorf("step %q requires exact head %s", stepID, current)
+	}
+	if head != current {
+		return fmt.Errorf("stale head %s; current head is %s", head, current)
+	}
+	return nil
+}
+
+func jobStepProducesImplementationHead(j *job.Job, stepID string) bool {
+	if j == nil || len(j.Steps) == 0 {
+		return false
+	}
+	stepID = strings.TrimSpace(stepID)
+	for i := range j.Steps {
+		if strings.EqualFold(strings.TrimSpace(j.Steps[i].ID), "implement") {
+			return j.Steps[i].ID == stepID
+		}
+	}
+	return j.Steps[0].ID == stepID
 }
 
 type jobEventReconcileResult struct {
@@ -13408,7 +13447,10 @@ func validateCurrentAttemptApprovalEvidence(teamDir string, j *job.Job, approval
 	if j == nil {
 		return nil
 	}
-	requiredSteps := currentAttemptEvidenceSteps(j, approvalStep)
+	requiredSteps, err := currentAttemptEvidenceSteps(teamDir, j, approvalStep)
+	if err != nil {
+		return err
+	}
 	if len(requiredSteps) == 0 {
 		return nil
 	}
@@ -13439,19 +13481,29 @@ func validateCurrentAttemptApprovalEvidence(teamDir string, j *job.Job, approval
 	return nil
 }
 
-func currentAttemptEvidenceSteps(j *job.Job, approvalStep string) []string {
+func currentAttemptEvidenceSteps(teamDir string, j *job.Job, approvalStep string) ([]string, error) {
+	top, err := topology.LoadFromTeamDir(teamDir)
+	if err != nil {
+		return nil, fmt.Errorf("load declared evidence roles: %w", err)
+	}
 	var required []string
 	for i := range j.Steps {
 		step := &j.Steps[i]
 		if !jobStepTransitivelyDependsOn(j, approvalStep, step.ID) {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(step.Target)) {
+		role := strings.ToLower(strings.TrimSpace(step.Target))
+		if top != nil {
+			if declared := top.Find(strings.TrimSpace(step.Target)); declared != nil {
+				role = strings.ToLower(strings.TrimSpace(declared.Agent))
+			}
+		}
+		switch role {
 		case "verifier", "reviewer":
 			required = append(required, step.ID)
 		}
 	}
-	return required
+	return required, nil
 }
 
 func optionalSendMessageBody(flagValue, fileValue string, positional []string) (string, error) {

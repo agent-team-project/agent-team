@@ -28,6 +28,33 @@ func TestNormalizeID(t *testing.T) {
 	}
 }
 
+func TestAttemptHeadMatchesRequiresExactGeneration(t *testing.T) {
+	headA := strings.Repeat("a", 40)
+	headB := strings.Repeat("b", 40)
+	j := &Job{Attempt: 2, Head: headB}
+
+	for _, tc := range []struct {
+		name    string
+		attempt int
+		head    string
+		want    bool
+	}{
+		{name: "current", attempt: 2, head: headB, want: true},
+		{name: "prior attempt", attempt: 1, head: headB},
+		{name: "prior head", attempt: 2, head: headA},
+		{name: "missing head", attempt: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AttemptHeadMatches(j, tc.attempt, tc.head); got != tc.want {
+				t.Fatalf("AttemptHeadMatches(%d, %q) = %t, want %t", tc.attempt, tc.head, got, tc.want)
+			}
+		})
+	}
+	if !AttemptHeadMatches(&Job{}, 0, "") {
+		t.Fatal("legacy attempt-one/headless generation did not match")
+	}
+}
+
 func TestTicketIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		raw       string

@@ -7489,6 +7489,188 @@ func TestJobStepRejectsStaleAttemptCompletionWithReusedInstance(t *testing.T) {
 	}
 }
 
+func TestJobStepRejectsStaleHeadCompletionWithinAttempt(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+	teamDir := filepath.Join(root, ".agent_team")
+	now := time.Now().UTC()
+	headA := strings.Repeat("a", 40)
+	headB := strings.Repeat("b", 40)
+	j := &job.Job{
+		ID: "gh-230-head", Ticket: "GH-230", Target: "worker", Pipeline: "ticket_to_pr",
+		Attempt: 1, Head: headB, Status: job.StatusRunning, CreatedAt: now, UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusDone},
+			{ID: "verify", Target: "verifier", Status: job.StatusRunning, Instance: "verifier-gh-230", After: []string{"implement"}},
+			{ID: "review", Target: "reviewer", Status: job.StatusBlocked, After: []string{"verify"}},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	stale.SetErr(stderr)
+	stale.SetArgs([]string{"job", "step", j.ID, "verify", "--repo", root, "--status", "done", "--attempt", "1", "--head", headA})
+	if err := stale.Execute(); err == nil || !strings.Contains(stderr.String(), "stale head "+headA) {
+		t.Fatalf("stale completion err=%v stderr=%q", err, stderr.String())
+	}
+	unchanged, err := job.Read(teamDir, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Head != headB || unchanged.Steps[1].Status != job.StatusRunning || unchanged.Steps[2].Status != job.StatusBlocked {
+		t.Fatalf("stale head completion mutated job = %+v", unchanged)
+	}
+
+	current := NewRootCmd()
+	current.SetArgs([]string{"job", "step", j.ID, "verify", "--repo", root, "--status", "done", "--attempt", "1", "--head", headB})
+	if err := current.Execute(); err != nil {
+		t.Fatalf("current completion: %v", err)
+	}
+	updated, err := job.Read(teamDir, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Head != headB || updated.Steps[1].Status != job.StatusDone || updated.Steps[2].Status != job.StatusBlocked {
+		t.Fatalf("current head completion = %+v", updated)
+	}
+}
+
+func TestReviewCurrentAttemptEvidenceRecognizesDeclaredTargets(t *testing.T) {
+	teamDir := filepath.Join(t.TempDir(), ".agent_team")
+	if err := os.MkdirAll(teamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "instances.toml"), []byte(`
+[instances.platform-worker]
+agent = "worker"
+
+[instances.platform-verifier]
+agent = "verifier"
+
+[instances.platform-reviewer]
+agent = "reviewer"
+
+[instances.manager]
+agent = "manager"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	head := strings.Repeat("b", 40)
+	j := &job.Job{
+		ID: "gh-230-roles", Attempt: 1, Head: head,
+		Steps: []job.Step{
+			{ID: "implement", Target: "platform-worker", Status: job.StatusDone},
+			{ID: "verify", Target: "platform-verifier", Status: job.StatusDone, After: []string{"implement"}},
+			{ID: "review", Target: "platform-reviewer", Status: job.StatusDone, After: []string{"verify"}},
+			{ID: "approve", Target: "manager", Status: job.StatusBlocked, After: []string{"review"}, Gate: job.StepGateManual},
+		},
+	}
+	if err := validateCurrentAttemptApprovalEvidence(teamDir, j, "approve"); err == nil || !strings.Contains(err.Error(), `step "verify" lacks passing gate evidence`) {
+		t.Fatalf("missing evidence err = %v", err)
+	}
+	for _, step := range []string{"verify", "review"} {
+		if err := job.AppendGateRecord(teamDir, &job.GateRecord{JobID: j.ID, Attempt: 1, Step: step, Commit: head, Name: step, Status: job.GateStatusPass}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateCurrentAttemptApprovalEvidence(teamDir, j, "approve"); err != nil {
+		t.Fatalf("current declared-role evidence: %v", err)
+	}
+}
+
+func TestJobGateRejectsStaleHeadEvidenceWithinAttempt(t *testing.T) {
+	root := t.TempDir()
+	initInto(t, root)
+	teamDir := filepath.Join(root, ".agent_team")
+	headA := strings.Repeat("a", 40)
+	headB := strings.Repeat("b", 40)
+	j := &job.Job{
+		ID: "gh-230-gate", Ticket: "GH-230", Target: "worker", Attempt: 1, Head: headB,
+		Status: job.StatusRunning, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusDone},
+			{ID: "verify", Target: "verifier", Status: job.StatusRunning, After: []string{"implement"}},
+		},
+	}
+	if err := job.Write(teamDir, j); err != nil {
+		t.Fatal(err)
+	}
+	stale := NewRootCmd()
+	stderr := &bytes.Buffer{}
+	stale.SetErr(stderr)
+	stale.SetArgs([]string{"job", "gate", "set", j.ID, "tests", "--repo", root, "--status", "pass", "--attempt", "1", "--step", "verify", "--commit", headA})
+	if err := stale.Execute(); err == nil || !strings.Contains(stderr.String(), "stale head "+headA) {
+		t.Fatalf("stale gate err=%v stderr=%q", err, stderr.String())
+	}
+	records, err := job.ListGateRecords(teamDir, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("stale gate evidence was recorded: %+v", records)
+	}
+	current := NewRootCmd()
+	current.SetArgs([]string{"job", "gate", "set", j.ID, "tests", "--repo", root, "--status", "pass", "--attempt", "1", "--step", "verify", "--commit", headB})
+	if err := current.Execute(); err != nil {
+		t.Fatalf("current gate evidence: %v", err)
+	}
+	records, err = job.ListGateRecords(teamDir, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Attempt != 1 || records[0].Step != "verify" || records[0].Commit != headB {
+		t.Fatalf("current gate records = %+v", records)
+	}
+}
+
+func TestReviewSameAttemptHeadRejectsStaleReconciliationSources(t *testing.T) {
+	teamDir := filepath.Join(t.TempDir(), ".agent_team")
+	now := time.Now().UTC()
+	headA := strings.Repeat("a", 40)
+	headB := strings.Repeat("b", 40)
+	j := &job.Job{
+		ID: "gh-230-reconcile", Attempt: 1, Head: headB, Status: job.StatusRunning, CreatedAt: now, UpdatedAt: now,
+		Steps: []job.Step{
+			{ID: "implement", Target: "worker", Status: job.StatusDone},
+			{ID: "review", Target: "reviewer", Status: job.StatusRunning, Instance: "reviewer-gh-230", After: []string{"implement"}},
+			{ID: "approve", Target: "manager", Status: job.StatusBlocked, After: []string{"review"}, Gate: job.StepGateManual},
+		},
+	}
+	before := cloneJobForEventReconcile(j)
+	zero := 0
+	metaResult := reconcileJobFromDaemonMetadata(teamDir, j, &daemon.Metadata{
+		Instance: "reviewer-gh-230", Job: j.ID, Attempt: 1, Head: headA,
+		Status: daemon.StatusExited, ExitCode: &zero,
+	}, "job", false, now.Add(time.Minute))
+	if metaResult.Changed || !reflect.DeepEqual(j, before) {
+		t.Fatalf("stale metadata changed job: result=%+v job=%+v", metaResult, j)
+	}
+	statusResult := reconcileJobFromStatusRow(teamDir, j, instanceRow{
+		Instance: "reviewer-gh-230", Job: j.ID, Attempt: 1, Head: headA, Phase: "done",
+	}, "job", false, now.Add(2*time.Minute))
+	if statusResult.Changed || !reflect.DeepEqual(j, before) {
+		t.Fatalf("stale status changed job: result=%+v job=%+v", statusResult, j)
+	}
+	queueResult := reconcileJobFromQueueItem(j, &daemon.QueueItem{
+		ID: "old-head", State: daemon.QueueStateDead, InstanceID: "reviewer-gh-230",
+		Payload: map[string]any{"job_id": j.ID, "attempt": 1, "head": headA},
+	}, false, now.Add(3*time.Minute))
+	if queueResult.Changed || !reflect.DeepEqual(j, before) {
+		t.Fatalf("stale queue changed job: result=%+v job=%+v", queueResult, j)
+	}
+
+	currentResult := reconcileJobFromDaemonMetadata(teamDir, j, &daemon.Metadata{
+		Instance: "reviewer-gh-230", Job: j.ID, Attempt: 1, Head: headB,
+		Status: daemon.StatusExited, ExitCode: &zero,
+	}, "job", false, now.Add(4*time.Minute))
+	if !currentResult.Changed || j.Steps[1].Status != job.StatusDone || j.Head != headB || j.Steps[2].Status != job.StatusBlocked {
+		t.Fatalf("current metadata was not reconciled: result=%+v job=%+v", currentResult, j)
+	}
+}
+
 func TestJobApproveRequiresCurrentAttemptExactHeadVerifierAndReviewerEvidence(t *testing.T) {
 	root := t.TempDir()
 	initInto(t, root)

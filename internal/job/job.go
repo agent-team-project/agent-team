@@ -527,6 +527,14 @@ func AttemptMatches(j *Job, attempt int) bool {
 	return CurrentAttempt(j) == attempt
 }
 
+// AttemptHeadMatches reports whether persisted/runtime generation metadata
+// belongs to the job's current implementation attempt and exact head. A blank
+// head is a real generation value: it identifies implementation work that was
+// dispatched before the implementation produced a commit.
+func AttemptHeadMatches(j *Job, attempt int, head string) bool {
+	return AttemptMatches(j, attempt) && strings.TrimSpace(j.Head) == strings.TrimSpace(head)
+}
+
 func validateBudgetFields(prefix string, tokenBudget int64, timeBudget string, hardMultiplier float64, reminderLevels, tokenBudgetNotices, timeBudgetNotices []int) error {
 	if tokenBudget < 0 {
 		return fmt.Errorf("%s: token_budget must be >= 0", prefix)

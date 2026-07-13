@@ -858,6 +858,10 @@ func mergeDaemonRows(teamDir string, rows []instanceRow, insts []*daemon.Metadat
 		rows[idx].LastActivityAt = activity.LastActivityAt
 		rows[idx].Activity = activity.Activity
 		rows[idx].Job = firstNonEmpty(rows[idx].Job, m.Job)
+		if rows[idx].Attempt <= 0 {
+			rows[idx].Attempt = m.Attempt
+		}
+		rows[idx].Head = firstNonEmpty(rows[idx].Head, m.Head)
 		rows[idx].Ticket = firstNonEmpty(rows[idx].Ticket, m.Ticket)
 		rows[idx].Branch = firstNonEmpty(rows[idx].Branch, m.Branch)
 		rows[idx].PR = firstNonEmpty(rows[idx].PR, m.PR)
@@ -1053,6 +1057,8 @@ func newRowFromMeta(teamDir string, m *daemon.Metadata, agentNames map[string]bo
 		LastActivityAt:   activity.LastActivityAt,
 		Activity:         activity.Activity,
 		Job:              m.Job,
+		Attempt:          m.Attempt,
+		Head:             m.Head,
 		Ticket:           m.Ticket,
 		Branch:           m.Branch,
 		PR:               m.PR,

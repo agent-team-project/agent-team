@@ -857,11 +857,11 @@ func (r *EventResolver) readInstanceFinalMessage(instance string) string {
 	return strings.TrimSpace(string(data))
 }
 
-func reconcilePipelineStepExit(j *jobstore.Job, instance string, attempt int, status jobstore.Status, now time.Time) (*jobstore.Step, bool) {
+func reconcilePipelineStepExit(j *jobstore.Job, instance string, attempt int, head string, status jobstore.Status, now time.Time) (*jobstore.Step, bool) {
 	if j == nil || instance == "" {
 		return nil, false
 	}
-	if !jobstore.AttemptMatches(j, attempt) {
+	if !jobstore.AttemptHeadMatches(j, attempt, head) {
 		return nil, false
 	}
 	for i := range j.Steps {

@@ -492,8 +492,8 @@ func (r *EventResolver) actuateEphemeralWithBudgetOrigin(inst *topology.Instance
 	if err != nil {
 		return EventOutcome{Instance: inst.Name, Action: "rejected", Reason: err.Error()}
 	}
-	if stale, current := r.dispatchAttemptStale(payload); stale {
-		reason := fmt.Sprintf("stale job attempt %d; current attempt is %d", payloadAttempt(payload), current)
+	if stale, currentAttempt, currentHead := r.dispatchGenerationStale(payload); stale {
+		reason := staleDispatchGenerationReason(payload, currentAttempt, currentHead)
 		return EventOutcome{Instance: inst.Name, Action: "rejected", InstanceID: childName, Reason: reason}
 	}
 	eventOrigin := r.originForEvent(inst, childName, eventType, payload)
@@ -502,13 +502,21 @@ func (r *EventResolver) actuateEphemeralWithBudgetOrigin(inst *topology.Instance
 	}
 	now := time.Now().UTC()
 	if requested && r.mgr.isRunning(childName) {
-		reason := fmt.Sprintf("instance %q already running", childName)
-		r.upsertDispatchJob(payload, childName, jobstore.StatusRunning, "already_running", reason, "", "")
-		return EventOutcome{
-			Instance:   inst.Name,
-			Action:     "rejected",
-			InstanceID: childName,
-			Reason:     reason,
+		superseded, stopErr := r.supersedeStaleRunningDispatch(payload, childName)
+		if stopErr != nil {
+			reason := fmt.Sprintf("supersede stale instance %q: %v", childName, stopErr)
+			r.upsertDispatchJob(payload, childName, jobstore.StatusFailed, "supersede_failed", reason, "", "")
+			return EventOutcome{Instance: inst.Name, Action: "rejected", InstanceID: childName, Reason: reason}
+		}
+		if !superseded {
+			reason := fmt.Sprintf("instance %q already running", childName)
+			r.upsertDispatchJob(payload, childName, jobstore.StatusRunning, "already_running", reason, "", "")
+			return EventOutcome{
+				Instance:   inst.Name,
+				Action:     "rejected",
+				InstanceID: childName,
+				Reason:     reason,
+			}
 		}
 	}
 
@@ -524,7 +532,7 @@ func (r *EventResolver) actuateEphemeralWithBudgetOrigin(inst *topology.Instance
 			if queued == nil || queued.uniqueName != childName {
 				continue
 			}
-			if sameJobStepPayload(queued.payload, payload) && payloadAttempt(queued.payload) != payloadAttempt(payload) {
+			if sameJobStepPayload(queued.payload, payload) && !samePayloadGeneration(queued.payload, payload) {
 				tr.queue = append(tr.queue[:i:i], tr.queue[i+1:]...)
 				_ = RemoveQueueItem(r.mgr.daemonRoot, queued.id)
 				superseded = true
@@ -715,19 +723,46 @@ func (r *EventResolver) actuateEphemeralWithBudgetOrigin(inst *topology.Instance
 	return EventOutcome{Instance: inst.Name, Action: "dispatched", InstanceID: meta.Instance}
 }
 
-func (r *EventResolver) dispatchAttemptStale(payload map[string]any) (bool, int) {
+func (r *EventResolver) dispatchGenerationStale(payload map[string]any) (bool, int, string) {
 	if r == nil || strings.TrimSpace(r.teamDir) == "" {
-		return false, 0
+		return false, 0, ""
 	}
 	id := eventJobID(payload)
 	if id == "" {
-		return false, 0
+		return false, 0, ""
 	}
 	j, err := jobstore.Read(r.teamDir, id)
 	if err != nil {
-		return false, 0
+		return false, 0, ""
 	}
-	return !jobstore.AttemptMatches(j, payloadAttempt(payload)), jobstore.CurrentAttempt(j)
+	return !jobstore.AttemptHeadMatches(j, payloadAttempt(payload), payloadString(payload, "head")), jobstore.CurrentAttempt(j), strings.TrimSpace(j.Head)
+}
+
+func staleDispatchGenerationReason(payload map[string]any, currentAttempt int, currentHead string) string {
+	attempt := payloadAttempt(payload)
+	if attempt <= 0 {
+		attempt = 1
+	}
+	if attempt != currentAttempt {
+		return fmt.Sprintf("stale job attempt %d; current attempt is %d", attempt, currentAttempt)
+	}
+	return fmt.Sprintf("stale job head %q; current head is %q", strings.TrimSpace(payloadString(payload, "head")), currentHead)
+}
+
+func (r *EventResolver) supersedeStaleRunningDispatch(payload map[string]any, childName string) (bool, error) {
+	if r == nil || r.mgr == nil || strings.TrimSpace(r.teamDir) == "" {
+		return false, nil
+	}
+	meta, err := ReadMetadata(r.mgr.daemonRoot, childName)
+	if err != nil || jobstore.NormalizeID(meta.Job) != eventJobID(payload) {
+		return false, nil
+	}
+	j, err := jobstore.Read(r.teamDir, meta.Job)
+	if err != nil || jobstore.AttemptHeadMatches(j, meta.Attempt, meta.Head) {
+		return false, nil
+	}
+	_, err = r.mgr.StopWithOptions(childName, StopOptions{Force: true})
+	return true, err
 }
 
 func sameJobStepPayload(left, right map[string]any) bool {
@@ -735,6 +770,18 @@ func sameJobStepPayload(left, right map[string]any) bool {
 		eventJobID(left) == eventJobID(right) &&
 		payloadString(left, "pipeline_step") != "" &&
 		payloadString(left, "pipeline_step") == payloadString(right, "pipeline_step")
+}
+
+func samePayloadGeneration(left, right map[string]any) bool {
+	leftAttempt, rightAttempt := payloadAttempt(left), payloadAttempt(right)
+	if leftAttempt <= 0 {
+		leftAttempt = 1
+	}
+	if rightAttempt <= 0 {
+		rightAttempt = 1
+	}
+	return leftAttempt == rightAttempt &&
+		strings.TrimSpace(payloadString(left, "head")) == strings.TrimSpace(payloadString(right, "head"))
 }
 
 func childNameForEvent(declared string, payload map[string]any) (string, bool, error) {

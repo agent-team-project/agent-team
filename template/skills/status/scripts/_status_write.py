@@ -159,6 +159,10 @@ def _apply_work_context(work: dict) -> None:
         if parsed > 0:
             work["attempt"] = parsed
 
+    head = _first_env(("AGENT_TEAM_HEAD",))
+    if head:
+        work["head"] = head
+
 
 def _first_env(keys: tuple[str, ...]) -> str:
     for key in keys:

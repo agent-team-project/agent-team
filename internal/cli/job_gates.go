@@ -86,6 +86,18 @@ func newJobGateSetCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job gate set: stale attempt %d; current attempt is %d.\n", attempt, job.CurrentAttempt(j))
 				return exitErr(2)
 			}
+			currentHead := strings.TrimSpace(j.Head)
+			commit = strings.TrimSpace(commit)
+			if strings.TrimSpace(step) != "" && !jobStepProducesImplementationHead(j, step) && currentHead != "" {
+				if commit == "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job gate set: step %q requires exact head %s.\n", step, currentHead)
+					return exitErr(2)
+				}
+				if !job.AttemptHeadMatches(j, attempt, commit) {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job gate set: stale head %s; current head is %s.\n", commit, currentHead)
+					return exitErr(2)
+				}
+			}
 			now := time.Now().UTC()
 			record := &job.GateRecord{
 				TS:        now,

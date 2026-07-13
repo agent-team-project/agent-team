@@ -100,6 +100,7 @@ func (r *EventResolver) upsertDispatchJobWithContract(payload map[string]any, in
 	}
 	now := time.Now().UTC()
 	j, err := jobstore.Read(r.teamDir, id)
+	existing := err == nil
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return nil
@@ -115,7 +116,7 @@ func (r *EventResolver) upsertDispatchJobWithContract(payload map[string]any, in
 		j.ID = id
 	}
 	incomingAttempt := payloadAttempt(payload)
-	if err == nil && !jobstore.AttemptMatches(j, incomingAttempt) {
+	if existing && !jobstore.AttemptHeadMatches(j, incomingAttempt, payloadString(payload, "head")) {
 		return j
 	}
 	if incomingAttempt > 0 {
