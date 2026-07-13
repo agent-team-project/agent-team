@@ -28,6 +28,33 @@ func TestNormalizeID(t *testing.T) {
 	}
 }
 
+func TestAttemptHeadMatchesRequiresExactGeneration(t *testing.T) {
+	headA := strings.Repeat("a", 40)
+	headB := strings.Repeat("b", 40)
+	j := &Job{Attempt: 2, Head: headB}
+
+	for _, tc := range []struct {
+		name    string
+		attempt int
+		head    string
+		want    bool
+	}{
+		{name: "current", attempt: 2, head: headB, want: true},
+		{name: "prior attempt", attempt: 1, head: headB},
+		{name: "prior head", attempt: 2, head: headA},
+		{name: "missing head", attempt: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AttemptHeadMatches(j, tc.attempt, tc.head); got != tc.want {
+				t.Fatalf("AttemptHeadMatches(%d, %q) = %t, want %t", tc.attempt, tc.head, got, tc.want)
+			}
+		})
+	}
+	if !AttemptHeadMatches(&Job{}, 0, "") {
+		t.Fatal("legacy attempt-one/headless generation did not match")
+	}
+}
+
 func TestTicketIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		raw       string
@@ -449,6 +476,55 @@ func TestJobGateRecordsAppendListLatest(t *testing.T) {
 	latest := LatestGateRecords(records)
 	if len(latest) != 2 || latest[0].Name != "lint" || latest[1].Name != "rust-checks" || latest[1].Status != GateStatusPass {
 		t.Fatalf("latest = %+v", latest)
+	}
+}
+
+func TestLatestGateRecordsForAttemptHeadRejectsPriorAttemptAndHead(t *testing.T) {
+	headA := strings.Repeat("a", 40)
+	headB := strings.Repeat("b", 40)
+	records := []GateRecord{
+		{Attempt: 1, Step: "verify", Commit: headA, Name: "tests", Status: GateStatusPass},
+		{Attempt: 2, Step: "verify", Commit: headA, Name: "tests", Status: GateStatusPass},
+		{Attempt: 2, Step: "verify", Commit: headB, Name: "tests", Status: GateStatusFail},
+		{Attempt: 2, Step: "review", Commit: headB, Name: "review", Status: GateStatusPass},
+	}
+	latest := LatestGateRecordsForAttemptHead(records, 2, headB)
+	if len(latest) != 2 || latest[0].Name != "review" || latest[0].Commit != headB || latest[1].Name != "tests" || latest[1].Status != GateStatusFail || latest[1].Commit != headB {
+		t.Fatalf("latest = %+v", latest)
+	}
+	if got := LatestGateRecordsForAttemptHead(records, 2, headA); len(got) != 1 || got[0].Name != "tests" || got[0].Status != GateStatusPass || got[0].Commit != headA {
+		t.Fatalf("head-A latest = %+v", got)
+	}
+}
+
+func TestLatestGateRecordsForAttemptHeadScopesNamesByStep(t *testing.T) {
+	head := strings.Repeat("b", 40)
+	records := []GateRecord{
+		{Attempt: 2, Step: "verify", Commit: head, Name: "shared", Status: GateStatusFail},
+		{Attempt: 2, Step: "verify", Commit: head, Name: "gofmt", Status: GateStatusPass},
+		{Attempt: 2, Step: "review", Commit: head, Name: "shared", Status: GateStatusPass},
+	}
+
+	latest := LatestGateRecordsForAttemptHead(records, 2, head)
+	if len(latest) != 3 {
+		t.Fatalf("latest len=%d, want 3: %+v", len(latest), latest)
+	}
+	byStepAndName := make(map[string]GateStatus, len(latest))
+	for _, record := range latest {
+		byStepAndName[record.Step+":"+record.Name] = record.Status
+	}
+	want := map[string]GateStatus{
+		"verify:shared": GateStatusFail,
+		"verify:gofmt":  GateStatusPass,
+		"review:shared": GateStatusPass,
+	}
+	if len(byStepAndName) != len(want) {
+		t.Fatalf("latest by step/name = %+v, want %+v", byStepAndName, want)
+	}
+	for key, status := range want {
+		if byStepAndName[key] != status {
+			t.Fatalf("latest by step/name = %+v, want %+v", byStepAndName, want)
+		}
 	}
 }
 

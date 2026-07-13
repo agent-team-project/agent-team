@@ -34,6 +34,8 @@ type statusSection struct {
 
 type workSection struct {
 	Job      string `toml:"job"`
+	Attempt  int    `toml:"attempt"`
+	Head     string `toml:"head"`
 	Ticket   string `toml:"ticket"`
 	PR       string `toml:"pr"`
 	Branch   string `toml:"branch"`
@@ -71,6 +73,8 @@ type instanceRow struct {
 	LastActivityAt   time.Time
 	Activity         string
 	Job              string
+	Attempt          int
+	Head             string
 	Ticket           string
 	Branch           string
 	PR               string
@@ -151,6 +155,8 @@ func instanceRowFor(stateRoot, instance string, agentNames map[string]bool, now 
 	row.Summary = formatSummary(sf)
 	if sf.Work != nil {
 		row.Job = sf.Work.Job
+		row.Attempt = sf.Work.Attempt
+		row.Head = sf.Work.Head
 		row.Ticket = sf.Work.Ticket
 		row.Branch = sf.Work.Branch
 		row.PR = sf.Work.PR

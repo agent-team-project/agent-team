@@ -2921,11 +2921,14 @@ Flags:
 
 ```text
       --actor string       Actor recorded on the gate result; defaults to AGENT_TEAM_INSTANCE or cli.
+      --attempt string     Implementation attempt this evidence belongs to; defaults to AGENT_TEAM_ATTEMPT or 1.
+      --commit string      Exact commit evaluated by this gate; defaults to AGENT_TEAM_HEAD.
       --json               Emit the recorded gate result as JSON.
       --log-ref string     Path or URL with supporting gate output.
       --repo string        Repo root containing .agent_team. (default "<repo>")
       --signature string   Failure signature or short failure text used for infra/content classification.
       --status string      Gate status: pass or fail.
+      --step string        Pipeline step this evidence belongs to; defaults to AGENT_TEAM_PIPELINE_STEP.
 ```
 
 ## `agent-team job gates`
@@ -4235,12 +4238,14 @@ Flags:
 
 ```text
       --advance                   After marking the step done, dispatch the next ready step.
+      --attempt string            Implementation attempt that owns this update; defaults to AGENT_TEAM_ATTEMPT or 1.
       --branch string             Branch name to record on the job.
       --commands                  With --dry-run, print the matching job step apply command when the preview has actionable work.
       --dry-run                   Preview the step update and optional advance dispatch without writing job or daemon state.
       --fail-on-failed            With --wait, exit 1 if the job resolves to failed.
   -f, --force                     Allow marking a step running without an owning instance.
       --format string             Render the updated job or advance result with a Go template, e.g. '{{.ID}} {{.Status}}' or '{{.Job.ID}} {{.Step.ID}}'.
+      --head string               Exact commit head produced or evaluated by this step.
       --instance string           Instance that owns or completed this step.
       --json                      Emit the updated job or advance result as JSON.
       --message string            Status message recorded on the job.

@@ -88,7 +88,7 @@ func (r *EventResolver) reconcileEphemeralJobExit(meta *Metadata) {
 		return
 	}
 	switch meta.Status {
-	case StatusExited, StatusCrashed:
+	case StatusStopped, StatusExited, StatusCrashed:
 	default:
 		return
 	}
@@ -96,8 +96,12 @@ func (r *EventResolver) reconcileEphemeralJobExit(meta *Metadata) {
 	if err != nil {
 		return
 	}
-	priorLastStatus := j.LastStatus
 	now := time.Now().UTC()
+	if meta.Status == StatusStopped || !jobstore.AttemptHeadMatches(j, meta.Attempt, meta.Head) {
+		_, _ = budget.ReleaseJobInstanceAllocations(r.teamDir, j, meta.Instance, now)
+		return
+	}
+	priorLastStatus := j.LastStatus
 	status := jobstore.StatusDone
 	eventType := "instance_exited"
 	message := "instance exited successfully"
@@ -131,7 +135,7 @@ func (r *EventResolver) reconcileEphemeralJobExit(meta *Metadata) {
 	if status == jobstore.StatusDone && jobIsProbe(j) {
 		message = "probe completed; report stored in last-message"
 	}
-	completedStep, stepTransitioned := reconcilePipelineStepExit(j, meta.Instance, status, now)
+	completedStep, stepTransitioned := reconcilePipelineStepExit(j, meta.Instance, meta.Attempt, meta.Head, status, now)
 	if completedStep != nil {
 		j.Status = pipelineStatusFromSteps(j)
 		switch j.Status {
@@ -609,6 +613,11 @@ func (r *EventResolver) popReadyQueuedEventLocked(inst *topology.Instance, tr *e
 		if !queueDrainIDAllowed(ids, ev.id) {
 			continue
 		}
+		if r.queuedEventGenerationStale(ev) {
+			tr.queue = append(tr.queue[:i:i], tr.queue[i+1:]...)
+			_ = RemoveQueueItem(r.mgr.daemonRoot, ev.id)
+			return r.popReadyQueuedEventLocked(inst, tr, now, ids)
+		}
 		if !ev.nextRetry.IsZero() && ev.nextRetry.After(now) {
 			continue
 		}
@@ -674,6 +683,18 @@ func (r *EventResolver) popReadyQueuedEventLocked(inst *topology.Instance, tr *e
 		return ev
 	}
 	return nil
+}
+
+func (r *EventResolver) queuedEventGenerationStale(ev *queuedEvent) bool {
+	if r == nil || ev == nil || strings.TrimSpace(r.teamDir) == "" {
+		return false
+	}
+	id := eventJobID(ev.payload)
+	if id == "" {
+		return false
+	}
+	j, err := jobstore.Read(r.teamDir, id)
+	return err == nil && !jobstore.AttemptHeadMatches(j, payloadAttempt(ev.payload), payloadString(ev.payload, "head"))
 }
 
 func (r *EventResolver) recordQueueFailure(declared string, ev *queuedEvent, spawnErr error) {

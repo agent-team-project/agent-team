@@ -245,6 +245,12 @@ func newApprovalDecisionCmd(name string, status job.ApprovalStatus) *cobra.Comma
 				fmt.Fprintf(cmd.ErrOrStderr(), "agent-team approval %s: %v\n", name, err)
 				return exitErr(1)
 			}
+			if status == job.ApprovalStatusApproved && strings.TrimSpace(approval.StepID) != "" {
+				if err := validateCurrentAttemptApprovalEvidence(teamDir, j, approval.StepID); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team approval %s: %v\n", name, err)
+					return exitErr(2)
+				}
+			}
 			decisionActor := defaultJobGateActor(actor)
 			now := time.Now().UTC()
 			if err := job.DecideApproval(approval, status, decisionActor, decisionNotes, now); err != nil {

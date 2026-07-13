@@ -2779,6 +2779,7 @@ func TestEvent_StalePipelineExitDoesNotFailActiveBouncedStep(t *testing.T) {
 		Ticket:           "SQU-198",
 		Target:           "worker",
 		Pipeline:         "ticket_to_pr",
+		Attempt:          2,
 		DeliveryContract: deliveryContractTicketToPR,
 		Status:           jobstore.StatusRunning,
 		Instance:         "worker-squ-198-bounce",
@@ -2799,8 +2800,9 @@ func TestEvent_StalePipelineExitDoesNotFailActiveBouncedStep(t *testing.T) {
 	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
 	zero := 0
 	resolver.reconcileEphemeralJobExit(&Metadata{
-		Instance: "reviewer-squ-198-review",
+		Instance: "worker-squ-198-bounce",
 		Job:      "squ-198",
+		Attempt:  1,
 		Ticket:   "SQU-198",
 		Status:   StatusExited,
 		ExitCode: &zero,
@@ -2824,6 +2826,301 @@ func TestEvent_StalePipelineExitDoesNotFailActiveBouncedStep(t *testing.T) {
 		if ev.Type == "deliverable_missing" {
 			t.Fatalf("stale reviewer exit emitted deliverable_missing: %+v", events)
 		}
+	}
+}
+
+func TestEvent_StaleHeadExitDoesNotCompleteCurrentStep(t *testing.T) {
+	root := t.TempDir()
+	repoRoot := t.TempDir()
+	teamDir := filepath.Join(repoRoot, ".agent_team")
+	now := time.Now().UTC()
+	headA := strings.Repeat("a", 40)
+	headB := strings.Repeat("b", 40)
+	j := &jobstore.Job{
+		ID: "gh-230-head-exit", Ticket: "GH-230", Target: "worker", Pipeline: "ticket_to_pr", Attempt: 1,
+		Head: headB, Status: jobstore.StatusRunning, CreatedAt: now, UpdatedAt: now,
+		Steps: []jobstore.Step{
+			{ID: "implement", Target: "worker", Status: jobstore.StatusDone},
+			{ID: "review", Target: "reviewer", Status: jobstore.StatusRunning, Instance: "reviewer-gh-230-review", After: []string{"implement"}},
+			{ID: "approve", Target: "manager", Status: jobstore.StatusBlocked, After: []string{"review"}, Gate: jobstore.StepGateManual},
+		},
+	}
+	if err := jobstore.Write(teamDir, j); err != nil {
+		t.Fatal(err)
+	}
+	m := NewInstanceManager(root, newFakeSpawner(time.Second).spawn)
+	resolver := NewEventResolver(m, teamDir, mustParseTopo(t))
+	zero := 0
+	resolver.reconcileEphemeralJobExit(&Metadata{
+		Instance: "reviewer-gh-230-review", Job: j.ID, Attempt: 1, Head: headA,
+		Status: StatusExited, ExitCode: &zero,
+	})
+	unchanged, err := jobstore.Read(teamDir, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Head != headB || unchanged.Steps[1].Status != jobstore.StatusRunning || unchanged.Steps[2].Status != jobstore.StatusBlocked {
+		t.Fatalf("stale head exit changed current job = %+v", unchanged)
+	}
+
+	resolver.reconcileEphemeralJobExit(&Metadata{
+		Instance: "reviewer-gh-230-review", Job: j.ID, Attempt: 1, Head: headB,
+		Status: StatusExited, ExitCode: &zero,
+	})
+	updated, err := jobstore.Read(teamDir, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Head != headB || updated.Steps[1].Status != jobstore.StatusDone || updated.Steps[2].Status != jobstore.StatusBlocked {
+		t.Fatalf("current head exit did not complete step = %+v", updated)
+	}
+}
+
+func TestEvent_CurrentAttemptSupersedesQueuedPriorReviewer(t *testing.T) {
+	root := t.TempDir()
+	repoRoot := t.TempDir()
+	teamDir := filepath.Join(repoRoot, ".agent_team")
+	writeFixtureAgent(t, teamDir, "reviewer")
+	top := mustParseCustomTopo(t, `
+[instances.reviewer]
+agent = "reviewer"
+ephemeral = true
+replicas = 1
+
+[[instances.reviewer.triggers]]
+event = "agent.dispatch"
+match.target = "reviewer"
+`)
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+	blocker := resolver.actuateEphemeral(top.Instances["reviewer"], topology.EventAgentDispatch, map[string]any{
+		"target": "reviewer", "name": "reviewer-capacity-blocker", "workspace": "repo",
+	})
+	if blocker.Action != "dispatched" {
+		t.Fatalf("blocker = %+v", blocker)
+	}
+	t.Cleanup(func() {
+		_, _ = m.Stop("reviewer-capacity-blocker")
+		_ = waitForEventReaper(t, m, "reviewer-capacity-blocker")
+		_, _ = m.Stop("reviewer-gh-230-review")
+		_ = waitForEventReaper(t, m, "reviewer-gh-230-review")
+	})
+
+	now := time.Now().UTC()
+	headA := strings.Repeat("a", 40)
+	headB := strings.Repeat("b", 40)
+	j := &jobstore.Job{
+		ID: "gh-230", Ticket: "GH-230", Target: "worker", Pipeline: "ticket_to_pr", Attempt: 1,
+		Head: headA, Status: jobstore.StatusRunning, CreatedAt: now, UpdatedAt: now,
+		Steps: []jobstore.Step{{ID: "review", Target: "reviewer", Status: jobstore.StatusQueued, Instance: "reviewer-gh-230-review"}},
+	}
+	if err := jobstore.Write(teamDir, j); err != nil {
+		t.Fatal(err)
+	}
+	payload := map[string]any{
+		"target": "reviewer", "name": "reviewer-gh-230-review", "job_id": j.ID,
+		"pipeline": j.Pipeline, "pipeline_step": "review", "attempt": 1, "head": headA, "workspace": "repo",
+	}
+	old := resolver.actuateEphemeral(top.Instances["reviewer"], topology.EventAgentDispatch, payload)
+	if old.Action != "queued" {
+		t.Fatalf("old reviewer = %+v", old)
+	}
+	j.Head = headB
+	j.Steps[0].Status = jobstore.StatusBlocked
+	j.Steps[0].Instance = ""
+	if err := jobstore.Write(teamDir, j); err != nil {
+		t.Fatal(err)
+	}
+	payload["head"] = headB
+	current := resolver.actuateEphemeral(top.Instances["reviewer"], topology.EventAgentDispatch, payload)
+	if current.Action != "queued" {
+		t.Fatalf("current reviewer = %+v, want superseding queue admission", current)
+	}
+	_, queued := resolver.QueueDepth("reviewer")
+	if queued != 1 {
+		t.Fatalf("queued = %d, want one current reviewer", queued)
+	}
+	items, err := ListQueueItems(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || payloadAttempt(items[0].Payload) != 1 || payloadString(items[0].Payload, "head") != headB || items[0].InstanceID != "reviewer-gh-230-review" {
+		t.Fatalf("queue items = %+v", items)
+	}
+	stalePayload := copyPayload(payload)
+	stalePayload["name"] = "reviewer-gh-230-stale"
+	stalePayload["head"] = headA
+	stale := resolver.actuateEphemeral(top.Instances["reviewer"], topology.EventAgentDispatch, stalePayload)
+	if stale.Action != "rejected" || !strings.Contains(stale.Reason, "stale job head") {
+		t.Fatalf("stale reviewer = %+v, want head-generation rejection", stale)
+	}
+}
+
+func TestEvent_QueueDrainDropsStaleHead(t *testing.T) {
+	root := t.TempDir()
+	repoRoot := t.TempDir()
+	teamDir := filepath.Join(repoRoot, ".agent_team")
+	writeFixtureAgent(t, teamDir, "reviewer")
+	top := mustParseCustomTopo(t, `
+[instances.reviewer]
+agent = "reviewer"
+ephemeral = true
+replicas = 1
+
+[[instances.reviewer.triggers]]
+event = "agent.dispatch"
+match.target = "reviewer"
+`)
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+	t.Cleanup(func() {
+		_, _ = m.Stop("reviewer-gh-230-old")
+		_ = waitForEventReaper(t, m, "reviewer-gh-230-old")
+	})
+	blocker := resolver.actuateEphemeral(top.Instances["reviewer"], topology.EventAgentDispatch, map[string]any{
+		"target": "reviewer", "name": "reviewer-capacity-blocker", "workspace": "repo",
+	})
+	if blocker.Action != "dispatched" {
+		t.Fatalf("blocker = %+v", blocker)
+	}
+
+	headA := strings.Repeat("a", 40)
+	headB := strings.Repeat("b", 40)
+	j := &jobstore.Job{
+		ID: "gh-230-drain", Ticket: "GH-230", Target: "worker", Pipeline: "ticket_to_pr", Attempt: 1,
+		Head: headA, Status: jobstore.StatusRunning, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		Steps: []jobstore.Step{{ID: "review", Target: "reviewer", Status: jobstore.StatusQueued, Instance: "reviewer-gh-230-old"}},
+	}
+	if err := jobstore.Write(teamDir, j); err != nil {
+		t.Fatal(err)
+	}
+	old := resolver.actuateEphemeral(top.Instances["reviewer"], topology.EventAgentDispatch, map[string]any{
+		"target": "reviewer", "name": "reviewer-gh-230-old", "job_id": j.ID,
+		"pipeline": j.Pipeline, "pipeline_step": "review", "attempt": 1, "head": headA, "workspace": "repo",
+	})
+	if old.Action != "queued" {
+		t.Fatalf("old reviewer = %+v", old)
+	}
+	j.Head = headB
+	j.Steps[0].Status = jobstore.StatusBlocked
+	j.Steps[0].Instance = ""
+	if err := jobstore.Write(teamDir, j); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Stop("reviewer-capacity-blocker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForEventReaper(t, m, "reviewer-capacity-blocker"); err != nil {
+		t.Fatal(err)
+	}
+	if m.isRunning("reviewer-gh-230-old") || fake.callCount() != 1 {
+		t.Fatalf("stale queued reviewer drained: running=%t spawn_calls=%d", m.isRunning("reviewer-gh-230-old"), fake.callCount())
+	}
+	_, queued := resolver.QueueDepth("reviewer")
+	if queued != 0 {
+		t.Fatalf("stale queue depth = %d, want 0", queued)
+	}
+}
+
+func TestEvent_CurrentHeadSupersedesRunningPriorReviewer(t *testing.T) {
+	root := t.TempDir()
+	repoRoot := t.TempDir()
+	teamDir := filepath.Join(repoRoot, ".agent_team")
+	writeFixtureAgent(t, teamDir, "reviewer")
+	top := mustParseCustomTopo(t, `
+[instances.reviewer]
+agent = "reviewer"
+ephemeral = true
+replicas = 1
+
+[[instances.reviewer.triggers]]
+event = "agent.dispatch"
+match.target = "reviewer"
+
+[teams.platform]
+instances = ["reviewer"]
+
+[budgets.platform]
+tokens_per_day = 100
+allocation = "reserve"
+`)
+	fake := newFakeSpawner(30 * time.Second)
+	m := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(m, teamDir, top)
+	t.Cleanup(func() {
+		_, _ = m.Stop("reviewer-gh-230-review")
+		_ = waitForEventReaper(t, m, "reviewer-gh-230-review")
+	})
+
+	now := time.Now().UTC()
+	headA := strings.Repeat("a", 40)
+	headB := strings.Repeat("b", 40)
+	j := &jobstore.Job{
+		ID: "gh-230-running", Ticket: "GH-230", Target: "worker", Pipeline: "ticket_to_pr", Attempt: 1,
+		Head: headA, Status: jobstore.StatusRunning, CreatedAt: now, UpdatedAt: now,
+		Steps: []jobstore.Step{{ID: "review", Target: "reviewer", Status: jobstore.StatusRunning, Instance: "reviewer-gh-230-review"}},
+	}
+	if err := jobstore.Write(teamDir, j); err != nil {
+		t.Fatal(err)
+	}
+	payload := map[string]any{
+		"target": "reviewer", "name": "reviewer-gh-230-review", "job_id": j.ID,
+		"pipeline": j.Pipeline, "pipeline_step": "review", "attempt": 1, "head": headA, "workspace": "repo",
+		"budget_tokens": int64(60),
+	}
+	old := resolver.actuateEphemeral(top.Instances["reviewer"], topology.EventAgentDispatch, payload)
+	if old.Action != "dispatched" {
+		t.Fatalf("old reviewer = %+v", old)
+	}
+	allocations, err := budget.ListAllocations(teamDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allocations) != 1 || allocations[0].Status != budget.AllocationStatusOutstanding || allocations[0].Tokens != 60 {
+		t.Fatalf("old reviewer allocations = %+v, want one outstanding 60-token reserve", allocations)
+	}
+	j.Head = headB
+	j.Steps[0].Status = jobstore.StatusBlocked
+	j.Steps[0].Instance = ""
+	if err := jobstore.Write(teamDir, j); err != nil {
+		t.Fatal(err)
+	}
+	payload["head"] = headB
+	current := resolver.actuateEphemeral(top.Instances["reviewer"], topology.EventAgentDispatch, payload)
+	if current.Action != "dispatched" {
+		t.Fatalf("current reviewer = %+v, want old-head runtime superseded", current)
+	}
+	allocations, err = budget.ListAllocations(teamDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outstanding, released int
+	for _, allocation := range allocations {
+		switch allocation.Status {
+		case budget.AllocationStatusOutstanding:
+			outstanding++
+		case budget.AllocationStatusReleased:
+			released++
+		}
+	}
+	if len(allocations) != 2 || released != 1 || outstanding != 1 {
+		t.Fatalf("superseded reviewer allocations = %+v, want old released and current outstanding", allocations)
+	}
+	rows, err := budget.Statuses(teamDir, top, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].TokensAllocated != 60 || rows[0].TokensRemaining != 40 {
+		t.Fatalf("current reviewer budget = %+v, want only current 60-token reserve", rows)
+	}
+	meta, err := ReadMetadata(root, "reviewer-gh-230-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Attempt != 1 || meta.Head != headB || meta.Status != StatusRunning {
+		t.Fatalf("current reviewer metadata = %+v", meta)
 	}
 }
 

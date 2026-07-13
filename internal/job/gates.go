@@ -32,6 +32,9 @@ const (
 type GateRecord struct {
 	TS        time.Time  `json:"ts"`
 	JobID     string     `json:"job_id"`
+	Attempt   int        `json:"attempt,omitempty"`
+	Step      string     `json:"step,omitempty"`
+	Commit    string     `json:"commit,omitempty"`
 	Name      string     `json:"name"`
 	Status    GateStatus `json:"status"`
 	Signature string     `json:"signature,omitempty"`
@@ -186,6 +189,9 @@ func AppendGateRecord(teamDir string, record *GateRecord) error {
 	if !ValidGateStatus(record.Status) {
 		return fmt.Errorf("job gate record status %q is invalid", record.Status)
 	}
+	if record.Attempt < 0 {
+		return errors.New("job gate record attempt must be >= 0")
+	}
 	if record.TS.IsZero() {
 		record.TS = time.Now().UTC()
 	} else {
@@ -194,6 +200,8 @@ func AppendGateRecord(teamDir string, record *GateRecord) error {
 	record.Signature = strings.TrimSpace(record.Signature)
 	record.LogRef = strings.TrimSpace(record.LogRef)
 	record.Actor = strings.TrimSpace(record.Actor)
+	record.Step = strings.TrimSpace(record.Step)
+	record.Commit = strings.TrimSpace(record.Commit)
 
 	dir := Directory(teamDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -259,6 +267,8 @@ func readGateRecords(r io.Reader) ([]GateRecord, error) {
 		}
 		record.JobID = IDFromInput(record.JobID)
 		record.Name = strings.TrimSpace(record.Name)
+		record.Step = strings.TrimSpace(record.Step)
+		record.Commit = strings.TrimSpace(record.Commit)
 		record.Signature = strings.TrimSpace(record.Signature)
 		record.LogRef = strings.TrimSpace(record.LogRef)
 		record.Actor = strings.TrimSpace(record.Actor)
@@ -270,6 +280,9 @@ func readGateRecords(r io.Reader) ([]GateRecord, error) {
 		}
 		if !ValidGateStatus(record.Status) {
 			return nil, fmt.Errorf("line %d: invalid status %q", line, record.Status)
+		}
+		if record.Attempt < 0 {
+			return nil, fmt.Errorf("line %d: attempt must be >= 0", line)
 		}
 		if !record.TS.IsZero() {
 			record.TS = record.TS.UTC()
@@ -299,6 +312,69 @@ func LatestGateRecords(records []GateRecord) []GateRecord {
 		out = append(out, record)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// LatestGateRecordsForAttempt returns the latest record per gate name from one
+// implementation generation. Legacy attempt-zero records belong to attempt one.
+func LatestGateRecordsForAttempt(records []GateRecord, attempt int) []GateRecord {
+	if attempt <= 0 {
+		attempt = 1
+	}
+	filtered := make([]GateRecord, 0, len(records))
+	for _, record := range records {
+		recordAttempt := record.Attempt
+		if recordAttempt <= 0 {
+			recordAttempt = 1
+		}
+		if recordAttempt == attempt {
+			filtered = append(filtered, record)
+		}
+	}
+	return LatestGateRecords(filtered)
+}
+
+// LatestGateRecordsForAttemptHead isolates evidence to one implementation
+// generation before folding it. Gate names are step-scoped because verifier and
+// reviewer steps may report gates with the same name. A blank head selects all
+// records for the attempt for compatibility with headless non-git jobs.
+func LatestGateRecordsForAttemptHead(records []GateRecord, attempt int, head string) []GateRecord {
+	if attempt <= 0 {
+		attempt = 1
+	}
+	head = strings.TrimSpace(head)
+	type gateIdentity struct {
+		step string
+		name string
+	}
+	latest := make(map[gateIdentity]GateRecord)
+	for _, record := range records {
+		name := strings.TrimSpace(record.Name)
+		if name == "" {
+			continue
+		}
+		recordAttempt := record.Attempt
+		if recordAttempt <= 0 {
+			recordAttempt = 1
+		}
+		if recordAttempt != attempt {
+			continue
+		}
+		if head != "" && strings.TrimSpace(record.Commit) != head {
+			continue
+		}
+		latest[gateIdentity{step: strings.TrimSpace(record.Step), name: name}] = record
+	}
+	out := make([]GateRecord, 0, len(latest))
+	for _, record := range latest {
+		out = append(out, record)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			return out[i].Step < out[j].Step
+		}
 		return out[i].Name < out[j].Name
 	})
 	return out
