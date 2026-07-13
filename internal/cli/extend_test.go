@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-team-project/agent-team/internal/archive"
 	budgetcalc "github.com/agent-team-project/agent-team/internal/budget"
 	"github.com/agent-team-project/agent-team/internal/daemon"
 	"github.com/agent-team-project/agent-team/internal/job"
@@ -297,6 +298,184 @@ updated_at = 2026-06-01T00:00:00Z
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr = %q, want diagnostic containing %q", stderr.String(), want)
 		}
+	}
+}
+
+func TestJobExtendTokensIsolatesUnrelatedInvalidArchivedRecords(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	appendBudgetFixture(t, teamDir, `
+[budgets.delivery]
+tokens_per_day = 1000
+allocation = "reserve"
+`)
+	now := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	target := &job.Job{
+		ID:        "squ-374-target",
+		Ticket:    "SQU-374-TARGET",
+		Target:    "worker",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		Origin:    origin.Envelope{Team: "delivery"},
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{{
+			ID:          "implement",
+			Target:      "worker",
+			Status:      job.StatusRunning,
+			Instance:    "worker-squ-374-target",
+			TokenBudget: 100,
+		}},
+	}
+	if err := job.Write(teamDir, target); err != nil {
+		t.Fatalf("write target job: %v", err)
+	}
+
+	archivePath, err := archive.AppendJSON(teamDir, now.Add(-24*time.Hour), map[string]any{
+		"type":        "job",
+		"archived_at": now.Add(-23 * time.Hour),
+		"id":          "archived-stale-report",
+		"terminal_at": now.Add(-24 * time.Hour),
+		"job": &job.Job{
+			ID:        "archived-stale-report",
+			Ticket:    "ARCHIVED-STALE-REPORT",
+			Target:    "worker",
+			Kind:      "unknown-profile-report",
+			Status:    job.StatusDone,
+			CreatedAt: now.Add(-48 * time.Hour),
+			UpdatedAt: now.Add(-24 * time.Hour),
+		},
+	})
+	if err != nil {
+		t.Fatalf("append invalid archived job: %v", err)
+	}
+	f, err := os.OpenFile(archivePath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	if _, err := f.WriteString("not-json\n"); err != nil {
+		_ = f.Close()
+		t.Fatalf("append malformed archive line: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+	archiveBefore, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("read archive before extension: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "extend", target.ID, "--step", "implement", "--tokens", "50", "--actor", "ops", "--repo", tmp, "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job extend tokens: %v\nstderr=%s", err, stderr.String())
+	}
+
+	persisted, err := job.Read(teamDir, target.ID)
+	if err != nil {
+		t.Fatalf("read target job: %v", err)
+	}
+	if len(persisted.Steps) != 1 || persisted.Steps[0].TokenBudget != 150 {
+		t.Fatalf("target job = %+v, want only target token budget increased to 150", persisted)
+	}
+	targetEvents, err := job.ListEvents(teamDir, target.ID)
+	if err != nil {
+		t.Fatalf("list target events: %v", err)
+	}
+	if len(targetEvents) != 1 || targetEvents[0].Type != "budget_extended" || targetEvents[0].Actor != "ops" || targetEvents[0].Data["tokens_added"] != "50" || targetEvents[0].Data["token_budget"] != "150" {
+		t.Fatalf("target events = %+v, want one auditable token extension", targetEvents)
+	}
+	if archiveAfter, err := os.ReadFile(archivePath); err != nil {
+		t.Fatalf("read archive after extension: %v", err)
+	} else if !bytes.Equal(archiveAfter, archiveBefore) {
+		t.Fatalf("unrelated archive changed:\n%s", archiveAfter)
+	}
+	if _, err := os.Stat(job.EventPath(teamDir, "archived-stale-report")); !os.IsNotExist(err) {
+		t.Fatalf("unrelated live event path err = %v, want not exist", err)
+	}
+	allocations, err := budgetcalc.ListAllocations(teamDir)
+	if err != nil {
+		t.Fatalf("list allocations: %v", err)
+	}
+	if len(allocations) != 1 || allocations[0].JobID != target.ID || allocations[0].StepID != "implement" || allocations[0].Tokens != 50 {
+		t.Fatalf("allocations = %+v, want only target extension allocation", allocations)
+	}
+	for _, want := range []string{filepath.Base(archivePath), "line 1", "archived-stale-report", `unknown job kind "unknown-profile-report"`, "line 2", "invalid character", "agent-team job doctor --json"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, want diagnostic containing %q", stderr.String(), want)
+		}
+	}
+}
+
+func TestJobExtendQuietSuppressesIsolationWarning(t *testing.T) {
+	tmp := t.TempDir()
+	initInto(t, tmp)
+	teamDir := filepath.Join(tmp, ".agent_team")
+	appendBudgetFixture(t, teamDir, `
+[budgets.delivery]
+tokens_per_day = 1000
+allocation = "reserve"
+`)
+	now := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	target := &job.Job{
+		ID:        "squ-374-quiet-target",
+		Ticket:    "SQU-374-QUIET-TARGET",
+		Target:    "worker",
+		Pipeline:  "ticket_to_pr",
+		Status:    job.StatusRunning,
+		Origin:    origin.Envelope{Team: "delivery"},
+		CreatedAt: now,
+		UpdatedAt: now,
+		Steps: []job.Step{{
+			ID:          "implement",
+			Target:      "worker",
+			Status:      job.StatusRunning,
+			Instance:    "worker-squ-374-quiet-target",
+			TokenBudget: 100,
+		}},
+	}
+	if err := job.Write(teamDir, target); err != nil {
+		t.Fatalf("write target job: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(job.Directory(teamDir), "stale-report.toml"), []byte(`id = "stale-report"
+ticket = "STALE-REPORT"
+target = "worker"
+kind = "unknown-profile-report"
+status = "done"
+created_at = 2026-06-01T00:00:00Z
+updated_at = 2026-06-01T00:00:00Z
+`), 0o644); err != nil {
+		t.Fatalf("write unrelated stale report: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	out, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"job", "extend", target.ID, "--step", "implement", "--tokens", "50", "--actor", "ops", "--repo", tmp, "--quiet"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("job extend tokens: %v\nstderr=%s", err, stderr.String())
+	}
+	if out.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("quiet output: stdout=%q stderr=%q, want both empty", out.String(), stderr.String())
+	}
+	persisted, err := job.Read(teamDir, target.ID)
+	if err != nil {
+		t.Fatalf("read target job: %v", err)
+	}
+	if len(persisted.Steps) != 1 || persisted.Steps[0].TokenBudget != 150 {
+		t.Fatalf("target job = %+v, want successful token extension", persisted)
+	}
+	events, err := job.ListEvents(teamDir, target.ID)
+	if err != nil {
+		t.Fatalf("list target events: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "budget_extended" {
+		t.Fatalf("target events = %+v, want one auditable token extension", events)
 	}
 }
 

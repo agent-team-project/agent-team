@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-team-project/agent-team/internal/archive"
 	jobstore "github.com/agent-team-project/agent-team/internal/job"
 	"github.com/agent-team-project/agent-team/internal/origin"
 	"github.com/agent-team-project/agent-team/internal/topology"
@@ -191,6 +192,80 @@ updated_at = 2026-07-13T10:00:00Z
 	}
 	if len(allocations) != 0 {
 		t.Fatalf("allocations = %+v, want none", allocations)
+	}
+}
+
+func TestGrantTokensIsolationNeverSkipsTargetArchivedJobRecord(t *testing.T) {
+	teamDir := testTeamDir(t)
+	top := testBudgetTopologyWithAllocation(t, 100, 0, topology.BudgetAllocationReserve)
+	now := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	writeBudgetJob(t, teamDir, "SQU-TARGET", jobstore.StatusRunning, "delivery", usage.Record{})
+	if _, err := archive.AppendJSON(teamDir, now, map[string]any{
+		"type":        "job",
+		"archived_at": now,
+		"id":          "squ-target",
+		"terminal_at": now,
+		"job": &jobstore.Job{
+			ID:        "squ-target",
+			Ticket:    "SQU-TARGET",
+			Target:    "worker",
+			Kind:      "unknown-profile-report",
+			Status:    jobstore.StatusDone,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	}); err != nil {
+		t.Fatalf("append invalid target archive: %v", err)
+	}
+
+	grant, err := GrantTokens(teamDir, top, GrantRequest{
+		Team:               "delivery",
+		JobID:              "squ-target",
+		Instance:           "worker-squ-target",
+		Tokens:             10,
+		IsolateInvalidJobs: true,
+		Now:                now,
+	})
+	if err == nil || !strings.Contains(err.Error(), `archived job squ-target: unknown job kind "unknown-profile-report"`) {
+		t.Fatalf("GrantTokens error = %v, want invalid target archive", err)
+	}
+	if grant.Allocation != nil {
+		t.Fatalf("grant = %+v, want no allocation for invalid target archive", grant)
+	}
+	allocations, listErr := ListAllocations(teamDir)
+	if listErr != nil {
+		t.Fatalf("ListAllocations: %v", listErr)
+	}
+	if len(allocations) != 0 {
+		t.Fatalf("allocations = %+v, want none", allocations)
+	}
+}
+
+func TestOrdinaryAdmissionRemainsStrictForInvalidArchivedJob(t *testing.T) {
+	teamDir := testTeamDir(t)
+	top := testBudgetTopologyWithAllocation(t, 100, 0, topology.BudgetAllocationReserve)
+	now := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	if _, err := archive.AppendJSON(teamDir, now, map[string]any{
+		"type":        "job",
+		"archived_at": now,
+		"id":          "archived-stale-report",
+		"terminal_at": now,
+		"job": &jobstore.Job{
+			ID:        "archived-stale-report",
+			Ticket:    "ARCHIVED-STALE-REPORT",
+			Target:    "worker",
+			Kind:      "unknown-profile-report",
+			Status:    jobstore.StatusDone,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	}); err != nil {
+		t.Fatalf("append invalid archived job: %v", err)
+	}
+
+	_, err := AdmissionForTeamWithRequest(teamDir, top, "delivery", "squ-target", 10, now)
+	if err == nil || !strings.Contains(err.Error(), `archived job archived-stale-report: unknown job kind "unknown-profile-report"`) {
+		t.Fatalf("AdmissionForTeamWithRequest error = %v, want strict archived-job validation", err)
 	}
 }
 

@@ -117,7 +117,9 @@ func newJobExtendCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job extend: %v\n", err)
 					return exitErr(1)
 				}
-				renderJobExtendDiagnostics(cmd.ErrOrStderr(), grant.Diagnostics)
+				if !quiet {
+					renderJobExtendDiagnostics(cmd.ErrOrStderr(), grant.Diagnostics)
+				}
 				if !grant.Allowed {
 					fmt.Fprintf(cmd.ErrOrStderr(), "agent-team job extend: token budget exhausted for team %s\n", grant.Team)
 					return exitErr(1)

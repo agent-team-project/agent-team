@@ -133,11 +133,11 @@ func collectInputs(teamDir string, top *topology.Topology, now time.Time, exclud
 	if err != nil {
 		return out, err
 	}
-	out.diagnostics = diagnostics
-	archived, err := jobstore.ListArchived(teamDir)
+	archived, archiveDiagnostics, err := listBudgetArchivedJobs(teamDir, excludeRunningJobID, isolateInvalidJobs)
 	if err != nil {
 		return out, err
 	}
+	out.diagnostics = append(diagnostics, archiveDiagnostics...)
 	windowStart := now.Add(-Window)
 	seenRecords := map[string]bool{}
 	for _, j := range append(jobs, archived...) {
@@ -177,6 +177,22 @@ func collectInputs(teamDir string, top *topology.Topology, now time.Time, exclud
 		out.allocatedByTeam[b.Team] = outstandingTokens(allocations, b.Team)
 	}
 	return out, nil
+}
+
+func listBudgetArchivedJobs(teamDir, targetJobID string, isolateInvalid bool) ([]*jobstore.Job, []InputDiagnostic, error) {
+	if !isolateInvalid {
+		jobs, err := jobstore.ListArchived(teamDir)
+		return jobs, nil, err
+	}
+	jobs, archiveDiagnostics, err := jobstore.ListArchivedIsolated(teamDir, targetJobID)
+	if err != nil {
+		return nil, nil, err
+	}
+	diagnostics := make([]InputDiagnostic, 0, len(archiveDiagnostics))
+	for _, diagnostic := range archiveDiagnostics {
+		diagnostics = append(diagnostics, InputDiagnostic{Record: diagnostic.Record, Error: diagnostic.Error})
+	}
+	return jobs, diagnostics, nil
 }
 
 func listBudgetJobs(teamDir, targetJobID string, isolateInvalid bool) ([]*jobstore.Job, []InputDiagnostic, error) {
