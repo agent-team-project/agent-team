@@ -242,6 +242,10 @@ const (
 type InstanceManager struct {
 	daemonRoot string
 	spawner    Spawner
+	// Watchdog operations are manager-local so process lifecycle tests can
+	// coordinate signal and completion boundaries without global hooks.
+	watchdogSignal      func(proc *os.Process, pid int, sig syscall.Signal) error
+	watchdogCleanupWait func(done <-chan struct{})
 
 	mu        sync.Mutex
 	instances map[string]*tracked
@@ -273,9 +277,11 @@ func NewInstanceManager(daemonRoot string, spawner Spawner) *InstanceManager {
 		spawner = DefaultSpawner
 	}
 	return &InstanceManager{
-		daemonRoot: daemonRoot,
-		spawner:    spawner,
-		instances:  make(map[string]*tracked),
+		daemonRoot:          daemonRoot,
+		spawner:             spawner,
+		watchdogSignal:      signalProcessGroupOrProcess,
+		watchdogCleanupWait: func(done <-chan struct{}) { <-done },
+		instances:           make(map[string]*tracked),
 	}
 }
 
@@ -382,6 +388,7 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 
 	reaped := make(chan struct{})
 	watchdogUpdate := newWatchdogUpdateChannel(in.Budget)
+	watchdogSync := newWatchdogProcessSync(in.Budget)
 	m.mu.Lock()
 	m.instances[in.Name] = &tracked{meta: meta, process: proc, watchdogUpdate: watchdogUpdate, reaped: reaped}
 	m.mu.Unlock()
@@ -389,9 +396,9 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 	m.recordEvent("dispatch", &out, "instance dispatched")
 	capture := m.startCodexSessionCapture(rt.Kind, out)
 	m.startBudgetNoticeWatcher(out, proc, reaped)
-	go m.reap(in.Name, proc, reaped, cleanupPaths)
+	go m.reap(in.Name, proc, reaped, cleanupPaths, watchdogSync)
 	if watchdogUpdate != nil {
-		go m.watchdog(in.Name, proc, reaped, watchdogUpdate)
+		go m.watchdog(in.Name, proc, watchdogSync, watchdogUpdate)
 	}
 	if captured := waitForCodexSessionCapture(capture); captured != nil {
 		out = *captured
@@ -415,6 +422,27 @@ func newWatchdogUpdateChannel(budget time.Duration) chan struct{} {
 		return nil
 	}
 	return make(chan struct{}, 1)
+}
+
+// watchdogProcessSync lets the runtime reaper and time-budget watchdog order
+// their work without conflating "the group leader exited" with "the owned
+// process group is terminated". The reaper closes processExited as soon as
+// Wait returns, then waits for cleanupDone before it finalises metadata and
+// fires the reap hook. That gives the watchdog a chance to SIGKILL surviving
+// descendants after a cooperative group leader exits on SIGTERM.
+type watchdogProcessSync struct {
+	processExited chan struct{}
+	cleanupDone   chan struct{}
+}
+
+func newWatchdogProcessSync(budget time.Duration) *watchdogProcessSync {
+	if budget <= 0 {
+		return nil
+	}
+	return &watchdogProcessSync{
+		processExited: make(chan struct{}),
+		cleanupDone:   make(chan struct{}),
+	}
 }
 
 type RuntimeBudgetExtension struct {
@@ -889,6 +917,26 @@ func waitForProcessExit(pid int, reaped <-chan struct{}, timeout time.Duration) 
 	}
 }
 
+func waitForProcessGroupExit(pgid int, timeout time.Duration) bool {
+	if pgid <= 0 {
+		return true
+	}
+	if timeout < 0 {
+		timeout = 0
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		err := syscall.Kill(-pgid, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			return true
+		}
+		if timeout == 0 || !time.Now().Before(deadline) {
+			return errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // Restart stops a running instance, waits for the old child to exit when the
 // daemon owns a reaper for it, then resumes the same session. If the instance
 // is already stopped/exited/crashed, Restart behaves like Start.
@@ -1337,7 +1385,7 @@ func (m *InstanceManager) start(instance string, expected *Metadata, opts StartO
 
 	out := meta
 	m.recordEvent("start", &out, "instance resumed")
-	go m.reap(instance, proc, reaped, nil)
+	go m.reap(instance, proc, reaped, nil, nil)
 	return &out, nil
 }
 
@@ -1870,6 +1918,7 @@ func (m *InstanceManager) launchPrepared(in DispatchInput, expected *Metadata) (
 	}
 	reaped := make(chan struct{})
 	watchdogUpdate := newWatchdogUpdateChannel(in.Budget)
+	watchdogSync := newWatchdogProcessSync(in.Budget)
 	m.instances[in.Name] = &tracked{meta: meta, process: proc, watchdogUpdate: watchdogUpdate, reaped: reaped}
 	m.mu.Unlock()
 
@@ -1877,9 +1926,9 @@ func (m *InstanceManager) launchPrepared(in DispatchInput, expected *Metadata) (
 	m.recordEvent("dispatch", &out, "instance dispatched")
 	capture := m.startCodexSessionCapture(rt.Kind, out)
 	m.startBudgetNoticeWatcher(out, proc, reaped)
-	go m.reap(in.Name, proc, reaped, cleanupPaths)
+	go m.reap(in.Name, proc, reaped, cleanupPaths, watchdogSync)
 	if watchdogUpdate != nil {
-		go m.watchdog(in.Name, proc, reaped, watchdogUpdate)
+		go m.watchdog(in.Name, proc, watchdogSync, watchdogUpdate)
 	}
 	if captured := waitForCodexSessionCapture(capture); captured != nil {
 		meta = captured
@@ -2162,10 +2211,19 @@ func (m *InstanceManager) isRunning(instance string) bool {
 // Closing `reaped` is the LAST thing reap does, after both the in-memory
 // metadata and on-disk metadata have been finalised. Tests block on this
 // channel for deterministic ordering.
-func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- struct{}, cleanupPaths []string) {
+func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- struct{}, cleanupPaths []string, watchdogSync *watchdogProcessSync) {
 	defer close(reaped)
 	defer cleanupLaunchPaths(cleanupPaths)
 	state, err := proc.Wait()
+	if watchdogSync != nil {
+		close(watchdogSync.processExited)
+		waitForCleanup := m.watchdogCleanupWait
+		if waitForCleanup == nil {
+			<-watchdogSync.cleanupDone
+		} else {
+			waitForCleanup(watchdogSync.cleanupDone)
+		}
+	}
 
 	m.mu.Lock()
 	t, ok := m.instances[instance]
@@ -2322,7 +2380,15 @@ func cleanupLaunchPaths(paths []string) {
 // The reaper remains the SOLE finaliser that fires the hook: the watchdog only
 // pre-marks status and kills, so the pipeline still advances exactly once. A
 // non-positive budget disables the watchdog (the default).
-func (m *InstanceManager) watchdog(instance string, proc *os.Process, reaped <-chan struct{}, updates <-chan struct{}) {
+func (m *InstanceManager) watchdog(instance string, proc *os.Process, sync *watchdogProcessSync, updates <-chan struct{}) {
+	if sync == nil {
+		return
+	}
+	signalProcess := m.watchdogSignal
+	if signalProcess == nil {
+		signalProcess = signalProcessGroupOrProcess
+	}
+	defer close(sync.cleanupDone)
 	if proc == nil || updates == nil {
 		return
 	}
@@ -2334,7 +2400,7 @@ func (m *InstanceManager) watchdog(instance string, proc *os.Process, reaped <-c
 		if wait := time.Until(deadline); wait > 0 {
 			timer := time.NewTimer(wait)
 			select {
-			case <-reaped:
+			case <-sync.processExited:
 				if !timer.Stop() {
 					select {
 					case <-timer.C:
@@ -2393,11 +2459,23 @@ func (m *InstanceManager) watchdog(instance string, proc *os.Process, reaped <-c
 		// best-effort and unactionable from this goroutine: if the process is already
 		// gone (ErrProcessDone/ESRCH) the reaper handles the wait; any other failure
 		// still leaves the reaper as the finaliser.
-		_ = signalProcessGroupOrProcess(proc, pid, syscall.SIGTERM)
-		if waitForProcessExit(pid, reaped, stopKillWaitTimeout) {
-			return
+		_ = signalProcess(proc, pid, syscall.SIGTERM)
+		timer := time.NewTimer(stopKillWaitTimeout)
+		select {
+		case <-sync.processExited:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timer.C:
 		}
-		_ = signalProcessGroupOrProcess(proc, pid, syscall.SIGKILL)
+		// The group leader exiting only proves that proc.Wait can complete; it says
+		// nothing about descendants that ignored SIGTERM. Always target the owned
+		// group with SIGKILL before unblocking the reaper and its completion hook.
+		_ = signalProcess(proc, pid, syscall.SIGKILL)
+		_ = waitForProcessGroupExit(pid, stopKillWaitTimeout)
 		return
 	}
 }
