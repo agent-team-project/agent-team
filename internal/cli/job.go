@@ -13405,7 +13405,7 @@ func validateManualGateStepForJobApprove(j *job.Job, step *job.Step) error {
 }
 
 func validateCurrentAttemptApprovalEvidence(teamDir string, j *job.Job, approvalStep string) error {
-	if j == nil || job.CurrentAttempt(j) <= 1 {
+	if j == nil {
 		return nil
 	}
 	requiredSteps := currentAttemptEvidenceSteps(j, approvalStep)
@@ -13414,6 +13414,9 @@ func validateCurrentAttemptApprovalEvidence(teamDir string, j *job.Job, approval
 	}
 	head := strings.TrimSpace(j.Head)
 	if head == "" {
+		if job.CurrentAttempt(j) <= 1 {
+			return nil
+		}
 		return fmt.Errorf("current implementation attempt has no exact head")
 	}
 	records, err := job.ListGateRecords(teamDir, j.ID)
