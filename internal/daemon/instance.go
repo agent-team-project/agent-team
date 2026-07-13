@@ -242,6 +242,10 @@ const (
 type InstanceManager struct {
 	daemonRoot string
 	spawner    Spawner
+	// Watchdog operations are manager-local so process lifecycle tests can
+	// coordinate signal and completion boundaries without global hooks.
+	watchdogSignal      func(proc *os.Process, pid int, sig syscall.Signal) error
+	watchdogCleanupWait func(done <-chan struct{})
 
 	mu        sync.Mutex
 	instances map[string]*tracked
@@ -273,9 +277,11 @@ func NewInstanceManager(daemonRoot string, spawner Spawner) *InstanceManager {
 		spawner = DefaultSpawner
 	}
 	return &InstanceManager{
-		daemonRoot: daemonRoot,
-		spawner:    spawner,
-		instances:  make(map[string]*tracked),
+		daemonRoot:          daemonRoot,
+		spawner:             spawner,
+		watchdogSignal:      signalProcessGroupOrProcess,
+		watchdogCleanupWait: func(done <-chan struct{}) { <-done },
+		instances:           make(map[string]*tracked),
 	}
 }
 
@@ -2211,7 +2217,12 @@ func (m *InstanceManager) reap(instance string, proc *os.Process, reaped chan<- 
 	state, err := proc.Wait()
 	if watchdogSync != nil {
 		close(watchdogSync.processExited)
-		<-watchdogSync.cleanupDone
+		waitForCleanup := m.watchdogCleanupWait
+		if waitForCleanup == nil {
+			<-watchdogSync.cleanupDone
+		} else {
+			waitForCleanup(watchdogSync.cleanupDone)
+		}
 	}
 
 	m.mu.Lock()
@@ -2373,6 +2384,10 @@ func (m *InstanceManager) watchdog(instance string, proc *os.Process, sync *watc
 	if sync == nil {
 		return
 	}
+	signalProcess := m.watchdogSignal
+	if signalProcess == nil {
+		signalProcess = signalProcessGroupOrProcess
+	}
 	defer close(sync.cleanupDone)
 	if proc == nil || updates == nil {
 		return
@@ -2444,7 +2459,7 @@ func (m *InstanceManager) watchdog(instance string, proc *os.Process, sync *watc
 		// best-effort and unactionable from this goroutine: if the process is already
 		// gone (ErrProcessDone/ESRCH) the reaper handles the wait; any other failure
 		// still leaves the reaper as the finaliser.
-		_ = signalProcessGroupOrProcess(proc, pid, syscall.SIGTERM)
+		_ = signalProcess(proc, pid, syscall.SIGTERM)
 		timer := time.NewTimer(stopKillWaitTimeout)
 		select {
 		case <-sync.processExited:
@@ -2459,7 +2474,7 @@ func (m *InstanceManager) watchdog(instance string, proc *os.Process, sync *watc
 		// The group leader exiting only proves that proc.Wait can complete; it says
 		// nothing about descendants that ignored SIGTERM. Always target the owned
 		// group with SIGKILL before unblocking the reaper and its completion hook.
-		_ = signalProcessGroupOrProcess(proc, pid, syscall.SIGKILL)
+		_ = signalProcess(proc, pid, syscall.SIGKILL)
 		_ = waitForProcessGroupExit(pid, stopKillWaitTimeout)
 		return
 	}

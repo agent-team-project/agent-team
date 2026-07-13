@@ -297,6 +297,72 @@ func TestInstance_WatchdogKillsOwnedNestedProcessTreeOnly(t *testing.T) {
 	unrelatedOutput := filepath.Join(t.TempDir(), "unrelated.log")
 	unrelated := startUnrelatedWatchdogWriter(t, unrelatedState, unrelatedOutput)
 	m := NewInstanceManager(root, watchdogTreeSpawner(t, ownedState, ownedOutput))
+	killReady := make(chan struct{})
+	allowKill := make(chan struct{})
+	hookObserved := make(chan struct{})
+	cleanupWaitStarted := make(chan struct{})
+	m.watchdogSignal = func(proc *os.Process, pid int, sig syscall.Signal) error {
+		if sig == syscall.SIGKILL {
+			close(killReady)
+			<-allowKill
+		}
+		return signalProcessGroupOrProcess(proc, pid, sig)
+	}
+	m.watchdogCleanupWait = func(done <-chan struct{}) {
+		close(cleanupWaitStarted)
+		<-done
+	}
+	go func() {
+		<-killReady
+		select {
+		case <-hookObserved:
+		case <-cleanupWaitStarted:
+		}
+		close(allowKill)
+	}()
+	type hookInput struct {
+		owned      map[string]int
+		ownedGroup int
+		unrelated  int
+	}
+	type hookObservation struct {
+		ownedLive        map[string]bool
+		ownedGroupLive   bool
+		unrelatedLive    bool
+		ownedOutputSize  int64
+		unrelatedOutSize int64
+		err              error
+	}
+	hookInputs := make(chan hookInput, 1)
+	hookObservations := make(chan hookObservation, 1)
+	m.SetReapHook(func(instance string) {
+		if instance != "process-tree" {
+			return
+		}
+		input := <-hookInputs
+		observation := hookObservation{
+			ownedLive:      make(map[string]bool, len(input.owned)),
+			ownedGroupLive: !waitForProcessGroupExit(input.ownedGroup, 0),
+			unrelatedLive:  PidLiveCheck(input.unrelated),
+		}
+		for name, pid := range input.owned {
+			observation.ownedLive[name] = PidLiveCheck(pid)
+		}
+		ownedInfo, err := os.Stat(ownedOutput)
+		if err != nil {
+			observation.err = fmt.Errorf("stat owned output at reap hook: %w", err)
+		} else {
+			observation.ownedOutputSize = ownedInfo.Size()
+		}
+		unrelatedInfo, err := os.Stat(unrelatedOutput)
+		if err != nil && observation.err == nil {
+			observation.err = fmt.Errorf("stat unrelated output at reap hook: %w", err)
+		} else if err == nil {
+			observation.unrelatedOutSize = unrelatedInfo.Size()
+		}
+		close(hookObserved)
+		hookObservations <- observation
+	})
 
 	meta, err := m.Dispatch(DispatchInput{
 		Agent: "worker", Name: "process-tree", Workspace: t.TempDir(),
@@ -329,40 +395,45 @@ func TestInstance_WatchdogKillsOwnedNestedProcessTreeOnly(t *testing.T) {
 		t.Fatalf("unrelated process unexpectedly joined owned group %d", meta.PID)
 	}
 
-	if err := m.WaitForReaper("process-tree", 8*time.Second); err != nil {
-		t.Fatalf("wait reaper: %v", err)
+	ownedPIDs := map[string]int{"root": meta.PID, "child": childPID, "grandchild": grandchildPID}
+	hookInputs <- hookInput{owned: ownedPIDs, ownedGroup: meta.PID, unrelated: unrelated.Process.Pid}
+	var atHook hookObservation
+	select {
+	case atHook = <-hookObservations:
+	case <-time.After(8 * time.Second):
+		t.Fatal("timed out waiting for reap hook")
 	}
-	for name, pid := range map[string]int{"root": meta.PID, "child": childPID, "grandchild": grandchildPID} {
-		if PidLiveCheck(pid) {
-			t.Errorf("owned %s pid %d remained live after watchdog completion", name, pid)
+	if atHook.err != nil {
+		t.Fatal(atHook.err)
+	}
+	for name, pid := range ownedPIDs {
+		if atHook.ownedLive[name] {
+			t.Errorf("owned %s pid %d remained live when reap hook initiated retry", name, pid)
 		}
 	}
-	if !PidLiveCheck(unrelated.Process.Pid) {
-		t.Fatalf("unrelated pid %d was killed with owned process group", unrelated.Process.Pid)
+	if atHook.ownedGroupLive {
+		t.Errorf("owned process group %d remained live when reap hook initiated retry", meta.PID)
 	}
-
-	ownedAtRetry, err := os.Stat(ownedOutput)
-	if err != nil {
-		t.Fatalf("stat owned output: %v", err)
+	if !atHook.unrelatedLive {
+		t.Fatalf("unrelated pid %d was not live when reap hook initiated retry", unrelated.Process.Pid)
 	}
-	unrelatedBefore, err := os.Stat(unrelatedOutput)
-	if err != nil {
-		t.Fatalf("stat unrelated output: %v", err)
+	if err := m.WaitForReaper("process-tree", 8*time.Second); err != nil {
+		t.Fatalf("wait reaper: %v", err)
 	}
 	time.Sleep(150 * time.Millisecond)
 	ownedAfterRetry, err := os.Stat(ownedOutput)
 	if err != nil {
 		t.Fatalf("stat owned output after retry window: %v", err)
 	}
-	if ownedAfterRetry.Size() != ownedAtRetry.Size() {
-		t.Fatalf("owned descendant wrote after watchdog completion: size %d -> %d", ownedAtRetry.Size(), ownedAfterRetry.Size())
+	if ownedAfterRetry.Size() != atHook.ownedOutputSize {
+		t.Fatalf("owned descendant wrote after reap hook initiated retry: size %d -> %d", atHook.ownedOutputSize, ownedAfterRetry.Size())
 	}
 	unrelatedAfter, err := os.Stat(unrelatedOutput)
 	if err != nil {
 		t.Fatalf("stat unrelated output after retry window: %v", err)
 	}
-	if unrelatedAfter.Size() <= unrelatedBefore.Size() {
-		t.Fatalf("unrelated writer stopped during watchdog cleanup: size %d -> %d", unrelatedBefore.Size(), unrelatedAfter.Size())
+	if unrelatedAfter.Size() <= atHook.unrelatedOutSize {
+		t.Fatalf("unrelated writer stopped during watchdog cleanup: size %d -> %d", atHook.unrelatedOutSize, unrelatedAfter.Size())
 	}
 }
 
