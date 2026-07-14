@@ -202,7 +202,10 @@ func New(cfg Config) (*Daemon, error) {
 			time.Now().UTC().Format(time.RFC3339), terr)
 		topo = nil
 	}
-	events := NewEventResolver(mgr, cfg.TeamDir, topo)
+	events := NewEventResolver(mgr, cfg.TeamDir, topo, cfg.Build)
+	if terr != nil {
+		events.SetTopologyLoadError(terr)
+	}
 	events.SetLogOutput(cfg.LogOut)
 	return &Daemon{cfg: cfg, manager: mgr, channels: channels, events: events}, nil
 }
@@ -225,6 +228,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if d.events != nil {
 		topo = d.events.Topology()
 	}
+	// Persist the active tuple before reconciliation so any generated manager
+	// brief reports this daemon, not the previous process's launch snapshot.
+	d.recordLaunchEnv()
 	if err := ReconcileWithTopology(d.cfg.TeamDir, d.manager, topo); err != nil {
 		return fmt.Errorf("daemon: reconcile: %w", err)
 	}
@@ -243,8 +249,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if _, err := EnsureOperatorToken(d.cfg.TeamDir); err != nil {
 		return fmt.Errorf("daemon: operator token: %w", err)
 	}
-	d.recordLaunchEnv()
-
 	socket := SocketPath(d.cfg.TeamDir)
 	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
 		return fmt.Errorf("daemon: mkdir socket dir: %w", err)
@@ -430,6 +434,9 @@ func (d *Daemon) recordLaunchEnv() {
 		PID:        os.Getpid(),
 		Version:    1,
 		Build:      d.cfg.Build,
+	}
+	if d.events != nil {
+		le.Assets = d.events.activationStatus().LoadedAssets
 	}
 	if err := WriteLaunchEnv(DaemonRoot(d.cfg.TeamDir), le); err != nil {
 		d.logf("launch-env: write snapshot failed: %v", err)

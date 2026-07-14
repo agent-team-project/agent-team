@@ -33,6 +33,7 @@ type LaunchEnv struct {
 	PID                 int            `json:"pid,omitempty"`
 	Version             int            `json:"version"`
 	Build               buildinfo.Info `json:"build,omitempty"`
+	Assets              string         `json:"assets,omitempty"`
 }
 
 var DefaultStrippedEnvKeys = []string{

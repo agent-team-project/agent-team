@@ -36,6 +36,7 @@ type InstanceBrief struct {
 	DaemonDir   string            `json:"daemon_dir"`
 	Topology    *BriefTopology    `json:"topology,omitempty"`
 	Runtime     *BriefRuntime     `json:"runtime,omitempty"`
+	Activation  *ActivationStatus `json:"activation,omitempty"`
 	Jobs        []BriefJob        `json:"jobs"`
 	Pipelines   []BriefPipeline   `json:"pipelines"`
 	Mailbox     []BriefMessage    `json:"mailbox"`
@@ -266,6 +267,21 @@ func GenerateInstanceBrief(teamDir, instance string, opts BriefOptions) (*Instan
 	} else if !os.IsNotExist(err) {
 		brief.Errors["runtime"] = err.Error()
 	}
+	if activation, err := ReadActivationStatus(teamDir); err == nil {
+		if snapshot, snapshotErr := ReadInstanceLaunchEnv(root, instance); snapshotErr == nil {
+			if stale, reason, _ := activationSnapshotStale(snapshot, *activation); stale {
+				activation.StaleInstances = []string{instance}
+				activation.Reasons = append(activation.Reasons, fmt.Sprintf("persistent instance %s is stale: %s", instance, reason))
+				activation.State = ActivationStateNeeded
+				activation.Action = activationAction
+			}
+		} else if !errors.Is(snapshotErr, os.ErrNotExist) {
+			brief.Errors["activation_provenance"] = snapshotErr.Error()
+		}
+		brief.Activation = activation
+	} else if !errors.Is(err, os.ErrNotExist) {
+		brief.Errors["activation"] = err.Error()
+	}
 
 	jobs, err := jobstore.List(teamDir)
 	if err != nil {
@@ -336,6 +352,13 @@ func RenderInstanceBrief(brief *InstanceBrief) string {
 		}
 		if brief.Runtime.SessionID != "" {
 			fmt.Fprintf(&b, "- Session: %s\n", brief.Runtime.SessionID)
+		}
+	}
+	if brief.Activation != nil {
+		fmt.Fprintf(&b, "\n## Activation\n\n")
+		fmt.Fprintf(&b, "- Tuple: %s\n", brief.Activation.Summary())
+		if brief.Activation.State == ActivationStateNeeded {
+			fmt.Fprintf(&b, "- Action: %s\n", brief.Activation.Diagnostic())
 		}
 	}
 	renderBriefJobs(&b, brief.Jobs)

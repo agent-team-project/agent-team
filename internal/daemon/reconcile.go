@@ -276,7 +276,10 @@ func launchDeclaredFreshWithPrompt(teamDir string, m *InstanceManager, topo *top
 	if inst == nil {
 		return nil, false, errors.New("restart: declared instance is required")
 	}
-	r := &EventResolver{mgr: m, teamDir: teamDir, topo: topo}
+	if err := m.requireActivation(); err != nil {
+		return nil, false, err
+	}
+	r := &EventResolver{mgr: m, teamDir: teamDir, topo: topo, activation: m.activationContext()}
 	runtime, err := r.prepareEphemeralRuntime(inst, inst.Name)
 	if err != nil {
 		return nil, false, err

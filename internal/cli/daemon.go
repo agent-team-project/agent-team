@@ -1246,27 +1246,28 @@ func renderDaemonReconcile(w fmtWriter, resp *daemonReconcileResponse) error {
 }
 
 type daemonStatusJSON struct {
-	Running        bool               `json:"running"`
-	Reachable      bool               `json:"reachable"`
-	Ready          bool               `json:"ready"`
-	PID            int                `json:"pid,omitempty"`
-	Instances      int                `json:"instances"`
-	TeamDir        string             `json:"team_dir"`
-	StartedAt      time.Time          `json:"started_at,omitempty"`
-	Build          buildinfo.Info     `json:"build,omitempty"`
-	Socket         string             `json:"socket"`
-	SocketExists   bool               `json:"socket_exists"`
-	HTTPAddr       string             `json:"http_addr,omitempty"`
-	HTTPURL        string             `json:"http_url,omitempty"`
-	HTTPAddrFile   string             `json:"http_addr_file,omitempty"`
-	HTTPAddrExists bool               `json:"http_addr_exists,omitempty"`
-	Pidfile        string             `json:"pidfile"`
-	StalePidfile   bool               `json:"stale_pidfile,omitempty"`
-	Log            string             `json:"log"`
-	LastExit       *daemon.ExitReason `json:"last_exit,omitempty"`
-	Error          string             `json:"error,omitempty"`
-	Warnings       []string           `json:"warnings,omitempty"`
-	Actions        []string           `json:"actions,omitempty"`
+	Running        bool                     `json:"running"`
+	Reachable      bool                     `json:"reachable"`
+	Ready          bool                     `json:"ready"`
+	PID            int                      `json:"pid,omitempty"`
+	Instances      int                      `json:"instances"`
+	TeamDir        string                   `json:"team_dir"`
+	StartedAt      time.Time                `json:"started_at,omitempty"`
+	Build          buildinfo.Info           `json:"build,omitempty"`
+	Activation     *daemon.ActivationStatus `json:"activation,omitempty"`
+	Socket         string                   `json:"socket"`
+	SocketExists   bool                     `json:"socket_exists"`
+	HTTPAddr       string                   `json:"http_addr,omitempty"`
+	HTTPURL        string                   `json:"http_url,omitempty"`
+	HTTPAddrFile   string                   `json:"http_addr_file,omitempty"`
+	HTTPAddrExists bool                     `json:"http_addr_exists,omitempty"`
+	Pidfile        string                   `json:"pidfile"`
+	StalePidfile   bool                     `json:"stale_pidfile,omitempty"`
+	Log            string                   `json:"log"`
+	LastExit       *daemon.ExitReason       `json:"last_exit,omitempty"`
+	Error          string                   `json:"error,omitempty"`
+	Warnings       []string                 `json:"warnings,omitempty"`
+	Actions        []string                 `json:"actions,omitempty"`
 }
 
 type daemonStatusOptions struct {
@@ -1361,7 +1362,7 @@ func daemonStatusCommandActions(status daemonStatusJSON) []string {
 			"agent-team daemon logs --tail 80",
 		}
 	}
-	if len(daemonBuildMismatchWarnings(status)) > 0 {
+	if len(daemonBuildMismatchWarnings(status)) > 0 || status.Activation != nil && status.Activation.State == daemon.ActivationStateNeeded {
 		return []string{"agent-team daemon restart"}
 	}
 	return []string{
@@ -1458,6 +1459,9 @@ func renderDaemonStatus(w fmtWriter, status daemonStatusJSON) {
 		fmt.Fprintf(w, "instances: %d\n", status.Instances)
 		if !status.Build.Empty() {
 			fmt.Fprintf(w, "build: %s\n", status.Build.Display())
+		}
+		if status.Activation != nil {
+			fmt.Fprintf(w, "activation: %s\n", status.Activation.Summary())
 		}
 	}
 	fmt.Fprintf(w, "socket: %s\n", status.Socket)
@@ -1588,6 +1592,7 @@ func collectDaemonStatus(teamDir string) daemonStatusJSON {
 		status.Instances = apiStatus.Instances
 		status.StartedAt = apiStatus.StartedAt
 		status.Build = apiStatus.Build
+		status.Activation = apiStatus.Activation
 		return status
 	}
 	instances, instancesErr := client.Instances()
@@ -1602,7 +1607,11 @@ func collectDaemonStatus(teamDir string) daemonStatusJSON {
 }
 
 func daemonStatusWarnings(status daemonStatusJSON) []string {
-	return daemonBuildMismatchWarnings(status)
+	warnings := daemonBuildMismatchWarnings(status)
+	if status.Activation != nil && status.Activation.State == daemon.ActivationStateNeeded {
+		warnings = append(warnings, status.Activation.Diagnostic())
+	}
+	return warnings
 }
 
 func daemonBuildMismatchWarnings(status daemonStatusJSON) []string {

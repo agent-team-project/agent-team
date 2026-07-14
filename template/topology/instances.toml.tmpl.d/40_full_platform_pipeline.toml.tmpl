@@ -137,6 +137,11 @@ Read the reviewer's verdict and the diff. APPROVE + green gates: merge via
 `agent-team job merge <job-id>` (or `gh pr merge`), close the ticket, mark
 the job done. BOUNCE: `agent-team job bounce <job-id> --findings-file <path>
 --advance`. Do not amend the branch yourself.
+For daemon/CLI, topology, authority-shim, prompt, or skill changes, record the
+merged SHA and an `activated` or `activation-needed` disposition in job notes.
+Activation requires matching CLI+daemon installation, managed daemon restart,
+topology validate/reload, a coherent `instance ps` activation tuple, and fresh
+persistent starts; never bypass the managed shim.
 """
 
 [teams.platform]

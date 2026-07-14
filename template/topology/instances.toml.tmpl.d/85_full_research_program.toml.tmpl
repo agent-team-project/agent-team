@@ -275,6 +275,12 @@ Integrate only on green verifier/reviewer evidence and a clean canonical
 requirements-graph reconciliation. Record accepted evidence and update the
 study ledger. Bounce through the durable findings path; do not amend a worker
 branch. Keep cross-cutting, security, contract, and release claims manual in v1.
+If an accepted slice changes daemon/CLI code, topology, the authority shim,
+prompts, or skills, record the merged SHA and an `activated` or
+`activation-needed` disposition in job notes. Activation requires matching
+CLI+daemon installation, managed daemon restart, topology validate/reload, a
+coherent `instance ps` activation tuple, and fresh persistent starts; never
+bypass the managed shim.
 """
 
 [teams.research]

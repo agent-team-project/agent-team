@@ -173,6 +173,11 @@ green, merge with `agent-team job merge <job-id>` (or `gh pr merge`), close the
 ticket, and mark the job done. If REVIEW: BOUNCE, run `agent-team job bounce
 <job-id> --findings-file <path> --advance` so the worker gets the findings in
 kickoff — do not amend the branch yourself.
+If this merge changes daemon/CLI code, topology, the authority shim, prompts,
+or skills, also record the merged SHA and an `activated` or `activation-needed`
+disposition in job notes. Activation means matching CLI+daemon installation,
+managed daemon restart, topology validate/reload, a coherent `instance ps`
+activation tuple, and fresh persistent starts; never bypass the managed shim.
 """
 
 
@@ -354,6 +359,11 @@ Read the reviewer's verdict and the diff. APPROVE + green gates: merge via
 `agent-team job merge <job-id>` (or `gh pr merge`), close the ticket, mark
 the job done. BOUNCE: `agent-team job bounce <job-id> --findings-file <path>
 --advance`. Do not amend the branch yourself.
+For daemon/CLI, topology, authority-shim, prompt, or skill changes, record the
+merged SHA and an `activated` or `activation-needed` disposition in job notes.
+Activation requires matching CLI+daemon installation, managed daemon restart,
+topology validate/reload, a coherent `instance ps` activation tuple, and fresh
+persistent starts; never bypass the managed shim.
 """
 
 [teams.platform]
@@ -595,6 +605,11 @@ Manual release decision. Read the release PR, changelog, SQU-138 gate status,
 and verify-step gate ledger. If approved, merge the release PR into main and
 mark this step done/advance so ship can tag exactly what was approved. If not
 approved, leave the job held or reject with the reason.
+If the release changes daemon/CLI code, topology, the authority shim, prompts,
+or skills, record the merged SHA and an `activated` or `activation-needed`
+disposition in job notes. Activation requires matching CLI+daemon installation,
+managed daemon restart, topology validate/reload, a coherent `instance ps`
+activation tuple, and fresh persistent starts; never bypass the managed shim.
 """
 
 [[pipelines.release.steps]]
@@ -961,6 +976,12 @@ Integrate only on green verifier/reviewer evidence and a clean canonical
 requirements-graph reconciliation. Record accepted evidence and update the
 study ledger. Bounce through the durable findings path; do not amend a worker
 branch. Keep cross-cutting, security, contract, and release claims manual in v1.
+If an accepted slice changes daemon/CLI code, topology, the authority shim,
+prompts, or skills, record the merged SHA and an `activated` or
+`activation-needed` disposition in job notes. Activation requires matching
+CLI+daemon installation, managed daemon restart, topology validate/reload, a
+coherent `instance ps` activation tuple, and fresh persistent starts; never
+bypass the managed shim.
 """
 
 [teams.research]
@@ -1127,6 +1148,11 @@ instructions = """
 Merge or advance only on green deterministic evidence and independent review.
 Keep the cutover deletion manual until the complete parity matrix passes. On a
 bounce, return findings through the durable job path; never amend the branch.
+If this merge changes daemon/CLI code, topology, the authority shim, prompts,
+or skills, record the merged SHA and an `activated` or `activation-needed`
+disposition in job notes. Activation requires matching CLI+daemon installation,
+managed daemon restart, topology validate/reload, a coherent `instance ps`
+activation tuple, and fresh persistent starts; never bypass the managed shim.
 """
 
 [budgets.frontend]
