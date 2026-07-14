@@ -12731,6 +12731,8 @@ workspace = "repo"
 	}()
 
 	now := time.Now().UTC()
+	failedStartedAt := now.Add(-2 * time.Hour)
+	failedFinishedAt := now.Add(-time.Hour)
 	j := &job.Job{
 		ID:         "gh390-frontend-owner",
 		Ticket:     "GH-390",
@@ -12743,13 +12745,14 @@ workspace = "repo"
 		UpdatedAt:  now,
 		Steps: []job.Step{
 			{ID: "implement", Target: "frontend-worker", Status: job.StatusDone, Instance: "frontend-worker-gh390-frontend-owner-implement"},
-			{ID: "verify", Target: "frontend-verifier", Status: job.StatusFailed, Instance: "manager", InstanceURI: "agt://project/instance/manager", After: []string{"implement"}},
+			{ID: "verify", Target: "frontend-verifier", Status: job.StatusFailed, Instance: "manager", InstanceURI: "agt://project/instance/manager", After: []string{"implement"}, Attempts: 1, StartedAt: failedStartedAt, FinishedAt: failedFinishedAt},
 		},
 	}
 	if err := job.Write(teamDir, j); err != nil {
 		t.Fatal(err)
 	}
 
+	retryStartedAfter := time.Now().UTC()
 	reset := NewRootCmd()
 	reset.SetOut(&bytes.Buffer{})
 	resetErr := &bytes.Buffer{}
@@ -12762,8 +12765,8 @@ workspace = "repo"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resetJob.Steps[1].Status != job.StatusQueued || resetJob.Steps[1].Instance != "" || resetJob.Steps[1].InstanceURI != "" {
-		t.Fatalf("reset verify step = %+v, want cleared active owner", resetJob.Steps[1])
+	if resetJob.Steps[1].Status != job.StatusQueued || resetJob.Steps[1].Instance != "" || resetJob.Steps[1].InstanceURI != "" || resetJob.Steps[1].StartedAt.Before(retryStartedAfter) || !resetJob.Steps[1].FinishedAt.IsZero() {
+		t.Fatalf("reset verify step = %+v, want cleared active owner and fresh lifecycle", resetJob.Steps[1])
 	}
 	resetEvents, err := job.ListEvents(teamDir, j.ID)
 	if err != nil {
@@ -12788,12 +12791,21 @@ workspace = "repo"
 	if len(rows) != 1 || rows[0].Action != "advanced" || rows[0].StepID != "verify" || rows[0].StepStatus != job.StatusRunning || !strings.HasPrefix(rows[0].Instance, "frontend-verifier-") {
 		t.Fatalf("advance rows = %+v, want fresh frontend-verifier owner", rows)
 	}
+	dispatched, err := job.Read(teamDir, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dispatched.Steps[1].StartedAt.Before(retryStartedAfter) || !dispatched.Steps[1].FinishedAt.IsZero() {
+		t.Fatalf("dispatched verify step = %+v, want fresh start and no finish", dispatched.Steps[1])
+	}
 
 	// Supplying --instance is the explicit same-instance contract: unlike an
 	// omitted instance on a failed-step requeue, it records that the named
 	// runtime already owns the queued attempt instead of requesting a fresh
 	// target-specific dispatch.
 	sameInstance := "frontend-verifier-gh390-same-owner-verify"
+	sameFailedStartedAt := now.Add(-90 * time.Minute)
+	sameFailedFinishedAt := now.Add(-30 * time.Minute)
 	same := &job.Job{
 		ID:         "gh390-same-owner",
 		Ticket:     "GH-390-same-owner",
@@ -12806,12 +12818,13 @@ workspace = "repo"
 		UpdatedAt:  now,
 		Steps: []job.Step{
 			{ID: "implement", Target: "frontend-worker", Status: job.StatusDone, Instance: "frontend-worker-gh390-same-owner-implement"},
-			{ID: "verify", Target: "frontend-verifier", Status: job.StatusFailed, Instance: sameInstance, After: []string{"implement"}},
+			{ID: "verify", Target: "frontend-verifier", Status: job.StatusFailed, Instance: sameInstance, After: []string{"implement"}, Attempts: 1, StartedAt: sameFailedStartedAt, FinishedAt: sameFailedFinishedAt},
 		},
 	}
 	if err := job.Write(teamDir, same); err != nil {
 		t.Fatal(err)
 	}
+	sameRetryStartedAfter := time.Now().UTC()
 	explicit := NewRootCmd()
 	explicit.SetOut(&bytes.Buffer{})
 	explicitErr := &bytes.Buffer{}
@@ -12824,8 +12837,8 @@ workspace = "repo"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if explicitJob.Steps[1].Status != job.StatusQueued || explicitJob.Steps[1].Instance != sameInstance {
-		t.Fatalf("explicit same-instance step = %+v, want retained owner", explicitJob.Steps[1])
+	if explicitJob.Steps[1].Status != job.StatusQueued || explicitJob.Steps[1].Instance != sameInstance || explicitJob.Steps[1].StartedAt.Before(sameRetryStartedAfter) || !explicitJob.Steps[1].FinishedAt.IsZero() {
+		t.Fatalf("explicit same-instance step = %+v, want retained owner with fresh lifecycle", explicitJob.Steps[1])
 	}
 	explicitEvents, err := job.ListEvents(teamDir, same.ID)
 	if err != nil {

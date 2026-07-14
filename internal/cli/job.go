@@ -12560,6 +12560,8 @@ func updateJobStep(j *job.Job, stepID string, status job.Status, update jobStepU
 	if failedStepRequeue {
 		step.Instance = ""
 		step.InstanceURI = ""
+		step.StartedAt = time.Time{}
+		step.FinishedAt = time.Time{}
 	}
 	if strings.TrimSpace(update.Instance) != "" {
 		step.Instance = strings.TrimSpace(update.Instance)
