@@ -10,14 +10,28 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	inheritedCLI := os.Getenv("AGENT_TEAM_TEST_MANAGED_CLI")
 	scrubAgentTeamEnvForTestProcess()
-	cleanup := installManagedCLITestBinary()
+	cleanup := installManagedCLITestBinary(inheritedCLI)
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
 }
 
-func installManagedCLITestBinary() func() {
+func installManagedCLITestBinary(inherited string) func() {
+	oldPath := os.Getenv("PATH")
+	if inherited != "" {
+		if err := os.Setenv("PATH", filepath.Dir(inherited)+string(os.PathListSeparator)+oldPath); err != nil {
+			panic(err)
+		}
+		if err := os.Setenv("AGENT_TEAM_TEST_MANAGED_CLI", inherited); err != nil {
+			panic(err)
+		}
+		return func() {
+			_ = os.Setenv("PATH", oldPath)
+			_ = os.Unsetenv("AGENT_TEAM_TEST_MANAGED_CLI")
+		}
+	}
 	dir, err := os.MkdirTemp("", "daemon-test-agent-team")
 	if err != nil {
 		panic(err)
@@ -28,13 +42,17 @@ func installManagedCLITestBinary() func() {
 		_ = os.RemoveAll(dir)
 		panic(string(body))
 	}
-	oldPath := os.Getenv("PATH")
 	if err := os.Setenv("PATH", dir+string(os.PathListSeparator)+oldPath); err != nil {
+		_ = os.RemoveAll(dir)
+		panic(err)
+	}
+	if err := os.Setenv("AGENT_TEAM_TEST_MANAGED_CLI", out); err != nil {
 		_ = os.RemoveAll(dir)
 		panic(err)
 	}
 	return func() {
 		_ = os.Setenv("PATH", oldPath)
+		_ = os.Unsetenv("AGENT_TEAM_TEST_MANAGED_CLI")
 		_ = os.RemoveAll(dir)
 	}
 }
