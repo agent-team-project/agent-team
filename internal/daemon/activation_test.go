@@ -54,9 +54,17 @@ allow = ["job.gate.*:team"]
 		t.Fatalf("production stale CLI verdict = %+v", status)
 	}
 
-	_, err := resolver.FireDueSchedulesWithResult(time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC))
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	state := map[string]*ScheduleState{}
+	_, err := resolver.fireDueSchedulesWithResult(now, state, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "activation needed") || !strings.Contains(err.Error(), "managed CLI") {
 		t.Fatalf("scheduled stale tuple error = %v", err)
+	}
+	if len(state) != 0 {
+		t.Fatalf("scheduled stale tuple consumed in-memory clock: %+v", state)
+	}
+	if _, err := ReadScheduleState(mgr.daemonRoot, "activation-check"); !os.IsNotExist(err) {
+		t.Fatalf("scheduled stale tuple persisted a clock, err=%v", err)
 	}
 	if got := fake.callCount(); got != 0 {
 		t.Fatalf("scheduled stale tuple spawned %d process(es), want 0", got)
@@ -67,6 +75,96 @@ allow = ["job.gate.*:team"]
 	}
 	if got := fake.callCount(); got != 0 {
 		t.Fatalf("direct stale tuple spawned %d process(es), want 0", got)
+	}
+
+	fixture.useCLI(t, fixture.currentCLI)
+	fired, err := resolver.fireDueSchedulesWithResult(now, state, false, nil)
+	if err != nil {
+		t.Fatalf("coherent retry of blocked schedule: %v", err)
+	}
+	if fired.Fired != 1 || len(state) != 1 || fake.callCount() != 1 {
+		t.Fatalf("coherent retry result=%+v state=%+v spawn_calls=%d", fired, state, fake.callCount())
+	}
+}
+
+func TestActivationBlockDoesNotConsumeQueueAttempt(t *testing.T) {
+	topologyText := `
+[instances.worker]
+agent = "worker"
+ephemeral = true
+`
+	fixture := newProductionActivationFixture(t, topologyText)
+	fixture.useCLI(t, fixture.staleCLI)
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	item := &QueueItem{
+		ID:         "activation-blocked",
+		State:      QueueStatePending,
+		EventType:  "agent.dispatch",
+		Instance:   "worker",
+		InstanceID: "worker-activation-blocked",
+		Payload: map[string]any{
+			"target":    "worker",
+			"name":      "worker-activation-blocked",
+			"workspace": "repo",
+		},
+		Attempts:  MaxQueueAttempts - 1,
+		QueuedAt:  now,
+		UpdatedAt: now,
+	}
+	root := DaemonRoot(fixture.teamDir)
+	if err := WriteQueueItem(root, item); err != nil {
+		t.Fatal(err)
+	}
+	top := mustParseCustomTopo(t, topologyText)
+	fake := newFakeSpawner(100 * time.Millisecond)
+	mgr := NewInstanceManager(root, fake.spawn)
+	resolver := NewEventResolver(mgr, fixture.teamDir, top)
+	setActivationContextForTest(resolver, fixture.activationContext())
+	if status := resolver.activationStatus(); status.State != ActivationStateNeeded {
+		t.Fatalf("production stale queue verdict = %+v", status)
+	}
+
+	result, err := resolver.DrainQueuesWithResult()
+	if err == nil || !strings.Contains(err.Error(), "activation needed") {
+		t.Fatalf("stale queue drain result=%+v err=%v", result, err)
+	}
+	if result == nil || result.Attempted != 0 || result.Dispatched != 0 || result.Rejected != 0 {
+		t.Fatalf("stale queue drain consumed work: %+v", result)
+	}
+	pending, err := ReadQueueItem(root, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.State != QueueStatePending || pending.Attempts != MaxQueueAttempts-1 || pending.LastError != "" {
+		t.Fatalf("blocked queue item = %+v, want unchanged pending attempt", pending)
+	}
+	if running, queued := resolver.QueueDepth("worker"); running != 0 || queued != 1 {
+		t.Fatalf("blocked queue depth running=%d queued=%d, want 0/1", running, queued)
+	}
+	if fake.callCount() != 0 {
+		t.Fatalf("blocked queue spawned %d process(es), want 0", fake.callCount())
+	}
+	if _, err := resolver.RetryQueueItem(item.ID); err == nil || !strings.Contains(err.Error(), "activation needed") {
+		t.Fatalf("stale explicit queue retry error = %v", err)
+	}
+	pending, err = ReadQueueItem(root, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.State != QueueStatePending || pending.Attempts != MaxQueueAttempts-1 || pending.LastError != "" {
+		t.Fatalf("blocked explicit retry changed queue item: %+v", pending)
+	}
+
+	fixture.useCLI(t, fixture.currentCLI)
+	result, err = resolver.DrainQueuesWithResult()
+	if err != nil {
+		t.Fatalf("coherent retry of blocked queue: %v", err)
+	}
+	if result.Attempted != 1 || result.Dispatched != 1 || result.Rejected != 0 || fake.callCount() != 1 {
+		t.Fatalf("coherent queue retry result=%+v spawn_calls=%d", result, fake.callCount())
+	}
+	if _, err := ReadQueueItem(root, item.ID); !os.IsNotExist(err) {
+		t.Fatalf("coherent queue retry did not consume pending work, err=%v", err)
 	}
 }
 
