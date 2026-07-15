@@ -255,6 +255,9 @@ allow = ["job.gate.*:team", "job.merge:team"]
 		if got := fake.callCount(); got != 1 {
 			t.Fatalf("persistent stale tuple spawned process; calls=%d", got)
 		}
+		if err := mgr.WaitForReaper("manager", 2*time.Second); err != nil {
+			t.Fatalf("wait coherent persistent reaper: %v", err)
+		}
 	})
 
 	t.Run("persistent resume regenerates stale bundle", func(t *testing.T) {
