@@ -652,6 +652,11 @@ a PTY.
 | `performance` | First paint and refresh | With `tui-large-v1`, overview render completes within 150 ms after the first complete API response; tick refresh is flicker-free and does not grow goroutines. |
 | `soak` | One-hour interactive run | Fixed refresh cadence, disconnect/reconnect cycle, navigation, filters, and log follow; stable memory after warm-up, no goroutine/file-descriptor growth, no corrupt frames. |
 
+Every metric the issue or SPEC declares for an evidence artifact must actually
+be measured; if a metric cannot be measured on this host, fail the gate loudly
+with the reason — a sentinel value (`-1`, `null`, or `skipped`) recorded in
+evidence is a failing gate, never a pass.
+
 “Stable memory” means the final 30-minute linear-regression slope is no more than
 1 MiB/hour and retained heap after forced collection is no more than 10% above
 the post-warm-up baseline. “Flicker-free” means one atomic frame commit per
