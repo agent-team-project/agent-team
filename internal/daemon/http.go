@@ -29,9 +29,11 @@ import (
 	"github.com/agent-team-project/agent-team/internal/topology"
 )
 
-// Handler builds the daemon's http.Handler. Routes are explicit (no library
-// router) — the surface is small and `http.ServeMux` is sufficient. All paths
-// are versioned `/v1/...` per orchestrator.md Open Q #7.
+// Handler builds an in-process daemon http.Handler with build enforcement
+// disabled. The shipped daemon enables enforcement explicitly through Config.
+// Routes are explicit (no library router) — the surface is small and
+// `http.ServeMux` is sufficient. All paths are versioned `/v1/...` per
+// orchestrator.md Open Q #7.
 //
 // If channels is nil, a fresh ChannelStore is constructed against the
 // instance manager's daemon root — convenient for tests that don't care about
@@ -50,6 +52,13 @@ func Handler(m *InstanceManager, channels *ChannelStore, events *EventResolver, 
 // HandlerWithLog builds the daemon HTTP handler and writes daemon diagnostics
 // such as build-skew warnings to logOut. nil logOut discards diagnostics.
 func HandlerWithLog(m *InstanceManager, channels *ChannelStore, events *EventResolver, teamDir string, logOut io.Writer, builds ...buildinfo.Info) http.Handler {
+	return handlerWithLogAndPolicy(m, channels, events, teamDir, logOut, false, builds...)
+}
+
+// handlerWithLogAndPolicy is the common constructor for the production daemon
+// and in-process test handlers. The executable entrypoint passes enforce=true;
+// test helpers opt out explicitly instead of inferring policy from a filename.
+func handlerWithLogAndPolicy(m *InstanceManager, channels *ChannelStore, events *EventResolver, teamDir string, logOut io.Writer, enforce bool, builds ...buildinfo.Info) http.Handler {
 	if channels == nil {
 		channels = NewChannelStore(m.daemonRoot)
 	}
@@ -1157,7 +1166,7 @@ func HandlerWithLog(m *InstanceManager, channels *ChannelStore, events *EventRes
 		writeJSON(w, http.StatusOK, marshalTopology(topo, events))
 	})
 
-	return buildHandshakeHandler(mux, build, logOut)
+	return buildHandshakeHandlerWithPolicy(mux, build, logOut, enforce)
 }
 
 func daemonStartedAt(teamDir string) time.Time {
@@ -1248,10 +1257,6 @@ func outcomeURIForJob(teamDir, deploymentID string, j *jobstore.Job) string {
 		return ""
 	}
 	return resource.OutcomeURI(deploymentID, j.ID)
-}
-
-func buildHandshakeHandler(next http.Handler, daemonBuild buildinfo.Info, logOut io.Writer) http.Handler {
-	return buildHandshakeHandlerWithPolicy(next, daemonBuild, logOut, buildinfo.RunningActivationExecutable())
 }
 
 func buildHandshakeHandlerWithPolicy(next http.Handler, daemonBuild buildinfo.Info, logOut io.Writer, enforce bool) http.Handler {

@@ -89,8 +89,9 @@ Supported build and launch classes are explicit:
   activation-comparable because `vcs.modified=true` does not identify content.
 - Revisionless and linked-worktree builds use `scripts/build.sh`, including
   with `GOFLAGS=-buildvcs=false`. The script captures one clean `HEAD` and links
-  the same fixed marker into both binaries. Plain `-buildvcs=false` builds are
-  unbound and fail closed.
+  the same fixed marker into both binaries, rejects caller control of raw
+  linker flags, and verifies both emitted identities before succeeding. Plain
+  `-buildvcs=false` builds are unbound and fail closed.
 - GoReleaser links its exact full commit into both release binaries. Published
   `go install ...@version` binaries may use the immutable main-module path and
   version when VCS metadata is unavailable. Docker builds must pass
@@ -101,7 +102,9 @@ Supported build and launch classes are explicit:
   dynamic dispatch, and managed resume all reach either the local launch check
   or the daemon write boundary. Unbound builds are rejected before a runtime or
   daemon is spawned; every daemon mutation requires a comparable matching CLI.
-  Read-only status and diagnostics remain available for repair.
+  Executable roles are selected by their compiled entrypoints, so copying or
+  renaming a binary cannot disable enforcement. Read-only status and
+  diagnostics remain available for repair.
 
 A long-running daemon plus an independently updated CLI is the *normal* state, and two traps live there (both hit in production):
 

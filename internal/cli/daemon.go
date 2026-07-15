@@ -1675,7 +1675,7 @@ func defaultFindAgentTeamd() (string, error) {
 }
 
 func ensureDaemonBinaryCompatible(path string) error {
-	if !buildinfo.RunningActivationExecutable() {
+	if !enforceActivationBuild {
 		return nil
 	}
 	daemonBuild, err := buildinfo.ReadFile(path)

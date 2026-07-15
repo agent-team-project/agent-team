@@ -272,17 +272,6 @@ func Equivalent(a, b Info) bool {
 	return a == b
 }
 
-// RunningActivationExecutable reports whether the current process is a shipped
-// CLI or daemon rather than a test/helper binary.
-func RunningActivationExecutable() bool {
-	executable, err := os.Executable()
-	if err != nil {
-		return false
-	}
-	base := strings.TrimSuffix(filepath.Base(executable), ".exe")
-	return base == "agent-team" || base == "agent-teamd"
-}
-
 var errMissingSourceIdentity = errors.New("missing immutable source identity")
 
 func immutableSourceID(i Info) (string, error) {

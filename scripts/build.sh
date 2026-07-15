@@ -32,10 +32,27 @@ output_dir=${1:-bin}
 mkdir -p "$output_dir"
 marker="agent-team-source-v1:git:$revision:end"
 identity_flag="-X github.com/agent-team-project/agent-team/internal/buildinfo.LinkedSourceIdentity=$marker"
-extra_ldflags=${AGENT_TEAM_EXTRA_LDFLAGS:-}
+short_revision=$(printf '%s' "$revision" | cut -c1-12)
 
-go build -ldflags "$identity_flag $extra_ldflags" -o "$output_dir/agent-team" ./cmd/agent-team
-go build -ldflags "$identity_flag $extra_ldflags" -o "$output_dir/agent-teamd" ./cmd/agent-teamd
+go build -ldflags "$identity_flag" -o "$output_dir/agent-team" ./cmd/agent-team
+go build -ldflags "$identity_flag" -o "$output_dir/agent-teamd" ./cmd/agent-teamd
 
-"$output_dir/agent-team" --version
-"$output_dir/agent-teamd" --version
+verify_identity() {
+  binary=$1
+  if ! LC_ALL=C grep -aFq "$marker" "$binary"; then
+    echo "scripts/build.sh: $binary does not contain the captured full source identity" >&2
+    exit 1
+  fi
+  version_line=$("$binary" --version)
+  case " $version_line " in
+    *" source git:$short_revision "*) ;;
+    *)
+      echo "scripts/build.sh: $binary reported the wrong source identity: $version_line" >&2
+      exit 1
+      ;;
+  esac
+  printf '%s\n' "$version_line"
+}
+
+verify_identity "$output_dir/agent-team"
+verify_identity "$output_dir/agent-teamd"

@@ -78,7 +78,12 @@ func run(argv []string) (err error) {
 		}
 	}()
 
-	d, err := daemon.New(daemon.Config{TeamDir: teamDir, HTTPAddr: *httpAddr, Build: build})
+	d, err := daemon.New(daemon.Config{
+		TeamDir:              teamDir,
+		HTTPAddr:             *httpAddr,
+		Build:                build,
+		EnforceBuildIdentity: true,
+	})
 	if err != nil {
 		writeExitReason(daemon.ExitReason{
 			Kind:   daemon.ExitKindError,
@@ -126,9 +131,6 @@ func run(argv []string) (err error) {
 }
 
 func requireManagedCLI(daemonBuild buildinfo.Info) error {
-	if !buildinfo.RunningActivationExecutable() {
-		return nil
-	}
 	executable, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("activation needed: locate agent-teamd executable: %w", err)
