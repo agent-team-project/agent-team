@@ -27,6 +27,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -64,6 +66,11 @@ jobs:
         run: |
           python3 scripts/ci/validate_gate_tiers.py --self-test
           python3 scripts/ci/validate_gate_tiers.py
+
+      - name: Validate TUI source inventory
+        run: |
+          python3 scripts/ci/validate_tui_inventory.py --mutant
+          python3 scripts/ci/validate_tui_inventory.py
 
       - name: Validate env_allow required vars
         run: |
