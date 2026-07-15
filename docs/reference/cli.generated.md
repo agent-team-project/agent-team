@@ -2921,14 +2921,14 @@ Flags:
 
 ```text
       --actor string       Actor recorded on the gate result; defaults to AGENT_TEAM_INSTANCE or cli.
-      --attempt string     Implementation attempt this evidence belongs to; defaults to AGENT_TEAM_ATTEMPT or 1.
+      --attempt string     Implementation attempt this evidence belongs to; defaults to AGENT_TEAM_ATTEMPT or 1. (default "1")
       --commit string      Exact commit evaluated by this gate; defaults to AGENT_TEAM_HEAD.
       --json               Emit the recorded gate result as JSON.
       --log-ref string     Path or URL with supporting gate output.
       --repo string        Repo root containing .agent_team. (default "<repo>")
       --signature string   Failure signature or short failure text used for infra/content classification.
       --status string      Gate status: pass or fail.
-      --step string        Pipeline step this evidence belongs to; defaults to AGENT_TEAM_PIPELINE_STEP.
+      --step string        Pipeline step this evidence belongs to; defaults to AGENT_TEAM_PIPELINE_STEP. (default "implement")
 ```
 
 ## `agent-team job gates`
@@ -4238,7 +4238,7 @@ Flags:
 
 ```text
       --advance                   After marking the step done, dispatch the next ready step.
-      --attempt string            Implementation attempt that owns this update; defaults to AGENT_TEAM_ATTEMPT or 1.
+      --attempt string            Implementation attempt that owns this update; defaults to AGENT_TEAM_ATTEMPT or 1. (default "1")
       --branch string             Branch name to record on the job.
       --commands                  With --dry-run, print the matching job step apply command when the preview has actionable work.
       --dry-run                   Preview the step update and optional advance dispatch without writing job or daemon state.
