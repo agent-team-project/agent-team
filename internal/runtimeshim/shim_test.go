@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -483,13 +484,20 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	out := filepath.Join(dir, "agent-team")
-	if b, err := exec.Command("go", "build", "-o", out, "github.com/agent-team-project/agent-team/cmd/agent-team").CombinedOutput(); err != nil {
+	goBinary := filepath.Join(runtime.GOROOT(), "bin", "go")
+	if b, err := exec.Command(goBinary, "build", "-o", out, "github.com/agent-team-project/agent-team/cmd/agent-team").CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build agent-team for shim tests: %v\n%s", err, b)
 		os.RemoveAll(dir)
 		os.Exit(1)
 	}
 	builtAgentTeamPath = out
+	oldPath := os.Getenv("PATH")
+	if err := os.Setenv("PATH", dir+string(os.PathListSeparator)+oldPath); err != nil {
+		os.RemoveAll(dir)
+		panic(err)
+	}
 	code := m.Run()
+	_ = os.Setenv("PATH", oldPath)
 	os.RemoveAll(dir)
 	os.Exit(code)
 }

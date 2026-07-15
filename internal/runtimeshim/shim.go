@@ -189,11 +189,6 @@ func ResolveRealAgentTeamForBuild(explicit string, daemonBuild buildinfo.Info) (
 	}
 	if exe != "" && filepath.Base(exe) == "agent-team" {
 		candidates = append(candidates, exe)
-	} else if exe != "" && strings.HasSuffix(filepath.Base(exe), ".test") {
-		// Go integration tests intentionally exercise shim installation without
-		// installing a separate CLI. Keep the historical in-process fallback
-		// narrowly test-only; production agent-teamd is never eligible.
-		candidates = append(candidates, exe)
 	} else if exe != "" {
 		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "agent-team"))
 	}
