@@ -1,5 +1,6 @@
 schema: agent-team.tui-parity.v1
 work_item: https://github.com/agent-team-project/kensho/issues/383
+inventory_revision_work_item: https://github.com/agent-team-project/kensho/issues/478
 epic: https://github.com/agent-team-project/kensho/issues/153
 purpose: >-
   Planned disposition of every capability in the embedded daemon dashboard and
@@ -21,8 +22,8 @@ semantics:
     oracle condition is satisfied on the same recorded integration result.
 
 source_inventory:
-  base_commit: f206f0f0503a0b4e841e9919b6c221793430dfe8
-  revision_basis: gh-383 working tree at 2026-07-10
+  base_commit: d45bb80558d7fd76cf1853ca7e815e4da562f023
+  revision_basis: canonical origin/main fetched and audited for GH-478 on 2026-07-15
   digest:
     algorithm: sha256
     serialization: git-ls-tree-r-z-full-tree
@@ -40,7 +41,7 @@ source_inventory:
       internal/daemon/ui changes the digest even when it is not yet named in
       files below. Entries are Git's NUL-delimited full-tree records, including
       mode, object type, blob object ID, and path in Git's deterministic order.
-    value: 8c844f7a6d93bc762c7d1ce0a755916376586f8a981330ede928e707b9714496
+    value: 3a0321948829a7d2935bed0c09fb0198dc230c8eaaaf77c858939d237d5d05f1
   files:
     - path: internal/daemon/ui/index.html
       role: controls, summary tiles, org view, and table declarations
@@ -53,7 +54,7 @@ source_inventory:
     - path: internal/daemon/ui.go
       role: embedded asset handler and redirect
     - path: internal/daemon/http.go
-      role: route registration and read endpoint handlers
+      role: route registration, read handlers, build enforcement, status/reload behavior, and topology projection
     - path: internal/daemon/http_auth.go
       role: unauthenticated static-shell exception
   api_routes:
@@ -70,8 +71,121 @@ source_inventory:
         app.js lines 104-155 collect resource URIs from those collections and
         fan out to the dynamic enrichment route.
       - >-
-        The cutover requires no new daemon API; all four current route shapes
-        remain behaviorally unchanged.
+        The cutover requires no new daemon API. The three primary collection
+        routes and the distinct dynamic enrichment route remain the complete
+        embedded-dashboard read surface.
+    revision_audit:
+      - route: GET /v1/instances
+        source:
+          - internal/daemon/http.go:414-425
+        change_since_previous_base: none
+        embedded_dashboard_effect: none
+      - route: GET /v1/jobs
+        source:
+          - internal/daemon/http.go:427-442
+          - internal/daemon/http.go:1220-1258
+        change_since_previous_base: none
+        embedded_dashboard_effect: none
+      - route: GET /v1/topology
+        source:
+          - internal/daemon/http.go:1137-1149
+          - internal/daemon/http.go:1590-1621
+        change_since_previous_base: >-
+          Additively altered: declared instance objects now include optional
+          required_verbs when configured; registration, methods, existing
+          fields, empty-state shape, and status behavior are unchanged.
+        embedded_dashboard_effect: >-
+          None. app.js reads the existing instances, pipelines, schedules,
+          teams, and budgets fields and never reads required_verbs, so no
+          dashboard capability is added, removed, or altered.
+      - route: GET /v1/resources?uri={resource_uri}
+        source:
+          - internal/daemon/http.go:444-469
+        change_since_previous_base: none
+        embedded_dashboard_effect: none
+
+inventory_refresh_audit:
+  previous_base_commit: f206f0f0503a0b4e841e9919b6c221793430dfe8
+  audited_base_commit: d45bb80558d7fd76cf1853ca7e815e4da562f023
+  compared_range: f206f0f0503a0b4e841e9919b6c221793430dfe8..d45bb80558d7fd76cf1853ca7e815e4da562f023
+  scoped_changes:
+    changed:
+      - internal/daemon/http.go
+    unchanged:
+      - internal/daemon/ui
+      - internal/daemon/ui.go
+      - internal/daemon/http_auth.go
+  capability_review:
+    rows_reviewed: 31
+    reviewed_ids:
+      - shell.manual-token-connect
+      - shell.manual-refresh
+      - shell.auto-refresh
+      - shell.connection-and-errors
+      - shell.panel-freshness-empty-errors
+      - shell.responsive-focus-color
+      - overview.instance-count
+      - overview.running-instance-count
+      - overview.job-count
+      - overview.active-job-count
+      - overview.model-tier-count
+      - overview.bounce-class-count
+      - overview.pipeline-count
+      - overview.budget-team-count
+      - overview.team-count
+      - overview.schedule-count
+      - overview.deployment-count
+      - overview.deadline-count
+      - org.declared-runtime-lanes
+      - org.role-and-lane-state
+      - org.runtime-detail
+      - instances.table
+      - jobs.table
+      - telemetry.model-tiers
+      - telemetry.bounce-classes
+      - topology.deployments-charters
+      - topology.pipelines
+      - topology.budgets
+      - topology.schedules
+      - topology.deadlines
+      - topology.teams
+    added: []
+    removed: []
+    altered: []
+    result: >-
+      Every capability row remains accurate. All capability-defining embedded
+      UI, UI handler, and auth sources are unchanged, and the sole scoped
+      handler change is either outside the dashboard read surface or an ignored
+      additive topology field.
+  http_delta_review:
+    - change: production build-provenance enforcement for activation-sensitive requests
+      source:
+        - internal/daemon/http.go:1270-1312
+      route_behavior: >-
+        Alters non-GET /v1 writes only; GET, HEAD, and OPTIONS are explicitly
+        excluded, so all four dashboard route shapes are unaffected.
+      embedded_dashboard_capability: none added, removed, or altered
+    - change: activation projection on GET /v1/status
+      source:
+        - internal/daemon/http.go:541-562
+      route_behavior: additively alters /v1/status, which the dashboard does not request
+      embedded_dashboard_capability: none added, removed, or altered
+    - change: topology-aware reconcile and topology reload status/error handling
+      source:
+        - internal/daemon/http.go:564-587
+        - internal/daemon/http.go:1152-1175
+      route_behavior: >-
+        Alters POST /v1/reconcile and POST /v1/topology/reload only; neither is
+        one of the dashboard's read route shapes.
+      embedded_dashboard_capability: none added, removed, or altered
+    - change: optional required_verbs projection on declared topology instances
+      source:
+        - internal/daemon/http.go:1590-1621
+      route_behavior: additively alters GET /v1/topology instance objects
+      embedded_dashboard_capability: >-
+        None added, removed, or altered because app.js does not consume the new
+        field; existing declared/runtime lane, state, and table projections use
+        the pre-existing fields unchanged.
 
 evidence_contract:
   state_in_this_slice: planned
