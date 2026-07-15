@@ -1251,13 +1251,28 @@ func outcomeURIForJob(teamDir, deploymentID string, j *jobstore.Job) string {
 }
 
 func buildHandshakeHandler(next http.Handler, daemonBuild buildinfo.Info, logOut io.Writer) http.Handler {
+	return buildHandshakeHandlerWithPolicy(next, daemonBuild, logOut, buildinfo.RunningActivationExecutable())
+}
+
+func buildHandshakeHandlerWithPolicy(next http.Handler, daemonBuild buildinfo.Info, logOut io.Writer, enforce bool) http.Handler {
 	if logOut == nil {
 		logOut = io.Discard
 	}
 	var seen sync.Map
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clientBuild, ok := requestBuildIdentity(r)
-		if ok && !buildinfo.Equivalent(clientBuild, daemonBuild) {
+		comparison := buildinfo.Compare(clientBuild, daemonBuild)
+		if enforce && activationSensitiveRequest(r) && (!ok || !comparison.Comparable || !comparison.Equal) {
+			reason := "missing build provenance"
+			if ok && comparison.Reason != "" {
+				reason = comparison.Reason
+			} else if ok && comparison.Comparable {
+				reason = fmt.Sprintf("client %s does not match daemon %s", clientBuild.Display(), daemonBuild.Display())
+			}
+			writeErrorWithBuild(w, http.StatusConflict, "activation needed: "+reason+"; install matching agent-team and agent-teamd builds", daemonBuild)
+			return
+		}
+		if ok && (!comparison.Comparable || !comparison.Equal) {
 			key := clientBuild.ComparisonKey()
 			if _, loaded := seen.LoadOrStore(key, struct{}{}); !loaded {
 				fmt.Fprintf(logOut, "%s daemon build skew: client=%s daemon=%s\n",
@@ -1266,6 +1281,21 @@ func buildHandshakeHandler(next http.Handler, daemonBuild buildinfo.Info, logOut
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func activationSensitiveRequest(r *http.Request) bool {
+	if r == nil || !strings.HasPrefix(r.URL.Path, "/v1/") {
+		return false
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	default:
+		// All daemon writes are activation-sensitive. Keeping this rule at the
+		// transport boundary covers new mailbox/job/lifecycle routes by default
+		// instead of relying on each handler author to remember the guard.
+		return true
+	}
 }
 
 func requestBuildIdentity(r *http.Request) (buildinfo.Info, bool) {

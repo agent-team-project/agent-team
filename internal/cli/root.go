@@ -19,6 +19,17 @@ func BuildInfo() buildinfo.Info {
 	return buildinfo.Current(Version)
 }
 
+func requireActivationBuild() error {
+	if !buildinfo.RunningActivationExecutable() {
+		return nil
+	}
+	comparison := buildinfo.Compare(BuildInfo(), BuildInfo())
+	if comparison.Comparable {
+		return nil
+	}
+	return fmt.Errorf("activation needed: %s; rebuild from clean VCS metadata or with scripts/build.sh", comparison.Reason)
+}
+
 const (
 	rootRepoFlagName = "repo"
 	repoFlagHelp     = "Repo root containing .agent_team."
