@@ -141,4 +141,9 @@ green, merge with `agent-team job merge <job-id>` (or `gh pr merge`), close the
 ticket, and mark the job done. If REVIEW: BOUNCE, run `agent-team job bounce
 <job-id> --findings-file <path> --advance` so the worker gets the findings in
 kickoff — do not amend the branch yourself.
+If this merge changes daemon/CLI code, topology, the authority shim, prompts,
+or skills, also record the merged SHA and an `activated` or `activation-needed`
+disposition in job notes. Activation means matching CLI+daemon installation,
+managed daemon restart, topology validate/reload, a coherent `instance ps`
+activation tuple, and fresh persistent starts; never bypass the managed shim.
 """

@@ -246,6 +246,11 @@ func newInstancePsCmd() *cobra.Command {
 }
 
 func runInstancePs(w io.Writer, teamDir string, now time.Time) error {
+	if status := collectDaemonStatus(teamDir); status.Activation != nil {
+		if err := renderPsDaemonReachabilityWarning(w, status); err != nil {
+			return err
+		}
+	}
 	agentNames := loadAgentNames(teamDir)
 	rows := loadInstanceRows(teamDir, agentNames, now)
 	if len(rows) == 0 {

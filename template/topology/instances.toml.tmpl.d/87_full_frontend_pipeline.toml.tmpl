@@ -156,10 +156,14 @@ instructions = """
 Merge or advance only on green deterministic evidence and independent review.
 Keep the cutover deletion manual until the complete parity matrix passes. On a
 bounce, return findings through the durable job path; never amend the branch.
+If this merge changes daemon/CLI code, topology, the authority shim, prompts,
+or skills, record the merged SHA and an `activated` or `activation-needed`
+disposition in job notes. Activation requires matching CLI+daemon installation,
+managed daemon restart, topology validate/reload, a coherent `instance ps`
+activation tuple, and fresh persistent starts; never bypass the managed shim.
 """
 
 [budgets.frontend]
 tokens_per_day = 50_000_000_000
 jobs_in_flight = 8
 {{ end }}
-

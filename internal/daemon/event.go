@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/agent-team-project/agent-team/internal/budget"
+	"github.com/agent-team-project/agent-team/internal/buildinfo"
 	jobstore "github.com/agent-team-project/agent-team/internal/job"
 	"github.com/agent-team-project/agent-team/internal/jobwrite"
 	"github.com/agent-team-project/agent-team/internal/origin"
@@ -81,6 +82,7 @@ type EventResolver struct {
 	tracking    map[string]*ephTracker // declared-name → tracker
 	locks       map[string]*dispatchLockTracker
 	concurrency *concurrencyController
+	activation  activationContext
 }
 
 type ephTracker struct {
@@ -152,7 +154,11 @@ type dispatchLockTracker struct {
 // NewEventResolver installs a reap hook on mgr and returns a resolver bound
 // to it. teamDir is the consumer's `.agent_team/` (used to resolve the
 // workspace for spawned instances).
-func NewEventResolver(mgr *InstanceManager, teamDir string, topo *topology.Topology) *EventResolver {
+func NewEventResolver(mgr *InstanceManager, teamDir string, topo *topology.Topology, builds ...buildinfo.Info) *EventResolver {
+	build := buildinfo.Info{}
+	if len(builds) > 0 {
+		build = builds[0]
+	}
 	r := &EventResolver{
 		mgr:         mgr,
 		teamDir:     teamDir,
@@ -162,7 +168,9 @@ func NewEventResolver(mgr *InstanceManager, teamDir string, topo *topology.Topol
 		locks:       map[string]*dispatchLockTracker{},
 		concurrency: newConcurrencyController(concurrencyConfigForTopology(topo)),
 		otel:        loadOrchestrationTracer(teamDir, mgr.daemonRoot),
+		activation:  newActivationContext(teamDir, build),
 	}
+	mgr.setActivationContext(r.activation)
 	mgr.SetReapHook(r.onReap)
 	mgr.SetTerminalHook(r.onTerminalMetadata)
 	r.mu.Lock()
@@ -175,12 +183,45 @@ func NewEventResolver(mgr *InstanceManager, teamDir string, topo *topology.Topol
 // SetTopology swaps the live topology pointer (used by /v1/topology/reload).
 // In-flight ephemeral spawns and their queue depth are preserved across
 // reloads — the running children outlive the topology that spawned them.
-func (r *EventResolver) SetTopology(t *topology.Topology) {
+func (r *EventResolver) SetTopology(t *topology.Topology) error {
+	if r == nil {
+		return errors.New("topology reload: event resolver is required")
+	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	activation := r.activation
+	r.mu.Unlock()
+	if activation.enabled() {
+		digest, err := activationAssetDigest(r.teamDir)
+		if err != nil {
+			return fmt.Errorf("topology reload: activation asset fingerprint: %w", err)
+		}
+		if err := persistLoadedActivationAssets(r.teamDir, digest); err != nil {
+			return fmt.Errorf("topology reload: persist activation fingerprint: %w", err)
+		}
+		activation.LoadedAssets = digest
+		activation.TopologyError = ""
+	}
+	r.mu.Lock()
 	r.topo = t
+	r.activation = activation
 	r.setConcurrencyConfigLocked(t)
 	r.recoverLockStateLocked(time.Now().UTC())
+	r.mu.Unlock()
+	r.mgr.setActivationContext(activation)
+	return nil
+}
+
+// SetTopologyLoadError makes a parser/schema incompatibility part of the
+// activation verdict instead of allowing a nil topology to look dispatchable.
+func (r *EventResolver) SetTopologyLoadError(err error) {
+	if r == nil || err == nil {
+		return
+	}
+	r.mu.Lock()
+	r.activation.TopologyError = "topology load failed: " + err.Error()
+	ctx := r.activation
+	r.mu.Unlock()
+	r.mgr.setActivationContext(ctx)
 }
 
 func concurrencyConfigForTopology(t *topology.Topology) *topology.Concurrency {
@@ -261,6 +302,9 @@ func (r *EventResolver) Event(eventType string, payload map[string]any) ([]Event
 func (r *EventResolver) EventWithResult(eventType string, payload map[string]any) (*EventResult, error) {
 	if strings.TrimSpace(eventType) == "" {
 		return nil, errors.New("event: type is required")
+	}
+	if err := r.requireActivation(); err != nil {
+		return nil, err
 	}
 	reconciled := r.reconcilePRJob(eventType, payload)
 	r.mu.Lock()

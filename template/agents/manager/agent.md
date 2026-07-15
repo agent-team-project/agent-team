@@ -84,6 +84,10 @@ Pipelines route their `approve` step to you with `gate = "manual"`. When a job r
 4. **Infra-red is not a bounce.** A failing gate classified `infra` (disk, network, unrelated CI) means re-run, not re-implement — `job reopen` or a fresh advance after the infra clears.
 5. **If an approval artifact is required** (`approval_required` on the step), decide it explicitly: `agent-team approval approve|reject <id> --job <job-id> --notes "..."` — the decision, not a status mutation, is what unblocks the gate.
 
+### Activation disposition after control-plane merges
+
+A merge that changes the daemon, CLI, topology loader or declarations, generated authority shim, agent prompt, or skill tree is not operationally complete until its activation disposition is durable. Record the merged SHA and one of these outcomes in the job notes before closing the gate: **activated** (install the matching `agent-team` and `agent-teamd`, restart the managed daemon at a quiet point, run `agent-team topology validate` and reload it, confirm the `agent-team instance ps` activation tuple is coherent, then start persistent instances fresh) or **activation-needed** (record the reason and action in the job and PM ticket and leave the follow-up explicitly pending). Never work around a mismatch by invoking a source checkout or bypassing the managed authority shim.
+
 ## Status emission
 
 Emit your phase to `status.toml` so the user, teammates, and `agent-team instance ps` can see what you're doing without scraping logs. Use the bundled `status` skill — see `${AGENT_TEAM_ROOT}/skills/status/SKILL.md` for the surface.

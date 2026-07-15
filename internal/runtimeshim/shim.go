@@ -121,6 +121,30 @@ func resolveRealAgentTeam(explicit string) (string, error) {
 	return resolveRealAgentTeamFrom(explicit, exe, exec.LookPath)
 }
 
+// ResolveRealAgentTeam returns the exact CLI executable a generated managed
+// shim must invoke. Unlike the install helper's single-binary test fallback,
+// this strict surface never accepts agent-teamd (or an arbitrary host binary)
+// as the CLI.
+func ResolveRealAgentTeam(explicit string) (string, error) {
+	if explicit = strings.TrimSpace(explicit); explicit != "" {
+		return explicit, validateExecutableFile(explicit)
+	}
+	exe, _ := os.Executable()
+	if exe != "" && filepath.Base(exe) == "agent-team" {
+		return exe, validateExecutableFile(exe)
+	}
+	if exe != "" {
+		sibling := filepath.Join(filepath.Dir(exe), "agent-team")
+		if validateExecutableFile(sibling) == nil {
+			return sibling, nil
+		}
+	}
+	if path, err := exec.LookPath("agent-team"); err == nil {
+		return path, validateExecutableFile(path)
+	}
+	return "", fmt.Errorf("managed agent-team CLI binary not found alongside %s or on PATH", exe)
+}
+
 // resolveRealAgentTeamFrom is the testable core. The shim must exec the
 // agent-team CLI, never the agent-teamd daemon — critical because the daemon
 // itself installs shims, and os.Executable() there is agent-teamd. Matching by

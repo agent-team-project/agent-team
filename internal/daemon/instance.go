@@ -242,8 +242,10 @@ const (
 // InstanceManager owns spawn / track / stop for claude children. Concurrency:
 // a single mutex protects the in-memory map; child wait() runs in goroutines.
 type InstanceManager struct {
-	daemonRoot string
-	spawner    Spawner
+	daemonRoot   string
+	spawner      Spawner
+	activationMu sync.RWMutex
+	activation   activationContext
 	// Watchdog operations are manager-local so process lifecycle tests can
 	// coordinate signal and completion boundaries without global hooks.
 	watchdogSignal      func(proc *os.Process, pid int, sig syscall.Signal) error
@@ -303,6 +305,9 @@ func (m *InstanceManager) Dispatch(in DispatchInput) (*Metadata, error) {
 	}
 	if in.Workspace == "" {
 		return nil, errors.New("dispatch: workspace is required")
+	}
+	if err := m.requireActivation(); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -1275,9 +1280,21 @@ func (m *InstanceManager) start(instance string, expected *Metadata, opts StartO
 	}
 
 	base := *t.meta
+	activation := m.activationStatus()
+	if activation.State == ActivationStateNeeded {
+		m.mu.Unlock()
+		return nil, &ActivationNeededError{Status: activation}
+	}
 	if opts.ForceFresh {
 		m.mu.Unlock()
 		return m.resumeFallbackFresh(instance, &base, errors.New("fresh start requested"), opts.ResumePrompt)
+	}
+	if stale, reason, err := m.launchSnapshotActivationStale(instance, activation); err != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("start: activation provenance: %w", err)
+	} else if stale {
+		m.mu.Unlock()
+		return m.resumeFallbackFresh(instance, &base, errors.New(reason), opts.ResumePrompt)
 	}
 	baseRuntime := metadataRuntimeKind(&base)
 	if !runtimeKindSupportsManagedResume(baseRuntime) {
@@ -1807,6 +1824,9 @@ func (m *InstanceManager) launchPrepared(in DispatchInput, expected *Metadata) (
 	if in.Workspace == "" {
 		return nil, false, errors.New("dispatch: workspace is required")
 	}
+	if err := m.requireActivation(); err != nil {
+		return nil, false, err
+	}
 
 	rt, err := m.dispatchRuntime(in)
 	if err != nil {
@@ -2133,6 +2153,9 @@ func (m *InstanceManager) writeInstanceLaunchEnv(instance string, args, env []st
 		PID:        pid,
 		Version:    1,
 	}
+	activation := m.activationContext()
+	snapshot.Build = activation.Build
+	snapshot.Assets = activation.LoadedAssets
 	return WriteInstanceLaunchEnv(m.daemonRoot, instance, snapshot)
 }
 

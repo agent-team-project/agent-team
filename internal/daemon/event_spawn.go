@@ -50,6 +50,9 @@ func validateRequestedChildName(declared, name string) error {
 // The caller's payload is JSON-encoded into the prompt so the spawned child has
 // full event context to work from.
 func (r *EventResolver) spawn(inst *topology.Instance, name, eventType string, payload map[string]any) (*Metadata, error) {
+	if err := r.requireActivation(); err != nil {
+		return nil, err
+	}
 	payload = copyPayload(payload)
 	contract := r.contractFromPayload(payload)
 	r.renderPayloadContract(payload, contract)
@@ -581,10 +584,12 @@ func (r *EventResolver) prepareEphemeralAgentArgs(inst *topology.Instance, agent
 		}
 	}
 	authorityAllow, authorityEnforce, authorityStrict := r.runtimeAuthorityForInstance(agentName, instance, payload)
+	activation := r.activationStatus()
 	shimBinDir, err := runtimeshim.Install(launchRoot, skillPaths, runtimeshim.Options{
 		EnforceAuthority:   authorityEnforce,
 		AuthorityAllowlist: authorityAllow,
 		StrictAuthority:    authorityStrict,
+		RealAgentTeam:      activation.CLIPath,
 	})
 	if err != nil {
 		return nil, "", runtimebin.Runtime{}, nil, nil, fmt.Errorf("event runtime: %w", err)

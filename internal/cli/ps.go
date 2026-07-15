@@ -439,6 +439,16 @@ func renderPsSummary(w io.Writer, summary psSummaryJSON) error {
 
 func renderPsDaemonReachabilityWarning(w io.Writer, status daemonStatusJSON) error {
 	if status.Reachable {
+		if status.Activation == nil {
+			return nil
+		}
+		if _, err := fmt.Fprintf(w, "activation: %s\n", status.Activation.Summary()); err != nil {
+			return err
+		}
+		if status.Activation.State == daemon.ActivationStateNeeded {
+			_, err := fmt.Fprintf(w, "warning: %s\n", status.Activation.Diagnostic())
+			return err
+		}
 		return nil
 	}
 	msg := "warning: daemon unreachable; instance states are last-known from state files and persisted daemon metadata, not live."

@@ -410,12 +410,13 @@ type RuntimeExtensionResponse struct {
 }
 
 type DaemonStatus struct {
-	Ready     bool           `json:"ready"`
-	PID       int            `json:"pid,omitempty"`
-	Instances int            `json:"instances"`
-	TeamDir   string         `json:"team_dir,omitempty"`
-	StartedAt time.Time      `json:"started_at,omitempty"`
-	Build     buildinfo.Info `json:"build,omitempty"`
+	Ready      bool                     `json:"ready"`
+	PID        int                      `json:"pid,omitempty"`
+	Instances  int                      `json:"instances"`
+	TeamDir    string                   `json:"team_dir,omitempty"`
+	StartedAt  time.Time                `json:"started_at,omitempty"`
+	Build      buildinfo.Info           `json:"build,omitempty"`
+	Activation *daemon.ActivationStatus `json:"activation,omitempty"`
 }
 
 type Resource struct {

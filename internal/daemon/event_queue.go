@@ -39,6 +39,9 @@ func (r *EventResolver) onReap(spawned string) {
 		r.reconcileEphemeralJobExit(meta)
 	}
 	_, _ = r.markTeamCharterReaped(spawned, map[string]string{"reason": "instance_reaped"})
+	if err := r.requireActivation(); err != nil {
+		return
+	}
 	var next *queuedEvent
 	r.mu.Lock()
 	tr = r.tracking[declared.Name]
@@ -893,6 +896,12 @@ func (r *EventResolver) drainQueuesWithResult(ids map[string]bool) (*QueueDrainR
 		return nil, err
 	}
 	result := &QueueDrainResult{Outcomes: []EventOutcome{}}
+	if err := r.requireActivation(); err != nil {
+		if items, listErr := ListQueueItems(r.mgr.daemonRoot); listErr == nil {
+			applyQueueDrainCounts(result, items, ids)
+		}
+		return result, err
+	}
 	for {
 		declared, ev := r.nextDrainableQueuedEvent(ids)
 		if declared == nil || ev == nil {
@@ -1083,6 +1092,9 @@ func (r *EventResolver) RetryQueueItem(id string) (EventOutcome, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return EventOutcome{}, errors.New("queue: id is required")
+	}
+	if err := r.requireActivation(); err != nil {
+		return EventOutcome{}, err
 	}
 	item, err := ReadQueueItem(r.mgr.daemonRoot, id)
 	if err != nil {

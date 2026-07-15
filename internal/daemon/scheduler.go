@@ -122,6 +122,11 @@ func (r *EventResolver) fireDueSchedules(now time.Time, state map[string]*Schedu
 
 func (r *EventResolver) fireDueSchedulesWithResult(now time.Time, state map[string]*ScheduleState, dryRun bool, names map[string]bool) (*ScheduleFireResult, error) {
 	result := &ScheduleFireResult{DryRun: dryRun, Schedules: []ScheduleFireItem{}}
+	if !dryRun {
+		if err := r.requireActivation(); err != nil {
+			return result, err
+		}
+	}
 	scoped := names != nil
 	topo := r.Topology()
 	if topo == nil || len(topo.Schedules) == 0 {
@@ -164,15 +169,15 @@ func (r *EventResolver) fireDueSchedulesWithResult(now time.Time, state map[stri
 			result.Schedules = append(result.Schedules, item)
 			continue
 		}
+		eventResult, err := r.EventWithResult(topology.EventSchedule, payload)
+		if err != nil {
+			return result, err
+		}
 		if !seen {
 			state[stateName] = clock
 		}
 		clock.LastSeenAt = now
 		clock.LastFiredAt = now
-		eventResult, err := r.EventWithResult(topology.EventSchedule, payload)
-		if err != nil {
-			return result, err
-		}
 		item.Outcomes = eventResult.Outcomes
 		_ = WriteScheduleState(r.mgr.daemonRoot, clock)
 		result.Fired++

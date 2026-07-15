@@ -68,6 +68,11 @@ Manual release decision. Read the release PR, changelog, SQU-138 gate status,
 and verify-step gate ledger. If approved, merge the release PR into main and
 mark this step done/advance so ship can tag exactly what was approved. If not
 approved, leave the job held or reject with the reason.
+If the release changes daemon/CLI code, topology, the authority shim, prompts,
+or skills, record the merged SHA and an `activated` or `activation-needed`
+disposition in job notes. Activation requires matching CLI+daemon installation,
+managed daemon restart, topology validate/reload, a coherent `instance ps`
+activation tuple, and fresh persistent starts; never bypass the managed shim.
 """
 
 [[pipelines.release.steps]]
@@ -106,4 +111,3 @@ stable delivery id `release:<tag>`. Releases never bypass its rolling 24-hour
 ceiling; the helper owns durable deferral and supervisor notification. Never
 post through worker-owned automation or a user account.
 """
-
