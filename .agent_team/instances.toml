@@ -1096,6 +1096,11 @@ Implement exactly one accepted terminal-interface epic slice. Follow its issue
 contract and advisor-backed specification. Preserve the daemon HTTP/JSON API as
 the data/control plane; do not create a compatibility web shim, bypass gates,
 or broaden into later slices.
+
+Every metric the issue or SPEC declares for an evidence artifact must actually
+be measured; if a metric cannot be measured on this host, fail the gate loudly
+with the reason — a sentinel value (-1, null, or 'skipped') recorded in evidence
+is a failing gate, never a pass.
 """
 
 [[pipelines.frontend_ticket_to_pr.steps]]
@@ -1112,6 +1117,11 @@ instructions = """
 Run deterministic repository gates plus every slice-specific golden, PTY,
 resize, seeded-daemon, API/CLI parity, auth, NO_COLOR, non-TTY, capability, and
 web-removal gate declared by the issue. Record exact commands and artifacts.
+
+Every metric the issue or SPEC declares for an evidence artifact must actually
+be measured; if a metric cannot be measured on this host, fail the gate loudly
+with the reason — a sentinel value (-1, null, or 'skipped') recorded in evidence
+is a failing gate, never a pass.
 
 ```agent-team-verify-gates
 gofmt-check :: test -z "$(gofmt -l .)"

@@ -10,6 +10,50 @@ import (
 	templatecfg "github.com/agent-team-project/agent-team/internal/template"
 )
 
+const frontendDeclaredEvidenceContract = "Every metric the issue or SPEC declares for an evidence artifact must actually be measured; if a metric cannot be measured on this host, fail the gate loudly with the reason — a sentinel value (-1, null, or 'skipped') recorded in evidence is a failing gate, never a pass."
+
+func TestFrontendProgramDeclaredEvidenceContract(t *testing.T) {
+	for _, fixture := range frontendProgramTopologies(t) {
+		t.Run(fixture.name, func(t *testing.T) {
+			if missing := missingFrontendDeclaredEvidenceContract(fixture.top); len(missing) != 0 {
+				t.Fatalf("frontend declared-evidence contract missing from steps: %s", strings.Join(missing, ", "))
+			}
+
+			for _, stepID := range []string{"implement", "verify"} {
+				step := frontendProgramStep(fixture.top, stepID)
+				if step == nil {
+					t.Fatalf("frontend %s step is missing", stepID)
+				}
+				normalized := normalizeFrontendInstructions(step.Instructions)
+
+				t.Run("delete-"+stepID, func(t *testing.T) {
+					original := step.Instructions
+					t.Cleanup(func() { step.Instructions = original })
+					step.Instructions = strings.Replace(normalized, frontendDeclaredEvidenceContract, "", 1)
+					if step.Instructions == normalized {
+						t.Fatal("declared-evidence deletion mutation did not change instructions")
+					}
+					if missing := missingFrontendDeclaredEvidenceContract(fixture.top); len(missing) != 1 || missing[0] != stepID {
+						t.Fatalf("deleting %s contract reports missing steps %v, want [%s]", stepID, missing, stepID)
+					}
+				})
+
+				t.Run("counterfeit-pass-"+stepID, func(t *testing.T) {
+					original := step.Instructions
+					t.Cleanup(func() { step.Instructions = original })
+					step.Instructions = strings.Replace(normalized, "never a pass.", "may still pass.", 1)
+					if step.Instructions == normalized {
+						t.Fatal("fail-open counterfeit mutation did not change instructions")
+					}
+					if missing := missingFrontendDeclaredEvidenceContract(fixture.top); len(missing) != 1 || missing[0] != stepID {
+						t.Fatalf("counterfeiting %s contract reports missing steps %v, want [%s]", stepID, missing, stepID)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestFrontendProgramSoakBudgets(t *testing.T) {
 	for _, fixture := range frontendProgramTopologies(t) {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -136,6 +180,33 @@ func frontendProgramTopologies(t *testing.T) []frontendProgramFixture {
 		{name: "self-dogfood", top: self},
 		{name: "full template", top: rendered},
 	}
+}
+
+func missingFrontendDeclaredEvidenceContract(top *Topology) []string {
+	missing := make([]string, 0, 2)
+	for _, stepID := range []string{"implement", "verify"} {
+		step := frontendProgramStep(top, stepID)
+		if step == nil || !strings.Contains(normalizeFrontendInstructions(step.Instructions), frontendDeclaredEvidenceContract) {
+			missing = append(missing, stepID)
+		}
+	}
+	return missing
+}
+
+func frontendProgramStep(top *Topology, stepID string) *PipelineStep {
+	if top == nil || top.Pipelines["frontend_ticket_to_pr"] == nil {
+		return nil
+	}
+	for _, step := range top.Pipelines["frontend_ticket_to_pr"].Steps {
+		if step.ID == stepID {
+			return step
+		}
+	}
+	return nil
+}
+
+func normalizeFrontendInstructions(instructions string) string {
+	return strings.Join(strings.Fields(instructions), " ")
 }
 
 func frontendManagerReceivesGateReady(owner *Instance) bool {
