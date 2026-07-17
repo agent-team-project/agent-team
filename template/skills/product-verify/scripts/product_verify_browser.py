@@ -13,6 +13,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+# Scheduled execution imports a sibling from the shipped skill tree. Suppress
+# bytecode before that import so running the skill never mutates its assets.
+sys.dont_write_bytecode = True
+
 from product_verify_diff import ProductVerifyError
 from product_verify_diff import read_operator_token
 from product_verify_diff import resolve_daemon_url
