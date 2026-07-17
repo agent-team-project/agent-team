@@ -5,6 +5,8 @@ import contextlib
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -48,6 +50,48 @@ def rendered_snapshot() -> dict[str, object]:
 
 
 class ProductVerifyBrowserTest(unittest.TestCase):
+    def test_scheduled_entrypoint_does_not_write_bytecode(self) -> None:
+        template_skill = REPO_ROOT / "template" / "skills" / "product-verify"
+        with tempfile.TemporaryDirectory() as tmp:
+            clean_target = Path(tmp)
+            team_dir = clean_target / ".agent_team"
+            installed_skill = team_dir / "skills" / "product-verify"
+            shutil.copytree(template_skill, installed_skill)
+
+            surfaces = {
+                "template": template_skill,
+                "installed": installed_skill,
+            }
+            for name, skill_dir in surfaces.items():
+                with self.subTest(surface=name):
+                    env = os.environ.copy()
+                    env.pop("PYTHONDONTWRITEBYTECODE", None)
+                    env.pop("PYTHONPYCACHEPREFIX", None)
+                    env["AGENT_TEAM_ROOT"] = str(team_dir)
+                    env["AGENT_TEAM_DAEMON_URL"] = ""
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            str(skill_dir / "scripts" / "product_verify_browser.py"),
+                            "--max-findings",
+                            "5",
+                        ],
+                        cwd=clean_target,
+                        env=env,
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                    )
+
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(json.loads(result.stdout)["status"], "skipped")
+                    artifacts = sorted(
+                        str(path.relative_to(skill_dir))
+                        for path in skill_dir.rglob("*")
+                        if path.name == "__pycache__" or path.suffix in {".pyc", ".pyo"}
+                    )
+                    self.assertEqual(artifacts, [])
+
     def test_dom_checks_accept_rendered_empty_states(self) -> None:
         checks = verifier.checks_for_dom_snapshot(rendered_snapshot())
 

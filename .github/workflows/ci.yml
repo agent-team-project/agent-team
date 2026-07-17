@@ -88,6 +88,11 @@ jobs:
       - name: Test verifier base comparison
         run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/skills/verify/test_verify.py
 
+      - name: Test product verifier
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 scripts/skills/product-verify/product_verify_browser_test.py
+          PYTHONDONTWRITEBYTECODE=1 python3 scripts/skills/product-verify/product_verify_diff_test.py
+
       - name: gofmt
         run: |
           unformatted=$(gofmt -l .)
